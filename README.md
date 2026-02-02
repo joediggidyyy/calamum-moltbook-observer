@@ -43,10 +43,17 @@ projects/calamum-moltbook-observer/
 ### Documentation
 - **Master Plan**: [Moltbook Observer Experiment Plan](planning/CALAMUM_MOLTBOOK_OBSERVER_EXPERIMENT_PLAN_20260201.md)
 - **Hardening Profile**: [Container Constraints](src/deployment/HARDENING_PROFILE.md)
+- **Sentinel**: [Triple-Redundancy Watchdog](src/sentinel.py)
 
 ### Evidence (Logs)
 - **Stage 1 (Public Sample)**: `logs/data/calamum/moltbook_samples_obfuscated.jsonl`
 - **Stage 3 (Canary Metrics)**: `logs/data/calamum/moltbook_canary_metrics.jsonl`
+
+## Operation Manual
+
+### Launching (Windows Host)
+1. **Start Observer**: `./src/deployment/secure_run.ps1`
+2. **Start Watchdog**: `python src/sentinel.py`
 
 ## Academic Reproducibility
 
