@@ -1,0 +1,130 @@
+{
+  "template_id": "VAULT_TEMPLATE_JOB_V1",
+  "doc_type": "job",
+  "job_id": "CALAMUM_JOB_0003",
+  "title": "Moltbook Observer - Stage 2: Container Hardening",
+  "status": "open",
+  "created_at": "2026-02-01",
+  "owner": "ORACL-Prime",
+  "project": "calamum / security experiment",
+  "phase": "hardening",
+  "priority": "P1",
+  "depends_on": [
+    "CALAMUM_JOB_0002"
+  ],
+  "blocks": [
+    "CALAMUM_JOB_0004"
+  ],
+  "links": {
+    "policies": [
+      "PP_GOV_PROTOCOL_POL_CORE_POLICY_20251122",
+      "PP_SEC_PROTOCOL_POL_AGENT_SOCIAL_NETWORKS_20260201"
+    ],
+    "plan_paths": [
+      "projects/calamum-moltbook-observer/planning/CALAMUM_MOLTBOOK_OBSERVER_EXPERIMENT_PLAN_20260201.json"
+    ],
+    "evidence_paths": []
+  },
+  "summary": "Harden the Calamum execution environment by migrating the sampler to a strictly confined container or VM. This stage enforces 'no self-modification' by mounting the code as read-only and explicitly dropping all capabilities except network egress to the allowlisted target.",
+  "status_update": {
+    "format": "STATUS_UPDATE_V1",
+    "ssot": {
+      "task_id": "calamum-moltbook-observer-stage2-20260201",
+      "path": "CodeSentinel/operations/tasks.json",
+      "status": "open"
+    },
+    "queststack": {
+      "id": "",
+      "doc_path": "",
+      "evidence_path": ""
+    },
+    "questframe": {
+      "id": ""
+    },
+    "gates": {
+      "last": "NONE",
+      "last_at": "",
+      "last_result": "SKIP",
+      "gate_events_path": "CodeSentinel/logs/behavioral/gates/gate_events.jsonl"
+    },
+    "next_action": "Define Dockerfile/Containerfile with read-only rootfs and run profile."
+  },
+  "redaction_palette": {
+    "network_endpoints": [],
+    "dns": [],
+    "secrets": [],
+    "identifiers": []
+  },
+  "problem": {
+    "current_state": [
+      "Sampler runs on host processing surface, relying on process-level discipline."
+    ],
+    "root_cause": [
+      "Lack of isolation boundary."
+    ],
+    "impact": [
+      "If the python runtime is compromised by a buffer overflow or logic bug in the feed parser, the host is exposed."
+    ],
+    "architecture": "Host -> Container Runtime -> [Read-Only Code + Read-Only Python] -> <target_platform_dns>; Write -> /data/logs (volume)",
+    "implementation_steps": [
+      "Create hardening profile (apparmor/seccomp/capabilities).",
+      "Configure read-only root filesystem.",
+      "Validate that `pip install` or file writes fail inside the container."
+    ]
+  },
+  "requirements": [
+    "Rootless execution.",
+    "Read-only root filesystem.",
+    "Drop all capabilities (e.g. CAP_NET_ADMIN).",
+    "Egress filtering (if possible via container network driver)."
+  ],
+  "acceptance_criteria": [
+    "Container runs sampler successfully.",
+    "Attempt to write to code directory fails.",
+    "Attempt to access host filesystem fails.",
+    "Attempt to connect to non-target IP fails (if strictly egress filtered)."
+  ],
+  "execution": {
+    "preflight": [
+      "Verify container runtime availability (Docker/Podman)."
+    ],
+    "steps": [
+      "Build image.",
+      "Run container with hardening flags.",
+      "Verify evidence."
+    ]
+  },
+  "rollout": {
+    "rollback_plan": "Revert to host-based execution (Job 0002).",
+    "verification": [
+      "Verify container logs show successful startup and strictly semantic error on write attempts."
+    ]
+  },
+  "validation": {
+    "env_var_names_only_checks": true,
+    "smoke_tests": [
+      "Verify read-only FS constraint"
+    ],
+    "gate_evidence_updated": false
+  },
+  "seam": {
+    "security": [
+      "Defense in depth: isolation prevents persistence."
+    ],
+    "efficiency": [
+      "Disposable containers ensure clean state per run."
+    ],
+    "awareness": [
+      "Runtime profile is explicit and versioned."
+    ],
+    "minimalism": [
+      "Minimal base image (distroless preferred)."
+    ]
+  },
+  "references": {
+    "queststack_id": "",
+    "paths": [
+      "projects/calamum-moltbook-observer/jobs/CALAMUM_JOB_0002_MOLTBOOK_OBSERVER_STAGE1_OBSERVE_AND_SAMPLE_20260201.json"
+    ]
+  }
+}

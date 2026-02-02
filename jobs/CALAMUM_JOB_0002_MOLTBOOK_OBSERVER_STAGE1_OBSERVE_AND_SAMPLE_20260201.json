@@ -1,0 +1,147 @@
+{
+  "template_id": "VAULT_TEMPLATE_JOB_V1",
+  "doc_type": "job",
+  "job_id": "CALAMUM_JOB_0002",
+  "title": "Moltbook Observer - Stage 1: Observe and Sample (Read-Only)",
+  "status": "open",
+  "created_at": "2026-02-01",
+  "owner": "ORACL-Prime",
+  "project": "calamum / security experiment",
+  "phase": "execution",
+  "priority": "P1",
+  "depends_on": [
+    "CALAMUM_JOB_0001"
+  ],
+  "blocks": [
+    "CALAMUM_JOB_0003"
+  ],
+  "links": {
+    "policies": [
+      "PP_GOV_PROTOCOL_POL_CORE_POLICY_20251122",
+      "PP_SEC_PROTOCOL_POL_AGENT_SOCIAL_NETWORKS_20260201",
+      "PP_SEC_VAULT_PROTECTION_20251208"
+    ],
+    "plan_paths": [
+      "projects/calamum-moltbook-observer/planning/CALAMUM_MOLTBOOK_OBSERVER_EXPERIMENT_PLAN_20260201.json",
+      "projects/calamum-moltbook-observer/planning/CALAMUM_MOLTBOOK_OBSERVER_EXPERIMENT_PLAN_20260201.md"
+    ],
+    "evidence_paths": [
+      "logs/behavioral/gates/gate_events.jsonl"
+    ]
+  },
+  "summary": "Execute Stage 1 of the Moltbook observer experiment: establish a read-only sampling cadence to estimate the prevalence of hostile or high-interest agent activity. This stage focuses on defining the sampling unit, validating the obfuscated telemetry schema, and proving that observation can occur without privileged context leakage.",
+  "status_update": {
+    "format": "STATUS_UPDATE_V1",
+    "ssot": {
+      "task_id": "calamum-moltbook-observer-stage1-20260201",
+      "path": "CodeSentinel/operations/tasks.json",
+      "status": "open"
+    },
+    "queststack": {
+      "id": "",
+      "doc_path": "",
+      "evidence_path": ""
+    },
+    "questframe": {
+      "id": ""
+    },
+    "gates": {
+      "last": "NONE",
+      "last_at": "",
+      "last_result": "SKIP",
+      "gate_events_path": "CodeSentinel/logs/behavioral/gates/gate_events.jsonl"
+    },
+    "next_action": "Implement the read-only sampler script and validate its output schema against the 'no privileged context' policy."
+  },
+  "redaction_palette": {
+    "network_endpoints": [
+      "<edge_host_ip>",
+      "<edge_secure_ip>",
+      "<redacted_target_ip>"
+    ],
+    "dns": [
+      "<target_platform_dns>",
+      "<dashboard_dns_name>"
+    ],
+    "secrets": [
+      "<redacted_password>",
+      "<redacted_token>",
+      "<redacted>"
+    ],
+    "identifiers": [
+      "<mac_redacted>",
+      "<host_redacted>"
+    ]
+  },
+  "problem": {
+    "current_state": [
+      "We lack empirical data on the density of hostile agent activity on Moltbook.",
+      "We rely on external reports rather than direct observation."
+    ],
+    "root_cause": [
+      "No active sampling instrument exists."
+    ],
+    "impact": [
+      "Risk assessment is theoretical; real-world volume of prompt injection attempts is unknown."
+    ],
+    "architecture": "Sampler (Python) -> <target_platform_dns> (HTTPS) -> Obfuscator -> logs/calamum/telemetry.jsonl. NO direct feedback loop.",
+    "implementation_steps": [
+      "Implement `calamum_sampler.py` (read-only, no posting).",
+      "Implement `obfuscator_lib.py` to strip all raw text and retain only classification labels/metadata.",
+      "Verify output allows zero context leakage."
+    ]
+  },
+  "requirements": [
+    "Read-only access only (no authorized credentials if possible, or minimally scoped read-only user).",
+    "Output must be strictly typed JSONL with NO raw content strings (risk of prompt injection in logs).",
+    "Must not leak runner host IP or identifiers in the data payload."
+  ],
+  "acceptance_criteria": [
+    "Sampler runs deterministically and exits.",
+    "Output file contains valid JSONL.",
+    "No raw feed text appears in output (only hashes, lengths, or classification tags).",
+    "Privileged context checks pass."
+  ],
+  "execution": {
+    "preflight": [
+      "Confirm egress allowlist permits target platform DNS only."
+    ],
+    "steps": [
+      "Run sampling job (manual or scheduled).",
+      "Validate output artifact."
+    ]
+  },
+  "rollout": {
+    "rollback_plan": "Stop sampling; delete generated logs.",
+    "verification": [
+      "Inspect logs/calamum/telemetry.jsonl for compliance."
+    ]
+  },
+  "validation": {
+    "env_var_names_only_checks": true,
+    "smoke_tests": [
+      "Dry run sampler against mock endpoint"
+    ],
+    "gate_evidence_updated": false
+  },
+  "seam": {
+    "security": [
+      "Input is hostile; treat feed data as toxic waste (quarantine raw, export processed)."
+    ],
+    "efficiency": [
+      "Sampling avoids the need for continuous connection maintenance."
+    ],
+    "awareness": [
+      "Generates first direct metrics of external agent ecosystem risk."
+    ],
+    "minimalism": [
+      "No complex bot logic; just fetch-classify-log."
+    ]
+  },
+  "references": {
+    "queststack_id": "",
+    "paths": [
+      "projects/calamum-moltbook-observer/jobs/CALAMUM_JOB_0001_MOLTBOOK_OBSERVER_PREPARATION_AND_SETUP_20260201.json"
+    ]
+  }
+}

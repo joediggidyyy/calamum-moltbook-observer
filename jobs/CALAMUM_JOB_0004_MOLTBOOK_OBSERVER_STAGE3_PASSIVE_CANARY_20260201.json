@@ -1,0 +1,133 @@
+{
+  "template_id": "VAULT_TEMPLATE_JOB_V1",
+  "doc_type": "job",
+  "job_id": "CALAMUM_JOB_0004",
+  "title": "Moltbook Observer - Stage 3: Passive Canary",
+  "status": "open",
+  "created_at": "2026-02-01",
+  "owner": "ORACL-Prime",
+  "project": "calamum / security experiment",
+  "phase": "execution",
+  "priority": "P2",
+  "depends_on": [
+    "CALAMUM_JOB_0003"
+  ],
+  "blocks": [
+    "CALAMUM_JOB_0005"
+  ],
+  "links": {
+    "policies": [
+      "PP_GOV_PROTOCOL_POL_CORE_POLICY_20251122",
+      "PP_SEC_PROTOCOL_POL_AGENT_SOCIAL_NETWORKS_20260201",
+      "PP_SEC_VAULT_PROTECTION_20251208"
+    ],
+    "plan_paths": [
+      "projects/calamum-moltbook-observer/planning/CALAMUM_MOLTBOOK_OBSERVER_EXPERIMENT_PLAN_20260201.json"
+    ],
+    "evidence_paths": []
+  },
+  "summary": "Deploy a 'passive canary' presence: a registered account that takes NO action (no posts, no replies, no follows) but monitors unsolicited inbound interactions (DMs, mentions, follows). This measures background radiation of the hostile network: how quickly is a silent agent targeted by bots or scanners?",
+  "status_update": {
+    "format": "STATUS_UPDATE_V1",
+    "ssot": {
+      "task_id": "calamum-moltbook-observer-stage3-20260201",
+      "path": "CodeSentinel/operations/tasks.json",
+      "status": "open"
+    },
+    "queststack": {
+      "id": "",
+      "doc_path": "",
+      "evidence_path": ""
+    },
+    "questframe": {
+      "id": ""
+    },
+    "gates": {
+      "last": "NONE",
+      "last_at": "",
+      "last_result": "SKIP",
+      "gate_events_path": "CodeSentinel/logs/behavioral/gates/gate_events.jsonl"
+    },
+    "next_action": "Register passive account (manual) and configure sampler to monitor its notifications only."
+  },
+  "redaction_palette": {
+    "network_endpoints": [],
+    "dns": [],
+    "secrets": [
+      "<canary_account_credentials_redacted>"
+    ],
+    "identifiers": [
+      "<canary_handle_redacted>"
+    ]
+  },
+  "problem": {
+    "current_state": [
+      "We know the feed is hostile, but not the targeted attack surface for a specific agent identity.",
+      "Is the network scanning for new agents?"
+    ],
+    "root_cause": [
+      "Passive observation ignores targeted inbound vectors."
+    ],
+    "impact": [
+      "We may underestimate risk if attacks are primarily directed (DMs/Mentions) rather than broadcast."
+    ],
+    "architecture": "Canary Account (Silent) -> Sampler (Notification Polling) -> Obfuscator -> logs/calamum/inbound_metrics.jsonl",
+    "implementation_steps": [
+      "Register 'silent' account.",
+      "Update sampler to poll notification/inbox endpoint (read-only).",
+      "Log inbound event types (follow/mention/dm) without content."
+    ]
+  },
+  "requirements": [
+    "ABSOLUTELY NO OUTBOUND ACTIVITY. Zero posts.",
+    "Strict content quarantine for inbound DMs (high risk of injection).",
+    "Metric collection only (count of events, type of event)."
+  ],
+  "acceptance_criteria": [
+    "Canary exists for > 48h.",
+    "Outbound activity is verified 0.",
+    "Inbound activity is logged with obfuscation."
+  ],
+  "execution": {
+    "preflight": [
+      "Confirm verify 'silence' policy on account settings."
+    ],
+    "steps": [
+      "Run prolonged monitoring window.",
+      "Analyze inbound rate vs time."
+    ]
+  },
+  "rollout": {
+    "rollback_plan": "Delete canary account; Archive logs.",
+    "verification": [
+      "Confirm no outbound posts in platform history."
+    ]
+  },
+  "validation": {
+    "env_var_names_only_checks": true,
+    "smoke_tests": [
+      "Verify notification fetching logic"
+    ],
+    "gate_evidence_updated": false
+  },
+  "seam": {
+    "security": [
+      "Higher risk than passive sampling (authentication required). Account credentials must be VAULT-protected."
+    ],
+    "efficiency": [
+      "Low impact; polling only."
+    ],
+    "awareness": [
+      "Measures 'background radiation' of the platform."
+    ],
+    "minimalism": [
+      "Do nothing, see who knocks."
+    ]
+  },
+  "references": {
+    "queststack_id": "",
+    "paths": [
+      "projects/calamum-moltbook-observer/jobs/CALAMUM_JOB_0003_MOLTBOOK_OBSERVER_STAGE2_CONTAINER_HARDENING_20260201.json"
+    ]
+  }
+}

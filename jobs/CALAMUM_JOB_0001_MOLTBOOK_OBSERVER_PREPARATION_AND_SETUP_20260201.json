@@ -1,0 +1,169 @@
+{
+  "template_id": "VAULT_TEMPLATE_JOB_V1",
+  "doc_type": "job",
+  "job_id": "CALAMUM_JOB_0001",
+  "title": "Moltbook Observer - Preparation and Setup (Calamum, read-only, obfuscated)",
+  "status": "open",
+  "created_at": "2026-02-01",
+  "owner": "ORACL-Prime",
+  "project": "calamum / security experiment",
+  "phase": "preparation",
+  "priority": "P0",
+  "depends_on": [],
+  "blocks": [
+    "CALAMUM_JOB_0002",
+    "CALAMUM_JOB_0003",
+    "CALAMUM_JOB_0004",
+    "CALAMUM_JOB_0005"
+  ],
+  "links": {
+    "policies": [
+      "PP_GOV_PROTOCOL_POL_CORE_POLICY_20251122",
+      "PP_GOV_PROTOCOL_POL_AGENT_ACTION_WORKFLOW_20251122",
+      "PP_GOV_PROTOCOL_POL_JOB_COMPLEXITY_REQUIREMENT_20251126",
+      "PP_GOV_PROTOCOL_POL_DETERMINISTIC_WORKFLOW_20251127",
+      "PP_SEC_PROTOCOL_POL_AGENT_SOCIAL_NETWORKS_20260201",
+      "PP_SEC_VAULT_PROTECTION_20251208"
+    ],
+    "plan_paths": [
+      "projects/calamum-moltbook-observer/planning/CALAMUM_MOLTBOOK_OBSERVER_EXPERIMENT_PLAN_20260201.json",
+      "projects/calamum-moltbook-observer/planning/CALAMUM_MOLTBOOK_OBSERVER_EXPERIMENT_PLAN_20260201.md"
+    ],
+    "evidence_paths": [
+      "logs/behavioral/gates/gate_events.jsonl"
+    ]
+  },
+  "summary": "Set up the Calamum-scoped Moltbook observer experiment with zero-trust constraints: no privileged host context export, no self-modification, strict egress allowlisting, and obfuscated structured outputs only. This job is paperwork + setup and explicitly reviews the job execution pipeline requirements (PREFLIGHT/PRE_JOB/POST_JOB).",
+  "status_update": {
+    "format": "STATUS_UPDATE_V1",
+    "ssot": {
+      "task_id": "calamum-moltbook-observer-prep-20260201",
+      "path": "CodeSentinel/operations/tasks.json",
+      "status": "open"
+    },
+    "queststack": {
+      "id": "",
+      "doc_path": "",
+      "evidence_path": ""
+    },
+    "questframe": {
+      "id": ""
+    },
+    "gates": {
+      "last": "NONE",
+      "last_at": "",
+      "last_result": "SKIP",
+      "gate_events_path": "CodeSentinel/logs/behavioral/gates/gate_events.jsonl"
+    },
+    "next_action": "Draft the stage job documents (JSON+MD) and identify the minimal QuestStack scaffolding needed to satisfy PRE_JOB before any live connector work."
+  },
+  "redaction_palette": {
+    "network_endpoints": [
+      "<edge_host_ip>",
+      "<edge_secure_ip>",
+      "<edge_parent_net_ip>",
+      "<core_host_ip>",
+      "<core_secure_ip>",
+      "<port>",
+      "<secure_subnet>",
+      "<parent_net_subnet>"
+    ],
+    "dns": [
+      "<dashboard_dns_name>",
+      "<optional_api_dns_name>"
+    ],
+    "secrets": [
+      "<redacted_password>",
+      "<redacted_token>",
+      "<redacted>"
+    ],
+    "identifiers": [
+      "<mac_redacted>",
+      "<host_redacted>"
+    ]
+  },
+  "problem": {
+    "current_state": [
+      "We have a feasibility and safety posture, but the Calamum execution paperwork (domain plan + staged job specs) must be created before running any connector.",
+      "The job execution pipeline requires SSOT task ids and QuestStack scaffolding for PRE_JOB." 
+    ],
+    "root_cause": [
+      "Untrusted social feed input demands stronger isolation, redaction discipline, and deterministic gates than ad-hoc scripts.",
+      "Without staged jobs and explicit constraints, a later implementation can drift into unsafe defaults." 
+    ],
+    "impact": [
+      "Increased risk of privileged context leakage if artifacts are not constrained.",
+      "Increased risk of workflow drift if pipeline requirements are not surfaced early." 
+    ],
+    "architecture": "Calamum experiment staged as jobs: preparation -> observe/sampling (offline) -> container hardening -> passive canary -> active magnet (gated). Execution via codesentinel job begin/finish gates; exports remain obfuscated and names-only.",
+    "implementation_steps": [
+      "Create Calamum domain planning artifacts (plan + jobs) using VAULT templates.",
+      "Review job automation pipeline requirements (PREFLIGHT + PRE_JOB scaffold expectations) and enumerate missing paperwork needed before any live run.",
+      "Confirm the 'no privileged host context export' and 'no self-modification' constraints are explicit in feasibility + checklist and referenced by stage jobs."
+    ]
+  },
+  "requirements": [
+    "Names-only documentation (no secrets, no private identifiers).",
+    "Read-only observer posture (no posting/engagement).",
+    "No privileged host context export (paths, usernames, hostnames, env inventories).",
+    "No self-modification: code and runtime must be immutable; only sandbox output is writable.",
+    "Job execution must respect gates (PREFLIGHT/PRE_JOB/POST_JOB/EOD as applicable)."
+  ],
+  "acceptance_criteria": [
+    "Calamum domain planning plan exists (JSON authoritative + MD view).",
+    "Stage job docs exist (JSON authoritative + MD views) and reference the same safety constraints.",
+    "Job docs explicitly reference the job execution pipeline and required evidence surfaces.",
+    "No privileged identifiers are introduced in the new paperwork."
+  ],
+  "execution": {
+    "preflight": [
+      "Read policy: PP_SEC_PROTOCOL_POL_AGENT_SOCIAL_NETWORKS_20260201.",
+      "Confirm checklist is current: operations/checklists/AGENT_SOCIAL_FEED_SAFETY_CHECKLIST.*",
+      "Confirm names-only and env-var-only discipline (no secrets committed)."
+    ],
+    "steps": [
+      "Create domain-scoped plan under projects/calamum-moltbook-observer/planning.",
+      "Create staged job documents for each experiment phase under jobs/.",
+      "Record the pipeline review references: docs/operations/guides/JOB_AUTOMATION_PIPELINE_TRANSITION_SCENARIOS_20260108.md and gate_pre_job.py expectations."
+    ]
+  },
+  "rollout": {
+    "rollback_plan": "No runtime changes are performed in this job; rollback is deletion-by-archive only if paperwork must be retired.",
+    "verification": [
+      "Confirm new documents are names-only and contain no privileged endpoints or host identifiers.",
+      "Confirm job docs link to the Calamum plan and feasibility artifacts." 
+    ]
+  },
+  "validation": {
+    "env_var_names_only_checks": true,
+    "smoke_tests": [
+      "N/A (paperwork-only job)"
+    ],
+    "gate_evidence_updated": false
+  },
+  "seam": {
+    "security": [
+      "Zero-trust: assume the observer may be compromised; constrain exports and permissions.",
+      "No secrets in repo; env-var only; names-only docs.",
+      "No privileged host context export." 
+    ],
+    "efficiency": [
+      "Stage work into deterministic jobs so later implementation is not ad-hoc." 
+    ],
+    "awareness": [
+      "Explicitly reference gate pipeline and evidence surfaces early." 
+    ],
+    "minimalism": [
+      "Prefer existing CodeSentinel gate and job patterns; avoid inventing new paperwork formats." 
+    ]
+  },
+  "references": {
+    "queststack_id": "",
+    "paths": [
+      "docs/reports/security/MOLTBOOK_SANDBOXED_OBSERVER_FEASIBILITY_2026-02-01.md",
+      "docs/reports/security/MOLTBOOK_AGENT_SOCIAL_NETWORKS_RISK_REPORT_2026-02-01.md",
+      "operations/checklists/AGENT_SOCIAL_FEED_SAFETY_CHECKLIST.md",
+      "docs/operations/guides/JOB_AUTOMATION_PIPELINE_TRANSITION_SCENARIOS_20260108.md"
+    ]
+  }
+}
