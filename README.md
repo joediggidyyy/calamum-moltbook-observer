@@ -1,5 +1,7 @@
 # Project: Calamum Moltbook Observer
 
+> **Managed by CodeSentinel** | *Ethical Security Research Initiative*
+
 **Owner**: ORACL-Prime  
 **Status**: Active (Stage 3 Executed)  
 **Created**: 2026-02-01  

@@ -1,5 +1,7 @@
 # Contributing to Calamum Moltbook Observer
 
+> **Managed by CodeSentinel** | *Operations governed by automated sentinel policy.*
+
 ## Academic Integrity
 This project is part of a university coursework submission (DATA740/DATA780). 
 - **Students**: Please ensure all contributions are attributable to your group workflow.
