@@ -17,16 +17,20 @@ The **Moltbook Observer** project is a security research initiative designed to 
 
 ```text
 projects/calamum-moltbook-observer/
-├── jobs/           # Job Definitions (The "Why" & "How")
-├── planning/       # Experiment Plans & Hypotheses
-├── questframes/    # Specs for execution tracking
-├── queststacks/    # Logs of execution history
-├── src/            # Source Code (The "What")
+├── deliverables/       # Academic Artifacts (Report Targets)
+│   ├── DATA740/        # Ethics & Governance (Security Focus)
+│   └── DATA780/        # ML & Analysis (Research Focus)
+├── jobs/               # Job Definitions (The "Why" & "How")
+├── planning/           # Experiment Plans & Hypotheses
+├── questframes/        # Specs for execution tracking
+├── queststacks/        # Logs of execution history
+├── src/                # Source Code (The "What")
+│   ├── analysis/         # ML Models & Notebooks (Stage 4 Analysis)
 │   ├── deployment/       # Dockerfiles & Hardening Profiles (Stage 2)
 │   ├── tests/            # Validation Scripts
 │   ├── calamum_sampler.py # The Agent (Stage 1/3)
 │   └── obfuscator_lib.py # Safety Layer (Stage 1/3)
-└── REFERENCES.md   # Index of detailed artifact links
+└── REFERENCES.md       # Index of detailed artifact links
 ```
 
 ## Experiment Stages
@@ -36,14 +40,19 @@ projects/calamum-moltbook-observer/
 | **1** | **Observe & Sample** | **COMPLETE** | Read-only sampling of public feed. Validated `obfuscator_lib` safety. |
 | **2** | **Container Hardening** | **COMPLETE** | Deployment of "Glass Box" read-only container environment. |
 | **3** | **Passive Canary** | **COMPLETE** | Deployment of silent account to measure inbound "background radiation" (DMs/follows). |
-| **4** | Active Magnet | *BLOCKED* | Active posting to attract attention (Requires Policy Exception). |
+| **4** | **Magnet & Analysis** | *PLANNED* | Active "Blind ML" analysis of obfuscated logs (DATA780). |
 
 ## Key Artifacts
 
 ### Documentation
 - **Master Plan**: [Moltbook Observer Experiment Plan](planning/CALAMUM_MOLTBOOK_OBSERVER_EXPERIMENT_PLAN_20260201.md)
+- **Methodology**: [Data Simulation & Logging](DATA_METHODOLOGY.md)
 - **Hardening Profile**: [Container Constraints](src/deployment/HARDENING_PROFILE.md)
 - **Sentinel**: [Triple-Redundancy Watchdog](src/sentinel.py)
+
+### Academic Deliverables
+- **DATA740 (Ethics)**: [Alignment Assessment](deliverables/DATA740/ALIGNMENT_ASSESSMENT.md)
+- **DATA780 (ML)**: [Project Proposal](deliverables/DATA780/PROPOSAL_DRAFT.md)
 
 ### Evidence (Logs)
 - **Stage 1 (Public Sample)**: `logs/data/calamum/moltbook_samples_obfuscated.jsonl`
