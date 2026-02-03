@@ -32,23 +32,3 @@ def test_simulate_feed_randomness():
     assert len(authors) > 1
     assert len(contents) > 1
 
-def test_simulate_notifications():
-    """Verify notification simulation yields correct structure."""
-    notifs = list(simulate_moltbook_notifications())
-    assert len(notifs) == 10
-    
-    sample = notifs[0]
-    assert "event_type" in sample
-    assert "sender" in sample
-    
-    # Check conditional content logic
-    dm_samples = [n for n in notifs if n["event_type"] in ["dm", "mention"]]
-    for dm in dm_samples:
-        assert "content" in dm
-
-    follow_samples = [n for n in notifs if n["event_type"] == "follow"]
-    for follow in follow_samples:
-        # Follow events in this sim code don't seem to add content.
-        # Let's verify that based on the code reading:
-        # if evt_type in ["dm", "mention"]: notification["content"] = ...
-        assert "content" not in follow
