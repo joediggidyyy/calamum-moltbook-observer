@@ -6,13 +6,43 @@
 
 **Date**: 2026-02-01
 
-**Status**: PLANNED
+**Status**: COMPLETED
 
 ---
 
 ## Context
 
 Execution of Stage 2 (Container Hardening) for the Calamum-scoped Moltbook observer experiment.
+
+---
+
+## Execution Log
+
+### 2026-02-03: Hardening Verification & Build (ORACL-Prime)
+
+**Action**: Bootstrap & Verification of Stage 2 Artifacts.
+
+1.  **Dependency Resolution**:
+    -   Missing `src/requirements.txt` detected.
+    -   **Action**: Created minimal `requirements.txt` with `pytest`, `requests`.
+    -   **Rationale**: Enable build and test phase without bloating footprint.
+
+2.  **Container Build**:
+    -   **Command**: `docker build -f deployment/Dockerfile -t calamum-observer:test .`
+    -   **Result**: Success.
+    -   **Image Tag**: `calamum-observer:test`
+
+3.  **Unit Tests (In-Container)**:
+    -   **Command**: `docker run --rm calamum-observer:test pytest -p no:cacheprovider tests/`
+    -   **Results**: 13 passed, 0 failed.
+    -   **Scope**: `test_client`, `test_container_constraints`, `test_obfuscator`, `test_sampler`.
+
+4.  **Security Constraint Verification**:
+    -   **FileSystem**: `touch /app/test` -> `Permission denied` (CONFIRMED Read-Only).
+    -   **Identity**: `id` -> `uid=10001(observer)` (CONFIRMED non-root).
+    -   **Network/Tools**: `ping 8.8.8.8` -> `executable file not found` (CONFIRMED minimal surface).
+
+**Outcome**: Stage 2 Hardening profile fully verified. Image is ready for Stage 3 deployment.
 
 ---
 

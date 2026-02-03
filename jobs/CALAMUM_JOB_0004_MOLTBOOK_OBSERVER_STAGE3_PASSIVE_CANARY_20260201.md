@@ -33,18 +33,18 @@ Deploy a 'passive canary' presence: a registered account that takes NO action (n
 ## Status update (compact)
 
 ```text
-STATUS_UPDATE_V1
+STATUS_UPDATE_V2
 job.id=calamum-moltbook-observer-stage3-20260201
 job.doc=CodeSentinel/projects/calamum-moltbook-observer/jobs/CALAMUM_JOB_0004_MOLTBOOK_OBSERVER_STAGE3_PASSIVE_CANARY_20260201.md
 ssot.path=CodeSentinel/operations/tasks.json
-ssot.status=open
-qs.id=
-qs.doc=
-qf.id=
-gates.last=NONE@::SKIP
+ssot.status=completed
+qs.id=QS-CALAMUM-MOLTBOOK-OBSERVER-STAGE3-20260201
+qs.doc=projects/calamum-moltbook-observer/queststacks/QS-CALAMUM-MOLTBOOK-OBSERVER-STAGE3-20260201.md
+qf.id=QF-CALAMUM-MOLTBOOK-OBSERVER-STAGE3-20260201
+gates.last=POST_JOB@2026-02-03
 evidence.gates=CodeSentinel/logs/behavioral/gates/gate_events.jsonl
-evidence.qs=
-next.action=Register passive account (manual) and configure sampler to monitor its notifications only.
+evidence.qs=logs/data/calamum/moltbook_canary_metrics.jsonl
+next.action=Proceed to Stage 4 (Active/Magnet).
 ```
 
 ## Problem statement
