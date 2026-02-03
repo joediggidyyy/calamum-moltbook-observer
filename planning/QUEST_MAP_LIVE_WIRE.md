@@ -8,12 +8,16 @@
 - [x] Sentinel Watchdog (`sentinel.py`)
 - [x] Legal/Strategic Approval (`CALAMUM_LIVE_DEPLOYMENT_STRATEGY_20260202.md`)
 
+**Execution governance (CLI-first; gates enforced):**
+- Start: `codesentinel job start calamum-moltbook-observer-stage4-20260201`
+- Close: `codesentinel job close calamum-moltbook-observer-stage4-20260201`
+
 ---
 
 ## 🗺️ The Mission Path
 
 ### Phase A: The "Red Pill" (Code Switching)
-- [ ] **Task 1**: Edit `src/moltbook_client.py`
+- [x] **Task 1**: Edit `src/moltbook_client.py`
     - *Action*: Un-comment the `requests` import and the `requests.get()` calls.
     - *Constraint*: Verify only `GET` requests are enabled.
 - [ ] **Task 2**: Create Air-Gapped Credentials
@@ -23,8 +27,8 @@
 
 ### Phase B: The "Sound Check" (Connectivity)
 - [ ] **Task 3**: Dry Run (Local Python)
-    - *Action*: Run `python src/calamum_sampler.py --dry-run` on the host.
-    - *Goal*: Verify authentication works without crashing.
+    - *Action*: Run `python src/calamum_sampler.py --mode sampler --source live` on the host.
+    - *Goal*: Verify authentication works without crashing and that GET-only live fetches return JSON.
 
 ### Phase C: The "Bell Jar" (Hardened Deployment)
 - [ ] **Task 4**: Launch Container
