@@ -1,8 +1,12 @@
 from nicegui import ui
 from datetime import datetime
+import os
 import random
 import asyncio
+from pathlib import Path
+from typing import Dict, Optional
 from ops.controller import controller # Import the controller
+from ops.telemetry import TelemetryProvider, load_config
 
 # --- CONFIGURATION & THEME ---
 THEME_BG = 'bg-zinc-900'
@@ -13,6 +17,51 @@ THEME_FONT = 'font-mono'
 # Visible build stamp to confirm the UI is served by the latest backend instance.
 # (Helps diagnose cases where a hidden old process keeps running and the launcher can't bind the port.)
 BUILD_STAMP = '2026-02-03'
+
+# --- MODE SPEC (CANARY now, others stubbed for posterity) ---
+# Canonical UI modes (design sketch):
+# - CANARY (Current): Test flight, limited sampling.
+# - HONEYPOT: High-interaction mode for attracting adverse actors.
+# - PASSIVE_LISTENER: Silent recording of traffic without active probing.
+# - REPLAY_SIMULATION: Re-running captured traffic for regression testing.
+# - CHAOS_MODE: Intentionally introducing faults to test Sentinel resilience.
+#
+# Optional override for local ops/dev:
+#   set CALAMUM_OPS_MODE to one of the canonical modes above.
+CANONICAL_MODES: Dict[str, str] = {
+    'CANARY': 'Test flight, limited sampling.',
+    'HONEYPOT': 'High-interaction mode for attracting adverse actors.',
+    'PASSIVE_LISTENER': 'Silent recording of traffic without active probing.',
+    'REPLAY_SIMULATION': 'Re-running captured traffic for regression testing.',
+    'CHAOS_MODE': 'Intentionally introducing faults to test Sentinel resilience.',
+}
+
+
+def normalize_mode(raw: Optional[str]) -> str:
+    """Normalize a user-provided mode into a canonical dashboard mode.
+
+    Any unknown value falls back to CANARY.
+    """
+    if not raw:
+        return 'CANARY'
+
+    candidate = raw.strip().upper().replace('-', '_').replace(' ', '_')
+    aliases = {
+        'PASSIVE': 'PASSIVE_LISTENER',
+        'LISTENER': 'PASSIVE_LISTENER',
+        'REPLAY': 'REPLAY_SIMULATION',
+        'CHAOS': 'CHAOS_MODE',
+    }
+    candidate = aliases.get(candidate, candidate)
+    return candidate if candidate in CANONICAL_MODES else 'CANARY'
+
+
+MODE_TOOLTIP = (
+    'Future Mode Capabilities:\n'
+    + '\n'.join([
+        f"- {name}: {desc}" for name, desc in CANONICAL_MODES.items()
+    ])
+)
 
 # --- MOCK DATA STATE ---
 class SystemState:
@@ -25,6 +74,7 @@ class SystemState:
         self.freshness_score = 100
         self.records_collected = 12450
         self.is_running = True
+        self.mode = normalize_mode(os.getenv('CALAMUM_OPS_MODE', 'CANARY'))
         self.timestamp = datetime.now()
         self.log_lines: list[str] = [
             '14:00 [INF] Sentinel initialized loop [hash:x89a]',
@@ -36,6 +86,9 @@ class SystemState:
 
 state = SystemState()
 
+# Telemetry provider (best-effort: will fall back to simulation if it can't read sources)
+telemetry = TelemetryProvider(load_config(Path(__file__)))
+
 # --- COMPONENTS ---
 
 def create_header(toggle_drawer_fn):
@@ -44,12 +97,19 @@ def create_header(toggle_drawer_fn):
             ui.icon('hub', size='md').classes('text-gray-400')
             with ui.column().classes('gap-0'):
                 ui.label('CALAMUM OPS').classes(f'text-xl {THEME_FONT} font-bold tracking-wider text-white')
-                ui.label('OBSERVER NODE: ACTIVE').classes('text-xs text-gray-500 uppercase')
+                ui.label()\
+                    .bind_text_from(state, 'mode', lambda m: f"MODE: [ {normalize_mode(m)} ]")\
+                    .classes('text-xs text-gray-500 uppercase')\
+                    .tooltip(MODE_TOOLTIP)
         
         with ui.row().classes('gap-6 items-center'):
             # Watchdog indicator
             watchdog_badge = ui.badge('WD: ACTIVE', color='green-10').classes('font-bold text-[10px]')
             watchdog_badge.tooltip('Watchdog: monitors the observer loop heartbeat. Reset in Control Deck.')
+
+            # Observer indicator (low-profile, beside WD)
+            observer_badge = ui.badge('OBS: ACTIVE', color='green-10').classes('font-bold text-[10px]')
+            observer_badge.tooltip('Observer: process status for the active node.')
 
             # Records Counter
             with ui.row().classes('items-center gap-2'):
@@ -60,9 +120,9 @@ def create_header(toggle_drawer_fn):
 
             # Clock + build stamp
             with ui.column().classes('gap-0 items-end'):
-                clock = ui.label(datetime.now().strftime('%H:%M:%S UTC')).classes('text-gray-400 font-mono')
+                clock = ui.label(datetime.now().strftime('%H:%M:%S')).classes('text-gray-400 font-mono')
                 ui.label(f'BUILD {BUILD_STAMP}').classes('text-[10px] text-gray-600 font-mono leading-none')
-            ui.timer(1.0, lambda: clock.set_text(datetime.now().strftime('%H:%M:%S UTC')))
+            ui.timer(1.0, lambda: clock.set_text(datetime.now().strftime('%H:%M:%S')))
 
             ui.button(icon='menu', on_click=toggle_drawer_fn).props('flat round color=white')
 
@@ -73,6 +133,13 @@ def create_header(toggle_drawer_fn):
                 else:
                     watchdog_badge.text = 'WD: STALE'
                     watchdog_badge.props('color=orange-9')
+
+                if state.is_running:
+                    observer_badge.text = 'OBS: ACTIVE'
+                    observer_badge.props('color=green-10')
+                else:
+                    observer_badge.text = 'OBS: DOWN'
+                    observer_badge.props('color=red-10')
 
             ui.timer(0.5, _update_watchdog_badge)
 
@@ -273,7 +340,7 @@ def main_page():
                 wd_state = ui.badge('ACTIVE', color='green-10').classes('font-bold text-[10px]')
 
             ui.button('WATCHDOG RESET', on_click=lambda: handle_control('WD_RESET')).props(btn_props()).classes('w-full border border-gray-700')
-            ui.label().bind_text_from(state, 'watchdog_last_reset', lambda d: f"Last reset: {d.strftime('%H:%M:%S UTC')}").classes('text-xs text-gray-500 -mt-2')
+            ui.label().bind_text_from(state, 'watchdog_last_reset', lambda d: f"Last reset: {d.strftime('%H:%M:%S')}").classes('text-xs text-gray-500 -mt-2')
 
             def _update_wd_state() -> None:
                 if state.watchdog_active:
@@ -321,7 +388,11 @@ def main_page():
         elif action == 'WD_RESET':
             _success, msg = controller.reset_watchdog()
             color = 'blue'
-            state.watchdog_active = True
+            # Touch the local watchdog heartbeat marker so WD reflects the reset immediately.
+            try:
+                telemetry.reset_watchdog()
+            except Exception:
+                pass
             state.watchdog_last_reset = datetime.now()
             add_log(f"[SYS] {msg}")
         else:
@@ -357,7 +428,7 @@ def main_page():
                             ui.label('RESOURCE METRICS').classes('text-xs font-bold text-gray-500')
                             with ui.row().classes('items-center gap-2'):
                                 ui.icon('help_outline', size='xs').classes('text-gray-600')\
-                                    .tooltip('Resource Metrics: CPU% (solid white) + MEM% (dotted gray). Values are simulated at 2Hz.')
+                                    .tooltip('Resource Metrics: CPU% (solid white) + MEM% (dotted gray). Sourced via psutil at 2Hz.')
                                 ui.icon('query_stats', size='xs').classes('text-gray-600')
                         with ui.column().classes('w-full flex-grow min-h-0 overflow-hidden'):
                             biorhythm = create_biorhythm_chart()
@@ -398,24 +469,15 @@ def main_page():
                         log_labels[i].set_text(lines[i] if i < len(lines) else '')
 
     # --- UPDATE LOOP ---
-    def update_sim():
-        # Simulate Data
+    def update_sim_fallback():
+        """Fallback simulation if telemetry sources are unavailable."""
         state.cpu_history.append(random.randint(10, 40) + (random.randint(0, 50) if random.random() > 0.9 else 0))
         state.cpu_history.pop(0)
         state.mem_history.append(random.randint(20, 30))
         state.mem_history.pop(0)
-        
         state.availability_score = max(0, min(100, state.availability_score + random.randint(-5, 5)))
-        state.records_collected += random.randint(0, 5) # Simulate collection
-
-        # Watchdog: occasionally mark stale to demonstrate indicator
-        if random.random() > 0.995:
-            state.watchdog_active = False
-
-        # Density bins: shift left and add new value
+        state.records_collected += random.randint(0, 5)
         state.density_bins = state.density_bins[1:] + [max(0, min(100, int(random.gauss(40, 18))))]
-        
-        # Update charts (ECharts)
         radar.options['series'][0]['data'][0]['value'] = [
             state.availability_score,
             state.integrity_score,
@@ -423,32 +485,76 @@ def main_page():
             state.freshness_score,
         ]
         radar.update()
-
         biorhythm.options['series'][0]['data'] = state.cpu_history
         biorhythm.options['series'][1]['data'] = state.mem_history
         biorhythm.update()
-
         density.options['series'][0]['data'] = state.density_bins
         density.update()
 
-        # Update status badge color (simple heuristic for now)
-        latest_cpu = state.cpu_history[-1] if state.cpu_history else 0
-        if not state.is_running:
-            status_badge.text = 'CRITICAL'
-            status_badge.props('color=red-10')
-        elif latest_cpu >= 80:
-            status_badge.text = 'DEGRADED'
-            status_badge.props('color=orange-9')
-        else:
-            status_badge.text = 'NOMINAL'
-            status_badge.props('color=green-10')
-        
-        # Random Logs
-        if random.random() > 0.9:
-            add_log(f"Cycle check: {random.choice(['OK', 'Clean', 'Verified', 'Indexing'])}")
+    def update_live():
+        """Real telemetry update loop (file + heartbeat + psutil)."""
+        try:
+            snap = telemetry.update()
+
+            # CPU/MEM -> histories
+            state.cpu_history.append(int(max(0, min(100, snap.get('cpu', 0.0)))))
+            state.cpu_history = state.cpu_history[-50:]
+            state.mem_history.append(int(max(0, min(100, snap.get('mem', 0.0)))))
+            state.mem_history = state.mem_history[-50:]
+
+            # Records + density
+            total = int(snap.get('total_records', 0))
+            new = int(snap.get('new_records', 0))
+            state.records_collected = total
+            bins = snap.get('density_bins')
+            if isinstance(bins, list) and len(bins) == len(state.density_bins):
+                state.density_bins = [int(max(0, min(100, x))) for x in bins]
+
+            # WD/OBS
+            state.watchdog_active = bool(snap.get('watchdog_active', False))
+            state.is_running = bool(snap.get('observer_active', False))
+
+            # Update charts
+            radar.options['series'][0]['data'][0]['value'] = [
+                state.availability_score,
+                state.integrity_score,
+                state.capacity_score,
+                state.freshness_score,
+            ]
+            radar.update()
+
+            biorhythm.options['series'][0]['data'] = state.cpu_history
+            biorhythm.options['series'][1]['data'] = state.mem_history
+            biorhythm.update()
+
+            density.options['series'][0]['data'] = state.density_bins
+            density.update()
+
+            # Status badge: tie to OBS + CPU
+            latest_cpu = state.cpu_history[-1] if state.cpu_history else 0
+            if not state.is_running:
+                status_badge.text = 'CRITICAL'
+                status_badge.props('color=red-10')
+            elif latest_cpu >= 80:
+                status_badge.text = 'DEGRADED'
+                status_badge.props('color=orange-9')
+            else:
+                status_badge.text = 'NOMINAL'
+                status_badge.props('color=green-10')
+
+            # Add a low-noise log line only when new data arrives
+            if new > 0:
+                src = snap.get('active_jsonl_path')
+                if src:
+                    add_log(f"Ingested +{new} records ({Path(src).name})")
+                else:
+                    add_log(f"Ingested +{new} records")
+
+        except Exception:
+            update_sim_fallback()
             
     # Use ui.timer for client-side updates instead of app.on_startup
-    ui.timer(0.5, update_sim)
+    ui.timer(0.5, update_live)
 
 # --- EXECUTION CONFIG ---
 # We use native=False to avoid pythonnet/pywebview dependency issues on Python 3.14

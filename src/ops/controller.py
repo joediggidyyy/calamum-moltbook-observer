@@ -1,5 +1,7 @@
 import datetime
-import random # Mocking for now if docker is unstable, but structure allows real call
+import json
+from pathlib import Path
+from typing import Any, Dict, Optional
 
 class CalamumController:
     """
@@ -9,6 +11,34 @@ class CalamumController:
     
     def __init__(self):
         self.node_id = "calamum-node-01"
+
+    def _find_repo_root(self) -> Path:
+        cur = Path(__file__).resolve()
+        # ops/controller.py -> src -> calamum-moltbook-observer -> projects -> repo root
+        # But we also support running from odd working dirs: search upward for `logs/`.
+        for parent in [cur] + list(cur.parents):
+            if (parent / 'logs').exists():
+                return parent
+        return cur.parents[0]
+
+    def _emit_signal(self, name: str, payload: Optional[dict] = None) -> Path:
+        repo_root = self._find_repo_root()
+        out_dir = repo_root / 'logs' / 'control' / 'calamum'
+        out_dir.mkdir(parents=True, exist_ok=True)
+
+        ts = datetime.datetime.utcnow().isoformat() + 'Z'
+        record: Dict[str, Any] = {
+            'ts': ts,
+            'node_id': self.node_id,
+            'signal': name,
+        }
+        if payload:
+            record['payload'] = payload
+
+        path = out_dir / f'{name}.signal.json'
+        # Overwrite with latest intent; this is a control surface, not a ledger.
+        path.write_text(json.dumps(record, indent=2, sort_keys=True), encoding='utf-8')
+        return path
     
     def kill_signal(self):
         """
@@ -17,11 +47,10 @@ class CalamumController:
         """
         # Logic: Touch a .kill_switch file that the sentinel watches, 
         # or execute a docker kill command.
-        timestamp = datetime.datetime.now().isoformat()
+        timestamp = datetime.datetime.utcnow().isoformat() + 'Z'
         try:
-            # Placeholder for actual Docker SDK call:
-            # client.containers.get('calamum_observer').kill()
-            return True, f"SIGKILL sent to {self.node_id} at {timestamp}"
+            path = self._emit_signal('kill', {'requested_at': timestamp})
+            return True, f"KILL signal staged ({path.name})"
         except Exception as e:
             return False, str(e)
 
@@ -29,18 +58,34 @@ class CalamumController:
         """
         Cuts network access for the node (except Ops channel).
         """
-        return True, "Node network isolation active. Ingress blocked."
+        try:
+            path = self._emit_signal('isolate', {'scope': 'ingress_only'})
+            return True, f"Isolation signal staged ({path.name})"
+        except Exception as e:
+            return False, str(e)
 
     def force_refresh(self):
         """
         Triggers a log rotation and config reload.
         """
-        return True, "Configuration reloaded. Logs rotated."
+        try:
+            path = self._emit_signal('refresh', {'kind': 'config_reload'})
+            return True, f"Refresh signal staged ({path.name})"
+        except Exception as e:
+            return False, str(e)
 
     def reset_watchdog(self):
-        """Resets the watchdog timer (stub)."""
-        timestamp = datetime.datetime.now().isoformat()
-        return True, f"Watchdog reset issued at {timestamp}"
+        """Request a watchdog reset.
+
+        The dashboard separately touches its local watchdog heartbeat marker so
+        the WD badge reflects the action immediately.
+        """
+        timestamp = datetime.datetime.utcnow().isoformat() + 'Z'
+        try:
+            path = self._emit_signal('watchdog_reset', {'requested_at': timestamp})
+            return True, f"Watchdog reset staged ({path.name})"
+        except Exception as e:
+            return False, str(e)
 
 # Singleton instance
 controller = CalamumController()
