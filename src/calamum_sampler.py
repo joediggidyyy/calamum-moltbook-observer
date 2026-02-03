@@ -1,4 +1,5 @@
 import sys
+import os
 import json
 import random
 import time
@@ -11,8 +12,9 @@ sys.path.append(str(current_dir))
 
 try:
     import obfuscator_lib
+    from moltbook_client import MoltbookAPIClient, MockMoltbookClient
 except ImportError:
-    print("Error: Could not import obfuscator_lib. Ensure it is in the same directory.")
+    print("Error: Could not import local modules. Ensure they are in the same directory.")
     sys.exit(1)
 
 def simulate_moltbook_feed():
@@ -67,6 +69,7 @@ def main():
     parser = argparse.ArgumentParser(description="Moltbook Sampler")
     parser.add_argument("--output", type=Path, help="Explicit output path for the JSONL file")
     parser.add_argument("--mode", choices=["sampler", "canary"], default="sampler", help="Operation mode")
+    parser.add_argument("--source", choices=["sim", "live"], default="sim", help="Data source (sim=generated, live=API)")
     args = parser.parse_args()
 
     if args.output:
@@ -94,15 +97,35 @@ def main():
     count = 0
     with open(output_file, "a", encoding="utf-8") as f:
         if args.mode == "sampler":
-            for sample in simulate_moltbook_feed():
+            if args.source == "live":
+                api_key = os.getenv("MOLTBOOK_API_KEY")
+                base_url = os.getenv("MOLTBOOK_HOST", "https://api.moltbook.com/v1")
+                if not api_key:
+                    raise EnvironmentError("MOLTBOOK_API_KEY required for live mode")
+                client = MoltbookAPIClient(base_url, api_key)
+                # Fetch 50 items to match sim volume
+                generator = client.fetch_feed(limit=50)
+            else:
+                generator = simulate_moltbook_feed()
+
+            for sample in generator:
                 safe_record = obfuscator_lib.Obfuscator.obfuscate_sample(sample)
                 f.write(json.dumps(safe_record) + "\n")
                 count += 1
         elif args.mode == "canary":
             # CANARY MODE: Strictly Inbound.
-            # Assert NO outgoing posts (simulated check)
-            # In a real impl, we would verify the API client has no 'post' permission
-            for notification in simulate_moltbook_notifications():
+            if args.source == "live":
+                if 'client' not in locals(): # Reuse connection if possible, but sampler/canary are exclusive modes here
+                    api_key = os.getenv("MOLTBOOK_API_KEY")
+                    base_url = os.getenv("MOLTBOOK_HOST", "https://api.moltbook.com/v1")
+                    if not api_key:
+                        raise EnvironmentError("MOLTBOOK_API_KEY required for live mode")
+                    client = MoltbookAPIClient(base_url, api_key)
+                generator = client.fetch_notifications()
+            else:
+                generator = simulate_moltbook_notifications()
+
+            for notification in generator:
                 safe_record = obfuscator_lib.Obfuscator.obfuscate_notification(notification)
                 f.write(json.dumps(safe_record) + "\n")
                 count += 1

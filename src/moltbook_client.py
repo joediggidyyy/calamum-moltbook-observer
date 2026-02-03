@@ -1,14 +1,9 @@
 import os
 import time
 import logging
+import requests  # ACTIVATED: Operation Live Wire
 from abc import ABC, abstractmethod
 from typing import Dict, Any, Generator
-
-# Simulating dependencies for now
-try:
-    import requests
-except ImportError:
-    requests = None
 
 class MoltbookClientInterface(ABC):
     @abstractmethod
@@ -26,7 +21,7 @@ class MoltbookAPIClient(MoltbookClientInterface):
     """
     def __init__(self, base_url: str, api_token: str):
         self.base_url = base_url.rstrip('/')
-        self.session = requests.Session() if requests else None
+        self.session = requests.Session()
         self.session.headers.update({
             "Authorization": f"Bearer {api_token}",
             "User-Agent": "CalamumObserver/1.0 (Research)"
@@ -37,7 +32,7 @@ class MoltbookAPIClient(MoltbookClientInterface):
         The ONLY allowed method. No POST/PUT/DELETE support exists in this class.
         """
         if not self.session:
-            raise RuntimeError("Request library not installed or client not initialized")
+            raise RuntimeError("Client session not initialized")
             
         url = f"{self.base_url}/{endpoint}"
         try:
