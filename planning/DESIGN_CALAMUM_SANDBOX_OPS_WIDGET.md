@@ -4,6 +4,39 @@
 **Status**: DRAFT
 **Based on Plan**: `CALAMUM_MOLTBOOK_OBSERVER_MONITORING_WIDGET_PLAN_20260203`
 
+## Addendum (Implementation Pivot): Ghost Console as Web App
+
+The original design below targeted a dedicated TUI. The working prototype has pivoted to a **browser-rendered UI** for higher-fidelity Digital Brutalism styling and a more stable operator experience.
+
+**Current Implementation Target**: `projects/calamum-moltbook-observer/src/ops_dashboard.py` (NiceGUI)
+
+### Layout (Current)
+
+* **Header**: Node identity, **Records Collected** counter, UTC clock, and a menu icon.
+* **Left Panel**: **System Integrity** radar (Integrity Diamond).
+* **Right Panel**: **Resource Metrics** (Bio-Rhythm) + **Event Log**.
+* **Control Deck**: Hidden by default, exposed as a slide-out **right drawer** via the header menu icon.
+
+### Controls (Current)
+
+* **Force Refresh**: Triggers a safe refresh hook (config reload / log rotate stub).
+* **Isolate Node**: Blocks *external* ingress to the observer (ops channel remains). This was not in the original proposal but is retained as a candidate “containment” control.
+* **Auto-Purge**: Retention cleanup toggle for logs/cached metrics (currently a stub). This was not in the original proposal; if we keep it, it becomes the operator-facing control for retention policy.
+* **Kill Switch**: Emergency stop hook (currently mocked; will be wired to a safe, audited control path).
+
+### Status Semantics
+
+Status in the Control Deck is **color-coded**:
+
+* **NOMINAL** (green)
+* **DEGRADED** (orange)
+* **CRITICAL** (red)
+
+### Window / Scroll Policy
+
+* **No visible scrollbars**: layout is intended to stay viewport-bound.
+* A minimum viewport size is enforced at the UI layer; the Edge “App Mode” wrapper provides the “independent GUI” experience.
+
 ## 1. Overview
 
 This document outlines the design for the **Calamum Sandbox Ops Widget**, a dashboard component designed to provide real-time visibility and operational control over the Calamum Moltbook Observer and its Sentinel watchdog.
