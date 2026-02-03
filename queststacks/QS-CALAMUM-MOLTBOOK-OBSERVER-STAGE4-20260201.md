@@ -1,18 +1,18 @@
 # QuestStack: QS-CALAMUM-MOLTBOOK-OBSERVER-STAGE4-20260201
 
-**Title**: Moltbook Observer - Stage 4: Active Magnet (GATED)
+**Title**: Moltbook Observer - Stage 4: Live Wire (Live Data Collection)
 
 **Owner**: ORACL-Prime
 
 **Date**: 2026-02-01
 
-**Status**: BLOCKED
+**Status**: ACTIVE
 
 ---
 
 ## Context
 
-Execution of Stage 4 (Active Magnet - GATED) for the Calamum-scoped Moltbook observer experiment. blocked by policy.
+Execution of Stage 4 ('Operation Live Wire') for the Calamum-scoped Moltbook observer experiment. Live execution authorized via [CALAMUM_LIVE_DEPLOYMENT_STRATEGY_20260202.md](../planning/CALAMUM_LIVE_DEPLOYMENT_STRATEGY_20260202.md).
 
 ---
 
