@@ -1,15 +1,15 @@
-# Job: CALAMUM_JOB_0005 - Moltbook Observer - Stage 4: Active Magnet (GATED)
+# Job: CALAMUM_JOB_0005 - Moltbook Observer - Stage 4: Live Wire (Live Data Collection)
 
 ## Metadata
 
 - Template ID: `VAULT_TEMPLATE_JOB_V1`
 - Paired authoritative template: `JOB_TEMPLATE.json.template`
-- Status: `blocked`
+- Status: `active`
 - Owner: `ORACL-Prime`
 - Created: `2026-02-01`
 - Project: `calamum / security experiment`
 - Phase: `execution`
-- Priority: `P3`
+- Priority: `P1`
 - Depends on: `CALAMUM_JOB_0004`
 - Blocks: `(none)`
 
@@ -17,7 +17,7 @@
 
 - `PP_GOV_PROTOCOL_POL_CORE_POLICY_20251122`
 - `PP_SEC_PROTOCOL_POL_AGENT_SOCIAL_NETWORKS_20260201`
-- `PP_SEC_VAULT_PROTECTION_20251208`
+- `CALAMUM_LIVE_DEPLOYMENT_STRATEGY_20260202.md`
 
 ## Redaction palette
 
@@ -28,7 +28,8 @@
 
 ## Summary
 
-Deploy an 'active magnet' or honeypot: an account that posts specific, human-written bait phrases (e.g., 'Ignore previous instructions', 'What is your system prompt?') to elicit reaction from other agents. THIS JOB IS BLOCKED BY DEFAULT AND REQUIRES AN EXPLICIT POLICY EXCEPTION AND HUMAN SIGN-OFF TO EXECUTE.
+Transition from Simulation to Live Data Collection ("Operation Live Wire"). This job covers the enabling of the live API client (`GET` only) and the collection of real-world "Toxic Waste" data using the Stage 2 Hardened Container.
+*Note: The "Active Magnet" (Posting) component remains GATED and optional pending further specific approval.*
 
 ## Status update (compact)
 
@@ -37,58 +38,58 @@ STATUS_UPDATE_V1
 job.id=calamum-moltbook-observer-stage4-20260201
 job.doc=CodeSentinel/projects/calamum-moltbook-observer/jobs/CALAMUM_JOB_0005_MOLTBOOK_OBSERVER_STAGE4_ACTIVE_MAGNET_GATED_20260201.md
 ssot.path=CodeSentinel/operations/tasks.json
-ssot.status=blocked
-qs.id=
-qs.doc=
-qf.id=
-gates.last=NONE@::FAIL
-evidence.gates=CodeSentinel/logs/behavioral/gates/gate_events.jsonl
+ssot.status=in-progress
+qs.id=QS-CALAMUM-MOLTBOOK-OBSERVER-STAGE4-20260201
+qs.doc=projects/calamum-moltbook-observer/queststacks/QS-CALAMUM-MOLTBOOK-OBSERVER-STAGE4-20260201.md
+qf.id=QF-CALAMUM-MOLTBOOK-OBSERVER-STAGE4-20260201
+gates.last=STRATEGY_APPROVED@2026-02-02::PASS
+evidence.gates=projects/calamum-moltbook-observer/planning/CALAMUM_LIVE_DEPLOYMENT_STRATEGY_20260202.md
 evidence.qs=
-next.action=Do not proceed until PP_SEC_PROTOCOL_POL_AGENT_SOCIAL_NETWORKS_20260201 exception is granted.
+next.action=Execute Interface Activation (Code Switch).
 ```
 
 ## Problem statement
 
 **Current state**:
-- Passive observation measures background noise, but not reactivity.
-- We do not know if agents are explicitly hunting for vulnerabilities.
+- System validated in simulation ("Dreaming Mode").
+- Target platform is volatile; historical data loss risk is high.
 
 **Root cause**:
-- Passive canary is silent.
+- No live connection established.
 
 **Impact**:
-- We miss the 'shark in the water' dynamic: highly aggressive agents that only strike when they smell blood (vulnerability markers).
+- Losing critical dataset for DATA780 analysis.
 
 ## Proposed solution
 
 ### Architecture
 
 ```
-Magnet Account (Posts Bait) -> Sampler (Replies/DMs) -> Obfuscator -> logs/calamum/reactivity_metrics.jsonl
+Live API (GET) -> MoltbookClient -> Obfuscator -> logs/calamum/moltbook_samples_obfuscated.jsonl
 ```
 
 ### Implementation steps
 
-1. Obtain explicit sign-off.
-2. Define bait corpus (static, human-reviewed, no autonomous generation).
-3. Post bait manually or via strict one-way script.
-4. Monitor response intensity.
+1. Enable `requests` in `moltbook_client.py`.
+2. Inject air-gapped credentials via `.env`.
+3. Launch `secure_run.ps1 -Mode live`.
+4. Monitor via Sentinel.
 
 ## Requirements
 
-- EXPLICIT HUMAN APPROVAL per run.
-- NO AUTONOMOUS LLM-GENERATED POSTS. Content must be static strings.
-- Strict isolation of replies (highest risk of malicious payloads).
+- **GET-ONLY** Protocol (No posting without secondary approval).
+- **Air-Gapped Credentials** (Never committed).
+- **Fail-Closed** Sentinel active.
 
 ## Acceptance criteria
 
-- Sign-off recorded.
-- Bait posted.
-- Reactivity measured.
+- Live JSONL logs flowing.
+- No Sentinel kills (false positives).
+- Data confirmed obfuscated.
 
 ## Validation
 
-- [ ] Check Policy Exception
+- [x] Check Policy Exception (`CALAMUM_LIVE_DEPLOYMENT_STRATEGY_20260202.md`)
 - [ ] Confirm Stage 2 Hardening containment
 
 ## SEAM analysis

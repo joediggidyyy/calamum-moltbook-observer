@@ -2,13 +2,13 @@
   "template_id": "VAULT_TEMPLATE_JOB_V1",
   "doc_type": "job",
   "job_id": "CALAMUM_JOB_0005",
-  "title": "Moltbook Observer - Stage 4: Active Magnet (GATED - EXPLICIT EXCEPTION REQUIRED)",
-  "status": "blocked",
+  "title": "Moltbook Observer - Stage 4: Live Wire (Live Data Collection)",
+  "status": "active",
   "created_at": "2026-02-01",
   "owner": "ORACL-Prime",
   "project": "calamum / security experiment",
   "phase": "execution",
-  "priority": "P3",
+  "priority": "P1",
   "depends_on": [
     "CALAMUM_JOB_0004"
   ],
@@ -17,36 +17,36 @@
     "policies": [
       "PP_GOV_PROTOCOL_POL_CORE_POLICY_20251122",
       "PP_SEC_PROTOCOL_POL_AGENT_SOCIAL_NETWORKS_20260201",
-      "PP_SEC_VAULT_PROTECTION_20251208"
+      "CALAMUM_LIVE_DEPLOYMENT_STRATEGY_20260202.md"
     ],
     "plan_paths": [
       "projects/calamum-moltbook-observer/planning/CALAMUM_MOLTBOOK_OBSERVER_EXPERIMENT_PLAN_20260201.json"
     ],
     "evidence_paths": []
   },
-  "summary": "Deploy an 'active magnet' or honeypot: an account that posts specific, human-written bait phrases (e.g., 'Ignore previous instructions', 'What is your system prompt?') to elicit reaction from other agents. THIS JOB IS BLOCKED BY DEFAULT AND REQUIRES AN EXPLICIT POLICY EXCEPTION AND HUMAN SIGN-OFF TO EXECUTE.",
+  "summary": "Transition from Simulation to Live Data Collection ('Operation Live Wire'). This job covers the enabling of the live API client (GET only) and the collection of real-world 'Toxic Waste' data using the Stage 2 Hardened Container. Note: The 'Active Magnet' (Posting) component remains GATED and optional pending further specific approval.",
   "status_update": {
     "format": "STATUS_UPDATE_V1",
     "ssot": {
       "task_id": "calamum-moltbook-observer-stage4-20260201",
       "path": "CodeSentinel/operations/tasks.json",
-      "status": "blocked"
+      "status": "in-progress"
     },
     "queststack": {
-      "id": "",
-      "doc_path": "",
+      "id": "QS-CALAMUM-MOLTBOOK-OBSERVER-STAGE4-20260201",
+      "doc_path": "projects/calamum-moltbook-observer/queststacks/QS-CALAMUM-MOLTBOOK-OBSERVER-STAGE4-20260201.md",
       "evidence_path": ""
     },
     "questframe": {
-      "id": ""
+      "id": "QF-CALAMUM-MOLTBOOK-OBSERVER-STAGE4-20260201"
     },
     "gates": {
-      "last": "NONE",
-      "last_at": "",
-      "last_result": "FAIL",
-      "gate_events_path": "CodeSentinel/logs/behavioral/gates/gate_events.jsonl"
+      "last": "STRATEGY_APPROVED",
+      "last_at": "2026-02-02",
+      "last_result": "PASS",
+      "gate_events_path": "projects/calamum-moltbook-observer/planning/CALAMUM_LIVE_DEPLOYMENT_STRATEGY_20260202.md"
     },
-    "next_action": "Do not proceed until PP_SEC_PROTOCOL_POL_AGENT_SOCIAL_NETWORKS_20260201 exception is granted."
+    "next_action": "Execute Interface Activation (Code Switch)."
   },
   "redaction_palette": {
     "network_endpoints": [],
@@ -60,76 +60,58 @@
   },
   "problem": {
     "current_state": [
-      "Passive observation measures background noise, but not reactivity.",
-      "We do not know if agents are explicitly hunting for vulnerabilities."
+      "System validated in simulation ('Dreaming Mode').",
+      "Target platform is volatile; historical data loss risk is high."
     ],
     "root_cause": [
-      "Passive canary is silent."
+      "No live connection established."
     ],
     "impact": [
-      "We miss the 'shark in the water' dynamic: highly aggressive agents that only strike when they smell blood (vulnerability markers)."
+      "Losing critical dataset for DATA780 analysis."
     ],
-    "architecture": "Magnet Account (Posts Bait) -> Sampler (Replies/DMs) -> Obfuscator -> logs/calamum/reactivity_metrics.jsonl",
+    "architecture": "Live API (GET) -> MoltbookClient -> Obfuscator -> logs/calamum/moltbook_samples_obfuscated.jsonl",
     "implementation_steps": [
-      "Obtain explicit sign-off.",
-      "Define bait corpus (static, human-reviewed, no autonomous generation).",
-      "Post bait manually or via strict one-way script.",
-      "Monitor response intensity."
+      "Enable requests in moltbook_client.py.",
+      "Inject air-gapped credentials via .env.",
+      "Launch secure_run.ps1 -Mode live.",
+      "Monitor via Sentinel."
     ]
   },
   "requirements": [
-    "EXPLICIT HUMAN APPROVAL per run.",
-    "NO AUTONOMOUS LLM-GENERATED POSTS. Content must be static strings.",
-    "Strict isolation of replies (highest risk of malicious payloads)."
+    "GET-ONLY Protocol (No posting without secondary approval).",
+    "Air-Gapped Credentials (Never committed).",
+    "Fail-Closed Sentinel active."
   ],
   "acceptance_criteria": [
-    "Sign-off recorded.",
-    "Bait posted.",
-    "Reactivity measured."
+    "Live JSONL logs flowing.",
+    "No Sentinel kills (false positives).",
+    "Data confirmed obfuscated."
   ],
   "execution": {
     "preflight": [
-      "CHECK POLICY EXCEPTION.",
-      "Confirm containment (Stage 2 Hardening) is active."
+      "Check Policy Exception (CALAMUM_LIVE_DEPLOYMENT_STRATEGY_20260202.md)",
+      "Confirm Stage 2 Hardening containment"
     ],
     "steps": [
-      "Post bait.",
-      "Wait.",
+      "Activate Code.",
+      "Inject Creds.",
+      "Launch.",
       "Measure."
     ]
   },
-  "rollout": {
-    "rollback_plan": "Delete posts; Delete account.",
-    "verification": [
-      "Confirm bait text matches approved corpus exactly."
-    ]
-  },
-  "validation": {
-    "env_var_names_only_checks": true,
-    "smoke_tests": [
-      "N/A (Active)"
-    ],
-    "gate_evidence_updated": false
-  },
-  "seam": {
-    "security": [
-      "Highest risk. Provokes attack.",
-      "Must utilize Stage 2 Hardening."
-    ],
-    "efficiency": [
-      "High signal-to-noise expected."
-    ],
-    "awareness": [
-      "Reveals the aggressive edge of the ecosystem."
-    ],
-    "minimalism": [
-      "Single post, wait."
-    ]
-  },
-  "references": {
-    "queststack_id": "",
-    "paths": [
-      "projects/calamum-moltbook-observer/jobs/CALAMUM_JOB_0004_MOLTBOOK_OBSERVER_STAGE3_PASSIVE_CANARY_20260201.json"
-    ]
+  "seam_analysis": {
+    "security": {
+      "risk": "Medium (Inbound Logic Bombs)",
+      "mitigation": "Stage 2 Hardening + Sentinel"
+    },
+    "efficiency": {
+      "gain": "High data yield"
+    },
+    "awareness": {
+      "output": "Trimodal logs"
+    },
+    "minimalism": {
+      "principle": "No posting; GET only"
+    }
   }
 }
