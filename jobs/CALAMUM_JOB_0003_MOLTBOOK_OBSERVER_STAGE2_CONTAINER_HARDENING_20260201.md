@@ -36,18 +36,18 @@ Harden the Calamum execution environment by migrating the sampler to a strictly 
 ## Status update (compact)
 
 ```text
-STATUS_UPDATE_V1
+STATUS_UPDATE_V2
 job.id=calamum-moltbook-observer-stage2-20260201
 job.doc=CodeSentinel/projects/calamum-moltbook-observer/jobs/CALAMUM_JOB_0003_MOLTBOOK_OBSERVER_STAGE2_CONTAINER_HARDENING_20260201.md
 ssot.path=CodeSentinel/operations/tasks.json
-ssot.status=open
-qs.id=
-qs.doc=
-qf.id=
-gates.last=NONE@::SKIP
+ssot.status=completed
+qs.id=QS-CALAMUM-MOLTBOOK-OBSERVER-STAGE2-20260201
+qs.doc=projects/calamum-moltbook-observer/queststacks/QS-CALAMUM-MOLTBOOK-OBSERVER-STAGE2-20260201.md
+qf.id=QF-CALAMUM-MOLTBOOK-OBSERVER-STAGE2-20260201
+gates.last=POST_JOB@2026-02-03
 evidence.gates=CodeSentinel/logs/behavioral/gates/gate_events.jsonl
-evidence.qs=
-next.action=Define Dockerfile/Containerfile with read-only rootfs and run profile.
+evidence.qs=deliverables/DATA740/CALAMUM_CONTAINER_HARDENING_EVIDENCE.md
+next.action=Complete. Proceed to Stage 3 Use Cases.
 ```
 
 ## Problem statement
@@ -60,6 +60,33 @@ next.action=Define Dockerfile/Containerfile with read-only rootfs and run profil
 
 **Impact**:
 - If the python runtime is compromised by a buffer overflow or logic bug in the feed parser, the host is exposed.
+
+## Methodology & Narrative Execution
+
+This stage implements the "Glass Box" security model, a critical requirement for safely observing hostile agent networks. The core principle is **total immutability at runtime**: once observing begins, the observer itself can have no memory of the event other than the structured telemetry it emits. This prevents prompt-injection payloads from persisting on the observer's filesystem or modifying its behavior.
+
+### 1. Build Process & Provenance
+We utilized a multi-stage Docker build to create a minimal, hardened artifact.
+
+- **Base Image**: `python:3.11-slim` (Minimizes attack surface; shell access retained only for debugging, no compiler toolchain).
+- **User Identity**: An explicit non-root user `observer` (UID 10001) was baked into the image.
+- **Dependency Management**: Dependencies (`requests`, `pytest`) were installed from a verified `requirements.txt` into a system-level directory, preventing user-level modification at runtime.
+
+### 2. Runtime Constraints (The Hardening Profile)
+The container was executed with a strict set of Docker runtime flags (`src/deployment/HARDENING_PROFILE.md`) to enforce the security model:
+
+1.  `--read-only`: The root filesystem follows a strict W^X policy (Write XOR Execute). The application code is readable but not writable.
+2.  `--cap-drop ALL`: All Linux kernel capabilities (including `CAP_NET_ADMIN`) were dropped to prevent privilege escalation or raw socket creation.
+3.  `--security-opt no-new-privileges`: Prevents setuid binaries from escalating privileges.
+
+### 3. Verification & Evidence
+To validate these constraints, we executed a "breakout suite" (`src/tests/test_container_constraints.py`) against the live container:
+
+- **Immutability Test**: Attempting `touch /app/test` inside the container resulted in `Permission denied`, confirming the read-only rootfs.
+- **Network Minimalization**: Attempting `ping 8.8.8.8` failed due to missing binaries and lack of capability, confirming the reduced surface area.
+- **Identity Assurance**: Validated that the process runs as UID 10001.
+
+Detailed forensic logs of this verification are stored in `deliverables/DATA740/CALAMUM_CONTAINER_HARDENING_EVIDENCE.md`.
 
 ## Proposed solution
 

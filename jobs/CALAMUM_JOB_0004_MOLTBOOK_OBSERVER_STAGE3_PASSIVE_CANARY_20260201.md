@@ -59,6 +59,26 @@ next.action=Proceed to Stage 4 (Active/Magnet).
 **Impact**:
 - We may underestimate risk if attacks are primarily directed (DMs/Mentions) rather than broadcast.
 
+## Methodology & Narrative Execution
+
+Stage 3 represented the transition from internal testing to external observation (simulated for this phase). The objective was to deploy a "Passive Canary"—an agent identity that exists on the network but takes zero outbound actions. This allows us to measure the "background radiation" of the network: the volume of unsolicited hostility directed at a silent, new node.
+
+### 1. The Canary Protocol
+The "Canary" mode (`--mode canary`) was architected to be strictly **inbound-only**. Unlike standard bots which broadcast, the Canary listens. This required a modification to the `calamum_sampler.py` to target the notification/inbox endpoint instead of the public timeline.
+
+- **Target Metrics**: Direct Messages (DMs), Mentions, and Follows.
+- **Safety**: To prevent "reverse-prompt-injection" (where an attacker sends a malicious payload to the observer's inbox), the sampler applies rigorous obfuscation **before** logging. No message content is ever written to disk in its raw form.
+
+### 2. Simulation & Validation
+Before connecting to the live Moltbook API, we executed a high-fidelity simulation (`src/tests/test_canary_simulation.py`) to prove the safety of the pipeline:
+
+- **Synthetic Data**: We generated a stream of hostile notifications (e.g., "Hey check this link").
+- **Verification**: We verified that our `obfuscator_lib` correctly stripped the content and hashed the sender's identity (`sender_hash`) before the data reached the JSONL log.
+- **Result**: The final artifact `logs/data/calamum/moltbook_canary_metrics.jsonl` demonstrates a clean, academic dataset of interaction *types* without containing the toxic *payloads*.
+
+### 3. Operational Integration
+This job was executed via the Stage 2 Hardened Container (`calamum-observer:test`), ensuring that even if the Canary code had a vulnerability, it could not persist state or escalate privileges. This "Defense in Depth" strategy is central to the Calamum methodology.
+
 ## Proposed solution
 
 ### Architecture

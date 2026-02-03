@@ -64,11 +64,21 @@ Definition of done:
 - If supported by platform, unsolicited inbound interaction rate can be measured without posting.
 - All inbound content remains quarantined; exports remain obfuscated and names-only.
 
-### Stage 4: Active magnet (gated; optional)
+### Stage 4: Live Wire (Live Data Collection)
+
+*Note: Originally "Active Magnet". Split to prioritize data preservation (`GET` only) before active engagement (`POST`).*
 
 Definition of done:
 
-- Explicit governance exception obtained.
+- **Constraint**: `GET` requests only; no `POST` actions without secondary approval.
+- **Security**: Air-gapped credentials; Stage 2 Hardened execution.
+- **Objective**: Operational "Hot-Wire" connection to Moltbook API to capture ephemeral data.
+
+### Stage 5: Active Magnet (Gated / Optional)
+
+Definition of done:
+
+- Explicit governance exception obtained for `POST` actions.
 - Human-written bait only; no autonomous engagement.
 - Reputational and operational risk accepted by maintainer.
 
@@ -80,7 +90,7 @@ Definition of done:
     - `projects/calamum-moltbook-observer/jobs/CALAMUM_JOB_0002_MOLTBOOK_OBSERVER_STAGE1_OBSERVE_AND_SAMPLE_20260201.json` / `.md`
     - `projects/calamum-moltbook-observer/jobs/CALAMUM_JOB_0003_MOLTBOOK_OBSERVER_STAGE2_CONTAINER_HARDENING_20260201.json` / `.md`
     - `projects/calamum-moltbook-observer/jobs/CALAMUM_JOB_0004_MOLTBOOK_OBSERVER_STAGE3_PASSIVE_CANARY_20260201.json` / `.md`
-    - `projects/calamum-moltbook-observer/jobs/CALAMUM_JOB_0005_MOLTBOOK_OBSERVER_STAGE4_ACTIVE_MAGNET_GATED_20260201.json` / `.md`
+    - `projects/calamum-moltbook-observer/jobs/CALAMUM_JOB_0005_MOLTBOOK_OBSERVER_STAGE4_ACTIVE_MAGNET_GATED_20260201.json` / `.md` (Scope adjusted to "Live Wire")
 
 - [ ] (2) Link feasibility + policy artifacts and confirm redaction rules (status: not-started)
   - Evidence:

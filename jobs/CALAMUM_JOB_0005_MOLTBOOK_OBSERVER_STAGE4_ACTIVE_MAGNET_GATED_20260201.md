@@ -34,18 +34,18 @@ Transition from Simulation to Live Data Collection ("Operation Live Wire"). This
 ## Status update (compact)
 
 ```text
-STATUS_UPDATE_V1
+STATUS_UPDATE_V2
 job.id=calamum-moltbook-observer-stage4-20260201
 job.doc=CodeSentinel/projects/calamum-moltbook-observer/jobs/CALAMUM_JOB_0005_MOLTBOOK_OBSERVER_STAGE4_ACTIVE_MAGNET_GATED_20260201.md
 ssot.path=CodeSentinel/operations/tasks.json
-ssot.status=in-progress
+ssot.status=completed
 qs.id=QS-CALAMUM-MOLTBOOK-OBSERVER-STAGE4-20260201
 qs.doc=projects/calamum-moltbook-observer/queststacks/QS-CALAMUM-MOLTBOOK-OBSERVER-STAGE4-20260201.md
 qf.id=QF-CALAMUM-MOLTBOOK-OBSERVER-STAGE4-20260201
-gates.last=STRATEGY_APPROVED@2026-02-02::PASS
-evidence.gates=projects/calamum-moltbook-observer/planning/CALAMUM_LIVE_DEPLOYMENT_STRATEGY_20260202.md
-evidence.qs=
-next.action=Execute Interface Activation (Code Switch).
+gates.last=POST_JOB@2026-02-03
+evidence.gates=CodeSentinel/logs/behavioral/gates/gate_events.jsonl
+evidence.qs=logs/data/calamum/moltbook_live_metrics.jsonl
+next.action=Monitor weekly logs; await Stage 5 authorization.
 ```
 
 ## Problem statement
@@ -59,6 +59,27 @@ next.action=Execute Interface Activation (Code Switch).
 
 **Impact**:
 - Losing critical dataset for DATA780 analysis.
+
+## Methodology: Operation "Live Wire"
+
+This job executes the "Live Wire" strategy: the immediate transition from simulation to live data collection against the Moltbook API. This decision is driven by the high volatility of the target platform and the need to preserve ephemeral data for DATA780 analysis.
+
+### 1. Operational Readiness Assessment (ORA)
+Before authorization, the system was evaluated against the "Safety Onion" architecture:
+- **Safety Core (`obfuscator_lib`)**: **PASSED** (Validated in simulation; strips PII/Malware).
+- **Containment (Stage 2)**: **PASSED** (Immutable Container / Read-Only Rootfs).
+- **Governance (`sentinel.py`)**: **PASSED** (Fail-Closed Watchdog active).
+- **Verdict**: The system is safe to conduct "Live Fire" read-only operations.
+
+### 2. Deployment Protocol ("The Hot-Wire")
+To execute this transition while maintaining academic reproducibility and security:
+
+1.  **Interface Activation (The Code Switch)**: The `src/moltbook_client.py` simulation stub is replaced with a live REST adapter using `requests`. **Constraint**: The client must strictly adhere to `GET` requests only.
+2.  **Credential Injection (Air-Gapped)**: Real credentials (`MOLTBOOK_API_KEY`) are injected via a local-only `.env` file, ensuring no secrets are ever committed to the repository.
+3.  **Execution (Glass Box)**: The system launches using the Stage 2 containment script (`deployment/secure_run.ps1 -Mode live`), ensuring the runtime remains ephemeral and immutable.
+
+### 3. Strategic Justification
+Historical data capture is prioritized over perfect feature completeness ("Smash and Grab" tactics authorized). The risk of platform evaporation necessitates this immediate deployment.
 
 ## Proposed solution
 
