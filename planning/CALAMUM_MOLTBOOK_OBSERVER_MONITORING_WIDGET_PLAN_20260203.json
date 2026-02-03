@@ -1,0 +1,169 @@
+{
+  "template_id": "VAULT_TEMPLATE_PLAN_V1",
+  "doc_type": "plan",
+  "title": "Calamum Moltbook Observer: Monitoring Widget (Observer + Sentinel Status and Statistics)",
+  "status": "planned",
+  "created_at": "2026-02-03",
+  "owner": "ORACL-Prime",
+  "links": {
+    "policies": [
+      "PP_GOV_PROTOCOL_POL_CORE_POLICY_20251122",
+      "PP_GOV_PROTOCOL_POL_AGENT_ACTION_WORKFLOW_20251122",
+      "PP_GOV_PROTOCOL_POL_DETERMINISTIC_WORKFLOW_20251127",
+      "PP_SEC_PROTOCOL_POL_AGENT_SOCIAL_NETWORKS_20260201",
+      "PP_SEC_VAULT_PROTECTION_20251208"
+    ],
+    "related_proposals": [],
+    "related_jobs": [
+      "CALAMUM_JOB_0006",
+      "CALAMUM_JOB_0002",
+      "CALAMUM_JOB_0003",
+      "CALAMUM_JOB_0004"
+    ]
+  },
+  "context": {
+    "summary": "Design a monitoring widget that provides at-a-glance status and statistics for the Calamum Moltbook observer and its watchdog sentinel. The widget must be telemetry-only (no raw content display), must be reproducible, and must integrate cleanly with existing CodeSentinel dashboard/reporting patterns.",
+    "assumptions": [
+      "Observer outputs are written as obfuscated JSONL telemetry under the Calamum logs path.",
+      "Sentinel (watchdog) emits deterministic status signals via logs/stdout suitable for aggregation.",
+      "The operator view should be generated from local artifacts (logs) without any direct interaction with Moltbook.",
+      "Widget controls are local-only operator actions (kill switch, pause/resume, bounded cadence changes) and must be fail-closed with names-only audit events."
+    ],
+    "risks": [
+      "Accidental display of raw inbound content (must be prevented by strict field allowlists).",
+      "Metric drift if log formats evolve without versioning (require schema/version fields and a compatibility note).",
+      "Operator overconfidence if the widget reports 'healthy' while sampling is stale (must include freshness/last-seen timestamps).",
+      "Control-surface risk: a kill switch and cadence controls can disrupt data collection or mask failures if not designed as explicit, bounded, audited actions (SEAM: Security/Awareness)."
+    ],
+    "stop_conditions": [
+      "Any attempt to display raw inbound content or external identifiers (hard stop).",
+      "Any non-allowlisted field appears in widget input parsing (hard stop; fail-closed).",
+      "Observer sampling freshness exceeds the defined stale threshold while widget reports healthy (hard stop; raise operator alert).",
+      "Any unexpected endpoint, redirect, or non-canonical host is detected in upstream telemetry (hard stop; escalate per Job 0006 protocol).",
+      "Any control action request that is out-of-bounds (e.g., cadence below min or above max) (hard stop; refuse action; emit audit event)."
+    ],
+    "control_event": {
+      "audit_sink_path": "logs/behavioral/control_surface/CALAMUM_MOLTBOOK_OBSERVER_WIDGET_CONTROL_EVENTS.jsonl",
+      "event_schema": {
+        "ts_utc": "ISO-8601 timestamp (UTC)",
+        "event": "enum",
+        "control_id": "string",
+        "requested_by": "enum: operator|system",
+        "confirmed": "bool",
+        "reason_code": "allowlisted enum",
+        "previous_state": "object (names-only)",
+        "new_state": "object (names-only)",
+        "notes": "string (names-only; optional)"
+      },
+      "allowed_events": [
+        "kill_switch_requested",
+        "kill_switch_confirmed",
+        "pause_requested",
+        "resume_requested",
+        "sampling_interval_changed",
+        "rotate_outputs_requested",
+        "export_status_snapshot_requested",
+        "sentinel_alert_acknowledged"
+      ],
+      "disallowed_events": [
+        "post_to_moltbook",
+        "render_raw_content",
+        "modify_remote_state"
+      ]
+    },
+    "defaults": {
+      "sampling_rate_window_minutes": 10,
+      "error_rate_window_minutes": 10,
+      "kill_event_windows_hours": [1, 24],
+      "freshness_stale_threshold": {
+        "min_minutes": 10,
+        "multiplier_of_sampling_interval": 3
+      },
+      "sparse_data": {
+        "min_samples_for_rate_window": 3,
+        "heartbeat_stale_label": "stale",
+        "insufficient_data_label": "insufficient_data"
+      }
+    },
+    "pinned_paths": {
+      "observer_telemetry_root": "logs/data/calamum/",
+      "observer_telemetry_pattern": "moltbook_*_obfuscated*.jsonl",
+      "control_event_audit_sink": "logs/behavioral/control_surface/CALAMUM_MOLTBOOK_OBSERVER_WIDGET_CONTROL_EVENTS.jsonl"
+    },
+    "acknowledge_model": {
+      "default": "ui_only_ephemeral",
+      "persistence_optional": true,
+      "persistence_note": "If persistence is added later, persist names-only acknowledgement state locally and record the write as a structured control-event."
+    }
+  },
+  "milestones": [
+    {
+      "name": "Metric inventory and schema",
+      "definition_of_done": [
+        "A versioned metric schema is defined for observer + sentinel outputs (allowed fields only).",
+        "Each metric is mapped to a concrete source artifact/path and update cadence."
+      ]
+    },
+    {
+      "name": "Widget specification",
+      "definition_of_done": [
+        "Widget layout and fields are specified (at-a-glance, one screen/panel).",
+        "Redaction and safety constraints are written as acceptance criteria (no raw content, names-only)."
+      ]
+    },
+    {
+      "name": "Dashboard integration plan",
+      "definition_of_done": [
+        "A concrete integration path is selected: CodeSentinel dashboard panel writer that emits a markdown panel under docs/dashboards/room/.",
+        "A target name, output filename, and update trigger strategy are defined."
+      ]
+    }
+  ],
+  "tasks": [
+    {
+      "id": 1,
+      "title": "Define data sources and freshness rules",
+      "status": "not-started",
+      "evidence_paths": [
+        "projects/calamum-moltbook-observer/planning/CALAMUM_MOLTBOOK_OBSERVER_MONITORING_WIDGET_PLAN_20260203.json",
+        "projects/calamum-moltbook-observer/planning/CALAMUM_MOLTBOOK_OBSERVER_MONITORING_WIDGET_PLAN_20260203.md"
+      ]
+    },
+    {
+      "id": 2,
+      "title": "Define metric allowlist (observer + sentinel)",
+      "status": "not-started",
+      "evidence_paths": []
+    },
+    {
+      "id": 3,
+      "title": "Specify widget layout and panel output",
+      "status": "not-started",
+      "evidence_paths": []
+    },
+    {
+      "id": 4,
+      "title": "Plan dashboard CLI integration",
+      "status": "not-started",
+      "evidence_paths": []
+    },
+    {
+      "id": 5,
+      "title": "Specify base control set and safety constraints",
+      "status": "not-started",
+      "evidence_paths": []
+    },
+    {
+      "id": 6,
+      "title": "Complete SEAM analysis and stop-conditions",
+      "status": "not-started",
+      "evidence_paths": []
+    }
+  ],
+  "success_metrics": [
+    "Operator can determine within 10 seconds: running/not-running, last successful sample time, sample rate, error rate, and sentinel status.",
+    "Widget displays only aggregated/obfuscated telemetry (no raw Moltbook text; no secrets; no sensitive identifiers).",
+    "Widget includes a freshness signal (e.g., seconds since last sample and last sentinel heartbeat).",
+    "Widget output is deterministic given the same input artifacts (log-derived; time window rules documented)."
+  ]
+}
