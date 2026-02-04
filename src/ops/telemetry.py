@@ -58,10 +58,27 @@ def _safe_touch(path: Path) -> None:
 def _newest_jsonl(data_dir: Path) -> Optional[Path]:
     if not data_dir.exists():
         return None
-    candidates = [p for p in data_dir.glob('*.jsonl') if p.is_file()]
-    if not candidates:
+    try:
+        candidates = []
+        for p in data_dir.glob('*.jsonl'):
+            try:
+                if p.is_file():
+                    candidates.append(p)
+            except OSError:
+                continue
+
+        if not candidates:
+            return None
+
+        def safe_mtime(p: Path) -> float:
+            try:
+                return p.stat().st_mtime
+            except OSError:
+                return 0.0
+
+        return max(candidates, key=safe_mtime)
+    except Exception:
         return None
-    return max(candidates, key=lambda p: p.stat().st_mtime)
 
 
 class _JsonlAppendCounter:
@@ -86,9 +103,24 @@ class _JsonlAppendCounter:
             return
         if self.path != path:
             self.path = path
-            self.offset = 0
-            self.total_lines = 0
-            self.last_size = 0
+            # CRITICAL FIX: Seek to end on first load to avoid processing historical 
+            # records as a massive "new" spike (e.g. +25k records in one slice).
+            try:
+                if path.exists():
+                    st = path.stat()
+                    self.offset = st.st_size
+                    self.last_size = st.st_size
+                    # Best-effort total lines estimate (assuming ~100b/line) so UI isn't empty
+                    # We accept this won't match line-count exactly, but it's better than 0.
+                    self.total_lines = int(st.st_size / 200) 
+                else:
+                    self.offset = 0
+                    self.last_size = 0
+                    self.total_lines = 0
+            except OSError:
+                self.offset = 0
+                self.last_size = 0
+                self.total_lines = 0
 
     def poll(self, max_read_bytes: int = 2_000_000) -> Tuple[int, int]:
         """Return (new_lines, total_lines).
@@ -102,32 +134,50 @@ class _JsonlAppendCounter:
         try:
             size = self.path.stat().st_size
         except OSError:
+            # If we can't stat, assume no change for this tick
             return 0, self.total_lines
 
         # Rotated or truncated
-        if size < self.last_size or size < self.offset:
+        if size < self.last_size:
+            # File got smaller? Reset.
             self.offset = 0
             self.total_lines = 0
+        elif size < self.offset:
+             # Offset beyond EOF? Reset.
+            self.offset = 0
 
         new_lines = 0
         try:
-            with self.path.open('rb') as f:
-                f.seek(self.offset)
-                remaining = max(0, max_read_bytes)
-                # Stream reads in chunks to keep memory bounded.
-                while remaining > 0:
-                    read_size = min(256 * 1024, remaining)
-                    chunk = f.read(read_size)
-                    if not chunk:
-                        break
-                    remaining -= len(chunk)
-                    new_lines += chunk.count(b'\n')
+            # Retry open once to handle transient Windows file locking
+            attempts = 2
+            f = None
+            while attempts > 0:
+                try:
+                    f = self.path.open('rb')
+                    break
+                except OSError:
+                    attempts -= 1
+                    if attempts > 0:
+                        time.sleep(0.05)
+            
+            if f:
+                with f:
+                    f.seek(self.offset)
+                    remaining = max(0, max_read_bytes)
+                    # Stream reads in chunks to keep memory bounded.
+                    while remaining > 0:
+                        read_size = min(256 * 1024, remaining)
+                        chunk = f.read(read_size)
+                        if not chunk:
+                            break
+                        remaining -= len(chunk)
+                        new_lines += chunk.count(b'\n')
 
-                if new_lines:
-                    self.total_lines += new_lines
+                    if new_lines:
+                        self.total_lines += new_lines
 
-                # Always advance offset by how much we actually read.
-                self.offset = f.tell()
+                    # Always advance offset by how much we actually read.
+                    self.offset = f.tell()
         except OSError:
             return 0, self.total_lines
 
@@ -213,7 +263,18 @@ class TelemetryProvider:
             return self._active_jsonl_cache
 
         self._active_jsonl_last_scan_ts = now
-        self._active_jsonl_cache = _newest_jsonl(self.config.data_dir)
+        new_pick = _newest_jsonl(self.config.data_dir)
+
+        # Persistence override: if scan fails (transient Windows locking on dir),
+        # but the old file still looks valid, stick with it to avoid resetting the reader offset.
+        if new_pick is None and self._active_jsonl_cache is not None:
+             try:
+                 if self._active_jsonl_cache.exists():
+                     return self._active_jsonl_cache
+             except OSError:
+                 pass
+
+        self._active_jsonl_cache = new_pick
         return self._active_jsonl_cache
 
     def update(self) -> dict:
