@@ -29,9 +29,12 @@ projects/calamum-moltbook-observer/
 ├── src/                # Source Code (The "What")
 │   ├── analysis/         # ML Models & Notebooks (Stage 4 Analysis)
 │   ├── deployment/       # Dockerfiles & Hardening Profiles (Stage 2)
+│   ├── ops/              # Ops/telemetry/control surfaces (Ghost Console V2)
 │   ├── tests/            # Validation Scripts
 │   ├── calamum_sampler.py # The Agent (Stage 1/3)
+│   ├── calamum_observer_agent.py # Local demo agent (heartbeats + JSONL + signal consumer)
 │   └── obfuscator_lib.py # Safety Layer (Stage 1/3)
+├── launch_ghost_console.ps1 # Ghost Console V2 launcher (Edge app-mode)
 └── REFERENCES.md       # Index of detailed artifact links
 ```
 
@@ -63,8 +66,54 @@ projects/calamum-moltbook-observer/
 ## Operation Manual
 
 ### Launching (Windows Host)
+#### A) Ghost Console V2 (Ops Dashboard)
+The Ghost Console is a fixed-size, "digital brutalism" ops dashboard (NiceGUI + ECharts) designed to show **names-only** telemetry.
+
+- **Start UI (recommended)**: run `projects/calamum-moltbook-observer/launch_ghost_console.ps1`
+	- starts the backend hidden (no terminal window)
+	- opens Microsoft Edge in app-mode at **1100×720**
+
+**Dashboard source**: `src/ops_dashboard.py`
+
+#### B) Observer + Watchdog (legacy/manual)
 1. **Start Observer**: `./src/deployment/secure_run.ps1`
 2. **Start Watchdog**: `python src/sentinel.py`
+
+## Ghost Console V2: Data + Control Contracts
+
+### Telemetry inputs (names-only)
+The dashboard reads from:
+- **CPU/MEM**: `psutil` (local host)
+- **Observer liveness**: heartbeat marker freshness OR recent JSONL activity
+- **Watchdog liveness**: watchdog heartbeat marker freshness
+- **Records/Density**: append-only JSONL metrics (counts only)
+
+Default locations (repo-root relative):
+- `logs/health/calamum_ops_watchdog.heartbeat`
+- `logs/health/calamum_observer.heartbeat`
+- `logs/data/calamum/*.jsonl` (newest file is treated as active)
+
+### Control surface (file-based intents)
+Control Deck actions emit JSON control signals (safe for later container wiring):
+- `logs/control/calamum/kill.signal.json`
+- `logs/control/calamum/isolate.signal.json`
+- `logs/control/calamum/refresh.signal.json`
+- `logs/control/calamum/watchdog_reset.signal.json`
+
+### Local end-to-end demo agent
+For local testing without a live container, `src/calamum_observer_agent.py` can:
+- touch heartbeat files
+- append JSONL records
+- consume/acknowledge control signals
+
+## Environment variables (optional overrides)
+- `CALAMUM_OPS_MODE`: dashboard mode label (normalized; defaults to `CANARY`)
+- `CALAMUM_FRESHNESS_SEC`: heartbeat freshness threshold (default: `15`)
+- `CALAMUM_WATCHDOG_HEARTBEAT_PATH`: path to watchdog heartbeat marker
+- `CALAMUM_OBSERVER_HEARTBEAT_PATH`: path to observer heartbeat marker
+- `CALAMUM_DATA_DIR`: directory containing JSONL metrics
+- `CALAMUM_DENSITY_SLICE_SEC`: histogram time-slice width (default: `15`)
+- `CALAMUM_BRAND_THUMB_PATH`, `CALAMUM_BRAND_PANEL_PATH`: optional branding asset overrides
 
 ## Academic Reproducibility
 

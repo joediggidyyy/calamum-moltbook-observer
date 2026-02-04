@@ -2,7 +2,7 @@
 
 **Date**: 2026-02-03
 **Status**: ACTIVE
-**Tech Stack**: Python (NiceGUI), Tailwind CSS, Plotly/ECharts
+**Tech Stack**: Python (NiceGUI), Tailwind CSS, ECharts
 
 ## 1. Overview
 A high-fidelity operational dashboard for the Calamum Moltbook Observer container.
@@ -20,31 +20,54 @@ A high-fidelity operational dashboard for the Calamum Moltbook Observer containe
 ## 3. Capabilities Components
 
 ### A. The "Integrity Diamond" (Radar Chart)
-- **Tech**: Plotly/ECharts (via NiceGUI).
+- **Tech**: ECharts (via NiceGUI).
 - **Metrics**: 
     1. Availability (Uptime)
     2. Integrity (File hashes matched)
     3. Capacity (Disk/Mem buffer)
     4. Freshness (Time since last snapshot)
-- **Behavior**: Real-time updates via binding loop.
+- **Behavior**:
+    - Real-time updates (2Hz)
+    - Hover tooltips show exact values
+    - Hover-reveal numbers on the four label strip
 
 ### B. The "Bio-Rhythm" (Time Series)
 - **Visual**: Scrolling line chart (ECG style).
-- **Data**: CPU/Memory usage of the target container.
+- **Data**: CPU/Memory usage of the host (psutil).
+- **Behavior**: Hover tooltips show exact CPU% and MEM%.
 
 ### C. Control Deck (Sidebar)
 - **Triggers**:
     - `KILL`: Immediate container stop.
-    - `RESTART`: Docker restart.
-    - `FLUSH`: Clear logs.
+    - `ISOLATE`: Stage an ingress isolation intent.
+    - `REFRESH`: Stage a config/log refresh intent.
+    - `WATCHDOG RESET`: Stage a watchdog reset intent.
 - **Style**: Big blocky buttons (`w-full`), hover effects (`hover:bg-green-500 hover:text-black`).
 
+### D. Density Histogram
+- **Meaning**: relative collection volume across the last 12 time slices.
+- **Behavior**:
+    - Time-sliced aggregation (defaults to 15s slices) to reduce twitchy bars.
+    - Hover tooltip shows raw counts and slice width (e.g., "12 rec / 15s").
+
 ## 4. Architecture
-- **Backend**: `src/ops_dashboard.py` runs a FastAPI server (wrapped by NiceGUI).
+- **Backend**: `src/ops_dashboard.py` runs the NiceGUI server.
 - **Frontend**: Served automatically by NiceGUI.
-- **Docker Interface**: Uses `docker` python SDK to fetch stats and execute commands.
-- **Launch Mode**: `ui.run(native=True)` attempts to open a standalone window (via pywebview), failing over to default browser.
+- **Telemetry**: `src/ops/telemetry.py` (psutil + heartbeat freshness + JSONL append counting).
+- **Control surface**: `src/ops/controller.py` emits file-based intents under `logs/control/calamum/`.
+- **Demo agent**: `src/calamum_observer_agent.py` can generate heartbeats/JSONL and consume signals for end-to-end testing.
+- **Launch Mode**: Windows uses Edge app-mode via `launch_ghost_console.ps1` to avoid native-window dependencies.
+    - Backend starts hidden
+    - Window size is fixed at 1100×720
 
 ## 5. Security & Auditing
 - **Names-Only**: The widget displays counts and statuses, never message content.
-- **Audit Log**: Every control action is logged to `logs/behavioral/control_surface/CALAMUM_MOLTBOOK_OBSERVER_WIDGET_CONTROL_EVENTS.jsonl`.
+- **Audit Log (Control Intents)**: File-based control intents are written to `logs/control/calamum/*.signal.json`.
+
+## 6. Configuration (Environment Variables)
+- `CALAMUM_FRESHNESS_SEC` (default: 15)
+- `CALAMUM_DATA_DIR` (default: `logs/data/calamum`)
+- `CALAMUM_DENSITY_SLICE_SEC` (default: 15)
+- Heartbeat paths:
+    - `CALAMUM_WATCHDOG_HEARTBEAT_PATH`
+    - `CALAMUM_OBSERVER_HEARTBEAT_PATH`

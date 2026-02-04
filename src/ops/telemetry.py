@@ -90,8 +90,12 @@ class _JsonlAppendCounter:
             self.total_lines = 0
             self.last_size = 0
 
-    def poll(self) -> Tuple[int, int]:
-        """Return (new_lines, total_lines)."""
+    def poll(self, max_read_bytes: int = 2_000_000) -> Tuple[int, int]:
+        """Return (new_lines, total_lines).
+
+        NOTE: we cap how many bytes we read per poll to avoid long blocking reads
+        which can stall the event loop and destabilize the UI.
+        """
         if self.path is None or not self.path.exists():
             return 0, self.total_lines
 
@@ -109,11 +113,21 @@ class _JsonlAppendCounter:
         try:
             with self.path.open('rb') as f:
                 f.seek(self.offset)
-                chunk = f.read()
-                if chunk:
-                    new_lines = chunk.count(b'\n')
+                remaining = max(0, max_read_bytes)
+                # Stream reads in chunks to keep memory bounded.
+                while remaining > 0:
+                    read_size = min(256 * 1024, remaining)
+                    chunk = f.read(read_size)
+                    if not chunk:
+                        break
+                    remaining -= len(chunk)
+                    new_lines += chunk.count(b'\n')
+
+                if new_lines:
                     self.total_lines += new_lines
-                    self.offset = f.tell()
+
+                # Always advance offset by how much we actually read.
+                self.offset = f.tell()
         except OSError:
             return 0, self.total_lines
 
@@ -130,6 +144,13 @@ class TelemetryConfig:
 
     # Data source
     data_dir: Path
+
+    # Density aggregation
+    density_slice_sec: float
+
+    # Performance knobs
+    active_jsonl_rescan_sec: float
+    jsonl_max_read_bytes_per_poll: int
 
 
 def load_config(module_file: Path) -> TelemetryConfig:
@@ -151,11 +172,22 @@ def load_config(module_file: Path) -> TelemetryConfig:
         str(repo_root / 'logs' / 'data' / 'calamum'),
     ))
 
+    density_slice_sec = float(os.getenv('CALAMUM_DENSITY_SLICE_SEC', '15'))
+
+    active_jsonl_rescan_sec = float(os.getenv('CALAMUM_ACTIVE_JSONL_RESCAN_SEC', '3.0'))
+    try:
+        jsonl_max_read_bytes_per_poll = int(os.getenv('CALAMUM_JSONL_MAX_READ_BYTES', '2000000'))
+    except Exception:
+        jsonl_max_read_bytes_per_poll = 2_000_000
+
     return TelemetryConfig(
         watchdog_heartbeat_path=wd_hb,
         observer_heartbeat_path=obs_hb,
         freshness_sec=freshness_sec,
         data_dir=data_dir,
+        density_slice_sec=density_slice_sec,
+        active_jsonl_rescan_sec=active_jsonl_rescan_sec,
+        jsonl_max_read_bytes_per_poll=jsonl_max_read_bytes_per_poll,
     )
 
 
@@ -164,13 +196,25 @@ class TelemetryProvider:
         self.config = config
         self._counter = _JsonlAppendCounter()
         self._density_window: List[int] = [0] * 12
+        self._slice_started_ts: float = _now_ts()
+        self._slice_count: int = 0
+        self._active_jsonl_cache: Optional[Path] = None
+        self._active_jsonl_last_scan_ts: float = 0.0
 
     def reset_watchdog(self) -> None:
         """Touch the watchdog heartbeat marker (used by dashboard reset control)."""
         _safe_touch(self.config.watchdog_heartbeat_path)
 
     def _pick_active_jsonl(self) -> Optional[Path]:
-        return _newest_jsonl(self.config.data_dir)
+        now = _now_ts()
+        # Avoid glob+stat on every tick; it can get expensive with many JSONL files.
+        interval = float(max(0.25, self.config.active_jsonl_rescan_sec))
+        if self._active_jsonl_cache is not None and (now - self._active_jsonl_last_scan_ts) < interval:
+            return self._active_jsonl_cache
+
+        self._active_jsonl_last_scan_ts = now
+        self._active_jsonl_cache = _newest_jsonl(self.config.data_dir)
+        return self._active_jsonl_cache
 
     def update(self) -> dict:
         """Collect a telemetry snapshot.
@@ -194,10 +238,19 @@ class TelemetryProvider:
         # Data file (JSONL) for records/density + fallback observer liveness
         active_jsonl = self._pick_active_jsonl()
         self._counter.set_path(active_jsonl)
-        new_lines, total_lines = self._counter.poll()
+        new_lines, total_lines = self._counter.poll(max_read_bytes=self.config.jsonl_max_read_bytes_per_poll)
 
-        # Density window (0-100 normalized per rolling max)
-        self._density_window = (self._density_window[1:] + [int(new_lines)])[-12:]
+        # Density window: aggregate new lines into coarse time slices so the
+        # histogram is less twitchy and better represents “volume over time”.
+        self._slice_count += int(new_lines)
+        slice_sec = float(max(0.25, self.config.density_slice_sec))
+        elapsed = now - self._slice_started_ts
+        if elapsed >= slice_sec:
+            self._density_window = (self._density_window[1:] + [int(self._slice_count)])[-12:]
+            self._slice_started_ts = now
+            self._slice_count = 0
+
+        # Density bins (0-100 normalized per rolling max)
         denom = max(self._density_window) if max(self._density_window) > 0 else 1
         density_bins = [int(min(100, round((x / denom) * 100))) for x in self._density_window]
 
@@ -214,6 +267,8 @@ class TelemetryProvider:
             'new_records': int(new_lines),
             'total_records': int(total_lines),
             'density_bins': density_bins,
+            'density_raw_window': list(self._density_window),
+            'density_slice_sec': float(self.config.density_slice_sec),
             'watchdog_active': bool(watchdog_active),
             'observer_active': bool(observer_active),
             'active_jsonl_path': str(active_jsonl) if active_jsonl is not None else None,
