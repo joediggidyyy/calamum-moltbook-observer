@@ -131,6 +131,13 @@ class _JsonlAppendCounter:
             # If we can't stat the file (locked?), return 0 new lines but KEEP total.
             return 0, self.total_lines
 
+        # FALSE TRUNCATION GUARD:
+        # On Windows, a locked file may report size 0 without raising OSError.
+        # If we were tracking a non-empty file and it suddenly reads 0, ignore it.
+        # We assume active append-only logs don't truncate to 0 in-place.
+        if current_size == 0 and self.last_size > 0:
+            return 0, self.total_lines
+
         # Handle rotation/truncation
         if current_size < self.last_size:
             self.last_size = 0
@@ -216,6 +223,7 @@ class TelemetryProvider:
         self._slice_count: int = 0
         self._active_jsonl_cache: Optional[Path] = None
         self._active_jsonl_last_scan_ts: float = 0.0
+        self._active_path_high_water_mtime: float = 0.0
 
     def reset_watchdog(self) -> None:
         """Touch the watchdog heartbeat marker (used by dashboard reset control)."""
@@ -233,6 +241,23 @@ class TelemetryProvider:
         self._active_jsonl_last_scan_ts = now
         new_pick = _newest_jsonl(self.config.data_dir)
 
+        # MONOTONIC GUARD: Prevent flapping to older files during Windows locking.
+        # If the active file is locked, glob/stat may return 0 or miss it, choosing an old file.
+        if new_pick is not None and self._active_jsonl_cache is not None:
+             if new_pick != self._active_jsonl_cache:
+                 try:
+                     new_mtime = new_pick.stat().st_mtime
+                     # If the new pick is older than the high-water mark of our current file,
+                     # assume the current file is ghosting/locked and stick with it.
+                     if new_mtime < self._active_path_high_water_mtime:
+                         new_pick = self._active_jsonl_cache
+                     else:
+                         # Valid switch to a newer file; reset high water logic for the new file.
+                         self._active_path_high_water_mtime = new_mtime
+                 except OSError:
+                     # If we can't stat the new pick, it's unsafe to switch.
+                     new_pick = self._active_jsonl_cache
+
         # Persistence override: if scan fails (transient Windows locking on dir),
         # always prefer the cache over returning None/0.
         if new_pick is None:
@@ -248,6 +273,16 @@ class TelemetryProvider:
              return canary
 
         self._active_jsonl_cache = new_pick
+        
+        # Update high-water mark if possible
+        if self._active_jsonl_cache:
+             try:
+                 ts = self._active_jsonl_cache.stat().st_mtime
+                 if ts > self._active_path_high_water_mtime:
+                     self._active_path_high_water_mtime = ts
+             except OSError:
+                 pass
+                 
         return self._active_jsonl_cache
 
     def update(self) -> dict:

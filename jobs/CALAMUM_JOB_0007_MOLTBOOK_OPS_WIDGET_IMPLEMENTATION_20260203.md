@@ -19,6 +19,7 @@ Implementation of the "Ghost Console" ops dashboard for the Calamum Moltbook Obs
 - [x] Phase 2: Live Wire (Data)
 - [x] Phase 3: Control Surface
 - [x] Phase 4: UX polish (fixed-size canvas, hidden scrollbars, readable system log)
+- [x] Phase 5: MVP Hardening (No-Stub / Real Math / Clean Labels)
 
 ## Artifacts
 - UI backend: `src/ops_dashboard.py`
@@ -31,3 +32,4 @@ Implementation of the "Ghost Console" ops dashboard for the Calamum Moltbook Obs
 ## Notes
 - The UI is served by NiceGUI and launched using Edge app-mode to avoid native-window dependency issues.
 - Density histogram is time-sliced (see `CALAMUM_DENSITY_SLICE_SEC`) to reduce twitchy bar motion.
+Phase 5: MVP Hardening (No-Stub / Real Math / Clean Labels)
