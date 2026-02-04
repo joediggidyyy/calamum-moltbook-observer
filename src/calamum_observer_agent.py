@@ -21,6 +21,8 @@ from datetime import datetime
 from pathlib import Path
 from typing import Any, Dict, Optional, Tuple
 
+from calamum_config import get_calamum_data_dir, get_calamum_control_dir, get_calamum_health_dir
+
 
 def _utc_now_iso() -> str:
     return datetime.utcnow().isoformat() + 'Z'
@@ -67,13 +69,15 @@ class AgentConfig:
 
 
 def load_config(argv_repo_root: Optional[str], mode: str, interval_sec: float, node_id: str) -> AgentConfig:
+    # Use consolidated config
+    data_dir = get_calamum_data_dir()
+    data_dir.mkdir(parents=True, exist_ok=True)
+
+    # We determine repo_root as best effort for back-compat or just use the parent of src
     if argv_repo_root:
         repo_root = Path(argv_repo_root).resolve()
     else:
-        repo_root = _find_repo_root(Path(__file__).resolve())
-
-    data_dir = Path(os.getenv('CALAMUM_DATA_DIR', str(repo_root / 'logs' / 'data' / 'calamum')))
-    data_dir.mkdir(parents=True, exist_ok=True)
+        repo_root = Path(__file__).resolve().parents[1]
 
     if mode.lower() == 'canary':
         output_jsonl = data_dir / 'moltbook_canary_metrics.jsonl'
@@ -81,15 +85,17 @@ def load_config(argv_repo_root: Optional[str], mode: str, interval_sec: float, n
         # Keep a generic filename for future modes
         output_jsonl = data_dir / f'moltbook_{mode.lower()}_metrics.jsonl'
 
-    control_dir = repo_root / 'logs' / 'control' / 'calamum'
+    control_dir = get_calamum_control_dir()
+    control_dir.mkdir(parents=True, exist_ok=True)
 
+    health_dir = get_calamum_health_dir()
     observer_heartbeat = Path(os.getenv(
         'CALAMUM_OBSERVER_HEARTBEAT_PATH',
-        str(repo_root / 'logs' / 'health' / 'calamum_observer.heartbeat'),
+        str(health_dir / 'calamum_observer.heartbeat'),
     ))
     watchdog_heartbeat = Path(os.getenv(
         'CALAMUM_WATCHDOG_HEARTBEAT_PATH',
-        str(repo_root / 'logs' / 'health' / 'calamum_ops_watchdog.heartbeat'),
+        str(health_dir / 'calamum_ops_watchdog.heartbeat'),
     ))
 
     return AgentConfig(

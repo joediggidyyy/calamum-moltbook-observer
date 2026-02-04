@@ -3,6 +3,8 @@ import json
 from pathlib import Path
 from typing import Any, Dict, Optional
 
+from ..calamum_config import get_calamum_control_dir
+
 class CalamumController:
     """
     Interface for controlling the Calamum Moltbook Observer container.
@@ -22,8 +24,7 @@ class CalamumController:
         return cur.parents[0]
 
     def _emit_signal(self, name: str, payload: Optional[dict] = None) -> Path:
-        repo_root = self._find_repo_root()
-        out_dir = repo_root / 'logs' / 'control' / 'calamum'
+        out_dir = get_calamum_control_dir()
         out_dir.mkdir(parents=True, exist_ok=True)
 
         ts = datetime.datetime.utcnow().isoformat() + 'Z'

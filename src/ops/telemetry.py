@@ -21,6 +21,8 @@ from typing import List, Optional, Tuple
 
 import psutil
 
+from ..calamum_config import get_calamum_data_dir, get_calamum_health_dir
+
 
 def _find_repo_root(start: Path) -> Path:
     """Walk upward until a directory containing a `logs/` folder is found."""
@@ -177,23 +179,21 @@ class TelemetryConfig:
 
 
 def load_config(module_file: Path) -> TelemetryConfig:
-    repo_root = _find_repo_root(module_file.resolve())
-
+    # Use consolidated config
+    health_dir = get_calamum_health_dir()
+    
     freshness_sec = float(os.getenv('CALAMUM_FRESHNESS_SEC', '15'))
 
     wd_hb = Path(os.getenv(
         'CALAMUM_WATCHDOG_HEARTBEAT_PATH',
-        str(repo_root / 'logs' / 'health' / 'calamum_ops_watchdog.heartbeat'),
+        str(health_dir / 'calamum_ops_watchdog.heartbeat'),
     ))
     obs_hb = Path(os.getenv(
         'CALAMUM_OBSERVER_HEARTBEAT_PATH',
-        str(repo_root / 'logs' / 'health' / 'calamum_observer.heartbeat'),
+        str(health_dir / 'calamum_observer.heartbeat'),
     ))
 
-    data_dir = Path(os.getenv(
-        'CALAMUM_DATA_DIR',
-        str(repo_root / 'logs' / 'data' / 'calamum'),
-    ))
+    data_dir = get_calamum_data_dir()
 
     density_slice_sec = float(os.getenv('CALAMUM_DENSITY_SLICE_SEC', '15'))
 

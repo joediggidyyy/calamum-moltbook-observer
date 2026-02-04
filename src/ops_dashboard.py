@@ -14,6 +14,7 @@ from typing import Dict, Optional, List, Tuple
 import json
 from ops.controller import controller # Import the controller
 from ops.telemetry import TelemetryProvider, load_config
+from calamum_config import get_calamum_log_dir
 
 # --- CONFIGURATION & THEME ---
 THEME_BG = 'bg-zinc-900'
@@ -43,8 +44,7 @@ def _backend_runtime_log(event: str, data: Optional[dict] = None) -> None:
 
     # Best-effort only: we never want the UI to fail due to logging.
     try:
-        repo_root = _repo_root_for_logs()
-        out_path = repo_root / 'logs' / 'ghost_console_backend.runtime.jsonl'
+        out_path = get_calamum_log_dir() / 'ghost_console_backend.runtime.jsonl'
         out_path.parent.mkdir(parents=True, exist_ok=True)
         with out_path.open('a', encoding='utf-8') as f:
             f.write(json.dumps(record, sort_keys=True) + '\n')
@@ -57,14 +57,7 @@ def _backend_runtime_log(event: str, data: Optional[dict] = None) -> None:
         except Exception:
             pass
 
-    # Fallback: try writing relative to the project root inference.
-    try:
-        out_path = _PROJECT_ROOT.parents[1] / 'logs' / 'ghost_console_backend.runtime.jsonl'
-        out_path.parent.mkdir(parents=True, exist_ok=True)
-        with out_path.open('a', encoding='utf-8') as f:
-            f.write(json.dumps(record, sort_keys=True) + '\n')
-    except Exception:
-        return
+    return # Removed fallback to repo root to enforce isolation logic
 
 
 _LIFECYCLE_HOOKS_INSTALLED = False
@@ -260,10 +253,9 @@ async def ghost_console_js_error(payload: dict) -> dict:
     This helps diagnose cases where the UI appears to "blank" due to a fatal
     ECharts/Vue error that won't surface in server-side Python logs.
     """
-    repo_root = _repo_root_for_logs()
-    out_path = repo_root / 'logs' / 'ghost_console_js_errors.jsonl'
-    err: Optional[str] = None
-    try:
+    # src/ops_dashboard.py -> src
+    src_dir = Path(__file__).resolve().parent
+    out_path = get_calamum_log_dir()
         out_path.parent.mkdir(parents=True, exist_ok=True)
         record = {
             'ts': datetime.now(timezone.utc).isoformat().replace('+00:00', 'Z'),
@@ -317,8 +309,7 @@ def _tail_text_file(path: Path, max_lines: int = 50, max_bytes: int = 200_000) -
 @app.get('/_ghost_console/js_error_tail')
 async def ghost_console_js_error_tail(lines: int = 60) -> dict:
     """Return the last few raw JSONL lines from the client diagnostics log."""
-    repo_root = _repo_root_for_logs()
-    out_path = repo_root / 'logs' / 'ghost_console_js_errors.jsonl'
+    out_path = get_calamum_log_dir() / 'ghost_console_js_errors.jsonl'
     raw = _tail_text_file(out_path, max_lines=lines)
     return {
         'path': str(out_path),
@@ -332,11 +323,11 @@ async def ghost_console_js_error_tail(lines: int = 60) -> dict:
 
 @app.get('/_ghost_console/diag_paths')
 async def ghost_console_diag_paths() -> dict:
-    repo_root = _repo_root_for_logs()
+    log_dir = get_calamum_log_dir()
     return {
-        'repo_root': str(repo_root),
-        'logs_dir_exists': (repo_root / 'logs').exists(),
-        'js_error_path': str(repo_root / 'logs' / 'ghost_console_js_errors.jsonl'),
+        'active_log_dir': str(log_dir),
+        'logs_dir_exists': log_dir.exists(),
+        'js_error_path': str(log_dir / 'ghost_console_js_errors.jsonl'),
     }
 
 
