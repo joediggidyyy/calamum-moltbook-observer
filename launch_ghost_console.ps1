@@ -15,63 +15,90 @@ $BackendStderrLog = Join-Path $BackendLogDir "ghost_console_backend.stderr.log"
 
 Write-Host "[*] Initializing Ghost Console V2..." -ForegroundColor Green
 
+# Default the density slice width to 2 seconds for this appliance UI unless the operator overrides it.
+if (-not $env:CALAMUM_DENSITY_SLICE_SEC -or $env:CALAMUM_DENSITY_SLICE_SEC -eq '0') {
+    $env:CALAMUM_DENSITY_SLICE_SEC = '2'
+}
+
 function Stop-OldGhostConsole {
     param(
         [int]$Port,
-        [string]$BackendProcessIdFile
+        [string]$BackendProcessIdFile,
+        [string]$Url
     )
 
-    # 1) Stop prior instance tracked by PID file (reliable for hidden windows)
-    if (Test-Path $BackendProcessIdFile) {
-        $OldProcessIdRaw = (Get-Content $BackendProcessIdFile -ErrorAction SilentlyContinue | Select-Object -First 1)
-        if ($OldProcessIdRaw -match '^\d+$') {
-            $OldProcessId = [int]$OldProcessIdRaw
-            $OldProc = Get-Process -Id $OldProcessId -ErrorAction SilentlyContinue
-            if ($OldProc) {
-                Write-Host "[!] Stopping previous backend (PID: $OldProcessId)..." -ForegroundColor Yellow
-                Stop-Process -Id $OldProcessId -Force -ErrorAction SilentlyContinue
-                Start-Sleep -Milliseconds 300
-            }
-        }
-        Remove-Item $BackendProcessIdFile -Force -ErrorAction SilentlyContinue
+    Write-Host "[*] Executing cleanup sequence (NUCLEAR)..." -ForegroundColor Cyan
+
+    # Helper to kill via TaskKill for reliability
+    function Kill-ByPid ($pidVal, $name) {
+        if (-not $pidVal -or $pidVal -le 0) { return }
+        Write-Host "    -> Terminating $name (PID: $pidVal)..." -ForegroundColor Yellow
+        # Try Stop-Process first
+        Stop-Process -Id $pidVal -Force -ErrorAction SilentlyContinue
+        # Double tap with TaskKill (handles stuck overlay/zombie windows better)
+        cmd.exe /c "taskkill /F /PID $pidVal >NUL 2>&1"
     }
 
-    # 2) If port is still in use, stop the owning process
-    # 2a) Stop any python process that appears to be running this dashboard (command line match)
+    # 1. Kill the specific process holding our port (The only source of truth for the active backend)
     try {
-        $dashProcs = Get-CimInstance Win32_Process -ErrorAction SilentlyContinue |
-            Where-Object {
-                $_.Name -match '^python(\.exe)?$' -and
-                $_.CommandLine -and
-                ($_.CommandLine -match 'calamum-moltbook-observer') -and
-                ($_.CommandLine -match 'ops_dashboard\.py')
-            }
-        foreach ($p in $dashProcs) {
-            Write-Host "[!] Stopping dashboard python (PID: $($p.ProcessId))..." -ForegroundColor Yellow
-            Stop-Process -Id $p.ProcessId -Force -ErrorAction SilentlyContinue
-        }
-    } catch {
-        # best-effort
-    }
-
-    # 2b) If port is still in use, stop the owning process(es) until freed
-    try {
-        $deadline = (Get-Date).AddSeconds(8)
-        while ((Get-Date) -lt $deadline) {
-            $listeners = Get-NetTCPConnection -LocalPort $Port -State Listen -ErrorAction SilentlyContinue
-            if (-not $listeners) { break }
-
+        $listeners = Get-NetTCPConnection -LocalPort $Port -State Listen -ErrorAction SilentlyContinue
+        if ($listeners) {
             $owning = $listeners | Select-Object -ExpandProperty OwningProcess -Unique
-            foreach ($processId in $owning) {
-                if ($processId) {
-                    Write-Host "[!] Port $Port in use. Stopping listener PID: $processId..." -ForegroundColor Yellow
-                    Stop-Process -Id $processId -Force -ErrorAction SilentlyContinue
-                }
+            foreach ($pidVal in $owning) {
+                Kill-ByPid $pidVal "Port Owner"
             }
+            # Give OS time to close the socket
             Start-Sleep -Milliseconds 500
         }
     } catch {
-        # If Get-NetTCPConnection isn't available, we'll just proceed; handshake below will catch failures.
+       Write-Host "[!] Warning: Could not enumerate port ${Port}: $_" -ForegroundColor DarkGray
+    }
+
+    # Helper safely get processes
+    $GetProcs = {
+        $p = @()
+        try { $p += Get-CimInstance Win32_Process -ErrorAction Stop } catch {
+            try { $p += Get-WmiObject Win32_Process -ErrorAction SilentlyContinue } catch {}
+        }
+        return $p
+    }
+
+    # 2. Sweep for any remaining Python backends (Zombie check)
+    try {
+        $allProcs = & $GetProcs
+        $dashProcs = $allProcs | Where-Object {
+            $_.Name -match '^python' -and
+            $_.CommandLine -and
+            ($_.CommandLine -match 'ops_dashboard')
+        }
+        foreach ($p in $dashProcs) {
+            Kill-ByPid $p.ProcessId "Zombie Backend"
+        }
+    } catch { }
+
+    # 3. Sweep for any Edge app windows for this URL
+    try {
+        if ($Url) {
+            # Normalize for regex: escape special chars
+            $safeUrlKey = [regex]::Escape($Url)
+            
+            $allProcs = & $GetProcs
+            $edgeProcs = $allProcs | Where-Object {
+                $_.Name -match '^msedge' -and
+                $_.CommandLine -and
+                ($_.CommandLine -match "--app=.*$safeUrlKey")
+            }
+            foreach ($p in $edgeProcs) {
+                Kill-ByPid $p.ProcessId "Zombie Frontend"
+            }
+            # Wait for windows to actually close
+            Start-Sleep -Milliseconds 500
+        }
+    } catch { }
+    
+    # 4. Cleanup the PID file
+    if (Test-Path $BackendProcessIdFile) {
+        Remove-Item $BackendProcessIdFile -Force -ErrorAction SilentlyContinue
     }
 }
 
@@ -136,7 +163,7 @@ public static class Win32 {
 }
 
 # 1. Stop any prior Ghost Console backend so changes actually take effect
-Stop-OldGhostConsole -Port $Port -BackendProcessIdFile $BackendProcessIdFile
+Stop-OldGhostConsole -Port $Port -BackendProcessIdFile $BackendProcessIdFile -Url $Url
 
 # Confirm port is free before starting a new backend
 try {

@@ -5,9 +5,9 @@ import os
 import random
 import asyncio
 import time
+import sys
 import atexit
 import signal
-import sys
 import traceback
 from pathlib import Path
 from typing import Dict, Optional, List, Tuple
@@ -20,14 +20,13 @@ THEME_BG = 'bg-zinc-900'
 THEME_FG = 'text-gray-300'
 THEME_ACCENT = 'border-gray-600'
 THEME_FONT = 'font-mono'
-
 # Visible build stamp to confirm the UI is served by the latest backend instance.
 # (Helps diagnose cases where a hidden old process keeps running and the launcher can't bind the port.)
-BUILD_STAMP = '2026-02-04'
+
+BUILD_STAMP = datetime.now(timezone.utc).strftime('%Y-%m-%d')
 
 # Unique per-backend-process id. Used to correlate client reloads with server restarts.
 SERVER_BOOT_ID = f"{int(time.time() * 1000)}-{random.randint(1000, 9999)}"
-
 
 def _backend_runtime_log(event: str, data: Optional[dict] = None) -> None:
     """Append a small runtime record for correlating restarts/crashes.
@@ -184,7 +183,8 @@ class SystemState:
         self.log_items: List[Tuple[int, str]] = []  # (seq, line)
         self.density_bins = [0] * 12
         self.density_raw_window = [0] * 12
-        self.density_slice_sec = 15.0
+        # Default: 2s time slices (can be overridden by telemetry config/env).
+        self.density_slice_sec = 2.0
         self.watchdog_active = True
         self.watchdog_last_reset = datetime.now()
         self._last_obs_active: Optional[bool] = None
@@ -205,7 +205,8 @@ def add_log(msg: str) -> None:
 
     NOTE: UI rendering is client-side via polling to avoid websocket churn.
     """
-    ts = datetime.now().strftime('%H:%M')
+    # Keep the timestamp short but include seconds so motion is visible.
+    ts = datetime.now().strftime('%H:%M:%S')
     line = f"{ts} {msg}"
     state.log_seq += 1
     state.log_items.append((state.log_seq, line))
@@ -867,7 +868,14 @@ def main_page():
                 right: var(--cids-deck-right, 0px);
                 bottom: var(--cids-deck-bottom, 0px);
                 width: var(--cids-deck-width, 300px);
-                transform: translateX(100%);
+                /*
+                 * When the surface is centered, right != 0 (it equals the stage gutter).
+                 * A plain translateX(100%) would slide the deck into that gutter and it will
+                 * still be visible when "closed" on wide screens.
+                 *
+                 * Add the gutter to the slide distance so the closed deck is fully off-viewport.
+                 */
+                transform: translateX(calc(100% + var(--cids-deck-right, 0px)));
                 transition: transform 160ms ease;
                 z-index: 60;
                 pointer-events: none;
@@ -897,6 +905,10 @@ def main_page():
                 animation: cidsFlash 0.35s ease-out 1;
                 padding: 1px 0;
             }
+
+            /* Subtle zebra shading so movement is visible without heavy timestamps. */
+            .cids-log-zebra-even { opacity: 0.92; }
+            .cids-log-zebra-odd { opacity: 0.80; }
 
             /*
              * Prevent long unbroken log lines (paths, hashes) from influencing flex min-content sizing.
@@ -946,6 +958,51 @@ def main_page():
                 right: auto !important;
                 margin-left: 0 !important;
                 transform: none !important;
+            }
+
+            /*
+             * Integrity radar containment clamp:
+             * We have observed cases where the radar chart's paint surface (canvas)
+             * is translated roughly by one column width, visually "mounting" the
+             * left chart on the right wall while DOM ancestry remains correct.
+             *
+             * These rules are intentionally narrow and only target the integrity
+             * chart subtree.
+             */
+            #cids-integrity-wrap {
+                position: relative !important;
+                overflow: hidden !important;
+                isolation: isolate;
+                contain: layout paint size;
+            }
+            #cids-integrity-radar-chart {
+                position: relative !important;
+                left: 0 !important;
+                top: 0 !important;
+                right: auto !important;
+                bottom: auto !important;
+                margin: 0 !important;
+                transform: none !important;
+                max-width: 100% !important;
+                max-height: 100% !important;
+                overflow: hidden !important;
+            }
+            #cids-integrity-radar-chart > div {
+                left: 0 !important;
+                top: 0 !important;
+                right: auto !important;
+                bottom: auto !important;
+                margin: 0 !important;
+                transform: none !important;
+                max-width: 100% !important;
+                max-height: 100% !important;
+            }
+            #cids-integrity-radar-chart canvas {
+                left: 0 !important;
+                top: 0 !important;
+                transform: none !important;
+                max-width: 100% !important;
+                max-height: 100% !important;
             }
         </style>
     ''')
@@ -1209,6 +1266,36 @@ def main_page():
                     }
                 }
 
+                function styleProbe(el) {
+                    try {
+                        if (!el || !window.getComputedStyle) return null;
+                        var cs = window.getComputedStyle(el);
+                        return {
+                            position: cs.position,
+                            display: cs.display,
+                            left: cs.left,
+                            right: cs.right,
+                            top: cs.top,
+                            bottom: cs.bottom,
+                            width: cs.width,
+                            height: cs.height,
+                            minWidth: cs.minWidth,
+                            minHeight: cs.minHeight,
+                            maxWidth: cs.maxWidth,
+                            maxHeight: cs.maxHeight,
+                            marginLeft: cs.marginLeft,
+                            marginRight: cs.marginRight,
+                            marginTop: cs.marginTop,
+                            marginBottom: cs.marginBottom,
+                            transform: cs.transform,
+                            overflowX: cs.overflowX,
+                            overflowY: cs.overflowY
+                        };
+                    } catch (e) {
+                        return null;
+                    }
+                }
+
                 function countSel(sel) {
                     try {
                         if (!document || !document.querySelectorAll) return null;
@@ -1448,6 +1535,21 @@ def main_page():
                 setInterval(function() {
                     try {
                         var now = Date.now();
+                        // Keep the diagnostics stream small so the tail endpoint (bounded by bytes)
+                        // retains rare events like chart_mount / chart_lookup / echarts_module.
+                        // Full layout probes are only sent periodically or when forced.
+                        var includeProbe = false;
+                        try {
+                            var lastFull = Number(window.__cids_alive_full_ts || 0);
+                            var forceFull = !!window.__cids_force_alive_full;
+                            includeProbe = forceFull || !isFinite(lastFull) || (now - lastFull) > 30000;
+                            if (includeProbe) {
+                                window.__cids_alive_full_ts = now;
+                                window.__cids_force_alive_full = false;
+                            }
+                        } catch (eProbeCtl) {
+                            includeProbe = false;
+                        }
                         var serverTick = window.__cids_server_tick;
                         var serverTickAge = (serverTick && typeof serverTick === 'number') ? (now - serverTick) : null;
                         var x = Math.floor(window.innerWidth * 0.5);
@@ -1528,63 +1630,93 @@ def main_page():
                             rootStyle = null;
                         }
 
-                        var gridEl = null;
-                        var rightColEl = null;
-                        try { gridEl = document.getElementById('cids-main-grid'); } catch (eG) { gridEl = null; }
-                        try { rightColEl = document.getElementById('cids-right-col'); } catch (eR) { rightColEl = null; }
-
-                        var logEl = null;
-                        var denEl = null;
-                        try { logEl = document.getElementById('cids-log-scroll'); } catch (eL) { logEl = null; }
-                        try { denEl = document.getElementById('cids-density-root'); } catch (eD) { denEl = null; }
-
-                        var logOP = null;
-                        var denOP = null;
-                        try { logOP = logEl ? logEl.offsetParent : null; } catch (eLOP) { logOP = null; }
-                        try { denOP = denEl ? denEl.offsetParent : null; } catch (eDOP) { denOP = null; }
-
-                        var docMetrics = null;
-                        try {
-                            var de = document.documentElement;
-                            docMetrics = {
-                                scrollX: (window && window.scrollX !== undefined) ? Number(window.scrollX) : null,
-                                scrollY: (window && window.scrollY !== undefined) ? Number(window.scrollY) : null,
-                                clientW: de ? Number(de.clientWidth) : null,
-                                clientH: de ? Number(de.clientHeight) : null,
-                                scrollW: de ? Number(de.scrollWidth) : null,
-                                scrollH: de ? Number(de.scrollHeight) : null
-                            };
-                        } catch (eDM) {
-                            docMetrics = null;
-                        }
-
-                        // Control Deck anchoring probe (is it still positioned relative to the root?)
-                        var deckProbe = null;
-                        try {
-                            var deck = document.getElementById('cids-control-deck');
-                            var bd = document.getElementById('cids-control-deck-backdrop');
-                            var op = null;
-                            try { op = deck ? deck.offsetParent : null; } catch (eOP) { op = null; }
-                            deckProbe = {
-                                deck_rect: safeRect(deck),
-                                backdrop_rect: safeRect(bd),
-                                offset_parent: op ? {
-                                    tag: op.tagName ? String(op.tagName) : null,
-                                    id: op.id ? String(op.id) : null,
-                                    cls: op.className ? truncate(String(op.className), 220) : null,
-                                    rect: safeRect(op)
-                                } : null
-                            };
-                        } catch (eDP) {
-                            deckProbe = null;
-                        }
-
-                        post('client_alive', {
+                        var alivePayload = {
                             build: %s,
                             server_tick_age_ms: serverTickAge,
                             top_at_point: top,
-                            root_style: rootStyle,
-                            layout_probe: {
+                            root_style: rootStyle
+                        };
+
+                        if (includeProbe) {
+                            var gridEl = null;
+                            var rightColEl = null;
+                            try { gridEl = document.getElementById('cids-main-grid'); } catch (eG) { gridEl = null; }
+                            try { rightColEl = document.getElementById('cids-right-col'); } catch (eR) { rightColEl = null; }
+
+                            var logEl = null;
+                            var denEl = null;
+                            try { logEl = document.getElementById('cids-log-scroll'); } catch (eL) { logEl = null; }
+                            try { denEl = document.getElementById('cids-density-chart'); } catch (eD) { denEl = null; }
+
+                            var logOP = null;
+                            var denOP = null;
+                            try { logOP = logEl ? logEl.offsetParent : null; } catch (eLOP) { logOP = null; }
+                            try { denOP = denEl ? denEl.offsetParent : null; } catch (eDOP) { denOP = null; }
+
+                            var docMetrics = null;
+                            try {
+                                var de = document.documentElement;
+                                docMetrics = {
+                                    scrollX: (window && window.scrollX !== undefined) ? Number(window.scrollX) : null,
+                                    scrollY: (window && window.scrollY !== undefined) ? Number(window.scrollY) : null,
+                                    clientW: de ? Number(de.clientWidth) : null,
+                                    clientH: de ? Number(de.clientHeight) : null,
+                                    scrollW: de ? Number(de.scrollWidth) : null,
+                                    scrollH: de ? Number(de.scrollHeight) : null
+                                };
+                            } catch (eDM) {
+                                docMetrics = null;
+                            }
+
+                            // Control Deck anchoring probe (is it still positioned correctly, and are its children in-frame?)
+                            var deckProbe = null;
+                            try {
+                                var deck = document.getElementById('cids-control-deck');
+                                var bd = document.getElementById('cids-control-deck-backdrop');
+                                var body = document.getElementById('cids-deck-body');
+                                var statusBadge = document.getElementById('cids-status-badge');
+
+                                var op = null;
+                                try { op = deck ? deck.offsetParent : null; } catch (eOP) { op = null; }
+
+                                var bodyOP = null;
+                                try { bodyOP = body ? body.offsetParent : null; } catch (eBOP) { bodyOP = null; }
+
+                                var statusOP = null;
+                                try { statusOP = statusBadge ? statusBadge.offsetParent : null; } catch (eSOP) { statusOP = null; }
+
+                                deckProbe = {
+                                    deck_rect: safeRect(deck),
+                                    backdrop_rect: safeRect(bd),
+                                    offset_parent: op ? {
+                                        tag: op.tagName ? String(op.tagName) : null,
+                                        id: op.id ? String(op.id) : null,
+                                        cls: op.className ? truncate(String(op.className), 220) : null,
+                                        rect: safeRect(op)
+                                    } : null,
+                                    body_rect: safeRect(body),
+                                    body_style: elStyleProbe(body),
+                                    body_offset_parent: bodyOP ? {
+                                        tag: bodyOP.tagName ? String(bodyOP.tagName) : null,
+                                        id: bodyOP.id ? String(bodyOP.id) : null,
+                                        cls: bodyOP.className ? truncate(String(bodyOP.className), 220) : null,
+                                        rect: safeRect(bodyOP)
+                                    } : null,
+                                    status_badge_rect: safeRect(statusBadge),
+                                    status_badge_style: elStyleProbe(statusBadge),
+                                    status_badge_offset_parent: statusOP ? {
+                                        tag: statusOP.tagName ? String(statusOP.tagName) : null,
+                                        id: statusOP.id ? String(statusOP.id) : null,
+                                        cls: statusOP.className ? truncate(String(statusOP.className), 220) : null,
+                                        rect: safeRect(statusOP)
+                                    } : null,
+                                    status_badge_ancestors: ancestorProbe(statusBadge, 6)
+                                };
+                            } catch (eDP) {
+                                deckProbe = null;
+                            }
+
+                            alivePayload.layout_probe = {
                                 stage_rect: safeRect(document.getElementById('cids-scale-stage')),
                                 root_rect: safeRect(document.getElementById('cids-scale-root')),
                                 main_grid_rect: safeRect(gridEl),
@@ -1611,7 +1743,7 @@ def main_page():
                                     cids_scale_root: countSel('#cids-scale-root'),
                                     cids_main_grid: countSel('#cids-main-grid'),
                                     cids_right_col: countSel('#cids-right-col'),
-                                    cids_density_root: countSel('#cids-density-root'),
+                                    cids_density_chart: countSel('#cids-density-chart'),
                                     cids_log_scroll: countSel('#cids-log-scroll')
                                 },
                                 doc_metrics: docMetrics,
@@ -1627,8 +1759,10 @@ def main_page():
                                 })(),
                                 control_deck: deckProbe,
                                 styles: computedStyleSnapshot()
-                            }
-                        });
+                            };
+                        }
+
+                        post('client_alive', alivePayload);
                     } catch (e2) {
                         // swallow
                         post('client_alive', { build: %s });
@@ -1760,6 +1894,19 @@ def main_page():
                         } catch (eG) { }
 
                         if (fixes.length) {
+                            // If charts are mounted, ask them to recompute geometry after enforcement.
+                            // This is especially important when the framework briefly applies transforms
+                            // or padding adjustments that can confuse ECharts' internal canvas placement.
+                            try {
+                                if (window.__cids_resize_charts) {
+                                    setTimeout(function() {
+                                        try { window.__cids_resize_charts(); } catch (eRZ) { }
+                                    }, 60);
+                                }
+                            } catch (eRZ0) {
+                                // swallow
+                            }
+
                             var after = computedStyleSnapshot();
                             var stageRect = safeRect(document.getElementById('cids-scale-stage'));
                             var key = JSON.stringify({ fixes: fixes, stage: stageRect, after: after });
@@ -1958,59 +2105,51 @@ def main_page():
     # Client-side polling loop (avoids websocket diff churn which was correlated with UI blanking)
     poll_ms = int(os.getenv('CALAMUM_CLIENT_POLL_MS', '1500'))
     log_poll_ms = int(os.getenv('CALAMUM_CLIENT_LOG_POLL_MS', '1000'))
-    ui.add_head_html(f'''
+    ui.add_head_html((
+        '''
         <script>
-            (function() {{
+            (function() {
                 if (window.__cids_poll_bound) return;
                 window.__cids_poll_bound = true;
 
-                var POLL_MS = {poll_ms};
-                var LOG_POLL_MS = {log_poll_ms};
+                var POLL_MS = __CIDS_POLL_MS__;
+                var LOG_POLL_MS = __CIDS_LOG_POLL_MS__;
                 var logAfter = 0;
                 var snapBusy = false;
                 var logBusy = false;
 
-                function byId(id) {{
-                    try {{ return document.getElementById(id); }} catch (e) {{ return null; }}
-                }}
+                function byId(id) {
+                    try { return document.getElementById(id); } catch (e) { return null; }
+                }
 
-                function pad2(n) {{
+                function pad2(n) {
                     n = Number(n || 0);
                     return (n < 10 ? '0' : '') + String(n);
-                }}
+                }
 
-                function fmtInt(n) {{
-                    try {{
+                function fmtInt(n) {
+                    try {
                         n = Number(n || 0);
                         if (!isFinite(n)) n = 0;
                         var s = String(Math.floor(n));
                         var out = '';
-                        while (s.length > 3) {{
+                        while (s.length > 3) {
                             out = ',' + s.slice(-3) + out;
                             s = s.slice(0, -3);
-                        }}
+                        }
                         return s + out;
-                    }} catch (e) {{
+                    } catch (e) {
                         return String(n);
-                    }}
-                }}
+                    }
+                }
 
-                function setText(id, text) {{
+                function setText(id, text) {
                     var el = byId(id);
                     if (!el) return;
                     el.textContent = String(text);
-                }}
+                }
 
-                function setBar(id, v) {{
-                    var el = byId(id);
-                    if (!el) return;
-                    var x = Number(v || 0);
-                    if (!isFinite(x)) x = 0;
-                    x = Math.max(0, Math.min(100, x));
-                    el.style.width = String(x) + '%';
-                }}
-
-                function setBadge(id, text, colorName) {{
+                function setBadge(id, text, colorName) {
                     var el = byId(id);
                     if (!el) return;
                     el.textContent = String(text);
@@ -2021,94 +2160,819 @@ def main_page():
                     else if (colorName === 'green') bg = '#065f46';
                     el.style.backgroundColor = bg;
                     el.style.color = '#ffffff';
-                }}
+                }
 
-                function toPoints(arr, w, h) {{
-                    try {{
-                        if (!arr || !arr.length) return '';
-                        var n = arr.length;
-                        var pts = [];
-                        for (var i = 0; i < n; i++) {{
-                            var v = Number(arr[i]);
-                            if (!isFinite(v)) v = 0;
-                            v = Math.max(0, Math.min(100, v));
-                            var x = (n <= 1) ? 0 : (i / (n - 1)) * w;
-                            var y = h - (v / 100.0) * h;
-                            pts.push(x.toFixed(1) + ',' + y.toFixed(1));
-                        }}
-                        return pts.join(' ');
-                    }} catch (e) {{
-                        return '';
-                    }}
-                }}
+                function safeRect(el) {
+                    try {
+                        if (!el || !el.getBoundingClientRect) return null;
+                        var r = el.getBoundingClientRect();
+                        function rr(x) { return Math.round(Number(x || 0) * 100) / 100; }
+                        return {
+                            left: rr(r.left),
+                            top: rr(r.top),
+                            width: rr(r.width),
+                            height: rr(r.height),
+                            right: rr(r.right),
+                            bottom: rr(r.bottom)
+                        };
+                    } catch (e) {
+                        return null;
+                    }
+                }
 
-                function bindLogFollow() {{
-                    var el = byId('cids-log-scroll');
-                    if (!el || el.dataset.bound === '1') return;
-                    el.dataset.bound = '1';
-                    el.dataset.follow = '1';
-                    el.scrollTop = 0;
-                    var onScroll = function() {{
-                        try {{
-                            var nearTop = el.scrollTop < 20;
-                            el.dataset.follow = nearTop ? '1' : '0';
-                        }} catch (e) {{
+                function ancestorChain(el, depth) {
+                    try {
+                        var out = [];
+                        var cur = el;
+                        var n = Number(depth || 0);
+                        if (!isFinite(n) || n < 1) n = 1;
+                        if (n > 8) n = 8;
+                        for (var i = 0; i < n; i++) {
+                            if (!cur) break;
+                            out.push({
+                                tag: cur.tagName ? String(cur.tagName) : null,
+                                id: cur.id ? String(cur.id) : null,
+                                cls: cur.className ? String(cur.className).slice(0, 180) : null,
+                                rect: safeRect(cur)
+                            });
+                            try { cur = cur.parentElement; } catch (eP) { cur = null; }
+                        }
+                        return out;
+                    } catch (e) {
+                        return null;
+                    }
+                }
+
+                function postDiag(kind, data) {
+                    try {
+                        if (window.__cids_post_diag) {
+                            window.__cids_post_diag(String(kind), data || {});
+                        }
+                    } catch (e) {
+                        // swallow
+                    }
+                }
+
+                function postDiagThrottled(kind, key, data, minMs) {
+                    try {
+                        var now = Date.now();
+                        var ms = Number(minMs || 0);
+                        if (!isFinite(ms) || ms < 0) ms = 0;
+                        if (!window.__cids_diag_throttle) window.__cids_diag_throttle = {};
+                        var last = Number(window.__cids_diag_throttle[String(key || kind)] || 0);
+                        if (isFinite(last) && ms && (now - last) < ms) return;
+                        window.__cids_diag_throttle[String(key || kind)] = now;
+                        postDiag(kind, data || {});
+                    } catch (e) {
+                        // swallow
+                    }
+                }
+
+                // ECharts wiring (stable under polling; no websocket diffs)
+                function getEChart(id) {
+                    try {
+                        var el = byId(id);
+                        if (!el) return null;
+
+                        // NiceGUI does not expose `window.echarts`. However, the bundled module
+                        // `nicegui-echart` *does* export `echarts`. Load it once and cache it on
+                        // `window` so our polling loop can call `getInstanceByDom` reliably.
+                        function ensureEChartsModule() {
+                            try {
+                                if (window.__cids_echarts_ref && typeof window.__cids_echarts_ref.getInstanceByDom === 'function') return;
+                                if (window.__cids_echarts_loading) return;
+                                window.__cids_echarts_loading = true;
+
+                                function looksLikeECharts(obj) {
+                                    try {
+                                        return !!(obj && typeof obj.getInstanceByDom === 'function' && typeof obj.init === 'function');
+                                    } catch (e) {
+                                        return false;
+                                    }
+                                }
+
+                                function tryFindEChartsRef() {
+                                    try {
+                                        // Fast-path common globals
+                                        try { if (looksLikeECharts(window.echarts)) return { via: 'window.echarts', ref: window.echarts }; } catch (e0) { }
+                                        try { if (looksLikeECharts(window._echarts)) return { via: 'window._echarts', ref: window._echarts }; } catch (e1) { }
+                                        try { if (looksLikeECharts(window.__echarts)) return { via: 'window.__echarts', ref: window.__echarts }; } catch (e2) { }
+
+                                        // Scan for any window prop that looks like an ECharts export.
+                                        // Keep this bounded; we only do it occasionally.
+                                        var names = [];
+                                        try { names = Object.getOwnPropertyNames(window); } catch (eN) { names = []; }
+
+                                        // First pass: names containing 'echarts'
+                                        for (var i = 0; i < names.length && i < 1200; i++) {
+                                            var nm = String(names[i] || '');
+                                            if (!nm) continue;
+                                            var low = nm.toLowerCase();
+                                            if (low.indexOf('echarts') < 0) continue;
+                                            var v = null;
+                                            try { v = window[nm]; } catch (eV) { v = null; }
+                                            if (looksLikeECharts(v)) return { via: 'window.' + nm, ref: v };
+                                        }
+
+                                        // Second pass: small bounded scan for objects with getInstanceByDom/init.
+                                        // (Some builds expose it under a short, non-obvious global.)
+                                        for (var j = 0; j < names.length && j < 260; j++) {
+                                            var nm2 = String(names[j] || '');
+                                            if (!nm2) continue;
+                                            var v2 = null;
+                                            try { v2 = window[nm2]; } catch (eV2) { v2 = null; }
+                                            if (looksLikeECharts(v2)) return { via: 'window.' + nm2, ref: v2 };
+                                        }
+                                        return null;
+                                    } catch (eAll) {
+                                        return null;
+                                    }
+                                }
+
+                                // Fallback: window-scan (throttled) before attempting module import.
+                                try {
+                                    var now = Date.now();
+                                    var lastScan = Number(window.__cids_echarts_scan_ts || 0);
+                                    if (!isFinite(lastScan)) lastScan = 0;
+                                    if (!lastScan || (now - lastScan) > 20000) {
+                                        window.__cids_echarts_scan_ts = now;
+                                        var found = tryFindEChartsRef();
+                                        if (found && looksLikeECharts(found.ref)) {
+                                            window.__cids_echarts_ref = found.ref;
+                                            window.__cids_echarts_loading = false;
+                                            try {
+                                                postDiag('echarts_ref_found', { via: String(found.via || ''), ok: true });
+                                            } catch (eDiag0) {
+                                                // swallow
+                                            }
+                                            return;
+                                        }
+                                    }
+                                } catch (eScan) {
+                                    // swallow
+                                }
+
+                                // Prove we attempted module wiring (throttled to avoid spam).
+                                try {
+                                    if (!window.__cids_echarts_attempt_ts) window.__cids_echarts_attempt_ts = 0;
+                                    if (!window.__cids_echarts_attempt_ts || (Date.now() - Number(window.__cids_echarts_attempt_ts || 0)) > 15000) {
+                                        window.__cids_echarts_attempt_ts = Date.now();
+                                        postDiag('echarts_module_attempt', {});
+                                    }
+                                } catch (eAttempt) {
+                                    // swallow
+                                }
+
+                                // Safety: clear loading if module resolution hangs.
+                                try {
+                                    setTimeout(function() {
+                                        try {
+                                            if (window.__cids_echarts_loading) {
+                                                window.__cids_echarts_loading = false;
+                                                postDiag('echarts_module_timeout', {});
+                                            }
+                                        } catch (eTO) {
+                                            // swallow
+                                        }
+                                    }, 4000);
+                                } catch (eTO2) {
+                                    // swallow
+                                }
+
+                                // Dynamic import is supported in modern Edge; keep it promise-based (no await).
+                                import('nicegui-echart').then(function(mod) {
+                                    try {
+                                        window.__cids_echarts_ref = (mod && mod.echarts) ? mod.echarts : null;
+                                    } catch (eSet) {
+                                        window.__cids_echarts_ref = null;
+                                    }
+                                    window.__cids_echarts_loading = false;
+                                    try {
+                                        postDiag('echarts_module', {
+                                            ok: !!(window.__cids_echarts_ref && typeof window.__cids_echarts_ref.getInstanceByDom === 'function'),
+                                            has_mod: !!mod,
+                                            keys: (mod && Object && Object.keys) ? Object.keys(mod).slice(0, 8) : null
+                                        });
+                                    } catch (eDiag) {
+                                        // swallow
+                                    }
+                                }).catch(function(err) {
+                                    window.__cids_echarts_loading = false;
+                                    try {
+                                        postDiag('echarts_module_fail', { err: String(err || '') });
+                                    } catch (eDiag2) {
+                                        // swallow
+                                    }
+                                });
+                            } catch (eAll) {
+                                try { window.__cids_echarts_loading = false; } catch (eF) { }
+                            }
+                        }
+
+                        // Trigger module load early; first call may return null, later calls will succeed.
+                        try { ensureEChartsModule(); } catch (eImp) { }
+
+                        function diagLookup(reason, extra) {
+                            try {
+                                var now = Date.now();
+                                if (!window.__cids_chart_lookup_ts) window.__cids_chart_lookup_ts = {};
+                                var last = Number(window.__cids_chart_lookup_ts[id] || 0);
+                                if (isFinite(last) && (now - last) < 5000) return;
+                                window.__cids_chart_lookup_ts[id] = now;
+
+                                var markedCount = null;
+                                try {
+                                    markedCount = 0;
+                                    try {
+                                        // ECharts marks the root container with `_echarts_instance_`.
+                                        if (el && el.getAttribute && el.getAttribute('_echarts_instance_')) {
+                                            markedCount += 1;
+                                        }
+                                    } catch (eM0) {
+                                        // swallow
+                                    }
+                                    try {
+                                        markedCount += (el && el.querySelectorAll) ? el.querySelectorAll('[_echarts_instance_]').length : 0;
+                                    } catch (eM1) {
+                                        // swallow
+                                    }
+                                } catch (eMC) {
+                                    markedCount = null;
+                                }
+
+                                var payload = {
+                                    id: String(id || ''),
+                                    reason: String(reason || ''),
+                                    el_exists: !!el,
+                                    el_rect: safeRect(el),
+                                    marked_count: markedCount
+                                };
+                                try {
+                                    if (extra) {
+                                        for (var k in extra) {
+                                            if (!extra.hasOwnProperty(k)) continue;
+                                            payload[k] = extra[k];
+                                        }
+                                    }
+                                } catch (eX) {
+                                    // swallow
+                                }
+                                postDiag('chart_lookup', payload);
+                            } catch (eD) {
+                                // swallow
+                            }
+                        }
+
+                        // Cache chart instances once found.
+                        try {
+                            if (!window.__cids_chart_inst_cache) window.__cids_chart_inst_cache = {};
+                            var cached = window.__cids_chart_inst_cache[id];
+                            if (cached && typeof cached.setOption === 'function') return cached;
+                        } catch (eCache) {
                             // swallow
-                        }}
-                    }};
-                    el.addEventListener('scroll', onScroll, {{ passive: true }});
-                    onScroll();
-                }}
+                        }
 
-                function appendLogLine(line) {{
-                    var el = byId('cids-log-scroll');
-                    if (!el) return;
-                    var node = document.createElement('div');
-                    node.className = 'w-full cids-log-flash';
-                    if (line.indexOf('[ALERT]') >= 0) node.className += ' text-red-300';
-                    else if (line.indexOf('[WARN]') >= 0 || line.indexOf('[WRN]') >= 0) node.className += ' text-orange-200';
-                    else if (line.indexOf('Ingested +') >= 0) node.className += ' text-emerald-200';
-                    else node.className += ' text-gray-400';
-                    node.textContent = String(line);
-                    if (el.firstChild) el.insertBefore(node, el.firstChild);
-                    else el.appendChild(node);
-                    while (el.childNodes && el.childNodes.length > 220) {{
-                        el.removeChild(el.lastChild);
-                    }}
-                    if (el.dataset.follow === '1') {{
-                        el.scrollTop = 0;
-                    }}
-                }}
+                        function looksLikeChart(inst) {
+                            try {
+                                return !!(inst && typeof inst.setOption === 'function' && typeof inst.resize === 'function');
+                            } catch (e) {
+                                return false;
+                            }
+                        }
 
-                async function pollSnapshot() {{
+                        function tryCache(inst) {
+                            try {
+                                if (!looksLikeChart(inst)) return null;
+                                if (!window.__cids_chart_inst_cache) window.__cids_chart_inst_cache = {};
+                                window.__cids_chart_inst_cache[id] = inst;
+                                return inst;
+                            } catch (e) {
+                                return null;
+                            }
+                        }
+
+                        // Vue component locator:
+                        // NiceGUI bundles ECharts inside the `nicegui-echart` Vue component module.
+                        // The ECharts instance is stored as `this.chart` on the component proxy.
+                        // Vue attaches component internals to DOM nodes via non-enumerable properties,
+                        // so we must use Object.getOwnPropertyNames/Symbols (not for..in).
+                        function findVueComponent(dom) {
+                            try {
+                                if (!dom) return null;
+                                try {
+                                    if (dom.__vueParentComponent) return dom.__vueParentComponent;
+                                } catch (e0) {
+                                    // swallow
+                                }
+
+                                function looksLikeVueComp(x) {
+                                    try {
+                                        if (!x || (typeof x !== 'object' && typeof x !== 'function')) return false;
+                                        // Vue component instance commonly has `proxy`.
+                                        if (x.proxy) return true;
+                                        // Some builds attach a vnode which then links to component.
+                                        if (x.component) return true;
+                                        return false;
+                                    } catch (e) {
+                                        return false;
+                                    }
+                                }
+
+                                function probeValue(v) {
+                                    try {
+                                        if (!v) return null;
+                                        // Direct component instance
+                                        if (looksLikeVueComp(v)) return v;
+                                        // VNode-ish wrappers
+                                        if (v.component && looksLikeVueComp(v.component)) return v.component;
+                                        if (v.ctx && v.ctx._ && looksLikeVueComp(v.ctx._)) return v.ctx._;
+                                        return null;
+                                    } catch (e) {
+                                        return null;
+                                    }
+                                }
+
+                                var names = [];
+                                try { names = Object.getOwnPropertyNames(dom); } catch (eN) { names = []; }
+                                for (var i = 0; i < names.length && i < 80; i++) {
+                                    var nm = names[i];
+                                    // Only probe likely internal keys to avoid touching huge objects.
+                                    if (nm && (String(nm).indexOf('vue') >= 0 || String(nm).indexOf('__v') === 0)) {
+                                        var v = null;
+                                        try { v = dom[nm]; } catch (eV) { v = null; }
+                                        var comp = probeValue(v);
+                                        if (comp) return comp;
+                                    }
+                                }
+
+                                var syms = [];
+                                try { syms = Object.getOwnPropertySymbols(dom); } catch (eS) { syms = []; }
+                                for (var j = 0; j < syms.length && j < 40; j++) {
+                                    var sym = syms[j];
+                                    var sv = null;
+                                    try { sv = dom[sym]; } catch (eSV) { sv = null; }
+                                    var comp2 = probeValue(sv);
+                                    if (comp2) return comp2;
+                                }
+                                return null;
+                            } catch (eAll) {
+                                return null;
+                            }
+                        }
+
+                        // Strategy A: if the ECharts library is globally exposed, use it.
+                        var ec = null;
+                        try {
+                            ec = (window && window.echarts && typeof window.echarts.getInstanceByDom === 'function') ? window.echarts : null;
+                            if (!ec && window && window.__cids_echarts_ref && typeof window.__cids_echarts_ref.getInstanceByDom === 'function') {
+                                ec = window.__cids_echarts_ref;
+                            }
+                        } catch (eEc) {
+                            ec = null;
+                        }
+
+                        function tryGetByDom(dom) {
+                            try {
+                                if (!ec || !dom) return null;
+                                return ec.getInstanceByDom(dom);
+                            } catch (eTG) {
+                                return null;
+                            }
+                        }
+
+                        if (ec) {
+                            var instA = tryCache(tryGetByDom(el));
+                            if (instA) return instA;
+                            try {
+                                var marked = el.querySelectorAll ? el.querySelectorAll('[_echarts_instance_]') : null;
+                                if (marked && marked.length) {
+                                    for (var m = 0; m < marked.length && m < 8; m++) {
+                                        instA = tryCache(tryGetByDom(marked[m]));
+                                        if (instA) return instA;
+                                    }
+                                }
+                            } catch (eMarked) {
+                                // swallow
+                            }
+                            try {
+                                var nodesA = el.querySelectorAll ? el.querySelectorAll('*') : null;
+                                if (nodesA && nodesA.length) {
+                                    for (var nA = 0; nA < nodesA.length && nA < 40; nA++) {
+                                        instA = tryCache(tryGetByDom(nodesA[nA]));
+                                        if (instA) return instA;
+                                    }
+                                }
+                            } catch (eScan) {
+                                // swallow
+                            }
+                        }
+
+                        // Strategy B: locate instance via Vue component internals.
+                        function tryFromVue(dom) {
+                            try {
+                                if (!dom) return null;
+                                var comp = findVueComponent(dom);
+                                if (!comp) return null;
+
+                                var cands = [];
+                                try { if (comp.exposed) cands.push(comp.exposed); } catch (e1) { }
+                                try { if (comp.ctx) cands.push(comp.ctx); } catch (e2) { }
+                                try { if (comp.setupState) cands.push(comp.setupState); } catch (e3) { }
+                                try { if (comp.proxy) cands.push(comp.proxy); } catch (e4) { }
+
+                                for (var i = 0; i < cands.length; i++) {
+                                    var c = cands[i];
+                                    if (!c) continue;
+                                    var names = ['chart', 'echart', 'instance', 'inst', 'myChart', 'ec', 'ecInstance'];
+                                    for (var j = 0; j < names.length; j++) {
+                                        var nm = names[j];
+                                        var v = null;
+                                        try { v = c[nm]; } catch (eV) { v = null; }
+                                        if (looksLikeChart(v)) return v;
+                                    }
+                                }
+                                return null;
+                            } catch (e) {
+                                return null;
+                            }
+                        }
+
+                        var inst = null;
+                        inst = tryCache(tryFromVue(el));
+                        if (inst) return inst;
+
+                        try {
+                            var marked0 = el.querySelector ? el.querySelector('[_echarts_instance_]') : null;
+                            inst = tryCache(tryFromVue(marked0));
+                            if (inst) return inst;
+                        } catch (eM0) {
+                            // swallow
+                        }
+
+                        try {
+                            var nodes = el.querySelectorAll ? el.querySelectorAll('*') : null;
+                            if (nodes && nodes.length) {
+                                for (var n = 0; n < nodes.length && n < 40; n++) {
+                                    inst = tryCache(tryFromVue(nodes[n]));
+                                    if (inst) return inst;
+                                }
+                            }
+                        } catch (eN) {
+                            // swallow
+                        }
+
+                        try {
+                            var cur = el;
+                            for (var up = 0; up < 8; up++) {
+                                if (!cur) break;
+                                inst = tryCache(tryFromVue(cur));
+                                if (inst) return inst;
+                                cur = cur.parentElement || null;
+                            }
+                        } catch (eUp) {
+                            // swallow
+                        }
+
+                        // Strategy C: scan DOM node properties for an ECharts-like instance.
+                        // NiceGUI can bundle ECharts without exposing `window.echarts`.
+                        function tryFromDomProps(dom) {
+                            try {
+                                if (!dom) return null;
+                                var names = [
+                                    '__echarts__', '__echarts', '_echarts', 'echarts',
+                                    '__chart', '_chart', 'chart',
+                                    '__ec', '_ec', 'ec',
+                                    '__instance', 'instance', 'inst',
+                                    'myChart', 'ecInstance'
+                                ];
+                                for (var i = 0; i < names.length; i++) {
+                                    var nm = names[i];
+                                    var v = null;
+                                    try { v = dom[nm]; } catch (eV) { v = null; }
+                                    if (looksLikeChart(v)) return v;
+                                }
+
+                                // Non-enumerable internal props (best-effort):
+                                // scan a small subset of own properties looking for chart-like values.
+                                try {
+                                    var props = Object.getOwnPropertyNames(dom);
+                                    for (var p = 0; p < props.length && p < 60; p++) {
+                                        var pn = props[p];
+                                        if (!pn) continue;
+                                        // reduce noise: only inspect keys that look relevant
+                                        var ps = String(pn);
+                                        if (ps.indexOf('chart') < 0 && ps.indexOf('echarts') < 0 && ps.indexOf('ec') !== 0) continue;
+                                        var pv = null;
+                                        try { pv = dom[pn]; } catch (ePV) { pv = null; }
+                                        if (looksLikeChart(pv)) return pv;
+                                    }
+                                } catch (eOwn) {
+                                    // swallow
+                                }
+                                return null;
+                            } catch (e) {
+                                return null;
+                            }
+                        }
+
+                        inst = tryCache(tryFromDomProps(el));
+                        if (inst) return inst;
+
+                        try {
+                            var nodesP = el.querySelectorAll ? el.querySelectorAll('*') : null;
+                            if (nodesP && nodesP.length) {
+                                for (var p = 0; p < nodesP.length && p < 60; p++) {
+                                    inst = tryCache(tryFromDomProps(nodesP[p]));
+                                    if (inst) return inst;
+                                }
+                            }
+                        } catch (eScanP) {
+                            // swallow
+                        }
+
+                        diagLookup('no_instance', {
+                            has_window_echarts: !!ec,
+                            vue_parent: !!(el && el.__vueParentComponent),
+                            vue_component_found: !!findVueComponent(el)
+                        });
+                        return null;
+                    } catch (e) {
+                        return null;
+                    }
+                }
+
+                function setRadarEChart(a, i, c, f) {
+                    try {
+                        var inst = getEChart('cids-integrity-radar-chart');
+                        if (!inst) return;
+                        try { inst.resize && inst.resize(); } catch (eR) { }
+                        try {
+                            inst.setOption({
+                                series: [{
+                                    type: 'radar',
+                                    data: [{ value: [Number(a||0), Number(i||0), Number(c||0), Number(f||0)] }]
+                                }]
+                            }, { notMerge: false, lazyUpdate: true });
+                            postDiagThrottled('chart_set_ok', 'chart_ok_radar', { id: 'cids-integrity-radar-chart' }, 30000);
+                        } catch (eSet) {
+                            postDiagThrottled('chart_set_fail', 'chart_fail_radar', { id: 'cids-integrity-radar-chart', err: String(eSet || '') }, 5000);
+                        }
+                    } catch (e) {
+                        // swallow
+                    }
+                }
+
+                function setBiorhythmEChart(cpuHist, memHist) {
+                    try {
+                        var inst = getEChart('cids-resource-chart');
+                        if (!inst) return;
+                        try { inst.resize && inst.resize(); } catch (eR) { }
+                        var n = (cpuHist && cpuHist.length) ? cpuHist.length : 0;
+                        var x = [];
+                        for (var k = 0; k < n; k++) x.push(k);
+                        try {
+                            inst.setOption({
+                                xAxis: { type: 'category', data: x },
+                                series: [
+                                    { name: 'CPU', type: 'line', data: cpuHist || [] },
+                                    { name: 'MEM', type: 'line', data: memHist || [] }
+                                ]
+                            }, { notMerge: false, lazyUpdate: true });
+                            postDiagThrottled('chart_set_ok', 'chart_ok_resource', { id: 'cids-resource-chart', n: n }, 30000);
+                        } catch (eSet) {
+                            postDiagThrottled('chart_set_fail', 'chart_fail_resource', { id: 'cids-resource-chart', err: String(eSet || '') }, 5000);
+                        }
+                    } catch (e) {
+                        // swallow
+                    }
+                }
+
+                function mean3(arr) {
+                    try {
+                        if (!arr || !arr.length) return [0,0,0];
+                        var n = arr.length;
+                        var g = Math.floor(n / 3);
+                        if (g < 1) g = 1;
+                        var out = [0,0,0];
+                        var cnt = [0,0,0];
+                        for (var i = 0; i < n; i++) {
+                            var gi = Math.min(2, Math.floor(i / g));
+                            var v = Number(arr[i] || 0);
+                            if (!isFinite(v)) v = 0;
+                            out[gi] += v;
+                            cnt[gi] += 1;
+                        }
+                        for (var j = 0; j < 3; j++) {
+                            out[j] = cnt[j] ? (out[j] / cnt[j]) : 0;
+                        }
+                        return out;
+                    } catch (e) {
+                        return [0,0,0];
+                    }
+                }
+
+                function sum3(arr) {
+                    try {
+                        if (!arr || !arr.length) return [0,0,0];
+                        var n = arr.length;
+                        var g = Math.floor(n / 3);
+                        if (g < 1) g = 1;
+                        var out = [0,0,0];
+                        for (var i = 0; i < n; i++) {
+                            var gi = Math.min(2, Math.floor(i / g));
+                            var v = Number(arr[i] || 0);
+                            if (!isFinite(v)) v = 0;
+                            out[gi] += v;
+                        }
+                        return out;
+                    } catch (e) {
+                        return [0,0,0];
+                    }
+                }
+
+                function setDensityEChart(bins, raw, sliceSec) {
+                    try {
+                        var inst = getEChart('cids-density-chart');
+                        if (!inst) return;
+                        try { inst.resize && inst.resize(); } catch (eR) { }
+                        var ss = Number(sliceSec || 2);
+                        if (!isFinite(ss) || ss <= 0) ss = 2;
+
+                        // Density is inherently spiky; update this chart at ~slice cadence so it reads cleanly.
+                        try {
+                            var now = Date.now();
+                            if (!window.__cids_density_last_set) window.__cids_density_last_set = 0;
+                            var minMs = Math.max(1200, Math.round(ss * 1000));
+                            if ((now - Number(window.__cids_density_last_set || 0)) < minMs) return;
+                            window.__cids_density_last_set = now;
+                        } catch (eT) {
+                            // swallow
+                        }
+
+                        var b = (bins && bins.length) ? bins : [];
+                        var r = (raw && raw.length) ? raw : [];
+                        var n = b.length;
+                        if (r.length && r.length < n) n = r.length;
+                        if (!n || n < 1) n = b.length || r.length || 0;
+
+                        var cats = [];
+                        var data = [];
+                        for (var k = 0; k < n; k++) {
+                            var bi = Number(b[k] || 0);
+                            var ri = Number(r[k] || 0);
+                            if (!isFinite(bi)) bi = 0;
+                            if (!isFinite(ri)) ri = 0;
+                            bi = Math.max(0, Math.min(100, bi));
+                            cats.push(String(Math.round(ri)) + ' rec / ' + String(Math.round(ss)) + 's');
+                            data.push(Math.round(bi));
+                        }
+
+                        try {
+                            inst.setOption({
+                                xAxis: { type: 'category', data: cats, axisLabel: { show: false }, axisTick: { show: false }, axisLine: { show: false } },
+                                yAxis: { type: 'value', min: 0, max: 100, axisLabel: { show: false }, axisTick: { show: false }, axisLine: { show: false }, splitLine: { show: false } },
+                                series: [{ type: 'bar', data: data }]
+                            }, { notMerge: false, lazyUpdate: true });
+                            postDiagThrottled('chart_set_ok', 'chart_ok_density', { id: 'cids-density-chart', n: n }, 30000);
+                        } catch (eSet) {
+                            postDiagThrottled('chart_set_fail', 'chart_fail_density', { id: 'cids-density-chart', err: String(eSet || '') }, 5000);
+                        }
+                    } catch (e) {
+                        // swallow
+                    }
+                }
+
+                function resizeChartsKicker() {
+                    try {
+                        var ids = ['cids-integrity-radar-chart', 'cids-resource-chart', 'cids-density-chart'];
+                        for (var i = 0; i < ids.length; i++) {
+                            var inst = getEChart(ids[i]);
+                            if (!inst) continue;
+                            try { inst.resize && inst.resize(); } catch (eR) { }
+                        }
+                    } catch (e) {
+                        // swallow
+                    }
+                }
+
+                // Expose for other head-injected scripts (layout enforcement / scaling) to call.
+                try { window.__cids_resize_charts = resizeChartsKicker; } catch (eExpose) { }
+
+                function appendLogLine(line) {
+                    try {
+                        var el = byId('cids-log-scroll');
+                        if (!el) return;
+                        var node = document.createElement('div');
+                        node.className = 'w-full cids-log-flash';
+                        if (String(line).indexOf('[ALERT]') >= 0) node.className += ' text-red-300';
+                        else if (String(line).indexOf('[WARN]') >= 0 || String(line).indexOf('[WRN]') >= 0) node.className += ' text-orange-200';
+                        else if (String(line).indexOf('Ingested +') >= 0) node.className += ' text-emerald-200';
+                        else node.className += ' text-gray-400';
+                        node.textContent = String(line);
+                        if (el.firstChild) el.insertBefore(node, el.firstChild);
+                        else el.appendChild(node);
+                        while (el.childNodes && el.childNodes.length > 220) {
+                            el.removeChild(el.lastChild);
+                        }
+                        if (el.dataset && el.dataset.follow === '1') {
+                            el.scrollTop = 0;
+                        }
+                    } catch (e) {
+                        // swallow
+                    }
+                }
+
+                function bindLogFollow() {
+                    try {
+                        var el = byId('cids-log-scroll');
+                        if (!el) return;
+                        if (el.__cids_follow_bound) return;
+                        el.__cids_follow_bound = true;
+
+                        // Follow means "stick to the top" since we prepend new lines.
+                        try {
+                            if (!el.dataset) el.dataset = {};
+                            if (!el.dataset.follow) el.dataset.follow = '1';
+                        } catch (eD) {
+                            // swallow
+                        }
+
+                        el.addEventListener('scroll', function() {
+                            try {
+                                var st = Number(el.scrollTop || 0);
+                                var follow = (isFinite(st) && st <= 4) ? '1' : '0';
+                                if (el.dataset) el.dataset.follow = follow;
+                            } catch (eS) {
+                                // swallow
+                            }
+                        });
+                    } catch (e) {
+                        // swallow
+                    }
+                }
+
+                function reportChartMount(tag) {
+                    try {
+                        var key = String(tag || 't');
+                        if (!window.__cids_chart_mount_seen) window.__cids_chart_mount_seen = {};
+                        if (window.__cids_chart_mount_seen[key]) return;
+                        window.__cids_chart_mount_seen[key] = 1;
+
+                        var ids = ['cids-integrity-radar-chart', 'cids-resource-chart', 'cids-density-chart'];
+                        var out = [];
+                        for (var i = 0; i < ids.length; i++) {
+                            var id = ids[i];
+                            var el = byId(id);
+                            var inst = null;
+                            try { inst = getEChart(id); } catch (eI) { inst = null; }
+                            out.push({
+                                id: id,
+                                el: !!el,
+                                rect: safeRect(el),
+                                has_instance: !!(inst && typeof inst.setOption === 'function'),
+                                has_resize: !!(inst && typeof inst.resize === 'function'),
+                                vue_parent: !!(el && el.__vueParentComponent)
+                            });
+                        }
+                        postDiag('chart_mount', {
+                            tag: key,
+                            has_window_echarts: !!(window && window.echarts),
+                            charts: out
+                        });
+                    } catch (e) {
+                        // swallow
+                    }
+                }
+
+                async function pollSnapshot() {
                     if (snapBusy) return;
                     snapBusy = true;
-                    try {{
-                        var res = await fetch('/_ghost_console/snapshot', {{ cache: 'no-store' }});
+                    try {
+                        var res = await fetch('/_ghost_console/snapshot', { cache: 'no-store' });
                         if (!res || !res.ok) return;
                         var snap = await res.json();
                         if (!snap) return;
 
                         // Mark server responsiveness for the heartbeat probe.
-                        try {{ window.__cids_server_tick = Date.now(); }} catch (eTick) {{ }}
+                        try { window.__cids_server_tick = Date.now(); } catch (eTick) { }
 
                         // Detect backend restarts (server boot id changes) and log them.
-                        try {{
+                        try {
                             var nextBoot = snap.server_boot_id ? String(snap.server_boot_id) : null;
-                            if (!window.__cids_server_boot_id) {{
+                            if (!window.__cids_server_boot_id) {
                                 window.__cids_server_boot_id = nextBoot;
-                            }} else if (nextBoot && String(window.__cids_server_boot_id) !== nextBoot) {{
-                                if (window.__cids_post_diag) {{
-                                    window.__cids_post_diag('server_boot_changed', {{
+                            } else if (nextBoot && String(window.__cids_server_boot_id) !== nextBoot) {
+                                if (window.__cids_post_diag) {
+                                    window.__cids_post_diag('server_boot_changed', {
                                         prev: String(window.__cids_server_boot_id),
                                         next: nextBoot
-                                    }});
-                                }}
+                                    });
+                                }
                                 window.__cids_server_boot_id = nextBoot;
-                            }}
-                        }} catch (eSB) {{
+                            }
+                        } catch (eSB) {
                             // swallow
-                        }}
+                        }
 
                         setText('cids-records', fmtInt(snap.total_records || 0));
                         setText('cids-mode', 'MODE: [ ' + String(snap.mode || 'CANARY') + ' ]');
@@ -2118,124 +2982,113 @@ def main_page():
                         var obs = !!snap.observer_active;
                         setBadge('cids-wd-badge', wd ? 'WD: ACTIVE' : 'WD: STALE', wd ? 'green' : 'orange');
                         setBadge('cids-obs-badge', obs ? 'OBS: ACTIVE' : 'OBS: DOWN', obs ? 'green' : 'red');
-
-                        if (snap.status && snap.status.text) {{
+                        if (snap.status && snap.status.text) {
                             setBadge('cids-status-badge', String(snap.status.text), String(snap.status.color || 'green'));
-                        }}
+                        }
                         setBadge('cids-wd-state', wd ? 'ACTIVE' : 'STALE', wd ? 'green' : 'orange');
 
                         // watchdog reset time
-                        try {{
+                        try {
                             var d = snap.watchdog_last_reset ? new Date(String(snap.watchdog_last_reset)) : null;
-                            if (d && isFinite(d.getTime())) {{
+                            if (d && isFinite(d.getTime())) {
                                 setText('cids-wd-lastreset', 'Last reset: ' + pad2(d.getHours()) + ':' + pad2(d.getMinutes()) + ':' + pad2(d.getSeconds()));
-                            }}
-                        }} catch (e0) {{
+                            }
+                        } catch (e0) {
                             // swallow
-                        }}
+                        }
 
-                        // scores
-                        var s = snap.scores || {{}};
+                        // scores (drive the radar)
+                        var s = snap.scores || {};
                         var a = Number(s.availability || 0);
                         var i = Number(s.integrity || 0);
                         var c = Number(s.capacity || 0);
                         var f = Number(s.freshness || 0);
-                        setText('cids-score-availability', String(Math.round(a)) + '/100');
-                        setText('cids-score-integrity', String(Math.round(i)) + '/100');
-                        setText('cids-score-capacity', String(Math.round(c)) + '/100');
-                        setText('cids-score-freshness', String(Math.round(f)) + '/100');
-                        setBar('cids-bar-availability', a);
-                        setBar('cids-bar-integrity', i);
-                        setBar('cids-bar-capacity', c);
-                        setBar('cids-bar-freshness', f);
+                        setRadarEChart(a, i, c, f);
 
-                        // cpu/mem + sparkline
-                        setText('cids-cpu', String(Math.round(Number(snap.cpu || 0))) + '%');
-                        setText('cids-mem', String(Math.round(Number(snap.mem || 0))) + '%');
-                        var cpuPts = toPoints(snap.cpu_history || [], 100, 24);
-                        var memPts = toPoints(snap.mem_history || [], 100, 24);
-                        var cpuEl = byId('cids-spark-cpu');
-                        var memEl = byId('cids-spark-mem');
-                        if (cpuEl) cpuEl.setAttribute('points', cpuPts);
-                        if (memEl) memEl.setAttribute('points', memPts);
-
-                        // density
-                        try {{
-                            var bins = snap.density_bins || [];
-                            var raw = snap.density_raw_window || [];
-                            var sliceSec = Number(snap.density_slice_sec || 15);
-                            for (var k = 0; k < bins.length; k++) {{
-                                var el = byId('cids-density-bar-' + String(k));
-                                if (!el) continue;
-                                var bi = Number(bins[k] || 0);
-                                var ri = Number(raw[k] || 0);
-                                if (!isFinite(bi)) bi = 0;
-                                if (!isFinite(ri)) ri = 0;
-                                bi = Math.max(0, Math.min(100, bi));
-                                el.style.height = String(Math.max(2, bi)) + '%';
-                                el.setAttribute('title', String(Math.round(ri)) + ' rec / ' + String(Math.round(sliceSec)) + 's  |  norm: ' + String(Math.round(bi)));
-                            }}
-                        }} catch (e2) {{
-                            // swallow
-                        }}
-
-                        // keep a hint for log poll
-                        if (snap.log_last_seq && Number(snap.log_last_seq) > logAfter) {{
-                            // no-op; log polling will catch up
-                        }}
-                    }} catch (e) {{
+                        // charts
+                        setBiorhythmEChart(snap.cpu_history || [], snap.mem_history || []);
+                        setDensityEChart(snap.density_bins || [], snap.density_raw_window || [], Number(snap.density_slice_sec || 2));
+                    } catch (e) {
                         // swallow
-                    }} finally {{
+                    } finally {
                         snapBusy = false;
-                    }}
-                }}
+                    }
+                }
 
-                async function pollLog() {{
+                async function pollLog() {
                     if (logBusy) return;
                     logBusy = true;
-                    try {{
+                    try {
                         bindLogFollow();
-                        var res = await fetch('/_ghost_console/log_tail?after=' + String(logAfter) + '&limit=120', {{ cache: 'no-store' }});
+                        var res = await fetch('/_ghost_console/log_tail?after=' + String(logAfter) + '&limit=120', { cache: 'no-store' });
                         if (!res || !res.ok) return;
                         var payload = await res.json();
                         if (!payload) return;
                         var lines = payload.lines || [];
-                        for (var i = 0; i < lines.length; i++) {{
+                        for (var i = 0; i < lines.length; i++) {
                             var item = lines[i] || null;
                             if (!item) continue;
                             var seq = Number(item.seq || 0);
                             if (seq > logAfter) logAfter = seq;
-                            appendLogLine(item.line || '');
-                        }}
-                    }} catch (e) {{
+                            (function() {
+                                try {
+                                    var line = item.line || '';
+                                    var el = byId('cids-log-scroll');
+                                    if (!el) { appendLogLine(line); return; }
+                                    var node = document.createElement('div');
+                                    node.className = 'w-full cids-log-flash ' + ((seq % 2) ? 'cids-log-zebra-odd' : 'cids-log-zebra-even');
+                                    if (line.indexOf('[ALERT]') >= 0) node.className += ' text-red-300';
+                                    else if (line.indexOf('[WARN]') >= 0 || line.indexOf('[WRN]') >= 0) node.className += ' text-orange-200';
+                                    else if (line.indexOf('Ingested +') >= 0) node.className += ' text-emerald-200';
+                                    else node.className += ' text-gray-400';
+                                    node.textContent = String(line);
+                                    if (el.firstChild) el.insertBefore(node, el.firstChild);
+                                    else el.appendChild(node);
+                                    while (el.childNodes && el.childNodes.length > 220) {
+                                        el.removeChild(el.lastChild);
+                                    }
+                                    if (el.dataset.follow === '1') {
+                                        el.scrollTop = 0;
+                                    }
+                                } catch (eX) {
+                                    appendLogLine(item.line || '');
+                                }
+                            })();
+                        }
+                    } catch (e) {
                         // swallow
-                    }} finally {{
+                    } finally {
                         logBusy = false;
-                    }}
-                }}
+                    }
+                }
 
-                function tickClock() {{
-                    try {{
+                function tickClock() {
+                    try {
                         var d = new Date();
                         setText('cids-clock', pad2(d.getHours()) + ':' + pad2(d.getMinutes()) + ':' + pad2(d.getSeconds()));
-                    }} catch (e) {{
+                    } catch (e) {
                         // swallow
-                    }}
-                }}
+                    }
+                }
 
                 // Start
                 if (POLL_MS < 250) POLL_MS = 250;
                 if (LOG_POLL_MS < 250) LOG_POLL_MS = 250;
+                postDiagThrottled('poll_started', 'poll_started', { poll_ms: POLL_MS, log_poll_ms: LOG_POLL_MS }, 60000);
                 tickClock();
                 bindLogFollow();
                 pollSnapshot();
                 pollLog();
+                // After initial mount/layout settles, kick chart resizes and record placement.
+                setTimeout(function() { resizeChartsKicker(); reportChartMount('t+650'); }, 650);
+                setTimeout(function() { resizeChartsKicker(); reportChartMount('t+1400'); }, 1400);
                 setInterval(tickClock, 1000);
                 setInterval(pollSnapshot, POLL_MS);
                 setInterval(pollLog, LOG_POLL_MS);
-            }})();
+            })();
         </script>
-    ''')
+        '''
+    ).replace('__CIDS_POLL_MS__', str(poll_ms)).replace('__CIDS_LOG_POLL_MS__', str(log_poll_ms)))
     
     # Control Deck overlay (does not resize/push content)
     def toggle_control_deck() -> None:
@@ -2291,12 +3144,13 @@ def main_page():
 
         # Control deck panel (right side) - stage-level so it stays pinned in maximized mode
         with ui.element('div').props('id="cids-control-deck"').classes('bg-zinc-900 border-l border-gray-700 p-3 flex flex-col'):
-            with ui.row().classes('w-full items-center justify-between border-b border-gray-700 pb-2 mb-3'):
+            with ui.row().classes('w-full items-center justify-between border-b border-gray-700 pb-2 mb-3 shrink-0'):
                 ui.label('CONTROL DECK').classes('text-xl font-bold text-white')
                 ui.button(icon='close', on_click=close_control_deck).props('flat round color=white')
 
-            # Use full-height flex column so the footer can be pinned to the bottom without scrolling.
-            with ui.column().classes('w-full h-full min-h-0 gap-3'):
+            # Deck body should flex to fill remaining height (avoid brittle h-full in nested flex layouts).
+            # Allow internal scroll if needed; hide scrollbars to keep the appliance look.
+            with ui.column().props('id="cids-deck-body"').classes('w-full flex-1 min-h-0 gap-3 overflow-y-auto no-scrollbar'):
                 # Buttons (Grayscale Style) - Explicit Colors via Props
                 def btn_props():
                     return 'push color=grey-9 text-color=white'
@@ -2352,34 +3206,19 @@ def main_page():
         
             # Primary Grid (Takes remaining height)
             with ui.row().props('id="cids-main-grid"').classes('w-full flex-grow min-h-0 min-w-0 gap-4 overflow-hidden'):
-             
+
                 # SYSTEM INTEGRITY (Left, 50%)
-                with ui.card().classes('flex-1 min-w-0 h-full min-h-0 bg-zinc-900 border border-gray-700 rounded-none p-0 flex flex-col'):
+                with ui.card().classes('relative overflow-hidden flex-1 min-w-0 h-full min-h-0 bg-zinc-900 border border-gray-700 rounded-none p-0 flex flex-col'):
                     with ui.row().classes('w-full border-b border-gray-800 p-2 justify-between items-center bg-zinc-950'):
                         ui.label('SYSTEM INTEGRITY').classes('text-xs font-bold text-gray-500')
                         with ui.row().classes('items-center gap-2'):
                             ui.icon('help_outline', size='xs').classes('text-gray-600')\
-                                .tooltip('Scores are updated via client-side polling (no websocket diffs).')
+                                .tooltip('System Integrity: radar chart derived from live snapshot scores (polling).')
                             ui.icon('shield', size='xs').classes('text-gray-600')
 
-                    # DOM-only score bars (stable; updated by client polling)
-                    with ui.column().classes('w-full flex-grow min-h-0 overflow-hidden p-3 gap-3'):
-                        def score_row(label: str, val_id: str, bar_id: str) -> None:
-                            with ui.column().classes('gap-1'):
-                                with ui.row().classes('w-full justify-between items-center text-[11px] text-gray-400'):
-                                    ui.label(label)
-                                    ui.label('0/100').props(f'id="{val_id}"').classes('text-gray-200')
-                                with ui.element('div').classes('w-full h-2 bg-zinc-800 border border-gray-700')\
-                                    .style('position: relative; overflow: hidden;'):
-                                    ui.element('div')\
-                                        .props(f'id="{bar_id}"')\
-                                        .classes('h-full bg-zinc-200/70')\
-                                        .style('width: 0%;')
-
-                        score_row('AVAILABILITY', 'cids-score-availability', 'cids-bar-availability')
-                        score_row('INTEGRITY', 'cids-score-integrity', 'cids-bar-integrity')
-                        score_row('CAPACITY', 'cids-score-capacity', 'cids-bar-capacity')
-                        score_row('FRESHNESS', 'cids-score-freshness', 'cids-bar-freshness')
+                    # Radar chart (ECharts) - matches the original layout.
+                    with ui.element('div').props('id="cids-integrity-wrap"').classes('relative w-full flex-grow min-h-0 overflow-hidden p-3'):
+                        create_integrity_diamond_chart().props('id="cids-integrity-radar-chart"')
 
                 # RIGHT COLUMN (Bio-Rhythm + Density + System Log)
                 # Use flex-based row splitting instead of percentage heights; percent heights can be
@@ -2392,23 +3231,10 @@ def main_page():
                             ui.label('RESOURCE METRICS').classes('text-xs font-bold text-gray-500')
                             with ui.row().classes('items-center gap-2'):
                                 ui.icon('help_outline', size='xs').classes('text-gray-600')\
-                                    .tooltip('Resource Metrics: CPU% + MEM% with a tiny sparkline history. Updated via client-side polling.')
+                                    .tooltip('Resource Metrics: CPU% + MEM% history (ECharts). Updated via client-side polling.')
                                 ui.icon('query_stats', size='xs').classes('text-gray-600')
-                        with ui.column().classes('w-full flex-grow min-h-0 overflow-hidden p-3 gap-2'):
-                            with ui.row().classes('w-full justify-between items-center'):
-                                ui.label('CPU').classes('text-xs text-gray-500')
-                                ui.label('0%').props('id="cids-cpu"').classes('text-sm text-white font-bold')
-                            with ui.row().classes('w-full justify-between items-center'):
-                                ui.label('MEM').classes('text-xs text-gray-500')
-                                ui.label('0%').props('id="cids-mem"').classes('text-sm text-white font-bold')
-
-                            # Simple SVG sparkline (client-updated)
-                            ui.html('''
-                                <svg id="cids-spark" viewBox="0 0 100 24" preserveAspectRatio="none" style="width:100%; height: 56px;">
-                                  <polyline id="cids-spark-cpu" fill="none" stroke="#ffffff" stroke-width="1.5" points="" />
-                                  <polyline id="cids-spark-mem" fill="none" stroke="#a1a1aa" stroke-width="1.2" stroke-dasharray="3 2" points="" />
-                                </svg>
-                            ''', sanitize=False)
+                        with ui.element('div').classes('w-full flex-grow min-h-0 overflow-hidden p-3'):
+                            create_biorhythm_chart().props('id="cids-resource-chart"')
 
                     # DENSITY HISTOGRAM (Middle Third)
                     with ui.card().classes('w-full flex-1 min-h-0 bg-zinc-900 border border-gray-700 rounded-none p-0 flex flex-col'):
@@ -2418,16 +3244,8 @@ def main_page():
                                 ui.icon('help_outline', size='xs').classes('text-gray-600')\
                                     .tooltip('Density Histogram: relative collection volume over the last 12 time slices (normalized 0-100). Time slice width is configurable; hover a bar for raw counts.')
                                 ui.icon('bar_chart', size='xs').classes('text-gray-600')
-                        with ui.column().classes('w-full flex-grow min-h-0 overflow-hidden'):
-                            # DOM-based histogram bars (stable under rapid updates).
-                            with ui.element('div').classes('w-full h-full px-3 pb-3 pt-2'):
-                                with ui.element('div').props('id="cids-density-root"')\
-                                    .classes('w-full h-full flex items-end gap-2'):
-                                    for i in range(len(state.density_bins)):
-                                        ui.element('div')\
-                                            .props(f'id="cids-density-bar-{i}"')\
-                                            .classes('flex-1 bg-zinc-200/60 border border-gray-600')\
-                                            .style('height: 2%')
+                        with ui.element('div').classes('w-full flex-grow min-h-0 overflow-hidden p-3'):
+                            create_density_histogram_chart().props('id="cids-density-chart"')
 
                     # SYSTEM LOG (Bottom Third)
                     with ui.card().classes('w-full flex-1 min-h-0 bg-zinc-900 border border-gray-700 rounded-none p-0 flex flex-col'):
