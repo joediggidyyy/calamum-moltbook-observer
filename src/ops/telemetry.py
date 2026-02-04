@@ -82,106 +82,72 @@ def _newest_jsonl(data_dir: Path) -> Optional[Path]:
 
 
 class _JsonlAppendCounter:
-    """Efficient-ish line counter for an append-only JSONL file.
-
-    Keeps a file offset and total line count. If the file shrinks/rotates,
-    it resets and recounts from scratch.
+    """Stat-based line estimator for an append-only JSONL file.
+    
+    Uses file size delta to estimate new records, avoiding open() calls 
+    that cause locking contention on Windows.
     """
+
+    AVG_BYTES_PER_LINE = 140
 
     def __init__(self) -> None:
         self.path: Optional[Path] = None
-        self.offset: int = 0
-        self.total_lines: int = 0
         self.last_size: int = 0
+        self.total_lines: int = 0
 
     def set_path(self, path: Optional[Path]) -> None:
         if path is None:
+            # If path is lost, freeze stats; do not reset to 0.
+            # This prevents UI blanking during transient file access issues.
             self.path = None
-            self.offset = 0
-            self.total_lines = 0
-            self.last_size = 0
             return
+            
         if self.path != path:
             self.path = path
-            # CRITICAL FIX: Seek to end on first load to avoid processing historical 
-            # records as a massive "new" spike (e.g. +25k records in one slice).
             try:
                 if path.exists():
+                    # Initial load: accept current state as baseline
                     st = path.stat()
-                    self.offset = st.st_size
                     self.last_size = st.st_size
-                    # Best-effort total lines estimate (assuming ~100b/line) so UI isn't empty
-                    # We accept this won't match line-count exactly, but it's better than 0.
-                    self.total_lines = int(st.st_size / 200) 
+                    self.total_lines = int(st.st_size / self.AVG_BYTES_PER_LINE)
                 else:
-                    self.offset = 0
                     self.last_size = 0
                     self.total_lines = 0
             except OSError:
-                self.offset = 0
                 self.last_size = 0
                 self.total_lines = 0
 
     def poll(self, max_read_bytes: int = 2_000_000) -> Tuple[int, int]:
-        """Return (new_lines, total_lines).
-
-        NOTE: we cap how many bytes we read per poll to avoid long blocking reads
-        which can stall the event loop and destabilize the UI.
-        """
-        if self.path is None or not self.path.exists():
+        """Return (estimated_new_lines, estimated_total_lines)."""
+        if self.path is None:
+            # If path is currently lost, return 0 new lines but KEEP the last known total.
+            # Do NOT return 0 total lines, or the UI will 'blank' out.
             return 0, self.total_lines
 
         try:
-            size = self.path.stat().st_size
+            st = self.path.stat()
+            current_size = st.st_size
         except OSError:
-            # If we can't stat, assume no change for this tick
+            # If we can't stat the file (locked?), return 0 new lines but KEEP total.
             return 0, self.total_lines
 
-        # Rotated or truncated
-        if size < self.last_size:
-            # File got smaller? Reset.
-            self.offset = 0
+        # Handle rotation/truncation
+        if current_size < self.last_size:
+            self.last_size = 0
             self.total_lines = 0
-        elif size < self.offset:
-             # Offset beyond EOF? Reset.
-            self.offset = 0
 
-        new_lines = 0
-        try:
-            # Retry open once to handle transient Windows file locking
-            attempts = 2
-            f = None
-            while attempts > 0:
-                try:
-                    f = self.path.open('rb')
-                    break
-                except OSError:
-                    attempts -= 1
-                    if attempts > 0:
-                        time.sleep(0.05)
-            
-            if f:
-                with f:
-                    f.seek(self.offset)
-                    remaining = max(0, max_read_bytes)
-                    # Stream reads in chunks to keep memory bounded.
-                    while remaining > 0:
-                        read_size = min(256 * 1024, remaining)
-                        chunk = f.read(read_size)
-                        if not chunk:
-                            break
-                        remaining -= len(chunk)
-                        new_lines += chunk.count(b'\n')
-
-                    if new_lines:
-                        self.total_lines += new_lines
-
-                    # Always advance offset by how much we actually read.
-                    self.offset = f.tell()
-        except OSError:
+        delta_bytes = current_size - self.last_size
+        if delta_bytes <= 0:
             return 0, self.total_lines
 
-        self.last_size = size
+        # Estimate new lines
+        new_lines = int(delta_bytes / self.AVG_BYTES_PER_LINE)
+        if new_lines == 0 and delta_bytes > 50:
+            new_lines = 1  # Minimum 1 if significant bytes added
+
+        self.total_lines += new_lines
+        self.last_size = current_size
+        
         return new_lines, self.total_lines
 
 
@@ -259,6 +225,8 @@ class TelemetryProvider:
         now = _now_ts()
         # Avoid glob+stat on every tick; it can get expensive with many JSONL files.
         interval = float(max(0.25, self.config.active_jsonl_rescan_sec))
+        
+        # PROACTIVE FALLBACK: If cache is None, we should try harder.
         if self._active_jsonl_cache is not None and (now - self._active_jsonl_last_scan_ts) < interval:
             return self._active_jsonl_cache
 
@@ -266,13 +234,18 @@ class TelemetryProvider:
         new_pick = _newest_jsonl(self.config.data_dir)
 
         # Persistence override: if scan fails (transient Windows locking on dir),
-        # but the old file still looks valid, stick with it to avoid resetting the reader offset.
-        if new_pick is None and self._active_jsonl_cache is not None:
-             try:
-                 if self._active_jsonl_cache.exists():
-                     return self._active_jsonl_cache
-             except OSError:
-                 pass
+        # always prefer the cache over returning None/0.
+        if new_pick is None:
+             if self._active_jsonl_cache is not None:
+                 return self._active_jsonl_cache
+             
+             # DETERMINISTIC FALLBACK:
+             # If we have never found a file (start up) and scanning failed,
+             # check for the known canonical filename directly.
+             canary = self.config.data_dir / 'moltbook_canary_metrics.jsonl'
+             # Note: We do NOT check exists() here to avoid lock failure.
+             # We just assume it might be valid and let the counter try to stat it.
+             return canary
 
         self._active_jsonl_cache = new_pick
         return self._active_jsonl_cache

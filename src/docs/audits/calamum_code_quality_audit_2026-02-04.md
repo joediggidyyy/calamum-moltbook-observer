@@ -8,6 +8,7 @@
 ---
 
 ## Executive Summary
+(Restored from memory check - Critical Findings)
 
 The codebase exhibits classic symptoms of "integration drift," where temporary test harnesses (`calamum_observer_agent.py`) have calcified alongside the intended production components (`calamum_observer_daemon.py`). This duplication has compelled the `telemetry.py` reader to become increasingly defensive and over-engineered to handle variable file locking behavior on Windows, resulting in the "blanking" artifacts observed in the UI.
 
@@ -50,7 +51,7 @@ Recent patches have addressed symptoms rather than root causes.
 
 *   **Telemetry Persistence (`telemetry.py` patch)**:
     *   **Analysis:** The logic `if new_pick is None ... return self._active_jsonl_cache` prevents the *path* from becoming None, but if the file is locked, the read *operation* still returns 0 lines.
-    *   **Result:** The UI receives "0 new records" and "0 total records" (if stat fails), causing the charts to flatline (blank out) because the frontend interprets "no data" as "clear charts". The fix prevents the crash but not the data loss event.
+    *   **Result:** The UI receives "0 new records" and "0 Total records" (if stat fails), causing the charts to flatline (blank out) because the frontend interprets "no data" as "clear charts". The fix prevents the crash but not the data loss event.
 
 *   **Process Double-Tap (`Stop-OldGhostConsole`)**:
     *   **Analysis:** Using `taskkill /F` after `Stop-Process` acknowledges that the application enters unrecoverable states. While functional, it masks *why* the Python backend hangs (likely a thread deadlock in `ops_dashboard.py` or the `telemetry` polling loop).

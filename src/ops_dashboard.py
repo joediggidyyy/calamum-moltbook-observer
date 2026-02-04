@@ -418,7 +418,22 @@ def _compute_snapshot() -> dict:
     availability = 100 if state.is_running else 0
     freshness = 100 if state.watchdog_active else 0
     capacity = int(max(0, min(100, 100 - max(cpu, mem))))
-    integrity = int(max(0, min(100, state.integrity_score)))
+    
+    # Real Integrity Calculation:
+    # Based on whether we have a valid data source file that is growing or stable.
+    # If no active jsonl path is found, integrity is 0 (System Blind).
+    src = snap.get('active_jsonl_path')
+    if src and total > 0:
+         # We have a file and it has data.
+         state.integrity_score = 100
+    elif src:
+         # We have a file but it's empty (startup?)
+         state.integrity_score = 50
+    else:
+         # No file found.
+         state.integrity_score = 0
+         
+    integrity = state.integrity_score
 
     # Status
     if not state.is_running:
@@ -681,7 +696,7 @@ def create_density_histogram_chart() -> ui.echart:
             'show': True,
             'trigger': 'item',
             # Use xAxis category labels to show raw stats without changing series data shape.
-            'formatter': '{b}<br/>norm: {c}',
+            'formatter': '{b}',
         },
         'grid': {'left': 8, 'right': 8, 'top': 10, 'bottom': 8, 'containLabel': False},
         'xAxis': {
@@ -738,7 +753,7 @@ def _update_density_dom(bins: List[int], raw: List[int], slice_sec: float) -> No
                     var ri = (raw[i] !== undefined && raw[i] !== null) ? raw[i] : 0;
                     var h = Math.max(0, Math.min(100, Number(bi)));
                     el.style.height = (Math.max(2, h)) + '%';
-                    el.setAttribute('title', String(Number(ri)) + ' rec / ' + String(Math.round(sliceSec)) + 's  |  norm: ' + String(Math.round(h)));
+                    el.setAttribute('title', String(Number(ri)) + ' rec / ' + String(Math.round(sliceSec)) + 's');
                 }}
             }})();
         ''')

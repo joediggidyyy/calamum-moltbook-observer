@@ -147,7 +147,22 @@ def handle_control_signals(control_dir: Path, node_id: str) -> Tuple[bool, Optio
             })
             return False, 'ISOLATE handled'
         if sig_name == 'refresh':
-            return False, 'REFRESH handled'
+            # Handle config reload / force refresh
+            try:
+                # Reload config from environment/args
+                # Note: We re-use original args via closure or just re-read env vars.
+                # For this agent, key params are env-driven or file-driven.
+                new_cfg = load_config(None, cfg.mode, cfg.interval_sec, cfg.node_id)
+                
+                # Update our runtime config reference (this is safe in this single-threaded loop)
+                cfg.interval_sec = new_cfg.interval_sec
+                cfg.mode = new_cfg.mode
+                # Paths usually don't change, but if they did:
+                cfg.data_dir = new_cfg.data_dir
+                
+                return False, 'REFRESH handled: Config reloaded'
+            except Exception as e:
+                return False, f'REFRESH failed: {e}'
         if sig_name == 'watchdog_reset':
             return False, 'WATCHDOG_RESET handled'
 
