@@ -6,7 +6,7 @@ Sources (best-effort, no secrets):
 - CPU/MEM: psutil
 - Records/Density: newest JSONL in repo-root logs/data/calamum
 - OBS: observer heartbeat file OR recent activity on JSONL
-- WD: watchdog heartbeat file (touched by dashboard reset control by default)
+- WD: watchdog heartbeat file (touched by the watchdog supervisor process)
 
 All paths may be overridden with environment variables.
 """
@@ -355,8 +355,15 @@ class TelemetryProvider:
         }
 
     def reset_watchdog(self) -> None:
-        """Touch the watchdog heartbeat marker (used by dashboard reset control)."""
-        _safe_touch(self.config.watchdog_heartbeat_path)
+        """Deprecated no-op.
+
+        Watchdog liveness is proved by the watchdog supervisor process touching
+        its own heartbeat. The UI should not fabricate watchdog freshness.
+
+        This method is retained for backwards compatibility with older UI code
+        paths, but intentionally performs no action.
+        """
+        return None
 
     def _pick_active_jsonl(self) -> Optional[Path]:
         now = _now_ts()

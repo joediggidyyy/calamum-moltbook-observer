@@ -12,11 +12,13 @@ $LogDir = Join-Path $RepoRoot "logs"
 $DashboardScript = Join-Path $SrcDir "ops_dashboard.py"
 $AgentScript = Join-Path $SrcDir "calamum_observer_agent.py"
 $LibrarianScript = Join-Path $SrcDir "calamum_librarian.py"
+$WatchdogScript = Join-Path $SrcDir "calamum_watchdog.py"
 
 # PID Tracking
 $DashboardPidFile = Join-Path $PSScriptRoot "ghost_console.pid"
 $AgentPidFile = Join-Path $PSScriptRoot "calamum_agent.pid"
 $LibrarianPidFile = Join-Path $PSScriptRoot "calamum_librarian.pid"
+$WatchdogPidFile = Join-Path $PSScriptRoot "calamum_watchdog.pid"
 
 # Dashboard Config
 $Port = 8899
@@ -93,15 +95,38 @@ function Get-RunningPid($pidFile) {
     return $null
 }
 
+# Helper to detect the process actually owning a LISTEN socket on a local port.
+function Get-PortOwningPid($port) {
+    try {
+        $listeners = Get-NetTCPConnection -LocalPort $port -State Listen -ErrorAction SilentlyContinue
+        if ($listeners) {
+            $owning = $listeners | Select-Object -ExpandProperty OwningProcess -Unique
+            if ($owning) {
+                return ($owning | Select-Object -First 1)
+            }
+        }
+    } catch { }
+    return $null
+}
+
 Write-Host "[*] Checking Core Stack Integrity..." -ForegroundColor Cyan
+
+# Check/Start Watchdog Supervisor
+$watchdogPid = Get-RunningPid $WatchdogPidFile
+if (-not $watchdogPid) {
+    Write-Host "    [!] Watchdog Supervisor not running. Starting..." -ForegroundColor Yellow
+    Start-ServiceScript "calamum_watchdog" $WatchdogScript $WatchdogPidFile
+} else {
+    Write-Host "    [+] Watchdog Supervisor is ACTIVE (PID: $watchdogPid)" -ForegroundColor Green
+}
 
 # Check/Start Agent
 $agentPid = Get-RunningPid $AgentPidFile
 if (-not $agentPid) {
-    Write-Host "    [!] Watchdog Agent not running. Starting..." -ForegroundColor Yellow
+    Write-Host "    [!] Observer Agent not running. Starting..." -ForegroundColor Yellow
     Start-ServiceScript "calamum_agent" $AgentScript $AgentPidFile @("--mode", "CANARY", "--interval", "2.0")
 } else {
-    Write-Host "    [+] Watchdog Agent is ACTIVE (PID: $agentPid)" -ForegroundColor Green
+    Write-Host "    [+] Observer Agent is ACTIVE (PID: $agentPid)" -ForegroundColor Green
 }
 
 # Check/Start Librarian
@@ -128,6 +153,7 @@ if (-not $dashboardPid) {
 Write-Host "[*] Verifying Uplink..." -ForegroundColor Cyan
 $deadline = (Get-Date).AddSeconds(15)
 $ready = $false
+$portOwnerPid = $null
 
 while ((Get-Date) -lt $deadline) {
     try {
@@ -135,6 +161,7 @@ while ((Get-Date) -lt $deadline) {
         if ($listeners) {
             $owning = $listeners | Select-Object -ExpandProperty OwningProcess -Unique
             if ($owning) {
+                $portOwnerPid = ($owning | Select-Object -First 1)
                 $ready = $true
                 break
             }
@@ -146,6 +173,16 @@ while ((Get-Date) -lt $deadline) {
 if (-not $ready) {
     Write-Host "[!] Dashboard did not come online on port $Port." -ForegroundColor Red
     exit 1
+}
+
+# Reconcile dashboard PID tracking: some servers spawn a child process that owns the port.
+if ($portOwnerPid) {
+    if ($dashboardPid -and ($dashboardPid -ne $portOwnerPid)) {
+        Write-Host "    [!] Dashboard PID mismatch detected (pidfile=$dashboardPid, port_owner=$portOwnerPid). Reconciling..." -ForegroundColor Yellow
+    }
+    Set-Content -Path $DashboardPidFile -Value $portOwnerPid -Encoding ASCII
+    $dashboardPid = $portOwnerPid
+    Write-Host "    [+] Dashboard Backend PORT OWNER is ACTIVE (PID: $dashboardPid)" -ForegroundColor Green
 }
 
 # 4. LAUNCH FRONTEND (Edge App Mode)

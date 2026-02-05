@@ -21,6 +21,17 @@ Restoration of the `calamum-moltbook-observer` system to full operational status
 4.  **UX Enhancements**:
     *   Fix missing data feeds (downstream of telemetry fix).
     *   Implement zebra-striping in Syslog UI for readability.
+5.  **Always-On Watchdog Governance (24/7)**:
+    *   Watchdog is system-level governance and must be running whenever the system is running (active experimentation is 24/7).
+    *   All other entities are Watchdog-owned. They must not run unsupervised.
+    *   If Watchdog goes down: isolate/quarantine and fail-closed; do not self-unquarantine without Watchdog authority.
+    *   Operator/external-agent recovery actions are fallback only after Watchdog self-resilience fails.
+6.  **GUI Is Not the System**:
+    *   The Ghost Console GUI is an interface/exhibition tool. It is not SSOT and no system behavior may depend on it.
+7.  **No Fabricated Liveness**:
+    *   The Ghost Console UI MUST NOT touch or "refresh" the watchdog heartbeat marker.
+    *   Watchdog liveness is proved only by the watchdog supervisor process updating its own heartbeat.
+    *   There is no separate "watchdog reset" control; operator-initiated refresh/recovery is a single supervisory action.
 
 ### 1.2 Inspection Protocol (Per-Frame parameter)
 At the end of *each* execution frame, the operator (ORACL) MUST manual inspect:

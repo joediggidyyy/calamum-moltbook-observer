@@ -21,8 +21,11 @@ The original design below targeted a dedicated TUI. The working prototype has pi
 
 * **Force Refresh**: Triggers a safe refresh hook (config reload / log rotate stub).
 * **Isolate Node**: Blocks *external* ingress to the observer (ops channel remains). This was not in the original proposal but is retained as a candidate “containment” control.
-* **Auto-Purge**: Retention cleanup toggle for logs/cached metrics (currently a stub). This was not in the original proposal; if we keep it, it becomes the operator-facing control for retention policy.
 * **Kill Switch**: Emergency stop hook (currently mocked; will be wired to a safe, audited control path).
+
+**Doctrine**:
+* The GUI is an interface/exhibition tool. It is not SSOT and no system behavior may depend on it.
+* Watchdog is system-level governance and is always-on for the duration of active experimentation (24/7).
 
 ### Status Semantics
 

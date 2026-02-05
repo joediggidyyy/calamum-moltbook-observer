@@ -271,9 +271,10 @@ async def ghost_console_js_error(payload: dict) -> dict:
     ECharts/Vue error that won't surface in server-side Python logs.
     """
     # src/ops_dashboard.py -> src
+    out_path = get_calamum_log_dir() / 'ghost_console_js_errors.jsonl'
+    err: Optional[str] = None
     try:
         src_dir = Path(__file__).resolve().parent
-        out_path = get_calamum_log_dir() / 'ghost_console_js_errors.jsonl'
         
         out_path.parent.mkdir(parents=True, exist_ok=True)
         record = {
@@ -2292,8 +2293,18 @@ def main_page():
                     else if (colorName === 'orange') bg = '#9a3412';
                     else if (colorName === 'blue') bg = '#1e3a8a';
                     else if (colorName === 'green') bg = '#065f46';
-                    el.style.backgroundColor = bg;
-                    el.style.color = '#ffffff';
+                    try {
+                        // Quasar badge classes may override plain inline styles; force with !important.
+                        if (el.style && el.style.setProperty) {
+                            el.style.setProperty('background-color', bg, 'important');
+                            el.style.setProperty('color', '#ffffff', 'important');
+                        } else {
+                            el.style.backgroundColor = bg;
+                            el.style.color = '#ffffff';
+                        }
+                    } catch (e) {
+                        // swallow
+                    }
                 }
 
                 function safeRect(el) {
@@ -3462,11 +3473,6 @@ def main_page():
         elif action == 'WD_RESET':
             _success, msg = controller.reset_watchdog()
             color = 'blue'
-            # Touch the local watchdog heartbeat marker so WD reflects the reset immediately.
-            try:
-                telemetry.reset_watchdog()
-            except Exception:
-                pass
             state.watchdog_last_reset = datetime.now()
             add_log(f"[SYS] {msg}")
         else:
@@ -3507,6 +3513,9 @@ def main_page():
                         ui.label('BIN WIDTH').classes('text-sm text-gray-400')
                         ui.icon('help_outline', size='xs').classes('text-gray-600')\
                             .tooltip('Density Histogram bin width (seconds). Local to this UI (persisted in browser). OFF freezes the chart only; backend sampling continues.')
+                    # NiceGUI Html now requires an explicit `sanitize=` kw-only arg.
+                    # This markup is static/owned by the backend, so we disable sanitization
+                    # to preserve intended structure and styling.
                     ui.html('''
                         <div class="cids-spinbox" title="Bin width (sec). Local persistent. OFF freezes chart only.">
                             <div class="cids-spinbox-arrows">
@@ -3518,14 +3527,14 @@ def main_page():
                             </div>
                             <div id="cids-binwidth-suffix" class="cids-spinbox-suffix">sec</div>
                         </div>
-                    ''')
+                    ''', sanitize=False)
 
                 # Watchdog controls
                 with ui.row().classes('w-full justify-between items-center'):
                     with ui.row().classes('items-center gap-2'):
                         ui.label('WATCHDOG').classes('text-sm text-gray-400')
                         ui.icon('help_outline', size='xs').classes('text-gray-600')\
-                            .tooltip('Watchdog: expects periodic loop heartbeats. Reset nudges the timer (stub).')
+                            .tooltip('Watchdog: expects periodic supervisor heartbeats. Reset stages an intent signal; it does not fabricate liveness.')
                     wd_state = ui.badge('ACTIVE', color='green-10').props('id="cids-wd-state"').classes('font-bold text-[10px]')
 
                 ui.button('WATCHDOG RESET', on_click=lambda: handle_control('WD_RESET')).props(btn_props()).classes('w-full border border-gray-700')

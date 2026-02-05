@@ -116,7 +116,11 @@ Control Deck actions emit JSON control signals (safe for later container wiring)
 - `logs/control/calamum/kill.signal.json`
 - `logs/control/calamum/isolate.signal.json`
 - `logs/control/calamum/refresh.signal.json`
-- `logs/control/calamum/watchdog_reset.signal.json`
+
+**Doctrine**:
+- The GUI is an interface/exhibition tool. It is not SSOT and no system behavior may depend on it.
+- Watchdog is system-level governance and is always-on for the duration of active experimentation (24/7).
+- If Watchdog is down, the node must remain isolated/quarantined until Watchdog returns via self-resilience recovery, or (if self-recovery fails) an operator/external agent performs an explicit recovery action.
 
 ### Local end-to-end demo agent
 For local testing without a live container, `src/calamum_observer_agent.py` can:

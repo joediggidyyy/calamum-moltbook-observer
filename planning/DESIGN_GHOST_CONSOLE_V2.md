@@ -9,6 +9,10 @@ A high-fidelity operational dashboard for the Calamum Moltbook Observer containe
 **Style**: Digital Brutalism / Ghost Console / Cyberpunk TUI-in-Web.
 **Visuals**: Black background, Neon Green/Amber text, thick borders, monospace fonts.
 
+**Doctrine**:
+- The GUI is an interface/exhibition tool. It is not SSOT and no system behavior may depend on it.
+- Watchdog is system-level governance and is always-on for the duration of active experimentation (24/7).
+
 ## 2. Visual Language
 - **Palette**:
     - Build: `bg-black`
@@ -40,8 +44,10 @@ A high-fidelity operational dashboard for the Calamum Moltbook Observer containe
 - **Triggers**:
     - `KILL`: Immediate container stop.
     - `ISOLATE`: Stage an ingress isolation intent.
-    - `REFRESH`: Stage a config/log refresh intent.
-    - `WATCHDOG RESET`: Stage a watchdog reset intent.
+    - `REFRESH`: Operator-initiated supervisory action (fallback).
+        - Primary behavior is Watchdog self-resilience and recovery.
+        - If Watchdog self-recovery fails and Watchdog is down: an explicit operator recovery action may attempt to relaunch Watchdog.
+        - If Watchdog is up: Watchdog orchestrates any safe refresh/reload actions for the stack.
 - **Style**: Big blocky buttons (`w-full`), hover effects (`hover:bg-green-500 hover:text-black`).
 
 ### D. Density Histogram
@@ -49,6 +55,7 @@ A high-fidelity operational dashboard for the Calamum Moltbook Observer containe
 - **Behavior**:
     - Time-sliced aggregation (defaults to 15s slices) to reduce twitchy bars.
     - Hover tooltip shows raw counts and slice width (e.g., "12 rec / 15s").
+    - Bin width is a UI-only view control (pending wiring).
 
 ## 4. Architecture
 - **Backend**: `src/ops_dashboard.py` runs the NiceGUI server.

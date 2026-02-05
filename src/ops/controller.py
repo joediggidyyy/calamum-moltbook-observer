@@ -1,5 +1,6 @@
 import datetime
 import json
+import os
 from pathlib import Path
 from typing import Any, Dict, Optional
 
@@ -18,16 +19,38 @@ class CalamumController:
         self.node_id = "calamum-node-01"
 
     def _find_repo_root(self) -> Path:
+        """Best-effort repo root discovery.
+
+        Preference order:
+        1) directory containing `codesentinel.json`
+        2) directory containing `.git/`
+        3) directory containing `logs/`
+        4) fallback to the directory containing this file
+
+        Rationale: a local `src/logs/` directory may exist for legacy artifacts;
+        we must not treat that as the workspace root.
+        """
         cur = Path(__file__).resolve()
-        # ops/controller.py -> src -> calamum-moltbook-observer -> projects -> repo root
-        # But we also support running from odd working dirs: search upward for `logs/`.
+        for parent in [cur] + list(cur.parents):
+            if (parent / 'codesentinel.json').exists():
+                return parent
+        for parent in [cur] + list(cur.parents):
+            if (parent / '.git').exists():
+                return parent
         for parent in [cur] + list(cur.parents):
             if (parent / 'logs').exists():
                 return parent
-        return cur.parents[0]
+        return cur.parent
 
     def _emit_signal(self, name: str, payload: Optional[dict] = None) -> Path:
-        out_dir = get_calamum_control_dir()
+        # Control-plane location should be workspace-stable and testable.
+        # - Honor explicit CALAMUM_CONTROL_DIR overrides.
+        # - Otherwise default to repo-root `logs/control/calamum`.
+        if os.getenv('CALAMUM_CONTROL_DIR'):
+            out_dir = get_calamum_control_dir()
+        else:
+            repo_root = self._find_repo_root()
+            out_dir = repo_root / 'logs' / 'control' / 'calamum'
         out_dir.mkdir(parents=True, exist_ok=True)
 
         ts = datetime.datetime.utcnow().isoformat() + 'Z'
@@ -80,9 +103,6 @@ class CalamumController:
 
     def reset_watchdog(self):
         """Request a watchdog reset.
-
-        The dashboard separately touches its local watchdog heartbeat marker so
-        the WD badge reflects the action immediately.
         """
         timestamp = datetime.datetime.utcnow().isoformat() + 'Z'
         try:

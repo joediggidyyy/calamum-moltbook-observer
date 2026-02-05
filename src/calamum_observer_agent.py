@@ -76,7 +76,7 @@ class AgentConfig:
     output_jsonl: Path
     control_dir: Path
     observer_heartbeat: Path
-    watchdog_heartbeat: Path
+    watchdog_heartbeat: Optional[Path]
 
 
 def load_config(argv_repo_root: Optional[str], mode: str, interval_sec: float, node_id: str) -> AgentConfig:
@@ -165,22 +165,9 @@ def handle_control_signals(control_dir: Path, node_id: str) -> Tuple[bool, Optio
             })
             return False, 'ISOLATE handled'
         if sig_name == 'refresh':
-            # Handle config reload / force refresh
-            try:
-                # Reload config from environment/args
-                # Note: We re-use original args via closure or just re-read env vars.
-                # For this agent, key params are env-driven or file-driven.
-                new_cfg = load_config(None, cfg.mode, cfg.interval_sec, cfg.node_id)
-                
-                # Update our runtime config reference (this is safe in this single-threaded loop)
-                cfg.interval_sec = new_cfg.interval_sec
-                cfg.mode = new_cfg.mode
-                # Paths usually don't change, but if they did:
-                cfg.data_dir = new_cfg.data_dir
-                
-                return False, 'REFRESH handled: Config reloaded'
-            except Exception as e:
-                return False, f'REFRESH failed: {e}'
+            # Agent is intentionally lightweight; treat refresh as an acknowledgement.
+            # (Avoid coupling to runtime state here; run_agent may re-read env/config in future.)
+            return False, 'REFRESH handled'
         if sig_name == 'watchdog_reset':
             return False, 'WATCHDOG_RESET handled'
 
@@ -295,7 +282,8 @@ def run_agent(cfg: AgentConfig, max_iterations: Optional[int] = None) -> int:
     while True:
         # Heartbeats (File Touch)
         _touch(cfg.observer_heartbeat)
-        _touch(cfg.watchdog_heartbeat)
+        if cfg.watchdog_heartbeat is not None:
+            _touch(cfg.watchdog_heartbeat)
 
         # Heartbeats (Log - separated)
         try:
