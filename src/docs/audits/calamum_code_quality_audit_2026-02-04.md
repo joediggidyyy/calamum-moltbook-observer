@@ -70,3 +70,42 @@ Recent patches have addressed symptoms rather than root causes.
 ---
 
 *End of Report*
+# Calamum Data Integrity Audit (Addendum)
+
+**Date**: 2026-02-04
+**Scope**: Generated Runtime Artifacts (v1.1.0)
+**Auditor**: ORACL-Prime
+
+## 1. Process Inventory Rules
+
+| Process | Role | Expected Status | Actual Status | Findings |
+| :--- | :--- | :--- | :--- | :--- |
+| **Ghost Console** | Visualization | **Active** | **Active** | backend listening on port 8899. |
+| **Observer Agent** | Producer | **Active** | **Active (Zombie?)** | `moltbook_canary_metrics.jsonl` is receiving heartbeats, but the dashboard launcher does not explicitly spawn this process. Risk of unmanaged background process. |
+| **Librarian** | Consumer | **Active** | **STOPPED** | The `calamum_librarian.py` daemon is NOT included in `launch_ghost_console.ps1`. |
+
+## 2. Artifact Validation Table
+
+| Artifact | Path | Type | Validation Rules | Result | Notes |
+| :--- | :--- | :--- | :--- | :--- | :--- |
+| **Canary Stream** | `moltbook_canary_metrics.jsonl` | JSONL (Append) | 1. Valid JSON<br>2. `node_id` present<br>3. Signed (if non-heartbeat) | **PARTIAL** | File contains `heartbeat_sample` records (valid). No `obfuscated_content` records observed (Blindness). |
+| **Rotation Policy**| `rotation_policy.json` | JSON (State) | 1. `max_bytes` defined<br>2. `observed_avg_bytes` updated | **FAIL** | File does not exist. Librarian is not running to generate it. |
+| **Archives** | `archive/*.jsonl.gz` | GZip | 1. Valid GZip<br>2. Manifested | **FAIL** | No archives found. Pre-requisite (Librarian) missing. |
+| **Legacy Samples** | `moltbook_samples_obfuscated.jsonl`| JSONL | N/A | **N/A** | Legacy artifact not verified in this run. |
+
+## 3. Data Methodology Validation
+
+The system adheres to the **"Brutalist" Telemetry** principle but fails the **"Self-Correcting"** requirement due to the missing Librarian.
+
+*   **Variable**: `CALAMUM_DATA_SIGNING_KEY`
+    *   **Status**: Default Dev Key likely in use (`dev-key-do-not-use-in-prod`).
+    *   **Risk**: Low (Local Simulation), High (Production).
+
+*   **Variable**: `CALAMUM_ROTATION_LIMIT` (Implicit)
+    *   **Status**: Defaulting to static code constant (50MB) because `rotation_policy.json` is missing.
+
+## 4. Recommendations
+
+1.  **Integrate Librarian**: Update `launch_ghost_console.ps1` to spawn `calamum_librarian.py` as a background job.
+2.  **Explicit Agent Spawn**: The launcher should explicitly start `calamum_observer_agent.py` rather than relying on an external/zombie process.
+3.  **Key Injection**: Production deployments must inject `CALAMUM_DATA_SIGNING_KEY`.
