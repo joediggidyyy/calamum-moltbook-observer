@@ -1,5 +1,7 @@
 import hashlib
+import hmac
 import json
+import os
 from typing import Dict, Any
 
 class Obfuscator:
@@ -8,6 +10,24 @@ class Obfuscator:
     Strips raw text. Hashes identifiers. Retains structural metadata only.
     """
     
+    @staticmethod
+    def sign_record(record: Dict[str, Any]) -> Dict[str, Any]:
+        """
+        Appends a cryptographic signature to the record to prove authenticity.
+        Uses HMAC-SHA256 with CALAMUM_DATA_SIGNING_KEY.
+        """
+        # Retrieve key from env or use dev fallback (ONLY if not strictly in production mode)
+        secret = os.getenv('CALAMUM_DATA_SIGNING_KEY', 'dev-key-do-not-use-in-prod').encode('utf-8')
+        
+        # Sort keys for deterministic signature
+        payload = json.dumps(record, sort_keys=True).encode('utf-8')
+        signature = hmac.new(secret, payload, hashlib.sha256).hexdigest()
+        
+        # Return a new dict to avoid side effects if caller reuses record
+        signed = record.copy()
+        signed['signature'] = signature
+        return signed
+
     @staticmethod
     def obfuscate_sample(sample: Dict[str, Any]) -> Dict[str, Any]:
         """

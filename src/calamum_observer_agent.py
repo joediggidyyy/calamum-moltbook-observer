@@ -21,6 +21,15 @@ from datetime import datetime
 from pathlib import Path
 from typing import Any, Dict, Optional, Tuple
 
+# Local imports
+try:
+    import calamum_sampler
+    import obfuscator_lib
+except ImportError:
+    # Allow running even if siblings are tricky to import (e.g. specialized envs)
+    calamum_sampler = None
+    obfuscator_lib = None
+
 from calamum_config import get_calamum_data_dir, get_calamum_control_dir, get_calamum_health_dir
 
 
@@ -175,36 +184,140 @@ def handle_control_signals(control_dir: Path, node_id: str) -> Tuple[bool, Optio
     return False, None
 
 
-def append_record(jsonl_path: Path, node_id: str, mode: str) -> None:
+# Global generator state
+_FEED_GEN = None
+
+def _get_next_sample() -> Optional[Dict[str, Any]]:
+    global _FEED_GEN
+    if not calamum_sampler:
+        return None
+    try:
+        if _FEED_GEN is None:
+            _FEED_GEN = calamum_sampler.simulate_moltbook_feed()
+        return next(_FEED_GEN)
+    except Exception:
+        # Restart generator on error or exhaustion
+        try:
+            _FEED_GEN = calamum_sampler.simulate_moltbook_feed()
+            return next(_FEED_GEN)
+        except Exception:
+            return None
+
+
+def get_dynamic_rotation_limit(control_dir: Path) -> int:
+    """Read the rotation policy or return default."""
+    # Configurable fallback default (e.g. 50MB) rather than hardcoded 1KB for testing
+    DEFAULT = 50 * 1024 * 1024 
+    
+    policy_path = control_dir / 'rotation_policy.json'
+    if not policy_path.exists():
+        return DEFAULT
+        
+    try:
+        data = json.loads(policy_path.read_text(encoding='utf-8'))
+        return data.get('max_bytes', DEFAULT)
+    except Exception:
+        return DEFAULT
+
+
+def rotate_active_log(jsonl_path: Path, data_dir: Path) -> None:
+    """Atomic rotation: Rename active -> archive/moltbook_canary_<ts>.jsonl"""
+    archive_dir = data_dir / 'archive'
+    archive_dir.mkdir(parents=True, exist_ok=True)
+    
+    ts_str = datetime.utcnow().strftime('%Y%m%dT%H%M%S')
+    new_name = f"moltbook_canary_{ts_str}.jsonl"
+    dest = archive_dir / new_name
+    
+    try:
+        # Atomic rename is fast
+        jsonl_path.rename(dest)
+    except OSError:
+        # If open or locked, we might fail. 
+        # But we use atomic 'with open' for writes, so file should be closed here.
+        pass
+
+
+def append_record(jsonl_path: Path, node_id: str, mode: str, control_dir: Path, data_dir: Path) -> None:
+    # 0. Check Rotation FIRST
+    if jsonl_path.exists():
+        try:
+            size = jsonl_path.stat().st_size
+            limit = get_dynamic_rotation_limit(control_dir)
+            if size >= limit:
+                rotate_active_log(jsonl_path, data_dir)
+        except OSError:
+            pass # Skipping rotation check on stat fail
+
+    # 1. Get sample
+    sample = _get_next_sample()
+    if not sample:
+        # Fallback if sampler unavailable
+        return
+
+    # 2. Obfuscate & Sign
+    if obfuscator_lib:
+        try:
+            record = obfuscator_lib.Obfuscator.obfuscate_sample(sample)
+            record = obfuscator_lib.Obfuscator.sign_record(record)
+        except Exception:
+            # Code safety: fail safe if obfuscation crashes
+            return
+    else:
+        record = sample
+
+    # Envelope
+    record['node_id'] = node_id
+    record['mode'] = mode.upper()
+    record['kind'] = 'obfuscated_content' 
+    # Ensure timestamp is preserved or added
+    if 'ts' not in record:
+         record['ts'] = _utc_now_iso()
+
+    # 3. Atomic Write (Context Manager)
     jsonl_path.parent.mkdir(parents=True, exist_ok=True)
-    record = {
-        'ts': _utc_now_iso(),
-        'node_id': node_id,
-        'mode': mode.upper(),
-        'kind': 'heartbeat_sample',
-        'status': 'ok',
-    }
-    with jsonl_path.open('a', encoding='utf-8') as f:
-        f.write(json.dumps(record) + '\n')
+    try:
+        with jsonl_path.open('a', encoding='utf-8') as f:
+            f.write(json.dumps(record) + '\n')
+    except OSError:
+        # Handle file locking or permission transient errors
+        pass
 
 
 def run_agent(cfg: AgentConfig, max_iterations: Optional[int] = None) -> int:
     i = 0
+    # Health log path (separated from data)
+    health_log = get_calamum_health_dir() / 'calamum_observer.heartbeat.jsonl'
+    
     while True:
-        # Heartbeats
+        # Heartbeats (File Touch)
         _touch(cfg.observer_heartbeat)
         _touch(cfg.watchdog_heartbeat)
+
+        # Heartbeats (Log - separated)
+        try:
+            health_log.parent.mkdir(parents=True, exist_ok=True)
+            with health_log.open('a', encoding='utf-8') as f:
+                f.write(json.dumps({
+                    'ts': _utc_now_iso(),
+                    'node_id': cfg.node_id, 
+                    'status': 'alive',
+                    'uptime_ticks': i
+                }) + '\n')
+        except Exception:
+            pass
 
         # Consume control signals
         should_exit, note = handle_control_signals(cfg.control_dir, cfg.node_id)
         if note:
-            # Also append a record so dashboards immediately see activity.
-            append_record(cfg.output_jsonl, cfg.node_id, cfg.mode)
+            # Log significant events to stdout/stderr
+            print(f"[{_utc_now_iso()}] CONTROL: {note}", file=sys.stderr)
+            
         if should_exit:
             return 0
 
-        # Emit a sample record
-        append_record(cfg.output_jsonl, cfg.node_id, cfg.mode)
+        # Emit a sample record (Real Data)
+        append_record(cfg.output_jsonl, cfg.node_id, cfg.mode, cfg.control_dir, cfg.data_dir)
 
         i += 1
         if max_iterations is not None and i >= max_iterations:

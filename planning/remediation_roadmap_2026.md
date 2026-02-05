@@ -50,14 +50,39 @@ This roadmap supersedes previous drafts. It combines the need for **Atomic Write
 
 ### Task 1.3: Telemetry Reader Robustness
 *   **Target:** `src/ops/telemetry.py`
-*   **Action:** Simplify the file reading logic.
-    *   Remove complex seeking/binary reading if unstable.
-    *   Ensure it looks in `logs/data/calamum/*.jsonl`.
-    *   Add `retry` decorator for `PermissionError` (handling the split-second race with the atomic writer).
+*   **Action:** Implement "Brutalist" Record Counting.
+    *   **Active Session**: Pure **Byte Estimation** (`file_size / AVG_BYTES`). No physical counting. This makes the UI click-free and fast even with large active files.
+    *   **Total History**: Sum of `Active Session` + `Archive Count` (retrieved from a manifest/cache).
+    *   **Benefits**: Zero I/O blocking. Occasional count correction (jumping +/- when file rotates and hard count is finalized) is accepted design behavior.
 
 ### Task 1.4: Retire Ghost Data
 *   **Action:** Archive `logs/data/calamum/moltbook_canary_metrics.jsonl` (containing 50k empty heartbeats) to `.../archive/`.
 *   **Status:** *Partially executed via CLI, needs verification.*
+
+### Task 1.5: Active Log Rotation (Adaptive)
+*   **Target:** `src/calamum_observer_agent.py` & `src/calamum_config.py`
+*   **Action:** Implement "Hot Rotation" with dynamic sizing.
+    *   **Base Config**: Start with safe default (e.g. 35MB ≈ 100k @ 350b/rec) in `CALAMUM_LOG_MAX_BYTES`.
+    *   **Logic**:
+        ```python
+        # Agent reads config on every loop or batch
+        limit = utils.get_dynamic_rotation_limit() 
+        if file_size > limit:
+            utils.rotate_file(file_path, archive_dir)
+        ```
+
+### Task 1.6: The Librarian (Compression, Manifest & Feedback)
+*   **Target:** `src/calamum_librarian.py` (New Component)
+*   **Role**: Async background daemon.
+*   **Duties**:
+    1.  **Compress**: `archive/*.jsonl` -> `.jsonl.gz`.
+    2.  **Validate**: Integrity check.
+    3.  **Manifest**: Update `archive/manifest.json`.
+    4.  **Feedback Loop (New)**: 
+        *   Calculate `avg_bytes_per_record` from the just-compressed file.
+        *   Derive `new_limit = avg_bytes_per_record * 100_000`.
+        *   Write `new_limit` to `logs/control/calamum/rotation_policy.json` (or similar shared config state).
+        *   Agent reads this policy to self-correct `MAX_FILE_SIZE`.
 
 ---
 

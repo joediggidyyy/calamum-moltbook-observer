@@ -22,11 +22,12 @@ def get_calamum_log_dir() -> Path:
 
 def get_calamum_data_dir() -> Path:
     """Return the data subdirectory."""
-    # Allow explicit override of data dir, or fall back to log_dir/data
+    # Allow explicit override of data dir, or fall back to log_dir/data/calamum
     env_val = os.getenv('CALAMUM_DATA_DIR')
     if env_val:
         return Path(env_val).resolve()
-    return get_calamum_log_dir() / 'data'
+    # Updated to enforce subdirectory per V2 Design
+    return get_calamum_log_dir() / 'data' / 'calamum'
 
 def get_calamum_control_dir() -> Path:
     """Return the control signal subdirectory."""
