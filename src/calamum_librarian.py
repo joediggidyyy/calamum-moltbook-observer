@@ -13,6 +13,8 @@ Design:
 -   Fail-safe: Corrupt files are quarantined, not deleted.
 """
 
+__version__ = "1.1.0"
+
 import gzip
 import hashlib
 import json
@@ -22,7 +24,7 @@ import time
 from pathlib import Path
 from typing import Dict, Optional, Tuple
 
-from calamum_config import get_calamum_data_dir, get_calamum_control_dir
+from calamum_config import get_calamum_data_dir, get_calamum_control_dir, get_calamum_health_dir
 
 # Constants
 DEFAULT_TARGET_RECORDS = 100_000
@@ -41,11 +43,35 @@ class Librarian:
         self.manifest_path = self.archive_dir / MANIFEST_FILENAME
         self.control_dir = get_calamum_control_dir()
         self.policy_path = self.control_dir / POLICY_FILENAME
+        self.health_dir = get_calamum_health_dir()
+        self.heartbeat_path = self.health_dir / 'calamum_librarian.heartbeat'
+        self.status_path = self.health_dir / 'calamum_librarian_status.json'
         
         # Ensure Dirs
         self.archive_dir.mkdir(parents=True, exist_ok=True)
         self.quarantine_dir.mkdir(parents=True, exist_ok=True)
         self.control_dir.mkdir(parents=True, exist_ok=True)
+        self.health_dir.mkdir(parents=True, exist_ok=True)
+
+    def _touch_heartbeat(self, status: str = "ok", details: Optional[Dict] = None) -> None:
+        """Update heartbeat and status file for Watchdog/Sentinel."""
+        try:
+            # Simple touch
+            self.heartbeat_path.touch(exist_ok=True)
+            
+            # Rich status for Watchdog to consume
+            status_data = {
+                "ts": time.time(),
+                "status": status,
+                "version": __version__,
+                "details": details or {}
+            }
+            # Atomic write
+            temp = self.status_path.with_suffix('.tmp')
+            temp.write_text(json.dumps(status_data), encoding='utf-8')
+            temp.replace(self.status_path)
+        except Exception as e:
+            print(f"[Librarian] Heartbeat failed: {e}")
 
     def _calculate_file_hash(self, path: Path) -> str:
         """Calculate SHA256 of a file."""
@@ -109,6 +135,8 @@ class Librarian:
         
         gz_path = jsonl_path.with_suffix('.jsonl.gz')
         
+        has_errors = False
+        
         try:
             with open(jsonl_path, 'rb') as f_in, gzip.open(gz_path, 'wb') as f_out:
                 for line in f_in:
@@ -124,11 +152,15 @@ class Librarian:
                         # If valid, write to GZ
                         f_out.write(line)
                     except json.JSONDecodeError:
-                        # Corrupt usage? Skip or quarantine line? 
-                        # For rigid security, we drop the line but log metadata?
-                        # Continuing with valid data.
-                        pass
+                        print(f"[Librarian] Corruption detected in {jsonl_path.name}")
+                        has_errors = True
+                        break # Stop processing specific file
             
+            if has_errors:
+                 if gz_path.exists():
+                     gz_path.unlink()
+                 return None
+
             # Validation complete.
             if records_count == 0:
                 print(f"[Librarian] Warning: Empty file {jsonl_path.name}")
@@ -204,8 +236,10 @@ class Librarian:
         while True:
             try:
                 self.run_once()
+                self._touch_heartbeat("ok", {"msg": "Loop iteration complete"})
             except Exception as e:
                 print(f"[Librarian] Crash in loop: {e}")
+                self._touch_heartbeat("error", {"error": str(e)})
             time.sleep(self.interval_sec)
 
 if __name__ == "__main__":

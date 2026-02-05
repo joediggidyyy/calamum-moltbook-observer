@@ -75,3 +75,39 @@ def test_obfuscate_notification_passive_event():
     assert safe["event_type"] == "follow"
     assert "content_length" not in safe
     assert "has_link" not in safe
+
+def test_sign_record():
+    """Verify digital signature generation."""
+    record = {"foo": "bar", "val": 123}
+    
+    # Sign it
+    signed = Obfuscator.sign_record(record)
+    
+    # Structure
+    assert "signature" in signed
+    assert signed["foo"] == "bar"
+    
+    # Determinism
+    signed2 = Obfuscator.sign_record(record)
+    assert signed["signature"] == signed2["signature"]
+    
+    # Tamper check (signature fails if data changes? 
+    # Note: verify method not currently exposed, but we can verify different data yields different sig)
+    record2 = {"foo": "baz", "val": 123}
+    signed3 = Obfuscator.sign_record(record2)
+    assert signed["signature"] != signed3["signature"]
+
+def test_sign_record_custom_key():
+    """Verify environment key changes signature."""
+    record = {"foo": "bar"}
+    
+    os.environ['CALAMUM_DATA_SIGNING_KEY'] = 'key1'
+    sig1 = Obfuscator.sign_record(record)['signature']
+    
+    os.environ['CALAMUM_DATA_SIGNING_KEY'] = 'key2'
+    sig2 = Obfuscator.sign_record(record)['signature']
+    
+    assert sig1 != sig2
+    
+    # Cleanup env
+    del os.environ['CALAMUM_DATA_SIGNING_KEY']

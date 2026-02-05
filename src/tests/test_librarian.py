@@ -1,0 +1,126 @@
+"""Tests for Calamum Librarian Daemon."""
+
+import json
+import os
+import gzip
+import shutil
+import tempfile
+import time
+from pathlib import Path
+from unittest.mock import patch
+
+import pytest
+import sys
+
+# Setup Path
+current_dir = Path(__file__).resolve().parent
+src_dir = current_dir.parent
+if str(src_dir) not in sys.path:
+    sys.path.append(str(src_dir))
+
+from calamum_librarian import Librarian
+
+@pytest.fixture
+def librarian_env():
+    """Create a temporary environment for the librarian."""
+    with tempfile.TemporaryDirectory() as tmpdir:
+        tmp_path = Path(tmpdir)
+        
+        # Mock the directory getters in config
+        with patch('calamum_librarian.get_calamum_data_dir', return_value=tmp_path / 'data'), \
+             patch('calamum_librarian.get_calamum_control_dir', return_value=tmp_path / 'control'), \
+             patch('calamum_librarian.get_calamum_health_dir', return_value=tmp_path / 'health'):
+            
+            lib = Librarian(interval_sec=0.1)
+            yield lib
+
+def test_librarian_initialization(librarian_env):
+    """Test that directories are created."""
+    assert librarian_env.archive_dir.exists()
+    assert librarian_env.quarantine_dir.exists()
+    assert librarian_env.control_dir.exists()
+    assert librarian_env.health_dir.exists()
+
+def test_process_valid_file(librarian_env):
+    """Test compression and manifest update for a valid JSONL file."""
+    # Create a dummy JSONL file
+    raw_path = librarian_env.archive_dir / "test.jsonl"
+    data = [{"id": 1}, {"id": 2, "msg": "hello"}]
+    
+    with open(raw_path, 'w', encoding='utf-8') as f:
+        for item in data:
+            f.write(json.dumps(item) + "\n")
+            
+    # Run once
+    librarian_env.run_once()
+    
+    # Input should be gone
+    assert not raw_path.exists()
+    
+    # Artifact should exist
+    gz_path = librarian_env.archive_dir / "test.jsonl.gz"
+    assert gz_path.exists()
+    
+    # Manifest should be updated
+    manifest = json.loads(librarian_env.manifest_path.read_text())
+    assert "test.jsonl" in manifest
+    entry = manifest["test.jsonl"]
+    assert entry["records"] == 2
+    assert entry["uncompressed_bytes"] > 0
+    assert "artifact_sha256" in entry
+
+    # Verify GZ content
+    with gzip.open(gz_path, 'rt', encoding='utf-8') as f:
+        lines = f.readlines()
+        assert len(lines) == 2
+        assert json.loads(lines[1])["msg"] == "hello"
+
+def test_process_corrupt_file(librarian_env):
+    """Test quarantine of corrupt files."""
+    # Create corrupt file
+    bad_path = librarian_env.archive_dir / "bad.jsonl"
+    bad_path.write_text('{"valid": 1}\n{broken json\n', encoding='utf-8')
+    
+    librarian_env.run_once()
+    
+    # Should be moved to quarantine
+    assert not bad_path.exists()
+    quarantine_path = librarian_env.quarantine_dir / "bad.jsonl"
+    assert quarantine_path.exists()
+    
+    # Manifest should NOT have it (or maybe partial? current logic skips/fails)
+    # Current logic: _process_file returns None on error, so it's NOT in manifest.
+    if librarian_env.manifest_path.exists():
+        manifest = json.loads(librarian_env.manifest_path.read_text())
+        assert "bad.jsonl" not in manifest
+
+def test_heartbeat_creation(librarian_env):
+    """Test that heartbeat and status files are touched."""
+    # run_once() logic does NOT call _touch_heartbeat in loop(), so we must call it manually or simulate loop
+    librarian_env._touch_heartbeat("ok", {"msg": "test"})
+    
+    assert librarian_env.heartbeat_path.exists()
+    assert librarian_env.status_path.exists()
+    
+    status = json.loads(librarian_env.status_path.read_text())
+    assert status["status"] == "ok"
+    assert "version" in status
+
+def test_policy_feedback(librarian_env):
+    """Test that rotation policy is updated based on average bytes."""
+    # Create large-ish records
+    raw_path = librarian_env.archive_dir / "dense.jsonl"
+    # 100 records of 100 bytes each (approx)
+    record = {"data": "x" * 90} # ~100+ bytes JSON
+    content = (json.dumps(record) + "\n") * 100
+    raw_path.write_text(content, encoding='utf-8')
+    
+    librarian_env.run_once()
+    
+    assert librarian_env.policy_path.exists()
+    policy = json.loads(librarian_env.policy_path.read_text())
+    
+    # Expect avg ~100 bytes. Target 100k records -> ~10MB
+    assert policy["observed_avg_bytes"] > 90
+    assert policy["max_bytes"] > 9_000_000
+
