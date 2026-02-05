@@ -11,6 +11,8 @@ No secrets are required.
 
 from __future__ import annotations
 
+__version__ = "1.1.0"
+
 import argparse
 import json
 import os
