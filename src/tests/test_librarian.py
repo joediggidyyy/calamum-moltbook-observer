@@ -124,3 +124,24 @@ def test_policy_feedback(librarian_env):
     assert policy["observed_avg_bytes"] > 90
     assert policy["max_bytes"] > 9_000_000
 
+def test_manifest_corruption_recovery(librarian_env):
+    """Test that a corrupt manifest is backed up and a new one started."""
+    # Write a corrupt manifest
+    librarian_env.manifest_path.write_text("{broken json", encoding='utf-8')
+    
+    # Process a file (triggers load_manifest)
+    raw_path = librarian_env.archive_dir / "recovery.jsonl"
+    raw_path.write_text('{"id": 1}\n', encoding='utf-8')
+    
+    librarian_env.run_once()
+    
+    # The corrupt manifest should have been backed up
+    backup = librarian_env.manifest_path.with_suffix('.bak')
+    assert backup.exists()
+    assert backup.read_text(encoding='utf-8') == "{broken json"
+    
+    # A new valid manifest should exist
+    assert librarian_env.manifest_path.exists()
+    manifest = json.loads(librarian_env.manifest_path.read_text())
+    assert "recovery.jsonl" in manifest
+

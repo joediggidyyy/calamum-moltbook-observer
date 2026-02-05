@@ -31,6 +31,26 @@ class Obfuscator:
         return signed
 
     @staticmethod
+    def verify_record(signed_record: Dict[str, Any]) -> bool:
+        """
+        Verifies the cryptographic signature of a record.
+        """
+        if 'signature' not in signed_record:
+            return False
+            
+        secret = os.getenv('CALAMUM_DATA_SIGNING_KEY', 'dev-key-do-not-use-in-prod').encode('utf-8')
+        
+        # separate signature from payload
+        payload_data = signed_record.copy()
+        expected_sig = payload_data.pop('signature')
+        
+        # recreate signature
+        payload = json.dumps(payload_data, sort_keys=True).encode('utf-8')
+        calculated_sig = hmac.new(secret, payload, hashlib.sha256).hexdigest()
+        
+        return hmac.compare_digest(calculated_sig, expected_sig)
+
+    @staticmethod
     def obfuscate_sample(sample: Dict[str, Any]) -> Dict[str, Any]:
         """
         Transforms a raw sample into a safe, obfuscated record.

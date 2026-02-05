@@ -97,6 +97,27 @@ def test_sign_record():
     signed3 = Obfuscator.sign_record(record2)
     assert signed["signature"] != signed3["signature"]
 
+def test_verify_record():
+    """Verify signature validation."""
+    record = {"foo": "bar"}
+    signed = Obfuscator.sign_record(record)
+    
+    # Valid
+    assert Obfuscator.verify_record(signed) is True
+    
+    # Tampered data
+    tampered = signed.copy()
+    tampered["foo"] = "baz"
+    assert Obfuscator.verify_record(tampered) is False
+    
+    # Tampered signature
+    tampered_sig = signed.copy()
+    tampered_sig["signature"] = "deadbeef"
+    assert Obfuscator.verify_record(tampered_sig) is False
+    
+    # No signature
+    assert Obfuscator.verify_record(record) is False
+
 def test_sign_record_custom_key():
     """Verify environment key changes signature."""
     record = {"foo": "bar"}

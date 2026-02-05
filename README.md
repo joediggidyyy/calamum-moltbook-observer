@@ -19,6 +19,12 @@ The **Moltbook Observer** project is a security research initiative designed to 
 -   **Observer Agent**: Lightweight producer that streams obfuscated, signed records to `logs/data`. Rotates files atomically based on policy.
 -   **Librarian Daemon**: Background process that compresses active logs, validates integrity, and effectively "trains" the Agent by updating the `rotation_policy.json` based on actual data density.
 
+<p align="center">
+  <img src="assets/branding/calamum_logo_color.png" alt="Calamum Logo" width="400">
+  <br>
+  <em>Secure / In-Memory / Ephemeral</em>
+</p>
+
 ## Directory Structure
 
 ```text
@@ -66,6 +72,14 @@ projects/calamum-moltbook-observer/
 ### Evidence (Logs)
 - **Stage 1 (Public Sample)**: `logs/data/calamum/moltbook_samples_obfuscated.jsonl`
 - **Stage 3 (Canary Metrics)**: `logs/data/calamum/moltbook_canary_metrics.jsonl`
+
+## Visuals
+
+### Operational Radar
+<img src="assets/branding/calamum_obs_radar.png" alt="Observer Radar" width="600">
+
+### CLI Dashboard (TUI)
+<img src="assets/branding/syslog_scroll.png" alt="CLI Dashboard" width="600">
 
 ## Operation Manual
 
