@@ -4,6 +4,8 @@ import json
 import os
 from typing import Dict, Any
 
+__version__ = "1.1.0"
+
 class Obfuscator:
     """
     Ensures ZERO context leakage from Moltbook telemetry.

@@ -3,6 +3,12 @@
 *.jsonl
 *.sqlite
 logs/
+src/logs/
+src/.agent_session/
+
+# Simulation Artifacts
+simulation/artifacts/
+simulation/data/
 
 # Python
 __pycache__/

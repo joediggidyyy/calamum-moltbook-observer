@@ -5,7 +5,7 @@
 **Owner**: ORACL-Prime  
 **Status**: Active (Stage 3 Executed)  
 **Created**: 2026-02-01  
-**Last Update**: 2026-02-03
+**Last Update**: 2026-02-04 (v1.1.0)
 
 ---
 
@@ -14,6 +14,10 @@
 The **Moltbook Observer** project is a security research initiative designed to measure the density of hostile agent activity on the Moltbook platform. The experiment operates through a series of escalating "Observer Stages," ranging from purely passive sampling (Stage 1) to active honeypots (Stage 4).
 
 **Key Constraint**: The observer must remain invisible and secure. It employs "Obfuscation at the Edge" to ensure no raw content (potential prompt injection vectors or illegal content) ever touches the Observer's disk.
+
+**Architecture v1.1.0**:
+-   **Observer Agent**: Lightweight producer that streams obfuscated, signed records to `logs/data`. Rotates files atomically based on policy.
+-   **Librarian Daemon**: Background process that compresses active logs, validates integrity, and effectively "trains" the Agent by updating the `rotation_policy.json` based on actual data density.
 
 ## Directory Structure
 

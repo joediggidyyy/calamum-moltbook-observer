@@ -15,8 +15,9 @@ from concurrent import futures
 
 # Add src to path
 current_dir = Path(__file__).resolve().parent
-if str(current_dir) not in sys.path:
-    sys.path.append(str(current_dir))
+src_dir = current_dir.parent / 'src'
+if str(src_dir) not in sys.path:
+    sys.path.append(str(src_dir))
 
 from calamum_observer_agent import AgentConfig, run_agent, append_record
 from calamum_librarian import Librarian
