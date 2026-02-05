@@ -21,7 +21,10 @@ from typing import List, Optional, Tuple
 
 import psutil
 
-from ..calamum_config import get_calamum_data_dir, get_calamum_health_dir
+try:
+    from calamum_config import get_calamum_data_dir, get_calamum_health_dir
+except ImportError:
+    from ..calamum_config import get_calamum_data_dir, get_calamum_health_dir
 
 
 def _find_repo_root(start: Path) -> Path:

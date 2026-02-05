@@ -254,8 +254,10 @@ async def ghost_console_js_error(payload: dict) -> dict:
     ECharts/Vue error that won't surface in server-side Python logs.
     """
     # src/ops_dashboard.py -> src
-    src_dir = Path(__file__).resolve().parent
-    out_path = get_calamum_log_dir()
+    try:
+        src_dir = Path(__file__).resolve().parent
+        out_path = get_calamum_log_dir() / 'ghost_console_js_errors.jsonl'
+        
         out_path.parent.mkdir(parents=True, exist_ok=True)
         record = {
             'ts': datetime.now(timezone.utc).isoformat().replace('+00:00', 'Z'),
@@ -269,12 +271,14 @@ async def ghost_console_js_error(payload: dict) -> dict:
                 os.fsync(f.fileno())
             except Exception:
                 pass
+        
         # in-memory counters (shown in snapshot)
         try:
             state.js_diag_seq += 1
             state.js_diag_last_ts_utc = record['ts']
         except Exception:
             pass
+            
     except Exception as e:
         # best-effort; never break the UI due to logging failures
         err = repr(e)

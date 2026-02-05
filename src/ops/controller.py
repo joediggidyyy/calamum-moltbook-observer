@@ -3,7 +3,10 @@ import json
 from pathlib import Path
 from typing import Any, Dict, Optional
 
-from ..calamum_config import get_calamum_control_dir
+try:
+    from calamum_config import get_calamum_control_dir
+except ImportError:
+    from ..calamum_config import get_calamum_control_dir
 
 class CalamumController:
     """
