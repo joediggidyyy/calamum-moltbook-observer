@@ -1,0 +1,39 @@
+{
+  "queststack_id": "qs-calamum-remediation-20260204",
+  "questframe_id": "calamum-remediation-execution",
+  "owner": "ORACL-Prime",
+  "primary_stakeholder": "joediggidyyy",
+  "created_at": "2026-02-04T10:50:00Z",
+  "updated_at": "2026-02-04T10:50:00Z",
+  "current_focus_frame": "qf1_cleanup_and_atomic_io",
+  "frames": [
+    {
+      "frame_id": "qf1_cleanup_and_atomic_io",
+      "stage_id": "execution",
+      "title": "Cleanup orphan code and implement atomic I/O",
+      "status": "completed",
+      "next_action": "Proceed to QF2.",
+      "notes": "Critical Phase 1 remediation to stop 'blanking' charts caused by Windows file locking.",
+      "tasks": [
+        "Archive and delete src/calamum_observer_daemon.py",
+        "Refactor src/calamum_observer_agent.py to use atomic 'with open()' writes per batch",
+        "Refactor src/ops/telemetry.py to remove _JsonlAppendCounter and use simple tail/read",
+        "Validate agent runs without locking errors"
+      ]
+    },
+    {
+      "frame_id": "qf2_verification_and_mvp",
+      "stage_id": "verification",
+      "title": "Verify MVP status and process stability",
+      "status": "in-progress",
+      "next_action": "Run ghost console launch test and UI observation.",
+      "notes": "Ensure remediation actually fixed the blanking issue and that process cleanup is reliable.",
+      "tasks": [
+        "Run launch_ghost_console.ps1 and verify successful startup",
+        "Observe GUI for > 10 minutes to confirm no 'blanking' (data loss)",
+        "Verify clean shutdown (no regex 'Nuclear' cleanup required)",
+        "Confirm MVP status: Reliable data, clean code, stable process"
+      ]
+    }
+  ]
+}

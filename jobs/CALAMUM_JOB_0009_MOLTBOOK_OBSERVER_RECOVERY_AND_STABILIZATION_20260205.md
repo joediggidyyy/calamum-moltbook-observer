@@ -33,7 +33,18 @@ Restoration of the `calamum-moltbook-observer` system to full operational status
     *   Watchdog liveness is proved only by the watchdog supervisor process updating its own heartbeat.
     *   There is no separate "watchdog reset" control; operator-initiated refresh/recovery is a single supervisory action.
 
-### 1.2 Inspection Protocol (Per-Frame parameter)
+### 1.2 Quest paperwork and evidence anchors
+
+- QuestStack: `projects/calamum-moltbook-observer/queststacks/QS-CALAMUM-MOLTBOOK-OBSERVER-RECOVERY-AND-STABILIZATION-20260205.md`
+- QuestFrame: `projects/calamum-moltbook-observer/questframes/QF-CALAMUM-MOLTBOOK-OBSERVER-RECOVERY-AND-STABILIZATION-20260205.json`
+- Job report: `docs/reports/operations/JOB_REPORT_QS-CALAMUM-MOLTBOOK-OBSERVER-RECOVERY-AND-STABILIZATION-20260205.md`
+- SessionMemory snapshots:
+    - `.agent_session/policy_snapshot.json`
+    - `.agent_session/policy_snapshot.md`
+    - `.agent_session/ops_awareness.json`
+    - `.agent_session/ops_awareness.md`
+
+### 1.3 Inspection Protocol (Per-Frame parameter)
 At the end of *each* execution frame, the operator (ORACL) MUST manual inspect:
 1.  **Process Tree**: Verify Agent, Librarian, and Dashboard are running.
 2.  **Artifacts**: 

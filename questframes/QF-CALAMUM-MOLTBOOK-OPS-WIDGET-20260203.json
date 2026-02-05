@@ -1,0 +1,49 @@
+{
+    "id": "QF-CALAMUM-MOLTBOOK-OPS-WIDGET-20260203",
+    "type": "quest_frame",
+    "title": "Build 'Ghost Console' TUI for Calamum Observer",
+    "status": "planned",
+    "owner": "ORACL-Prime",
+    "created_at": "2026-02-03T15:00:00Z",
+    "context": {
+        "design_doc": "projects/calamum-moltbook-observer/planning/DESIGN_CALAMUM_SANDBOX_OPS_WIDGET.md",
+        "quest_stack": "projects/calamum-moltbook-observer/queststacks/QS-CALAMUM-MOLTBOOK-OPS-WIDGET-20260203.md"
+    },
+    "tasks": [
+        {
+            "id": "1_install_deps",
+            "title": "Install TUI Dependencies",
+            "description": "Install `textual` and `plotext` into the environment.",
+            "command": "pip install textual plotext",
+            "verification": "python -c 'import textual; import plotext; print(\"OK\")'"
+        },
+        {
+            "id": "2_scaffold_app",
+            "title": "Scaffold ops_console.py",
+            "description": "Create the basic Textual App structure with Header, Grid, and Footer.",
+            "file_path": "projects/calamum-moltbook-observer/src/ops_console.py"
+        },
+        {
+            "id": "3_implement_diamond",
+            "title": "Implement Integrity Diamond",
+            "description": "Use Plotext to render a 4-axis radar chart widget within Textual.",
+            "context": "Axes: Availability, Integrity, Capacity, Freshness."
+        },
+        {
+            "id": "4_implement_controls",
+            "title": "Implement Control Shortcuts",
+            "description": "Bind Shift+K (Kill), P (Pause), R (Rotate) to actions.",
+            "verification": "Verify key presses log events to the console footer."
+        },
+        {
+            "id": "5_slide_out_deck",
+            "title": "Implement Slide-Out Control Deck",
+            "description": "Create a modal overlay triggered by [Space] containing clickable buttons."
+        }
+    ],
+    "constraints": {
+        "theme": "Digital Brutalism (Dark Mode)",
+        "tech_stack": "Python 3.11 + Textual + Plotext",
+        "safety": "Fail-closed on rendering errors"
+    }
+}
