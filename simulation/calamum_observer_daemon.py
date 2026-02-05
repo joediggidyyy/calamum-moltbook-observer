@@ -1,4 +1,9 @@
-"""Calamum Observer Daemon
+"""Calamum Observer Daemon (LEGACY / SIMULATION ONLY)
+
+DEPRECATED (governance):
+- This module is not SSOT for Calamum operations.
+- Do not wire this into the production launcher.
+- Prefer `calamum_observer_agent.py` + Watchdog-owned supervision for active experimentation.
 
 Long-running observer process that:
 - writes obfuscated telemetry records to JSONL (no raw content)
@@ -216,9 +221,10 @@ def run_once(cfg: DaemonConfig, signals: ControlSignals) -> Dict[str, Any]:
             # Placeholder: in a real impl this would reload config/state.
             signals.ack(name, payload, status='ok', note='noop refresh (stub)')
         elif name == 'watchdog_reset':
-            # Placeholder: dashboard already touches its own watchdog heartbeat.
-            # Here we simply ack for audit.
-            signals.ack(name, payload, status='ok', note='watchdog reset acknowledged')
+            # Governance: the GUI must not fabricate watchdog liveness.
+            # This daemon does not (and must not) touch watchdog heartbeat markers.
+            # Best-effort: ack for audit only.
+            signals.ack(name, payload, status='ok', note='watchdog reset intent acknowledged (no-op)')
         else:
             signals.ack(name, payload, status='ignored', note='unknown signal')
 
