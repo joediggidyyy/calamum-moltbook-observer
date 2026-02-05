@@ -12,6 +12,7 @@ import traceback
 from pathlib import Path
 from typing import Dict, Optional, List, Tuple
 import json
+import psutil  # Required for uptime and system resource queries
 from ops.controller import controller # Import the controller
 from ops.telemetry import TelemetryProvider, load_config
 from calamum_config import get_calamum_log_dir
@@ -174,14 +175,19 @@ class SystemState:
         self.timestamp = datetime.now()
         self.log_seq: int = 0
         self.log_items: List[Tuple[int, str]] = []  # (seq, line)
-        self.density_bins = [0] * 12
-        self.density_raw_window = [0] * 12
-        # Default: 2s time slices (can be overridden by telemetry config/env).
-        self.density_slice_sec = 2.0
+        # Density is maintained as a fixed global-time window (base resolution) and
+        # rebinned client-side by the Control Deck bin-width (seconds) setting.
+        # Backend base default: 60 seconds @ 1s slices.
+        self.density_bins = [0] * 60
+        self.density_raw_window = [0] * 60
+        self.density_slice_sec = 1.0
         self.watchdog_active = True
         self.watchdog_last_reset = datetime.now()
+        self.librarian_active = False  # NEW
         self._last_obs_active: Optional[bool] = None
         self._last_wd_active: Optional[bool] = None
+        self._last_lib_active: Optional[bool] = None  # NEW
+        self._last_archive_count: int = 0  # NEW
         # UI push throttles (monotonic seconds)
         self._last_density_push_at: float = 0.0
         self._last_charts_push_at: float = 0.0
@@ -211,6 +217,17 @@ state = SystemState()
 
 # Telemetry provider (best-effort: will fall back to simulation if it can't read sources)
 telemetry = TelemetryProvider(load_config(Path(__file__)))
+
+# Density base window (dashboard-local): fixed global time window at 1-second resolution.
+# The browser rebins this base window into [1,2,5,10,20] second bins.
+_DENSITY_BASE_SLICE_SEC: float = 1.0
+_DENSITY_WINDOW_SEC: int = 60
+try:
+    telemetry.set_density_bins(int(_DENSITY_WINDOW_SEC))
+    telemetry.set_density_slice_sec(float(_DENSITY_BASE_SLICE_SEC))
+except Exception:
+    # best-effort; never break the UI due to telemetry config
+    pass
 
 # Branding assets (optional)
 _PROJECT_ROOT = Path(__file__).resolve().parents[1]  # .../projects/calamum-moltbook-observer
@@ -370,7 +387,9 @@ def _compute_snapshot() -> dict:
     """
     try:
         snap = telemetry.update()
-    except Exception:
+    except Exception as e:
+        # Log critical telemetry failure so it's visible in the UI console
+        add_log(f"[ERR] Telemetry failed: {str(e)}")
         snap = {}
 
     # CPU/MEM -> histories (bounded)
@@ -394,24 +413,33 @@ def _compute_snapshot() -> dict:
     state.records_collected = total
 
     bins = snap.get('density_bins')
-    if isinstance(bins, list) and len(bins) == len(state.density_bins):
+    if isinstance(bins, list):
         state.density_bins = [int(max(0, min(100, x))) for x in bins]
 
     raw = snap.get('density_raw_window')
-    if isinstance(raw, list) and len(raw) == len(state.density_bins):
+    if isinstance(raw, list):
         state.density_raw_window = [int(max(0, x)) for x in raw]
     try:
         state.density_slice_sec = float(snap.get('density_slice_sec', state.density_slice_sec))
     except Exception:
         pass
 
-    # WD/OBS
+    # WD/OBS/LIB
     state.watchdog_active = bool(snap.get('watchdog_active', False))
     state.is_running = bool(snap.get('observer_active', False))
+    state.librarian_active = bool(snap.get('librarian_active', False))
 
     # Derive scores
     availability = 100 if state.is_running else 0
+    
+    # Freshness depends on both Watchdog and Librarian now
     freshness = 100 if state.watchdog_active else 0
+    if state.librarian_active:
+        freshness = int((freshness + 100) / 2)
+    elif freshness > 0:
+        # Penalize if Librarian is down but Watchdog is up
+        freshness = int(freshness / 2)
+
     capacity = int(max(0, min(100, 100 - max(cpu, mem))))
     
     # Real Integrity Calculation:
@@ -446,10 +474,9 @@ def _compute_snapshot() -> dict:
         else:
             add_log(f"Ingested +{new} records")
 
-    if state._last_obs_active is None:
-        state._last_obs_active = state.is_running
-    if state._last_wd_active is None:
-        state._last_wd_active = state.watchdog_active
+    if state._last_obs_active is None: state._last_obs_active = state.is_running
+    if state._last_wd_active is None: state._last_wd_active = state.watchdog_active
+    if state._last_lib_active is None: state._last_lib_active = state.librarian_active
 
     if state.is_running != state._last_obs_active:
         add_log(f"[SYS] Observer state -> {'ACTIVE' if state.is_running else 'DOWN'}")
@@ -457,6 +484,16 @@ def _compute_snapshot() -> dict:
     if state.watchdog_active != state._last_wd_active:
         add_log(f"[SYS] Watchdog state -> {'ACTIVE' if state.watchdog_active else 'STALE'}")
         state._last_wd_active = state.watchdog_active
+    if state.librarian_active != state._last_lib_active:
+        add_log(f"[SYS] Librarian state -> {'ACTIVE' if state.librarian_active else 'DOWN'}")
+        state._last_lib_active = state.librarian_active
+
+    # Archive Logic (Librarian activity)
+    current_archived = int(snap.get('records_archive', 0))
+    if current_archived > state._last_archive_count and state._last_archive_count > 0:
+        delta_arch = current_archived - state._last_archive_count
+        add_log(f"[LIB] Archived +{delta_arch} records (Total: {current_archived})")
+    state._last_archive_count = current_archived
 
     return {
         'ts': datetime.now().isoformat(),
@@ -479,12 +516,23 @@ def _compute_snapshot() -> dict:
         'watchdog_active': state.watchdog_active,
         'watchdog_last_reset': state.watchdog_last_reset.isoformat(),
         'observer_active': state.is_running,
+        'librarian_active': state.librarian_active,
         'scores': {
             'availability': availability,
             'integrity': integrity,
             'capacity': capacity,
             'freshness': freshness,
         },
+        'stats': {
+            'wd': snap.get('watchdog_stats', {}),
+            'obs': snap.get('observer_stats', {}),
+            'lib': snap.get('librarian_stats', {}),
+        },
+        'records_breakdown': {
+            'session': snap.get('records_session', 0),
+            'archive': snap.get('records_archive', 0),
+        },
+        'uptime_s': time.time() - psutil.boot_time(),
         'status': status,
         'log_last_seq': state.log_seq,
     }
@@ -580,18 +628,26 @@ def create_header(toggle_drawer_fn):
                 .classes('font-bold text-[10px]')
             watchdog_badge.tooltip('Watchdog: monitors the observer loop heartbeat. Reset in Control Deck.')
 
-            # Observer indicator (low-profile, beside WD)
+            # Observer indicator
             observer_badge = ui.badge('OBS: ACTIVE', color='green-10')\
                 .props('id="cids-obs-badge"')\
                 .classes('font-bold text-[10px]')
             observer_badge.tooltip('Observer: process status for the active node.')
 
+            # Librarian indicator
+            librarian_badge = ui.badge('LIB: ACTIVE', color='green-10')\
+                .props('id="cids-lib-badge"')\
+                .classes('font-bold text-[10px]')
+            librarian_badge.tooltip('Librarian: archival process status (Auto-Rotate/Compaction).')
+
             # Records Counter
             with ui.row().classes('items-center gap-2'):
-                ui.label('RECORDS:').classes('text-xs text-gray-500')
+                ui.label('RECORDS:').classes('text-xs text-gray-500 font-bold')
                 ui.label(f"{int(state.records_collected):,}")\
                     .props('id="cids-records"')\
                     .classes('text-xl font-bold text-white')
+                    # Tooltip logic handled by client-side JS updating the 'title' attribute
+                    # to match the requested format: [ sess: <m> \n arch: <n> ]
 
             ui.separator().props('vertical').classes('h-8 border-gray-700')
 
@@ -896,6 +952,73 @@ def main_page():
                 pointer-events: auto;
             }
 
+            /* Control Deck: bin-width spinbox (local, persistent) */
+            .cids-spinbox {
+                display: flex;
+                align-items: center;
+                gap: 10px;
+                user-select: none;
+            }
+            .cids-spinbox-core {
+                display: flex;
+                align-items: center;
+                justify-content: center;
+                background: rgba(255, 255, 255, 0.06);
+                border: 1px solid rgba(255, 255, 255, 0.16);
+                width: 86px;
+                height: 58px;
+                box-sizing: border-box;
+            }
+            .cids-spinbox-arrows {
+                display: flex;
+                flex-direction: column;
+                align-items: stretch;
+                justify-content: center;
+                height: 58px;
+                width: 28px;
+                box-sizing: border-box;
+            }
+            .cids-spinbox-btn {
+                display: flex;
+                align-items: center;
+                justify-content: center;
+                height: 29px;
+                background: rgba(255, 255, 255, 0.03);
+                border: 1px solid rgba(255, 255, 255, 0.12);
+                color: #e5e7eb;
+                font-family: monospace;
+                cursor: pointer;
+                padding: 0;
+            }
+            .cids-spinbox-btn:active {
+                background: rgba(255, 255, 255, 0.09);
+            }
+            .cids-spinbox-value {
+                font-family: monospace;
+                font-weight: 800;
+                font-size: 18px;
+                color: #ffffff;
+                letter-spacing: 0.04em;
+                width: 70px;
+                text-align: center;
+            }
+            .cids-spinbox-value.off {
+                color: #a1a1aa;
+            }
+            .cids-spinbox-suffix {
+                display: inline-flex;
+                align-items: center;
+                justify-content: center;
+                height: 22px;
+                padding: 0 8px;
+                border: 1px solid rgba(255, 255, 255, 0.12);
+                background: rgba(255, 255, 255, 0.03);
+                color: #d4d4d8;
+                font-size: 12px;
+                letter-spacing: 0.06em;
+                text-transform: lowercase;
+            }
+
             /* Optional: crisper text when scaled */
             #cids-scale-root * { -webkit-font-smoothing: antialiased; }
 
@@ -915,8 +1038,9 @@ def main_page():
                 animation: cidsFlash 0.35s ease-out 1;
                 padding: 1px 0;
             }
-
-            /* Subtle zebra shading so movement is visible without heavy timestamps. */
+            /* Zebra striping for logs (applied via JS)
+             * IMPORTANT: This is character-level striping (text/opacity), not row background fills.
+             */
             .cids-log-zebra-even { opacity: 0.92; }
             .cids-log-zebra-odd { opacity: 0.80; }
 
@@ -2471,6 +2595,7 @@ def main_page():
                                 if (!dom) return null;
                                 try {
                                     if (dom.__vueParentComponent) return dom.__vueParentComponent;
+                                    if (dom.__vue_app__) return dom.__vue_app__._instance; 
                                 } catch (e0) {
                                     // swallow
                                 }
@@ -2524,6 +2649,7 @@ def main_page():
                                     var comp2 = probeValue(sv);
                                     if (comp2) return comp2;
                                 }
+                                
                                 return null;
                             } catch (eAll) {
                                 return null;
@@ -2536,6 +2662,10 @@ def main_page():
                             ec = (window && window.echarts && typeof window.echarts.getInstanceByDom === 'function') ? window.echarts : null;
                             if (!ec && window && window.__cids_echarts_ref && typeof window.__cids_echarts_ref.getInstanceByDom === 'function') {
                                 ec = window.__cids_echarts_ref;
+                            }
+                            if (!ec) {
+                                // If we don't have the module yet, trigger a reload attempt.
+                                try { ensureEChartsModule(); } catch (eEns) { }
                             }
                         } catch (eEc) {
                             ec = null;
@@ -2852,6 +2982,159 @@ def main_page():
                     }
                 }
 
+                // --- Density bin-width (sec) control (local, persistent; OFF is chart-only) ---
+                var __CIDS_DENSITY_BIN_WIDTH_KEY = '__cids_density_bin_width_sec';
+                var __CIDS_DENSITY_BIN_WIDTH_CHOICES = [1, 2, 5, 10, 20, 'off'];
+                var __CIDS_DENSITY_BIN_WIDTH_DEFAULT = 10;
+
+                function normalizeBinWidthSetting(v) {
+                    try {
+                        if (v === null || v === undefined) return __CIDS_DENSITY_BIN_WIDTH_DEFAULT;
+                        if (typeof v === 'number') {
+                            if (!isFinite(v)) return __CIDS_DENSITY_BIN_WIDTH_DEFAULT;
+                            v = Math.round(v);
+                            for (var i = 0; i < __CIDS_DENSITY_BIN_WIDTH_CHOICES.length; i++) {
+                                if (__CIDS_DENSITY_BIN_WIDTH_CHOICES[i] === v) return v;
+                            }
+                            return __CIDS_DENSITY_BIN_WIDTH_DEFAULT;
+                        }
+                        var s = String(v).trim().toLowerCase();
+                        if (s === 'off' || s === '0' || s === 'false') return 'off';
+                        var n = parseInt(s, 10);
+                        if (!isFinite(n)) return __CIDS_DENSITY_BIN_WIDTH_DEFAULT;
+                        for (var j = 0; j < __CIDS_DENSITY_BIN_WIDTH_CHOICES.length; j++) {
+                            if (__CIDS_DENSITY_BIN_WIDTH_CHOICES[j] === n) return n;
+                        }
+                        return __CIDS_DENSITY_BIN_WIDTH_DEFAULT;
+                    } catch (e) {
+                        return __CIDS_DENSITY_BIN_WIDTH_DEFAULT;
+                    }
+                }
+
+                function readBinWidthSetting() {
+                    try {
+                        var raw = null;
+                        try { raw = localStorage.getItem(__CIDS_DENSITY_BIN_WIDTH_KEY); } catch (eLS) { raw = null; }
+                        return normalizeBinWidthSetting(raw);
+                    } catch (e) {
+                        return __CIDS_DENSITY_BIN_WIDTH_DEFAULT;
+                    }
+                }
+
+                function writeBinWidthSetting(v) {
+                    try {
+                        var nv = normalizeBinWidthSetting(v);
+                        try { localStorage.setItem(__CIDS_DENSITY_BIN_WIDTH_KEY, String(nv)); } catch (eLS) { }
+                        try { window.__cids_density_bin_width = nv; } catch (eW) { }
+                        return nv;
+                    } catch (e) {
+                        return __CIDS_DENSITY_BIN_WIDTH_DEFAULT;
+                    }
+                }
+
+                function renderBinWidthSetting(v) {
+                    try {
+                        var nv = normalizeBinWidthSetting(v);
+                        var elVal = byId('cids-binwidth-value');
+                        var elSuf = byId('cids-binwidth-suffix');
+                        if (elVal) {
+                            if (String(nv) === 'off') {
+                                elVal.textContent = 'OFF';
+                                try { elVal.classList.add('off'); } catch (eC0) { }
+                                if (elSuf) elSuf.style.opacity = '0.35';
+                            } else {
+                                elVal.textContent = String(nv);
+                                try { elVal.classList.remove('off'); } catch (eC1) { }
+                                if (elSuf) elSuf.style.opacity = '1';
+                            }
+                        }
+                        try { window.__cids_density_bin_width = nv; } catch (eW) { }
+                    } catch (e) {
+                        // swallow
+                    }
+                }
+
+                function stepBinWidthSetting(dir) {
+                    try {
+                        var cur = readBinWidthSetting();
+                        var idx = 0;
+                        for (var i = 0; i < __CIDS_DENSITY_BIN_WIDTH_CHOICES.length; i++) {
+                            if (__CIDS_DENSITY_BIN_WIDTH_CHOICES[i] === cur) { idx = i; break; }
+                        }
+                        var next = idx + (dir >= 0 ? 1 : -1);
+                        if (next < 0) next = __CIDS_DENSITY_BIN_WIDTH_CHOICES.length - 1;
+                        if (next >= __CIDS_DENSITY_BIN_WIDTH_CHOICES.length) next = 0;
+                        var nv = __CIDS_DENSITY_BIN_WIDTH_CHOICES[next];
+                        nv = writeBinWidthSetting(nv);
+                        renderBinWidthSetting(nv);
+                    } catch (e) {
+                        // swallow
+                    }
+                }
+
+                function bindBinWidthControl() {
+                    try {
+                        if (window.__cids_binwidth_bound) return;
+                        window.__cids_binwidth_bound = true;
+                        var up = byId('cids-binwidth-up');
+                        var dn = byId('cids-binwidth-down');
+                        if (up) up.addEventListener('click', function() { stepBinWidthSetting(+1); });
+                        if (dn) dn.addEventListener('click', function() { stepBinWidthSetting(-1); });
+
+                        // Initialize from storage.
+                        var v = readBinWidthSetting();
+                        writeBinWidthSetting(v);
+                        renderBinWidthSetting(v);
+                    } catch (e) {
+                        // swallow
+                    }
+                }
+
+                function aggregateDensityFromBase(rawBase, binWidthSec) {
+                    try {
+                        var w = Number(binWidthSec || 0);
+                        if (!isFinite(w) || w <= 0) w = __CIDS_DENSITY_BIN_WIDTH_DEFAULT;
+                        w = Math.round(w);
+
+                        var base = (rawBase && rawBase.length) ? rawBase : [];
+                        var m = base.length;
+                        if (!m) return { raw: [], bins: [] };
+
+                        // Make window divisible by width by trimming the oldest remainder.
+                        var rem = m % w;
+                        var start = rem > 0 ? rem : 0;
+                        var usable = m - start;
+                        if (usable <= 0) return { raw: [], bins: [] };
+                        var nBins = Math.floor(usable / w);
+                        if (nBins < 1) return { raw: [], bins: [] };
+
+                        var outRaw = [];
+                        for (var i = 0; i < nBins; i++) {
+                            var sum = 0;
+                            for (var j = 0; j < w; j++) {
+                                var idx = start + (i * w) + j;
+                                var v = Number(base[idx] || 0);
+                                if (!isFinite(v)) v = 0;
+                                sum += v;
+                            }
+                            outRaw.push(Math.round(sum));
+                        }
+
+                        var denom = 1;
+                        for (var k = 0; k < outRaw.length; k++) {
+                            if (outRaw[k] > denom) denom = outRaw[k];
+                        }
+                        if (denom < 1) denom = 1;
+                        var outBins = [];
+                        for (var t = 0; t < outRaw.length; t++) {
+                            outBins.push(Math.max(0, Math.min(100, Math.round((outRaw[t] / denom) * 100))));
+                        }
+                        return { raw: outRaw, bins: outBins };
+                    } catch (e) {
+                        return { raw: [], bins: [] };
+                    }
+                }
+
                 function resizeChartsKicker() {
                     try {
                         var ids = ['cids-integrity-radar-chart', 'cids-resource-chart', 'cids-density-chart'];
@@ -2873,7 +3156,14 @@ def main_page():
                         var el = byId('cids-log-scroll');
                         if (!el) return;
                         var node = document.createElement('div');
-                        node.className = 'w-full cids-log-flash';
+                        
+                        // Zebra striping (infer from previous sibling to maintain alternated look)
+                        var isOdd = true;
+                        if (el.firstChild && el.firstChild.classList) {
+                            if (el.firstChild.classList.contains('cids-log-zebra-odd')) isOdd = false;
+                        }
+                        
+                        node.className = 'w-full cids-log-flash ' + (isOdd ? 'cids-log-zebra-odd' : 'cids-log-zebra-even');
                         if (String(line).indexOf('[ALERT]') >= 0) node.className += ' text-red-300';
                         else if (String(line).indexOf('[WARN]') >= 0 || String(line).indexOf('[WRN]') >= 0) node.className += ' text-orange-200';
                         else if (String(line).indexOf('Ingested +') >= 0) node.className += ' text-emerald-200';
@@ -2985,13 +3275,33 @@ def main_page():
                         }
 
                         setText('cids-records', fmtInt(snap.total_records || 0));
+                        
+                        // Detail pill (Removed from DOM, but logic might remain in old cached JS? No.)
+                        // Tooltip update
+                        try {
+                            var rb = snap.records_breakdown || {};
+                            var sRec = rb.session || 0;
+                            var aRec = rb.archive || 0;
+                            var elRecs = byId('cids-records');
+                            if (elRecs) {
+                                // Use fmtInt safely
+                                var sStr = (typeof fmtInt === 'function') ? fmtInt(sRec) : String(sRec);
+                                var aStr = (typeof fmtInt === 'function') ? fmtInt(aRec) : String(aRec);
+                                elRecs.title = 'sess: ' + sStr + ' \\narch: ' + aStr;
+                            }
+                        } catch (eTip) {
+                            // swallow
+                        }
+
                         setText('cids-mode', 'MODE: [ ' + String(snap.mode || 'CANARY') + ' ]');
 
                         // badges
                         var wd = !!snap.watchdog_active;
                         var obs = !!snap.observer_active;
+                        var lib = !!snap.librarian_active;
                         setBadge('cids-wd-badge', wd ? 'WD: ACTIVE' : 'WD: STALE', wd ? 'green' : 'orange');
                         setBadge('cids-obs-badge', obs ? 'OBS: ACTIVE' : 'OBS: DOWN', obs ? 'green' : 'red');
+                        setBadge('cids-lib-badge', lib ? 'LIB: ACTIVE' : 'LIB: DOWN', lib ? 'green' : 'gray');
                         if (snap.status && snap.status.text) {
                             setBadge('cids-status-badge', String(snap.status.text), String(snap.status.color || 'green'));
                         }
@@ -3017,7 +3327,25 @@ def main_page():
 
                         // charts
                         setBiorhythmEChart(snap.cpu_history || [], snap.mem_history || []);
-                        setDensityEChart(snap.density_bins || [], snap.density_raw_window || [], Number(snap.density_slice_sec || 2));
+                        try {
+                            // Local-only chart control:
+                            // - OFF freezes the density chart only (backend sampling continues)
+                            // - Otherwise we rebin the backend 1s base window into the selected bin width.
+                            if (!window.__cids_binwidth_bound) {
+                                bindBinWidthControl();
+                            }
+                            var bw = (window.__cids_density_bin_width !== undefined && window.__cids_density_bin_width !== null)
+                                ? window.__cids_density_bin_width
+                                : readBinWidthSetting();
+
+                            if (String(bw) !== 'off') {
+                                var bws = Number(bw || __CIDS_DENSITY_BIN_WIDTH_DEFAULT);
+                                var agg = aggregateDensityFromBase(snap.density_raw_window || [], bws);
+                                setDensityEChart(agg.bins || [], agg.raw || [], bws);
+                            }
+                        } catch (eDen) {
+                            // swallow
+                        }
                     } catch (e) {
                         // swallow
                     } finally {
@@ -3086,6 +3414,7 @@ def main_page():
                 if (LOG_POLL_MS < 250) LOG_POLL_MS = 250;
                 postDiagThrottled('poll_started', 'poll_started', { poll_ms: POLL_MS, log_poll_ms: LOG_POLL_MS }, 60000);
                 tickClock();
+                bindBinWidthControl();
                 bindLogFollow();
                 pollSnapshot();
                 pollLog();
@@ -3172,6 +3501,25 @@ def main_page():
 
                 ui.separator().classes('bg-gray-700')
 
+                # Density histogram bin width control (local, persistent; OFF is chart-only)
+                with ui.row().classes('w-full justify-between items-center'):
+                    with ui.row().classes('items-center gap-2'):
+                        ui.label('BIN WIDTH').classes('text-sm text-gray-400')
+                        ui.icon('help_outline', size='xs').classes('text-gray-600')\
+                            .tooltip('Density Histogram bin width (seconds). Local to this UI (persisted in browser). OFF freezes the chart only; backend sampling continues.')
+                    ui.html('''
+                        <div class="cids-spinbox" title="Bin width (sec). Local persistent. OFF freezes chart only.">
+                            <div class="cids-spinbox-arrows">
+                                <button id="cids-binwidth-up" class="cids-spinbox-btn" type="button" aria-label="Increase bin width">&#9650;</button>
+                                <button id="cids-binwidth-down" class="cids-spinbox-btn" type="button" aria-label="Decrease bin width">&#9660;</button>
+                            </div>
+                            <div class="cids-spinbox-core">
+                                <div id="cids-binwidth-value" class="cids-spinbox-value">10</div>
+                            </div>
+                            <div id="cids-binwidth-suffix" class="cids-spinbox-suffix">sec</div>
+                        </div>
+                    ''')
+
                 # Watchdog controls
                 with ui.row().classes('w-full justify-between items-center'):
                     with ui.row().classes('items-center gap-2'):
@@ -3252,7 +3600,7 @@ def main_page():
                             ui.label('DENSITY HISTOGRAM').classes('text-xs font-bold text-gray-500')
                             with ui.row().classes('items-center gap-2'):
                                 ui.icon('help_outline', size='xs').classes('text-gray-600')\
-                                    .tooltip('Density Histogram: relative collection volume over the last 12 time slices (normalized 0-100). Time slice width is configurable; hover a bar for raw counts.')
+                                    .tooltip('Density Histogram: relative collection volume over the last 60 seconds (base 1s sampling), rebinned locally by the Control Deck bin width (sec). Hover a bar for raw counts.')
                                 ui.icon('bar_chart', size='xs').classes('text-gray-600')
                         with ui.element('div').classes('w-full flex-grow min-h-0 overflow-hidden p-3'):
                             create_density_histogram_chart().props('id="cids-density-chart"')
@@ -3270,8 +3618,7 @@ def main_page():
                         with ui.element('div').classes('w-full flex-1 min-h-0 p-2 bg-black font-mono text-xs gap-1 flex flex-col'):
                             log_scroll = ui.element('div').props('id="cids-log-scroll"')\
                                 .classes('w-full flex-1 min-h-0 overflow-y-auto no-scrollbar')
-                            # Prompt line (outside scroll so it stays visible)
-                            ui.label('>_').classes('text-gray-500 mt-1')
+                            # Prompt line intentionally removed (was a visual artifact under the feed).
 
     # --- UPDATE LOOP ---
     # Intentionally removed.

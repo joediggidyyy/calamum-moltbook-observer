@@ -104,10 +104,11 @@ def load_config(argv_repo_root: Optional[str], mode: str, interval_sec: float, n
         'CALAMUM_OBSERVER_HEARTBEAT_PATH',
         str(health_dir / 'calamum_observer.heartbeat'),
     ))
-    watchdog_heartbeat = Path(os.getenv(
-        'CALAMUM_WATCHDOG_HEARTBEAT_PATH',
-        str(health_dir / 'calamum_ops_watchdog.heartbeat'),
-    ))
+    # Watchdog responsibility moved to dedicated supervisor process.
+    # watchdog_heartbeat = Path(os.getenv(
+    #     'CALAMUM_WATCHDOG_HEARTBEAT_PATH',
+    #     str(health_dir / 'calamum_ops_watchdog.heartbeat'),
+    # ))
 
     return AgentConfig(
         repo_root=repo_root,
@@ -118,7 +119,7 @@ def load_config(argv_repo_root: Optional[str], mode: str, interval_sec: float, n
         output_jsonl=output_jsonl,
         control_dir=control_dir,
         observer_heartbeat=observer_heartbeat,
-        watchdog_heartbeat=watchdog_heartbeat,
+        watchdog_heartbeat=None, # Deprecated
     )
 
 

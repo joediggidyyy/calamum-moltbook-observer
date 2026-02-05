@@ -14,6 +14,7 @@ All paths may be overridden with environment variables.
 from __future__ import annotations
 
 import os
+import json
 import time
 from dataclasses import dataclass
 from pathlib import Path
@@ -86,66 +87,128 @@ def _newest_jsonl(data_dir: Path) -> Optional[Path]:
         return None
 
 
+class _SafeStat:
+    """Windows-friendly stat wrapper that retries on locking errors."""
+    def __init__(self) -> None:
+        self._last_good_size: int = 0
+        self._last_good_mtime: float = 0.0
+
+    def get_size_and_mtime(self, path: Path) -> Tuple[int, float]:
+        # Retry loop for Windows file locking
+        for _ in range(3):
+            try:
+                if not path.exists():
+                    # If file genuinely disappears, we might want to reset,
+                    # but for stability, returning last known is safer until it reappears.
+                    return self._last_good_size, self._last_good_mtime
+                st = path.stat()
+                self._last_good_size = st.st_size
+                self._last_good_mtime = st.st_mtime
+                return st.st_size, st.st_mtime
+            except OSError:
+                time.sleep(0.02)
+        # Fallback to last known good state
+        return self._last_good_size, self._last_good_mtime
+
+
 class _JsonlAppendCounter:
     """Robust line counter for an append-only JSONL file.
     
-    Replaces estimation with actual line counting (buffered read) to ensure accuracy.
-    Includes retries for Windows file locking contention.
+    Uses byte estimation with retry logic for Windows file locking resilience.
+    Enforces monotonic growth to prevent UI blanking.
     """
 
     def __init__(self) -> None:
         self.path: Optional[Path] = None
         self.total_lines: int = 0
+        self._stat_tracker = _SafeStat()
+        self._historical_count: int = 0
+        self._last_manifest_check: float = 0.0
 
     def set_path(self, path: Optional[Path]) -> None:
         if self.path != path:
             self.path = path
-            # Reset baseline if path changes, but don't zero out total_lines immediately
-            # to avoid UI flicker. Trust the next poll() to align.
+            # Reset tracker for new file
+            self._stat_tracker = _SafeStat()
+
+    def _sync_manifest(self) -> int:
+        # Check manifest periodically (e.g. every 5s) or if count seems low
+        now = time.time()
+        if now - self._last_manifest_check < 5.0 and self._historical_count > 0:
+            return self._historical_count
+            
+        self._last_manifest_check = now
+        count = 0
+        try:
+             # Look for manifest relative to data dir
+             # We assume self.path is in data_dir, or we find data_dir via config if we had access.
+             # Best effort: look in archive/ relative to the data dir parent.
+             # Assuming structure: logs/data/calamum/ -> ../archive -> logs/data/calamum/archive
+             # Wait, Librarian puts archive in data_dir/archive.
+             if self.path:
+                 base = self.path.parent
+                 manifest_path = base / 'archive' / 'manifest.json'
+                 if manifest_path.exists():
+                     data = json.loads(manifest_path.read_text(encoding='utf-8'))
+                     for _, meta in data.items():
+                         count += meta.get('records', 0)
+        except Exception:
+            pass
+        
+        self._historical_count = count
+        return count
 
     def poll(self, max_read_bytes: int = 2_000_000) -> Tuple[int, int]:
         """Return (new_lines, total_lines).
         
-        Brutalist Implementation:
-        - Active File: Estimated via size / AVG_BYTES (Zero I/O scan).
+        Robust Implementation:
+        - Active File: SafeStat byte estimation (survives locking).
         - Historical: Retrieved from archive/manifest.json.
         """
-        historical_count = 0
-        try:
-             # Look for manifest
-             if self.path:
-                 manifest_path = self.path.parent / 'archive' / 'manifest.json'
-                 if manifest_path.exists():
-                     data = json.loads(manifest_path.read_text(encoding='utf-8'))
-                     for _, meta in data.items():
-                         historical_count += meta.get('records', 0)
-        except Exception:
-            pass
-
-        if self.path is None:
-            return 0, historical_count
-
-        estimated_active_lines = 0
+        historical = self._sync_manifest()
         
-        # Byte Estimation for Active File
-        try:
-            if self.path.exists():
-                st = self.path.stat()
-                if st.st_size > 0:
-                    # Estimate ~350 bytes per record
-                    estimated_active_lines = int(st.st_size / 350)
-        except OSError:
-            pass
+        active_lines = 0
+        if self.path:
+            size, _ = self._stat_tracker.get_size_and_mtime(self.path)
+
+            # Prefer exact counts for small files to avoid "0 lines" at startup.
+            # This also keeps unit tests stable while preserving fast-path behavior
+            # for large, continuously-appending JSONL streams.
+            try:
+                budget = int(max(4_096, min(10_000_000, int(max_read_bytes))))
+            except Exception:
+                budget = 2_000_000
+
+            if size > 0 and size <= budget:
+                for _ in range(3):
+                    try:
+                        with self.path.open('rb') as f:
+                            data = f.read(budget)
+                        # JSONL records are newline-delimited.
+                        # Count '\n'; if file doesn't end with newline, count the last partial line.
+                        nl = int(data.count(b'\n'))
+                        if data and not data.endswith(b'\n'):
+                            nl += 1
+                        active_lines = int(max(0, nl))
+                        break
+                    except OSError:
+                        time.sleep(0.02)
+                    except Exception:
+                        break
+            else:
+                # Estimate ~350 bytes per record (best-effort; monotonic guard below prevents regressions)
+                if size > 0:
+                    active_lines = int(size / 350)
             
-        total = historical_count + estimated_active_lines
+        new_total = historical + active_lines
         
-        # Delta calculation is fuzzy in this mode, but acceptable for density bars.
-        # We just report the difference from last poll.
-        delta = total - self.total_lines
-        if delta < 0: 
-            delta = 0 # Ignore negative correction jumps
+        # Enforce Monotonicity (prevent negative deltas from locking glitches)
+        if new_total < self.total_lines:
+            new_total = self.total_lines
             
-        self.total_lines = total
+        delta = new_total - self.total_lines
+        self.total_lines = new_total
+        
         return delta, self.total_lines
 
 
@@ -155,6 +218,7 @@ class TelemetryConfig:
     # Heartbeats
     watchdog_heartbeat_path: Path
     observer_heartbeat_path: Path
+    librarian_heartbeat_path: Path
     freshness_sec: float
 
     # Data source
@@ -162,6 +226,9 @@ class TelemetryConfig:
 
     # Density aggregation
     density_slice_sec: float
+
+    # Density histogram shape
+    density_bins: int
 
     # Performance knobs
     active_jsonl_rescan_sec: float
@@ -182,10 +249,21 @@ def load_config(module_file: Path) -> TelemetryConfig:
         'CALAMUM_OBSERVER_HEARTBEAT_PATH',
         str(health_dir / 'calamum_observer.heartbeat'),
     ))
+    lib_hb = Path(os.getenv(
+        'CALAMUM_LIBRARIAN_HEARTBEAT_PATH',
+        str(health_dir / 'calamum_librarian.heartbeat'),
+    ))
 
     data_dir = get_calamum_data_dir()
 
-    density_slice_sec = float(os.getenv('CALAMUM_DENSITY_SLICE_SEC', '15'))
+    # Default to a visibly "streaming" cadence; can be overridden via env var.
+    density_slice_sec = float(os.getenv('CALAMUM_DENSITY_SLICE_SEC', '2'))
+
+    try:
+        density_bins = int(os.getenv('CALAMUM_DENSITY_BINS', '12'))
+    except Exception:
+        density_bins = 12
+    density_bins = int(max(3, min(60, density_bins)))
 
     active_jsonl_rescan_sec = float(os.getenv('CALAMUM_ACTIVE_JSONL_RESCAN_SEC', '3.0'))
     try:
@@ -196,9 +274,11 @@ def load_config(module_file: Path) -> TelemetryConfig:
     return TelemetryConfig(
         watchdog_heartbeat_path=wd_hb,
         observer_heartbeat_path=obs_hb,
+        librarian_heartbeat_path=lib_hb,
         freshness_sec=freshness_sec,
         data_dir=data_dir,
         density_slice_sec=density_slice_sec,
+        density_bins=density_bins,
         active_jsonl_rescan_sec=active_jsonl_rescan_sec,
         jsonl_max_read_bytes_per_poll=jsonl_max_read_bytes_per_poll,
     )
@@ -208,12 +288,71 @@ class TelemetryProvider:
     def __init__(self, config: TelemetryConfig) -> None:
         self.config = config
         self._counter = _JsonlAppendCounter()
-        self._density_window: List[int] = [0] * 12
+        # Oldest -> newest density slice counts.
+        self._density_window: List[int] = [0] * int(max(3, min(60, self.config.density_bins)))
         self._slice_started_ts: float = _now_ts()
         self._slice_count: int = 0
         self._active_jsonl_cache: Optional[Path] = None
         self._active_jsonl_last_scan_ts: float = 0.0
         self._active_path_high_water_mtime: float = 0.0
+
+    def _clamp_density_slice_sec(self, value: float) -> float:
+        try:
+            v = float(value)
+        except Exception:
+            v = float(self.config.density_slice_sec)
+        if not (v > 0):
+            v = float(self.config.density_slice_sec)
+        # Hard clamps: avoid degenerate cadence and avoid overly large windows.
+        return float(max(0.25, min(60.0, v)))
+
+    def _clamp_density_bins(self, value: int) -> int:
+        try:
+            n = int(value)
+        except Exception:
+            n = int(self.config.density_bins)
+        return int(max(3, min(60, n)))
+
+    def _ensure_density_window_size(self, n_bins: int) -> None:
+        """Resize internal density window to match requested bin count.
+
+        Keeps the most-recent values stable (window is oldest->newest).
+        """
+        n = self._clamp_density_bins(n_bins)
+        cur = list(self._density_window)
+        if len(cur) == n:
+            return
+        if len(cur) > n:
+            self._density_window = cur[-n:]
+            return
+        # len(cur) < n
+        pad = [0] * (n - len(cur))
+        self._density_window = pad + cur
+
+    def set_density_slice_sec(self, slice_sec: float) -> float:
+        """Adjust density slice width at runtime (best-effort, non-persistent)."""
+        ss = self._clamp_density_slice_sec(slice_sec)
+        self.config.density_slice_sec = float(ss)
+        # Reset slice accumulator so the change takes effect immediately.
+        self._slice_started_ts = _now_ts()
+        self._slice_count = 0
+        return float(ss)
+
+    def set_density_bins(self, bins: int) -> int:
+        """Adjust density histogram bin count at runtime (best-effort, non-persistent)."""
+        n = self._clamp_density_bins(bins)
+        self.config.density_bins = int(n)
+        self._ensure_density_window_size(n)
+        # Reset slice accumulator to avoid mixing incompatible windows.
+        self._slice_started_ts = _now_ts()
+        self._slice_count = 0
+        return int(n)
+
+    def get_density_config(self) -> dict:
+        return {
+            'density_slice_sec': float(self.config.density_slice_sec),
+            'density_bins': int(self._clamp_density_bins(self.config.density_bins)),
+        }
 
     def reset_watchdog(self) -> None:
         """Touch the watchdog heartbeat marker (used by dashboard reset control)."""
@@ -274,6 +413,19 @@ class TelemetryProvider:
                  pass
                  
         return self._active_jsonl_cache
+    
+    def _get_freshness_age(self, path: Path, now_ts: float) -> Tuple[bool, float, str]:
+        """Returns (is_fresh, age_sec, pretty_age)."""
+        if not path.exists():
+            return False, 9999.9, "Missing"
+        try:
+            mtime = path.stat().st_mtime
+            age = max(0.0, now_ts - mtime)
+            is_fresh = age <= self.config.freshness_sec
+            return is_fresh, age, f"{age:.1f}s"
+        except OSError:
+            # File locked or vanished
+            return False, 9999.9, "Locked"
 
     def update(self) -> dict:
         """Collect a telemetry snapshot.
@@ -298,14 +450,20 @@ class TelemetryProvider:
         active_jsonl = self._pick_active_jsonl()
         self._counter.set_path(active_jsonl)
         new_lines, total_lines = self._counter.poll(max_read_bytes=self.config.jsonl_max_read_bytes_per_poll)
+        
+        historical = self._counter._historical_count
+        session_recs = max(0, total_lines - historical)
+
+        # Ensure window size matches config (config may change at runtime).
+        self._ensure_density_window_size(int(self.config.density_bins))
 
         # Density window: aggregate new lines into coarse time slices so the
         # histogram is less twitchy and better represents “volume over time”.
         self._slice_count += int(new_lines)
-        slice_sec = float(max(0.25, self.config.density_slice_sec))
+        slice_sec = self._clamp_density_slice_sec(self.config.density_slice_sec)
         elapsed = now - self._slice_started_ts
         if elapsed >= slice_sec:
-            self._density_window = (self._density_window[1:] + [int(self._slice_count)])[-12:]
+            self._density_window = (self._density_window[1:] + [int(self._slice_count)])[-len(self._density_window):]
             self._slice_started_ts = now
             self._slice_count = 0
 
@@ -314,21 +472,34 @@ class TelemetryProvider:
         density_bins = [int(min(100, round((x / denom) * 100))) for x in self._density_window]
 
         # Heartbeat freshness
-        watchdog_active = _is_fresh(self.config.watchdog_heartbeat_path, self.config.freshness_sec, now_ts=now)
-
-        observer_active = _is_fresh(self.config.observer_heartbeat_path, self.config.freshness_sec, now_ts=now)
-        if not observer_active and active_jsonl is not None:
-            observer_active = _is_fresh(active_jsonl, self.config.freshness_sec, now_ts=now)
+        wd_fresh, wd_age, wd_age_str = self._get_freshness_age(self.config.watchdog_heartbeat_path, now)
+        obs_fresh, obs_age, obs_age_str = self._get_freshness_age(self.config.observer_heartbeat_path, now)
+        lib_fresh, lib_age, lib_age_str = self._get_freshness_age(self.config.librarian_heartbeat_path, now)
+        
+        # Fallback for Observer if file lock prevents reading its heartbeat but data is flowing
+        if not obs_fresh and active_jsonl is not None:
+             # If we choose active_jsonl as proxy, check its freshness
+             aj_fresh, aj_age, aj_age_str = self._get_freshness_age(active_jsonl, now)
+             if aj_fresh:
+                 obs_fresh = True
+                 obs_age = aj_age
+                 obs_age_str = aj_age_str
 
         return {
             'cpu': cpu,
             'mem': mem,
             'new_records': int(new_lines),
             'total_records': int(total_lines),
+            'records_session': int(session_recs),
+            'records_archive': int(historical),
             'density_bins': density_bins,
             'density_raw_window': list(self._density_window),
             'density_slice_sec': float(self.config.density_slice_sec),
-            'watchdog_active': bool(watchdog_active),
-            'observer_active': bool(observer_active),
+            'watchdog_active': bool(wd_fresh),
+            'watchdog_stats': {'age': wd_age, 'age_str': wd_age_str, 'path': str(self.config.watchdog_heartbeat_path.name)},
+            'observer_active': bool(obs_fresh),
+            'observer_stats': {'age': obs_age, 'age_str': obs_age_str, 'path': str(self.config.observer_heartbeat_path.name)},
+            'librarian_active': bool(lib_fresh),
+            'librarian_stats': {'age': lib_age, 'age_str': lib_age_str, 'path': str(self.config.librarian_heartbeat_path.name)},
             'active_jsonl_path': str(active_jsonl) if active_jsonl is not None else None,
         }
