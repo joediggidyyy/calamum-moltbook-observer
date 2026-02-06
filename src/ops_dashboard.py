@@ -3644,11 +3644,24 @@ def main_page():
 if __name__ in {"__main__", "__mp_main__"}:
     _install_backend_lifecycle_hooks()
     _backend_runtime_log('process_start', {'build': BUILD_STAMP})
-    ui.run(
+    # Allow the launcher/tests to pick a port without editing source.
+    # Default remains 8899 to preserve operator expectations.
+    try:
+        _port = int(os.getenv('CALAMUM_DASHBOARD_PORT', '8899'))
+    except Exception:
+        _port = 8899
+
+    _host = os.getenv('CALAMUM_DASHBOARD_HOST')  # optional; if unset, NiceGUI default applies
+
+    _run_kwargs = dict(
         native=False,
-        port=8899, # Changed port to avoid zombie process conflicts
+        port=_port,  # Changed port to avoid zombie process conflicts
         title='CALAMUM OPS V2',
         dark=True,
-        show=False, 
-        reload=False
+        show=False,
+        reload=False,
     )
+    if _host:
+        _run_kwargs['host'] = str(_host)
+
+    ui.run(**_run_kwargs)
