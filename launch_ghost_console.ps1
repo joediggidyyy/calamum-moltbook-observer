@@ -99,15 +99,15 @@ function Get-PidsByScript ($scriptPath) {
 # Enforce single-instance semantics: kill any extra instances beyond the expected PID.
 function Stop-OrphanInstances ($name, $scriptPath, $expectedPid) {
     $pids = Get-PidsByScript $scriptPath
-    foreach ($pid in $pids) {
-        if ($expectedPid -and ($pid -eq $expectedPid)) {
+    foreach ($procId in $pids) {
+        if ($expectedPid -and ($procId -eq $expectedPid)) {
             continue
         }
         try {
-            $proc = Get-Process -Id $pid -ErrorAction SilentlyContinue
+            $proc = Get-Process -Id $procId -ErrorAction SilentlyContinue
             if ($proc) {
-                Write-Host "    [!] Orphan instance detected for ${name} (PID: ${pid}). Stopping..." -ForegroundColor Yellow
-                Stop-Process -Id $pid -Force -ErrorAction SilentlyContinue
+                Write-Host "    [!] Orphan instance detected for ${name} (PID: ${procId}). Stopping..." -ForegroundColor Yellow
+                Stop-Process -Id $procId -Force -ErrorAction SilentlyContinue
             }
         } catch { }
     }
