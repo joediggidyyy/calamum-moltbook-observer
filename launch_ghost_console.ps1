@@ -186,10 +186,31 @@ if (-not $librarianPid) {
 # The dashboard is technically the 'Convenience Layer' but currently provides the API for the UI.
 # It should be treated as a service for the frontend.
 $dashboardPid = Get-RunningPid $DashboardPidFile
+
+# If we think the dashboard is running but it is not LISTENing on the expected port,
+# treat it as unhealthy and restart it.
+if ($dashboardPid) {
+    $ownerNow = Get-PortOwningPid $Port
+    if ($ownerNow) {
+        if ($dashboardPid -ne $ownerNow) {
+            Write-Host "    [!] Dashboard PID mismatch detected (pidfile=$dashboardPid, port_owner=$ownerNow). Reconciling..." -ForegroundColor Yellow
+            Set-Content -Path $DashboardPidFile -Value $ownerNow -Encoding ASCII
+            $dashboardPid = $ownerNow
+        }
+    } else {
+        Write-Host "    [!] Dashboard PID present but port $Port is not LISTENing. Restarting..." -ForegroundColor Yellow
+        Stop-ByPidFile $DashboardPidFile "Dashboard Backend"
+        $dashboardPid = $null
+    }
+}
+
+# Only enforce single-instance semantics after the port-owner is known (or after restart decision).
 Stop-OrphanInstances "Dashboard Backend" $DashboardScript $dashboardPid
+
 if (-not $dashboardPid) {
     Write-Host "    [!] Dashboard Backend not running. Starting..." -ForegroundColor Yellow
     Start-ServiceScript "calamum_dashboard" $DashboardScript $DashboardPidFile
+    $dashboardPid = Get-RunningPid $DashboardPidFile
 } else {
     Write-Host "    [+] Dashboard Backend is ACTIVE (PID: $dashboardPid)" -ForegroundColor Green
 }
@@ -216,8 +237,32 @@ while ((Get-Date) -lt $deadline) {
 }
 
 if (-not $ready) {
-    Write-Host "[!] Dashboard did not come online on port $Port." -ForegroundColor Red
-    exit 1
+    Write-Host "[!] Dashboard did not come online on port $Port. Attempting one restart..." -ForegroundColor Yellow
+    Stop-ByPidFile $DashboardPidFile "Dashboard Backend"
+    Start-ServiceScript "calamum_dashboard" $DashboardScript $DashboardPidFile
+
+    $deadline = (Get-Date).AddSeconds(15)
+    $ready = $false
+    $portOwnerPid = $null
+    while ((Get-Date) -lt $deadline) {
+        try {
+            $listeners = Get-NetTCPConnection -LocalPort $Port -State Listen -ErrorAction SilentlyContinue
+            if ($listeners) {
+                $owning = $listeners | Select-Object -ExpandProperty OwningProcess -Unique
+                if ($owning) {
+                    $portOwnerPid = ($owning | Select-Object -First 1)
+                    $ready = $true
+                    break
+                }
+            }
+        } catch {}
+        Start-Sleep -Milliseconds 250
+    }
+
+    if (-not $ready) {
+        Write-Host "[!] Dashboard still did not come online on port $Port." -ForegroundColor Red
+        exit 1
+    }
 }
 
 # Reconcile dashboard PID tracking: some servers spawn a child process that owns the port.
