@@ -113,9 +113,12 @@ class _SafeStat:
 
 class _JsonlAppendCounter:
     """Robust line counter for an append-only JSONL file.
-    
-    Uses byte estimation with retry logic for Windows file locking resilience.
-    Enforces monotonic growth to prevent UI blanking.
+
+    Design goals (Ghost Console):
+    - Prefer UI stability over exactness under contention.
+    - Avoid stateful offset tracking (fragile with rotation/locking on Windows).
+    - Use tail sampling to estimate counts for large files.
+    - Enforce monotonic totals so transient read/stat failures don't blank charts.
     """
 
     def __init__(self) -> None:
@@ -158,6 +161,42 @@ class _JsonlAppendCounter:
         self._historical_count = count
         return count
 
+    def _count_jsonl_records(self, data: bytes) -> int:
+        """Count JSONL records in a byte buffer.
+
+        Records are newline-delimited. If the buffer does not end with a newline
+        but has content, treat the trailing partial line as a record.
+        """
+        try:
+            nl = int(data.count(b'\n'))
+            if data and not data.endswith(b'\n'):
+                nl += 1
+            return int(max(0, nl))
+        except Exception:
+            return 0
+
+    def _read_tail(self, path: Path, n_bytes: int) -> Optional[bytes]:
+        """Read last N bytes from file (best-effort; retries on Windows locks)."""
+        if n_bytes <= 0:
+            return b''
+        for _ in range(3):
+            try:
+                with path.open('rb') as f:
+                    try:
+                        f.seek(-n_bytes, os.SEEK_END)
+                    except OSError:
+                        # Small file or non-seekable: fall back to beginning.
+                        try:
+                            f.seek(0)
+                        except Exception:
+                            pass
+                    return f.read(n_bytes)
+            except OSError:
+                time.sleep(0.02)
+            except Exception:
+                return None
+        return None
+
     def poll(self, max_read_bytes: int = 2_000_000) -> Tuple[int, int]:
         """Return (new_lines, total_lines).
         
@@ -166,41 +205,43 @@ class _JsonlAppendCounter:
         - Historical: Retrieved from archive/manifest.json.
         """
         historical = self._sync_manifest()
-        
+
         active_lines = 0
         if self.path:
             size, _ = self._stat_tracker.get_size_and_mtime(self.path)
 
-            # Prefer exact counts for small files to avoid "0 lines" at startup.
-            # This also keeps unit tests stable while preserving fast-path behavior
-            # for large, continuously-appending JSONL streams.
+            # Clamp budget: keep it bounded and predictable.
             try:
-                budget = int(max(4_096, min(10_000_000, int(max_read_bytes))))
+                budget = int(max(16_384, min(10_000_000, int(max_read_bytes))))
             except Exception:
                 budget = 2_000_000
 
-            if size > 0 and size <= budget:
-                for _ in range(3):
-                    try:
-                        with self.path.open('rb') as f:
-                            data = f.read(budget)
-                        # JSONL records are newline-delimited.
-                        # Count '\n'; if file doesn't end with newline, count the last partial line.
-                        nl = int(data.count(b'\n'))
-                        if data and not data.endswith(b'\n'):
-                            nl += 1
-                        active_lines = int(max(0, nl))
-                        break
-                    except OSError:
-                        time.sleep(0.02)
-                    except Exception:
-                        break
-            else:
-                # Estimate ~350 bytes per record (best-effort; monotonic guard below prevents regressions)
-                if size > 0:
-                    active_lines = int(size / 350)
-            
-        new_total = historical + active_lines
+            if size > 0:
+                sample_bytes = int(min(size, budget))
+                tail = self._read_tail(self.path, sample_bytes)
+
+                # If we can't read (locked), hold last known totals to avoid blanking.
+                if tail is None:
+                    new_total = self.total_lines
+                    return 0, int(new_total)
+
+                tail_lines = self._count_jsonl_records(tail)
+
+                if size <= budget:
+                    # Exact count for small files (tail == whole file).
+                    active_lines = int(tail_lines)
+                else:
+                    # Estimate lines using average bytes-per-record from tail sample.
+                    # This is a tailing strategy (no offsets) and stays stable under locking.
+                    if tail_lines <= 0:
+                        active_lines = 0
+                    else:
+                        avg_bpr = float(sample_bytes) / float(tail_lines)
+                        # Guard against degenerate averages.
+                        avg_bpr = float(max(32.0, min(4096.0, avg_bpr)))
+                        active_lines = int(max(0, round(float(size) / avg_bpr)))
+
+        new_total = int(historical + active_lines)
         
         # Enforce Monotonicity (prevent negative deltas from locking glitches)
         if new_total < self.total_lines:

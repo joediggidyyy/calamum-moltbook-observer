@@ -33,7 +33,7 @@ This report is the SSOT audit document.
 
 ## Executive Summary
 
-The codebase exhibits symptoms of integration drift: temporary test harnesses (`calamum_observer_agent.py`) have calcified alongside intended production components (`calamum_observer_daemon.py`). This duplication has compelled the `telemetry.py` reader to become increasingly defensive and over-engineered to handle variable file locking behavior on Windows, contributing to "blanking" artifacts observed in the UI.
+The codebase exhibits symptoms of integration drift: a temporary test harness (`calamum_observer_agent.py`) has calcified alongside a legacy/simulation implementation (`simulation/calamum_observer_daemon.py`). This duplication has compelled the `telemetry.py` reader to become increasingly defensive and over-engineered to handle variable file locking behavior on Windows, contributing to "blanking" artifacts observed in the UI.
 
 The `launch_ghost_console.ps1` script has evolved from a simple launcher into a fragile process manager, implementing regex-based process hunting to compensate for the lack of a proper supervisor tree.
 
@@ -68,7 +68,7 @@ A critical violation of logic separation exists between the "Agent" and "Daemon"
 | Component | Status | Description |
 | :--- | :--- | :--- |
 | `src/calamum_observer_agent.py` | **Active** | Currently running in the active process list. Generates synthetic data. |
-| `src/calamum_observer_daemon.py` | **Orphaned** | The "real" implementation with actual API clients (`moltbook_client`). It is present on disk but unused by the current launcher, creating confusion about which logic creates the `moltbook_canary_metrics.jsonl` artifact. |
+| `simulation/calamum_observer_daemon.py` | **Legacy (Simulation-Only)** | Legacy implementation with API-client wiring. It must not be treated as SSOT unless explicitly promoted to the active runtime entrypoint. |
 | `src/calamum_sampler.py` | **Partial** | Imported by the Daemon for simulation logic, effectively triplicating the data generation definitions across the codebase. |
 
 **Impact:** High. Future maintenance will likely patch `daemon.py` while the system actually runs `agent.py`, leading to "fix not working" scenarios.
@@ -122,7 +122,7 @@ This section tracks (a) completeness of each legacy section after transfer, and 
 ### Legacy section transfer: 4. Recommendations
 
 #### Immediate Remediation (Cleanup)
-1.  **Decommission `calamum_observer_daemon.py`** or promote it to active status. Do not keep both.
+1.  **Decommission / quarantine the legacy simulation daemon (`simulation/calamum_observer_daemon.py`)** or promote it to active status. Do not keep multiple producers with overlapping responsibilities.
 2.  **Simplify Telemetry**: Replace `_JsonlAppendCounter` with a simple "read last N lines" for the dashboard. The integrity exactness required for finance is not required for a "Canary" visualization.
 3.  **Fix the Writer**: Ensure `calamum_observer_agent.py` opens, writes, and *closes* the file for every batch (atomic append). This eliminates the need for reader retry loops on Windows.
 

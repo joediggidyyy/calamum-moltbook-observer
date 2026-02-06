@@ -2,7 +2,7 @@
 
 **Job ID**: CALAMUM_JOB_0009_MOLTBOOK_OBSERVER_RECOVERY_AND_STABILIZATION_20260205  
 **Date**: 2026-02-05  
-**Status**: OPEN  
+**Status**: IN-PROGRESS  
 **Owner**: ORACL-Prime  
 **Frame**: 0009  
 
@@ -58,8 +58,8 @@ At the end of *each* execution frame, the operator (ORACL) MUST manual inspect:
 ## 2. Execution Plan
 
 ### 2.1 Codebase Purification
-- [ ] **Check**: Verify absence/removal of `src/calamum_observer_daemon.py`.
-- [ ] **Audit**: Scan codebase for imports of `calamum_observer_daemon`.
+- [ ] **Check**: Verify the legacy daemon is not treated as SSOT (expected: `simulation/calamum_observer_daemon.py` is clearly marked LEGACY / SIMULATION-ONLY).
+- [ ] **Audit**: Scan codebase for operational imports/references of `calamum_observer_daemon` (expected: none in runtime entrypoints / launcher).
 
 ### 2.2 Telemetry Hardening
 - [ ] **Refactor**: Rewrite `src/ops/telemetry.py::_JsonlAppendCounter`.

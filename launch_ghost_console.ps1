@@ -72,6 +72,47 @@ function Start-ServiceScript ($name, $scriptPath, $pidFile, $argsList=@()) {
     }
 }
 
+# Return a list of PIDs whose command line indicates they are running a given script.
+function Get-PidsByScript ($scriptPath) {
+    $pids = @()
+    try {
+        $needle = [System.IO.Path]::GetFileName($scriptPath)
+        $full = (Resolve-Path $scriptPath -ErrorAction SilentlyContinue)
+        $fullStr = $null
+        if ($full) {
+            $fullStr = "$full"
+        }
+        $items = Get-CimInstance Win32_Process -ErrorAction SilentlyContinue | Where-Object {
+            if (-not $_.CommandLine) { return $false }
+            if ($fullStr -and ($_.CommandLine -like "*${fullStr}*")) { return $true }
+            return ($_.CommandLine -like "*${needle}*")
+        }
+        foreach ($it in $items) {
+            if ($it.ProcessId) {
+                $pids += [int]$it.ProcessId
+            }
+        }
+    } catch { }
+    return ($pids | Select-Object -Unique)
+}
+
+# Enforce single-instance semantics: kill any extra instances beyond the expected PID.
+function Stop-OrphanInstances ($name, $scriptPath, $expectedPid) {
+    $pids = Get-PidsByScript $scriptPath
+    foreach ($pid in $pids) {
+        if ($expectedPid -and ($pid -eq $expectedPid)) {
+            continue
+        }
+        try {
+            $proc = Get-Process -Id $pid -ErrorAction SilentlyContinue
+            if ($proc) {
+                Write-Host "    [!] Orphan instance detected for ${name} (PID: ${pid}). Stopping..." -ForegroundColor Yellow
+                Stop-Process -Id $pid -Force -ErrorAction SilentlyContinue
+            }
+        } catch { }
+    }
+}
+
 # --- EXECUTION ---
 
 Write-Host "=== CALAMUM OPS STACK LAUNCHER ===" -ForegroundColor Green
@@ -113,6 +154,7 @@ Write-Host "[*] Checking Core Stack Integrity..." -ForegroundColor Cyan
 
 # Check/Start Watchdog Supervisor
 $watchdogPid = Get-RunningPid $WatchdogPidFile
+Stop-OrphanInstances "Watchdog" $WatchdogScript $watchdogPid
 if (-not $watchdogPid) {
     Write-Host "    [!] Watchdog Supervisor not running. Starting..." -ForegroundColor Yellow
     Start-ServiceScript "calamum_watchdog" $WatchdogScript $WatchdogPidFile
@@ -122,15 +164,17 @@ if (-not $watchdogPid) {
 
 # Check/Start Agent
 $agentPid = Get-RunningPid $AgentPidFile
+Stop-OrphanInstances "Observer Agent" $AgentScript $agentPid
 if (-not $agentPid) {
     Write-Host "    [!] Observer Agent not running. Starting..." -ForegroundColor Yellow
-    Start-ServiceScript "calamum_agent" $AgentScript $AgentPidFile @("--mode", "CANARY", "--interval", "2.0")
+    Start-ServiceScript "calamum_agent" $AgentScript $AgentPidFile @("--mode", "canary", "--interval-sec", "2.0")
 } else {
     Write-Host "    [+] Observer Agent is ACTIVE (PID: $agentPid)" -ForegroundColor Green
 }
 
 # Check/Start Librarian
 $librarianPid = Get-RunningPid $LibrarianPidFile
+Stop-OrphanInstances "Librarian" $LibrarianScript $librarianPid
 if (-not $librarianPid) {
     Write-Host "    [!] Librarian not running. Starting..." -ForegroundColor Yellow
     Start-ServiceScript "calamum_librarian" $LibrarianScript $LibrarianPidFile
@@ -142,6 +186,7 @@ if (-not $librarianPid) {
 # The dashboard is technically the 'Convenience Layer' but currently provides the API for the UI.
 # It should be treated as a service for the frontend.
 $dashboardPid = Get-RunningPid $DashboardPidFile
+Stop-OrphanInstances "Dashboard Backend" $DashboardScript $dashboardPid
 if (-not $dashboardPid) {
     Write-Host "    [!] Dashboard Backend not running. Starting..." -ForegroundColor Yellow
     Start-ServiceScript "calamum_dashboard" $DashboardScript $DashboardPidFile
@@ -184,6 +229,9 @@ if ($portOwnerPid) {
     $dashboardPid = $portOwnerPid
     Write-Host "    [+] Dashboard Backend PORT OWNER is ACTIVE (PID: $dashboardPid)" -ForegroundColor Green
 }
+
+# Final single-instance enforcement for the dashboard after port-owner reconciliation.
+Stop-OrphanInstances "Dashboard Backend" $DashboardScript $dashboardPid
 
 # 4. LAUNCH FRONTEND (Edge App Mode)
 Write-Host "[*] Launching Ghost Console Interface..." -ForegroundColor Green
