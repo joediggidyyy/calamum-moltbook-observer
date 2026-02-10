@@ -1,0 +1,159 @@
+# SSOT Domain Canonical Document Template
+
+## Metadata
+
+| Field | Value |
+| --- | --- |
+| Document Title | <DOMAIN>_SSOT |
+| Domain / Scope | <DOMAIN> |
+| Artifact Type | SSOT Canonical |
+| Classification | Internal |
+| Version | 0.1 |
+| Status | draft |
+| Owner | ORACL-Prime |
+| Stakeholder | joediggidyyy |
+| Last Updated (UTC) | <YYYY-MM-DD> |
+| Location | CodeSentinel/docs/operations/ssot/<DOMAIN>_SSOT.md |
+| Machine-Readable (optional) | CodeSentinel/docs/operations/ssot/<DOMAIN>_SSOT.json |
+
+---
+
+## 1. Purpose
+
+This document is the single, scoped SSOT for the <DOMAIN> domain.
+
+It is the official reference for:
+
+- maintenance
+- audit
+- debugging / triage
+- operator runbooks (or pointers to them)
+
+This document MUST remain names-only. Use placeholders such as `<HOST>`, `<TOKEN_NAME>`, `<DEVICE_ID>`.
+
+---
+
+## 2. Scope
+
+### In scope
+
+- <list what is covered>
+
+### Out of scope
+
+- <list what is explicitly not covered>
+
+---
+
+## 3. SSOT boundary (what is authoritative)
+
+Declare the authoritative sources for each kind of truth.
+
+### Authoritative artifacts
+
+| Truth | SSOT artifact | Notes |
+| --- | --- | --- |
+| Work status | CodeSentinel/operations/tasks.json | Status is not a paragraph in docs |
+| Evidence log | CodeSentinel/logs/behavioral/gates/gate_events.jsonl | Append-only |
+| <X> | <path> | <notes> |
+
+### Derived / rendered artifacts
+
+| Derived view | Source | Notes |
+| --- | --- | --- |
+| Dashboard markdown | <source-of-truth> | Derived output |
+
+---
+
+## 4. Security and redaction rules (non-negotiable)
+
+- No secrets in repo, ever.
+- Env-var only authentication.
+- Do not record device identifiers by default in repo-committed artifacts.
+- If a domain has a Top Secret UI boundary, document the boundary and what is allowed behind it.
+
+---
+
+## 5. Operator workflows
+
+### 5.1 Routine operation
+
+- Preconditions:
+  - <precondition 1>
+  - <precondition 2>
+
+- Steps:
+  1. <step>
+  2. <step>
+
+- Expected outputs:
+  - <evidence path(s)>
+
+### 5.2 Safe edits / change control
+
+- Allowed edit surfaces:
+  - <file/command>
+
+- Required validation after edits:
+  - <gate/runbook>
+
+---
+
+## 6. Maintenance tasks
+
+List repeatable tasks with clear triggers and evidence.
+
+| Task | Trigger | Procedure | Evidence |
+| --- | --- | --- | --- |
+| <task> | <trigger> | <link or steps> | <path> |
+
+---
+
+## 7. Audit surfaces and evidence
+
+### Required evidence files
+
+- CodeSentinel/logs/behavioral/gates/gate_events.jsonl
+- CodeSentinel/logs/queststack/<QS>_evidence.jsonl
+
+### What auditors should verify
+
+- <bullet list>
+
+---
+
+## 8. Debug / triage guide
+
+### Common symptoms
+
+- Symptom: <symptom>
+  - Likely causes: <causes>
+  - First checks: <checks>
+  - Runbook: <link>
+
+---
+
+## 9. Interfaces and contracts
+
+Document the domain's contracts (schemas, endpoints, file formats) using placeholders only.
+
+- Contract: <name>
+  - Source: <file>
+  - Schema: <schema or example>
+
+---
+
+## 10. Related documents
+
+- Plans: <paths>
+- Runbooks: <paths>
+- Guides: <paths>
+- Reports: <paths>
+
+---
+
+## 11. Change log
+
+| Date (UTC) | Version | Change | Author |
+| --- | --- | --- | --- |
+| <YYYY-MM-DD> | 0.1 | Initial draft | ORACL-Prime |

@@ -8,7 +8,7 @@
 
 **Date**: 2026-02-05
 
-**Status**: ACTIVE
+**Status**: COMPLETED
 
 ---
 
@@ -55,10 +55,10 @@ The following artifacts are treated as evidence inputs for deterministic executi
 
 ## Execution checklist (paperwork-first)
 
-- [ ] Confirm gate evidence paths are available: `logs/behavioral/gates/gate_events.jsonl`.
-- [ ] Confirm SessionMemory snapshots are present and fresh (policy + ops-awareness).
-- [ ] Confirm Calamum Job 0009 doc is the execution SSOT for recovery/stabilization.
-- [ ] Record any manual override rationale in the QuestStack log (names-only).
+- [x] Confirm gate evidence paths are available: `logs/behavioral/gates/gate_events.jsonl`.
+- [x] Confirm SessionMemory snapshots are present and fresh (policy + ops-awareness).
+- [x] Confirm Calamum Job 0009 doc is the execution SSOT for recovery/stabilization.
+- [x] Record any manual override rationale in the QuestStack log (names-only).
 
 ---
 

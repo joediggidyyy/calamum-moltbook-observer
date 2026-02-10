@@ -1,0 +1,59 @@
+# Calamum Operations Parameters Report
+
+- Timestamp (UTC): `{{ timestamp_utc }}`
+- Run ID: `{{ run_id }}`
+- Auditor: `{{ auditor }}`
+- Overall status: `{{ overall_status }}`
+
+## Scope
+
+- Repo root: `{{ repo_root }}`
+- Project root: `{{ project_root }}`
+- Effective log dir: `{{ log_dir }}`
+
+## Environment
+
+{{ env_vars_block }}
+
+## Path safety
+
+{{ path_safety_block }}
+
+## Liveness (heartbeats)
+
+{{ heartbeats_block }}
+
+## Figures of interest
+
+{{ figures_of_interest_block }}
+
+## Collection density (derived)
+
+{{ collection_density_block }}
+
+## Future data points (placeholders)
+
+{{ future_placeholders_block }}
+
+## Telemetry volumes 
+
+{{ telemetry_block }}
+
+## Control signals
+
+{{ control_signals_block }}
+
+## Service logs (names-only)
+
+{{ service_logs_block }}
+
+## Stray artifacts scout (project tree)
+
+{{ stray_artifacts_block }}
+
+## Evidence
+
+- Evidence JSON: `{{ evidence_path }}`
+- Report markdown: `{{ report_path }}`
+- Append-only JSONL log: `{{ audit_jsonl_path }}`
+- Local audit index: `{{ audit_index_path }}`

@@ -4,7 +4,7 @@
 
 - Template ID: `VAULT_TEMPLATE_JOB_V1`
 - Paired authoritative template: `JOB_TEMPLATE.json.template`
-- Status: `active`
+- Status: `completed`
 - Owner: `ORACL-Prime`
 - Created: `2026-02-01`
 - Project: `calamum / security experiment`
@@ -75,7 +75,8 @@ Before authorization, the system was evaluated against the "Safety Onion" archit
 To execute this transition while maintaining academic reproducibility and security:
 
 1.  **Interface Activation (The Code Switch)**: The `src/moltbook_client.py` simulation stub is replaced with a live REST adapter using `requests`. **Constraint**: The client must strictly adhere to `GET` requests only.
-2.  **Credential Injection (Air-Gapped)**: Real credentials (`MOLTBOOK_API_KEY`) are injected via a local-only `.env` file, ensuring no secrets are ever committed to the repository.
+2.  **Credential Injection (Air-Gapped)**: Real credentials (`MOLTBOOK_API_KEY`) are injected via exported environment variables (preferred) or a local-only `projects/calamum-moltbook-observer/.env` file (project root), ensuring no secrets are ever committed to the repository.
+	- Note: Calamum does not auto-load dotenv files; the operator must explicitly load/export env vars.
 3.  **Execution (Glass Box)**: The system launches using the Stage 2 containment script (`deployment/secure_run.ps1 -Mode live`), ensuring the runtime remains ephemeral and immutable.
 
 ### 3. Strategic Justification
@@ -92,7 +93,7 @@ Live API (GET) -> MoltbookClient -> Obfuscator -> logs/calamum/moltbook_samples_
 ### Implementation steps
 
 1. Enable `requests` in `moltbook_client.py`.
-2. Inject air-gapped credentials via `.env`.
+2. Inject air-gapped credentials via exported env vars (or project-root `.env`).
 3. Launch `secure_run.ps1 -Mode live`.
 4. Monitor via Sentinel.
 

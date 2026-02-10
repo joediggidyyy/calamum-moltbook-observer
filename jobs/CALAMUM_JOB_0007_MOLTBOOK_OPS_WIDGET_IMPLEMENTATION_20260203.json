@@ -1,6 +1,6 @@
 {
     "id": "calamum-moltbook-ops-widget-20260203",
-    "title": "Build 'Ghost Console' TUI",
+    "title": "Ghost Console ops dashboard (web UI)",
     "status": "active",
     "quest_stack": "projects/calamum-moltbook-observer/queststacks/QS-CALAMUM-MOLTBOOK-OPS-WIDGET-20260203.md",
     "quest_frame": "projects/calamum-moltbook-observer/questframes/QF-CALAMUM-MOLTBOOK-OPS-WIDGET-20260203.json"

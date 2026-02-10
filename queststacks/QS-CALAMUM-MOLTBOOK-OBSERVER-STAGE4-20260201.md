@@ -6,7 +6,7 @@
 
 **Date**: 2026-02-01
 
-**Status**: ACTIVE
+**Status**: COMPLETED
 
 ---
 
@@ -25,9 +25,10 @@ Execution of Stage 4 ('Operation Live Wire') for the Calamum-scoped Moltbook obs
     - *Action*: Un-comment the `requests` import and the `requests.get()` calls.
     - *Constraint*: Verify only `GET` requests are enabled.
 - [x] **Task 2**: Create Air-Gapped Credentials
-    - *Action*: Create `projects/calamum-moltbook-observer/src/.env`
+    - *Action*: Create `projects/calamum-moltbook-observer/.env` (project root) **or** export the variable in your shell.
     - *Content*: `MOLTBOOK_API_KEY=your_actual_key_here`
-    - *Verification*: Ensure `.gitignore` blocks this file.
+    - *Verification*: Ensure `.gitignore` blocks `.env` files.
+    - *Note*: Calamum does not auto-load dotenv files; the operator must explicitly load/export env vars.
 
 ### Phase B: The "Sound Check" (Connectivity)
 - [x] **Task 3**: Dry Run (Local Python)

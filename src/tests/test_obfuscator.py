@@ -11,6 +11,12 @@ if str(src_dir) not in sys.path:
 
 from obfuscator_lib import Obfuscator
 
+
+@pytest.fixture(autouse=True)
+def _set_signing_key(monkeypatch: pytest.MonkeyPatch) -> None:
+    # Signing now requires an explicit key to avoid insecure silent defaults.
+    monkeypatch.setenv('CALAMUM_DATA_SIGNING_KEY', 'unit-test-key')
+
 def test_obfuscate_sample_strips_content():
     """Verify that sample content is stripped and structure preserved."""
     raw_sample = {
@@ -118,17 +124,15 @@ def test_verify_record():
     # No signature
     assert Obfuscator.verify_record(record) is False
 
-def test_sign_record_custom_key():
+def test_sign_record_custom_key(monkeypatch: pytest.MonkeyPatch):
     """Verify environment key changes signature."""
     record = {"foo": "bar"}
-    
-    os.environ['CALAMUM_DATA_SIGNING_KEY'] = 'key1'
+
+    monkeypatch.setenv('CALAMUM_DATA_SIGNING_KEY', 'key1')
     sig1 = Obfuscator.sign_record(record)['signature']
-    
-    os.environ['CALAMUM_DATA_SIGNING_KEY'] = 'key2'
+
+    monkeypatch.setenv('CALAMUM_DATA_SIGNING_KEY', 'key2')
     sig2 = Obfuscator.sign_record(record)['signature']
-    
+
     assert sig1 != sig2
-    
-    # Cleanup env
-    del os.environ['CALAMUM_DATA_SIGNING_KEY']
+

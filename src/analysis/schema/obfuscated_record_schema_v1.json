@@ -1,0 +1,29 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "title": "Calamum Obfuscated Telemetry Record (Blind ML) - v1",
+  "type": "object",
+  "description": "Privacy-preserving telemetry record. Must not contain raw semantic payload.",
+  "additionalProperties": true,
+  "properties": {
+    "timestamp": {"type": "string"},
+    "ts": {"type": "string"},
+    "type": {"type": "string"},
+    "event_type": {"type": "string"},
+    "author_hash": {"type": "string"},
+    "sender_hash": {"type": "string"},
+    "content_length": {"type": "integer", "minimum": 0},
+    "has_code_block": {"type": "boolean"},
+    "has_link": {"type": "boolean"},
+    "tags_count": {"type": "integer", "minimum": 0},
+    "mentions_count": {"type": "integer", "minimum": 0},
+    "f_complexity": {"type": "number"},
+    "f_code_density": {"type": "number"},
+    "f_toxicity": {"type": "integer"},
+    "f_timestamp_epoch": {"type": "number"},
+    "node_id": {"type": "string"},
+    "mode": {"type": "string"},
+    "kind": {"type": "string"},
+    "signature": {"type": "string"},
+    "tv_id": {"type": "string"}
+  }
+}

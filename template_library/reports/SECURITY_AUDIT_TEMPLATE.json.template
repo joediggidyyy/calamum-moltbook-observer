@@ -1,0 +1,23 @@
+{
+  "template_id": "security_audit",
+  "template_version": "2025-12-23",
+  "output": {
+    "type": "markdown",
+    "suggested_output_dir": "docs/reports/biweekly",
+    "suggested_filename_pattern": "security_audit_YYYY-MM-DD.md"
+  },
+  "rendering": {
+    "engine": "string_replace",
+    "placeholder_syntax": "{{ name }}"
+  },
+  "placeholders": [
+    "timestamp",
+    "audit_scope",
+    "compliance_score",
+    "critical_findings",
+    "high_findings",
+    "medium_findings",
+    "low_findings"
+  ],
+  "notes": "Canonical bi-weekly security audit report template."
+}

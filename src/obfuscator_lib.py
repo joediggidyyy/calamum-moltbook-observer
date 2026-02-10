@@ -6,6 +6,35 @@ from typing import Dict, Any
 
 __version__ = "1.1.0"
 
+
+def _bool_env(name: str) -> bool:
+    val = (os.getenv(name) or '').strip().lower()
+    return val in {'1', 'true', 'yes', 'y', 'on'}
+
+
+def _get_signing_secret() -> bytes:
+    """Return the signing secret for telemetry signatures.
+
+    Security posture:
+    - In normal operation, CALAMUM_DATA_SIGNING_KEY is required.
+    - For local/dev-only workflows, an insecure fallback may be enabled by
+      setting CALAMUM_ALLOW_DEV_SIGNING_KEY=1.
+
+    Never log the secret.
+    """
+    key = os.getenv('CALAMUM_DATA_SIGNING_KEY')
+    if key:
+        return key.encode('utf-8')
+
+    if _bool_env('CALAMUM_ALLOW_DEV_SIGNING_KEY'):
+        return b'dev-key-do-not-use-in-prod'
+
+    raise EnvironmentError(
+        'CALAMUM_DATA_SIGNING_KEY is required for signing/verification. '
+        'For local dev only, set CALAMUM_ALLOW_DEV_SIGNING_KEY=1 to use an insecure fallback.'
+    )
+
+
 class Obfuscator:
     """
     Ensures ZERO context leakage from Moltbook telemetry.
@@ -18,8 +47,7 @@ class Obfuscator:
         Appends a cryptographic signature to the record to prove authenticity.
         Uses HMAC-SHA256 with CALAMUM_DATA_SIGNING_KEY.
         """
-        # Retrieve key from env or use dev fallback (ONLY if not strictly in production mode)
-        secret = os.getenv('CALAMUM_DATA_SIGNING_KEY', 'dev-key-do-not-use-in-prod').encode('utf-8')
+        secret = _get_signing_secret()
         
         # Sort keys for deterministic signature
         payload = json.dumps(record, sort_keys=True).encode('utf-8')
@@ -37,8 +65,8 @@ class Obfuscator:
         """
         if 'signature' not in signed_record:
             return False
-            
-        secret = os.getenv('CALAMUM_DATA_SIGNING_KEY', 'dev-key-do-not-use-in-prod').encode('utf-8')
+
+        secret = _get_signing_secret()
         
         # separate signature from payload
         payload_data = signed_record.copy()

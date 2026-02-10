@@ -1,0 +1,15 @@
+{
+  "name": "Job Complexity Templates",
+  "version": "2025-11-25",
+  "description": "Canonical templates for integrating job complexity estimation into pre-task, pre-job, PR and remediation workflows.",
+  "templates": [
+    {"id": "pre_task_quick_scope.md", "title": "Pre-Task Quick Scope", "path": "pre_task_quick_scope.md"},
+    {"id": "pre_job_planning.md", "title": "Pre-Job Planning Template", "path": "pre_job_planning.md"},
+    {"id": "pr_template_complexity.md", "title": "PR Template (Complexity Section)", "path": "pr_template_complexity.md"},
+    {"id": "recovery_remediation.md", "title": "Recovery / Quarantine Remediation", "path": "recovery_remediation.md"},
+    {"id": "defrag_ci_incident_report.md", "title": "DEFRAG CI Incident / Remediation report", "path": "defrag_ci_incident_report.md"},
+    {"id": "quarantine_registry_entry.json", "title": "Quarantine Registry Entry (machine) ", "path": "quarantine_registry_entry.json"},
+    {"id": "snapshot_restore.md", "title": "Pre-merge Snapshot / Restore Plan", "path": "snapshot_restore.md"},
+    {"id": "postmortem_analysis.md", "title": "Post-Mortem / Forensics Template", "path": "postmortem_analysis.md"}
+  ]
+}

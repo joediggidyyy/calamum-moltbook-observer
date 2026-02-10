@@ -1,0 +1,81 @@
+{
+  "template_id": "VAULT_TEMPLATE_HEALTH_REPORT_V1",
+  "doc_type": "health_report",
+  "title": "HEALTH_REPORT_{{ scope }}_{{ yyyymmdd }}",
+  "domain": "{{ domain }}",
+  "scope": "{{ scope }}",
+  "lifecycle_phase": "{{ lifecycle_phase }}",
+  "classification": "internal",
+  "execution_window_utc": "{{ execution_window_utc }}",
+  "created_at_utc": "{{ timestamp_utc }}",
+  "generated_by": "{{ generated_by }}",
+  "status": "draft",
+  "kcs": { "k": 0.0, "c": 0.0, "s": 0.0 },
+  "summary": {
+    "short_title": "{{ short_title }}",
+    "executive_summary": "{{ executive_summary }}"
+  },
+  "snapshot": {
+    "tests": "{{ tests_status }}",
+    "artifacts": "{{ artifacts_status }}",
+    "signing": "{{ signing_status }}",
+    "mirrors": "{{ mirrors_status }}",
+    "pipeline_guard": "{{ pipeline_guard_status }}"
+  },
+  "environment": {{ environment }},
+  "oracl_health": {{ oracl_health }},
+  "behavior_metrics": {{ behavior_metrics }},
+  "behavior_determiners": {{ behavior_determiners }},
+  "artifacts": [],
+  "metrics_observability": {{ metrics_observability }},
+  "primary_status_update": {
+    "format": "STATUS_UPDATE_V1",
+    "job": {
+      "id": "{{ job_id_or_task_id }}",
+      "doc_path": "{{ job_doc_path }}"
+    },
+    "ssot": {
+      "path": "CodeSentinel/operations/tasks.json",
+      "status": "{{ ssot_status }}"
+    },
+    "queststack": {
+      "id": "{{ queststack_id }}",
+      "doc_path": "{{ queststack_doc_path }}",
+      "evidence_path": "{{ queststack_evidence_path }}"
+    },
+    "questframe": {
+      "id": "{{ questframe_id }}"
+    },
+    "gates": {
+      "last": "{{ last_gate }}",
+      "last_at": "{{ last_gate_at }}",
+      "last_result": "{{ last_gate_result }}",
+      "gate_events_path": "CodeSentinel/logs/behavioral/gates/gate_events.jsonl"
+    },
+    "next_action": "{{ next_action }}"
+  },
+  "next_action": {
+    "id": "{{ next_action_id }}",
+    "title": "{{ next_action_title }}",
+    "owner": "{{ next_action_owner }}",
+    "pointers": {{ next_action_pointers }}
+  },
+  "explicit_schedule": {
+    "trigger": "{{ explicit_schedule_trigger }}"
+  },
+  "next_up_scheduled": {
+    "id": "{{ next_scheduled_id }}",
+    "title": "{{ next_scheduled_title }}",
+    "owner": "{{ next_scheduled_owner }}",
+    "trigger": "{{ next_scheduled_trigger }}",
+    "pointers": {{ next_scheduled_pointers }}
+  },
+  "completion_state": "{{ completion_state }}",
+  "completion_message": "{{ completion_message }}",
+  "next_actions": [],
+  "signoff": {
+    "author": "{{ author }}",
+    "date_utc": "{{ date_utc }}",
+    "signature": null
+  }
+}

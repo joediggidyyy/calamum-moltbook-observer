@@ -53,7 +53,7 @@ class CalamumController:
             out_dir = repo_root / 'logs' / 'control' / 'calamum'
         out_dir.mkdir(parents=True, exist_ok=True)
 
-        ts = datetime.datetime.utcnow().isoformat() + 'Z'
+        ts = datetime.datetime.now(datetime.timezone.utc).isoformat().replace('+00:00', 'Z')
         record: Dict[str, Any] = {
             'ts': ts,
             'node_id': self.node_id,
@@ -74,7 +74,7 @@ class CalamumController:
         """
         # Logic: Touch a .kill_switch file that the sentinel watches, 
         # or execute a docker kill command.
-        timestamp = datetime.datetime.utcnow().isoformat() + 'Z'
+        timestamp = datetime.datetime.now(datetime.timezone.utc).isoformat().replace('+00:00', 'Z')
         try:
             path = self._emit_signal('kill', {'requested_at': timestamp})
             return True, f"KILL signal staged ({path.name})"
@@ -104,7 +104,7 @@ class CalamumController:
     def reset_watchdog(self):
         """Request a watchdog reset.
         """
-        timestamp = datetime.datetime.utcnow().isoformat() + 'Z'
+        timestamp = datetime.datetime.now(datetime.timezone.utc).isoformat().replace('+00:00', 'Z')
         try:
             path = self._emit_signal('watchdog_reset', {'requested_at': timestamp})
             return True, f"Watchdog reset staged ({path.name})"

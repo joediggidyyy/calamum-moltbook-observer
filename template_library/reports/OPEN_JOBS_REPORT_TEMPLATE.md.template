@@ -1,0 +1,33 @@
+# Open Jobs Snapshot Template
+
+> Scope: POLICY_STRAT / QuestStack core (update as needed)
+> Generated: {{ timestamp }}
+> Filters: status={{ status_filter_list }} | owners={{ owners }} | priorities={{ priorities }}
+> Sort: {{ sort_key }} ({{ sort_direction }}) | Limit: {{ limit or "all" }}
+
+| ID | Summary | Owner | Priority | Status | Category | Due (hrs) |
+| --- | --- | --- | --- | --- | --- | --- |
+| {{ job.id }} | {{ job.summary }} | {{ job.owner }} | {{ job.priority }} | {{ job.status }} | {{ job.category }} | {{ job.due_within_hours or "n/a" }} |
+| {{ repeat for remaining jobs }} |
+
+## Notes
+- Highlight blocking items or approvals needed.
+- Call out incoming due dates (< 24h) and overdue records explicitly.
+- Reference related docs (e.g., `docs/reports/telemetry/...`) for deep dives.
+
+## Follow-ups
+1. {{ actionable next step }}
+2. {{ owner + expected completion }}
+
+---
+
+### Usage
+1. Generate a live snapshot (the `report` subcommand is implied when omitted):
+	```powershell
+	codesentinel jobs --sort due --status open --status in-progress
+	```
+2. To change ordering, pass `--sort priority` or `--sort owner`; add `--descending` for reverse order.
+3. Filter by owner/category/priority with repeatable flags (e.g., `--owner security-team --priority P1`).
+4. Use `--json` for automation pipelines or `--fields id,summary,due_hours` to reduce columns.
+5. Paste the rendered table into this template, fill metadata, and add narrative notes.
+6. Commit the completed snapshot under `docs/reports/...` or attach to review notes as required.

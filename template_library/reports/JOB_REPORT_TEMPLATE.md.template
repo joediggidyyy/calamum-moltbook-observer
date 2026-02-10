@@ -1,0 +1,82 @@
+# Job Report: <JOB_ID> - <JOB_REPORT_TITLE>
+
+## Metadata
+
+- Template ID: `VAULT_TEMPLATE_JOB_REPORT_V1`
+- Paired authoritative template: `REPO:codesentinel/assets/VAULT_templates/reports/JOB_REPORT_TEMPLATE.json.template`
+- Status: `in-progress`
+- Owner: `<OWNER_OR_TEAM>`
+- Created: `<YYYY-MM-DD>`
+
+## Policy links
+
+- `PP_GOV_PROTOCOL_POL_CORE_POLICY_20251122`
+- `PP_GOV_PROTOCOL_POL_AGENT_ACTION_WORKFLOW_20251122`
+- `PP_GOV_PROTOCOL_POL_DETERMINISTIC_WORKFLOW_20251127`
+
+## Summary
+
+<ONE_PARAGRAPH_SUMMARY>
+
+## Status update (compact)
+
+```text
+STATUS_UPDATE_V1
+job.id=<JOB_ID_OR_SSOT_TASK_ID>
+job.doc=<CodeSentinel/jobs/...md OR CodeSentinel/docs/...md>
+ssot.path=CodeSentinel/operations/tasks.json
+ssot.status=<open|in-progress|blocked|completed|n/a>
+qs.id=<QS_ID_OR_EMPTY>
+qs.doc=<CodeSentinel/docs/operations/queststacks/...md OR EMPTY>
+qf.id=<QF_ID_OR_EMPTY>
+gates.last=<PREFLIGHT|BOD|POST_JOB|EOD|NONE>@<YYYY-MM-DDThh:mmZ>:<PASS|FAIL|SKIP>
+evidence.gates=CodeSentinel/logs/behavioral/gates/gate_events.jsonl
+evidence.qs=<CodeSentinel/logs/queststack/..._evidence.jsonl OR EMPTY>
+next.action=<ONE_LINE_DETERMINISTIC_NEXT_STEP>
+```
+
+## Actions taken
+
+- <ACTION_1>
+
+## Results
+
+- <RESULT_1>
+
+## Issues
+
+- <ISSUE_1_OR_EMPTY>
+
+## Tests / validation
+
+- <TEST_COMMAND_OR_TASK>
+
+## Follow-ups
+
+- <FOLLOW_UP_1_OR_EMPTY> (unscheduled)
+
+## Next action (deterministic)
+
+If work continues, specify the next deterministic step (no invented schedule):
+
+- ID: <NEXT_ACTION_ID_OR_EMPTY>
+- Title: <NEXT_ACTION_TITLE_OR_EMPTY>
+- Owner: <NEXT_ACTION_OWNER_OR_EMPTY>
+- Pointer(s): <CodeSentinel/PATH/TO/NEXT_QF_OR_DOCS_OR_EMPTY>
+
+## Explicit schedule (optional)
+
+Only fill this section if there is a true external schedule (calendar/event/runbook), because SSOT does not encode scheduling by default.
+
+- Trigger: <DATE_TIME_EVENT_OR_RUNBOOK_TRIGGER_OR_EMPTY>
+
+## Completion state (when no next up exists)
+
+If no next stage is explicitly scheduled, do NOT invent one. Use one of:
+
+- `CONCLUDED_NO_NEXT_SCHEDULED`
+- `PAUSED_NO_NEXT_SCHEDULED`
+- `BLOCKED_NO_NEXT_SCHEDULED`
+
+Completion: <STATE_TOKEN>
+Message: <ONE_LINE_EXPLANATION>

@@ -4,7 +4,7 @@
 
 - Template ID: `VAULT_TEMPLATE_JOB_V1`
 - Paired authoritative template: `JOB_TEMPLATE.json.template`
-- Status: `open`
+- Status: `completed`
 - Owner: `ORACL-Prime`
 - Created: `2026-02-01`
 - Project: `calamum / security experiment`

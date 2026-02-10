@@ -1,0 +1,32 @@
+{
+  "meta": {
+    "type": "questframe",
+    "version": "1.0.0",
+    "id": "QF-CALAMUM-MOLTBOOK-OBSERVER-AUDIT-TOOLING-SECURITY-AND-PROVENANCE-UPGRADES-20260209",
+    "parent_queststack": "QS-CALAMUM-MOLTBOOK-OBSERVER-AUDIT-TOOLING-SECURITY-AND-PROVENANCE-UPGRADES-20260209",
+    "created_at": "2026-02-09T00:00:00Z",
+    "status": "planned"
+  },
+  "spec": {
+    "title": "Moltbook Observer - Audit Tooling Security + Provenance Upgrades (Job 0010)",
+    "owner": "ORACL-Prime",
+    "participants": [
+      "joediggidyyy",
+      "ORACL-Prime"
+    ],
+    "goals": [
+      "Add consistent --dry-run support across Calamum audit tools",
+      "Ensure GUI audits can be run with network fully disabled (--no-network)",
+      "Confine all audit outputs to ignored local_untracked paths",
+      "Append names-only provenance records to untracked JSONL logs",
+      "Maintain a central untracked audit index for latest reports"
+    ],
+    "deliverables": [
+      "projects/calamum-moltbook-observer/queststacks/QS-CALAMUM-MOLTBOOK-OBSERVER-AUDIT-TOOLING-SECURITY-AND-PROVENANCE-UPGRADES-20260209.md",
+      "docs/reports/operations/JOB_REPORT_QS-CALAMUM-MOLTBOOK-OBSERVER-AUDIT-TOOLING-SECURITY-AND-PROVENANCE-UPGRADES-20260209.md",
+      "jobs/CALAMUM_JOB_0010_AUDIT_TOOLING_SECURITY_AND_PROVENANCE_UPGRADES_20260209.md",
+      "projects/calamum-moltbook-observer/jobs/CALAMUM_JOB_0010_AUDIT_TOOLING_SECURITY_AND_PROVENANCE_UPGRADES_20260209.md",
+      "projects/calamum-moltbook-observer/jobs/CALAMUM_JOB_0010_AUDIT_TOOLING_SECURITY_AND_PROVENANCE_UPGRADES_20260209.json"
+    ]
+  }
+}

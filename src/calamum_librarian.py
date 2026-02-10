@@ -21,10 +21,16 @@ import json
 import os
 import shutil
 import time
+from datetime import datetime, timezone
 from pathlib import Path
 from typing import Dict, Optional, Tuple
 
 from calamum_config import get_calamum_data_dir, get_calamum_control_dir, get_calamum_health_dir
+
+try:
+    from calamum_keepalive import KeepaliveHelper
+except ImportError:
+    KeepaliveHelper = None
 
 # Constants
 DEFAULT_TARGET_RECORDS = 100_000
@@ -32,6 +38,10 @@ DEFAULT_BYTES_PER_RECORD = 350
 MANIFEST_FILENAME = 'manifest.json'
 POLICY_FILENAME = 'rotation_policy.json'
 QUARANTINE_DIR_NAME = 'quarantine'
+
+
+def _utc_now_iso() -> str:
+    return datetime.now(timezone.utc).isoformat().replace('+00:00', 'Z')
 
 
 class Librarian:
@@ -126,8 +136,11 @@ class Librarian:
         temp.write_text(content, encoding='utf-8')
         temp.replace(self.policy_path)
 
-    def _process_file(self, jsonl_path: Path) -> Optional[Tuple[int, int]]:
-        """Compress, Validate, Hash. Returns (records_count, total_uncompressed_bytes)."""
+    def _process_file(self, jsonl_path: Path) -> Optional[Tuple[int, int, str]]:
+        """Compress, validate, and hash.
+
+        Returns: (records_count, total_uncompressed_bytes, artifact_sha256)
+        """
         print(f"[Librarian] Processing {jsonl_path.name}...")
         
         records_count = 0
@@ -233,10 +246,35 @@ class Librarian:
 
     def loop(self):
         print(f"[Librarian] Watching {self.archive_dir}")
+        
+        # Initialize shared keepalive helper (if available)
+        keepalive_helper = None
+        if KeepaliveHelper:
+            # Use raw env read or logic here if not moved; reusing existing logic behavior
+            # Default to 60s if not set, handled by helper if passed specific value
+            interval_raw = os.getenv('CALAMUM_STDOUT_KEEPALIVE_SEC', '60')
+            try:
+                interval = float(interval_raw)
+            except Exception:
+                interval = 60.0
+            
+            if interval > 0:
+                keepalive_helper = KeepaliveHelper("CalamumLibrarian", interval_seconds=interval)
+
         while True:
             try:
                 self.run_once()
                 self._touch_heartbeat("ok", {"msg": "Loop iteration complete"})
+
+                # Operator-friendly liveness signal (stdout; rate-limited)
+                if keepalive_helper:
+                    pending = None
+                    try:
+                        pending = len(list(self.archive_dir.glob('*.jsonl')))
+                    except Exception:
+                        pending = None
+                    
+                    keepalive_helper.emit("RUNNING", {"pending_archive_jsonl": pending})
             except Exception as e:
                 print(f"[Librarian] Crash in loop: {e}")
                 self._touch_heartbeat("error", {"error": str(e)})

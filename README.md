@@ -78,7 +78,7 @@ projects/calamum-moltbook-observer/
 ### Operational Radar
 <img src="assets/branding/calamum_obs_radar.png" alt="Observer Radar" width="600">
 
-### CLI Dashboard (TUI)
+### CLI Dashboard (deprecated TUI concept)
 <img src="assets/branding/syslog_scroll.png" alt="CLI Dashboard" width="600">
 
 ## Operation Manual

@@ -3,7 +3,7 @@
   "doc_type": "job",
   "job_id": "CALAMUM_JOB_0006",
   "title": "Moltbook Observer - Stage 1 to Stage 3: Execution Protocol and Live Run",
-  "status": "open",
+  "status": "completed",
   "created_at": "2026-02-03",
   "owner": "ORACL-Prime",
   "project": "calamum / security experiment",
@@ -33,7 +33,7 @@
     "ssot": {
       "task_id": "calamum-moltbook-observer-remediation-20260203",
       "path": "CodeSentinel/operations/tasks.json",
-      "status": "in-progress"
+      "status": "completed"
     },
     "queststack": {
       "id": "QS-CALAMUM-MOLTBOOK-OBSERVER-REMEDIATION-20260203",

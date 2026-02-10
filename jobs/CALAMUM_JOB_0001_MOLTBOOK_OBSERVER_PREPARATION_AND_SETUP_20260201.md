@@ -4,7 +4,7 @@
 
 - Template ID: `VAULT_TEMPLATE_JOB_V1`
 - Paired authoritative template: `JOB_TEMPLATE.json.template`
-- Status: `open`
+- Status: `completed`
 - Owner: `ORACL-Prime`
 - Created: `2026-02-01`
 - Project: `calamum / security experiment`
@@ -50,7 +50,7 @@ STATUS_UPDATE_V1
 job.id=calamum-moltbook-observer-prep-20260201
 job.doc=CodeSentinel/projects/calamum-moltbook-observer/jobs/CALAMUM_JOB_0001_MOLTBOOK_OBSERVER_PREPARATION_AND_SETUP_20260201.md
 ssot.path=CodeSentinel/operations/tasks.json
-ssot.status=open
+ssot.status=completed
 qs.id=
 qs.doc=
 qf.id=

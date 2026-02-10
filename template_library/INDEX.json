@@ -1,0 +1,50 @@
+{
+  "copied_templates": [
+    "projects/calamum-moltbook-observer/template_library/reports/CALAMUM_REPO_HEALTH_AUDIT_TEMPLATE.md.template",
+    "projects/calamum-moltbook-observer/template_library/reports/CALAMUM_GUI_AUDIT_TEMPLATE.md.template",
+    "projects/calamum-moltbook-observer/template_library/reports/CALAMUM_RUNTIME_ARTIFACTS_AUDIT_TEMPLATE.md.template",
+    "projects/calamum-moltbook-observer/template_library/reports/SYSTEM_HEALTH_OVERVIEW_TEMPLATE.md.template",
+    "projects/calamum-moltbook-observer/template_library/reports/SYSTEM_HEALTH_OVERVIEW_TEMPLATE.json.template",
+    "projects/calamum-moltbook-observer/template_library/reports/HEALTH_REPORT_TEMPLATE.md.template",
+    "projects/calamum-moltbook-observer/template_library/reports/HEALTH_REPORT_TEMPLATE.json.template",
+    "projects/calamum-moltbook-observer/template_library/reports/PERFORMANCE_HEALTH_TEMPLATE.md.template",
+    "projects/calamum-moltbook-observer/template_library/reports/PERFORMANCE_HEALTH_TEMPLATE.json.template",
+    "projects/calamum-moltbook-observer/template_library/reports/ERROR_DIGEST_TEMPLATE.md.template",
+    "projects/calamum-moltbook-observer/template_library/reports/ERROR_DIGEST_TEMPLATE.json.template",
+    "projects/calamum-moltbook-observer/template_library/reports/SECURITY_AUDIT_TEMPLATE.md.template",
+    "projects/calamum-moltbook-observer/template_library/reports/SECURITY_AUDIT_TEMPLATE.json.template",
+    "projects/calamum-moltbook-observer/template_library/reports/CODE_QUALITY_AUDIT_TEMPLATE.md.template",
+    "projects/calamum-moltbook-observer/template_library/reports/CODE_QUALITY_AUDIT_TEMPLATE.json.template",
+    "projects/calamum-moltbook-observer/template_library/reports/OPEN_JOBS_REPORT_TEMPLATE.md.template",
+    "projects/calamum-moltbook-observer/template_library/reports/OPEN_JOBS_REPORT_TEMPLATE.json.template",
+    "projects/calamum-moltbook-observer/template_library/reports/ENV_VARS_TEMPLATE.md.template",
+    "projects/calamum-moltbook-observer/template_library/reports/ENV_VARS_TEMPLATE.json.template",
+    "projects/calamum-moltbook-observer/template_library/reports/JOB_TEMPLATE.md.template",
+    "projects/calamum-moltbook-observer/template_library/reports/JOB_TEMPLATE.json.template",
+    "projects/calamum-moltbook-observer/template_library/reports/PLAN_TEMPLATE.md.template",
+    "projects/calamum-moltbook-observer/template_library/reports/PLAN_TEMPLATE.json.template",
+    "projects/calamum-moltbook-observer/template_library/reports/JOB_REPORT_TEMPLATE.md.template",
+    "projects/calamum-moltbook-observer/template_library/reports/JOB_REPORT_TEMPLATE.json.template",
+    "projects/calamum-moltbook-observer/template_library/job_complexity_templates/INDEX.json",
+    "projects/calamum-moltbook-observer/template_library/job_complexity_templates/pre_job_planning.md",
+    "projects/calamum-moltbook-observer/template_library/job_complexity_templates/pre_task_quick_scope.md",
+    "projects/calamum-moltbook-observer/template_library/job_complexity_templates/postmortem_analysis.md",
+    "projects/calamum-moltbook-observer/template_library/job_complexity_templates/recovery_remediation.md",
+    "projects/calamum-moltbook-observer/template_library/job_complexity_templates/snapshot_restore.md",
+    "projects/calamum-moltbook-observer/template_library/ssot/SSOT_DOMAIN_CANONICAL_TEMPLATE.md.template",
+    "projects/calamum-moltbook-observer/template_library/ssot/SSOT_DOMAIN_CANONICAL_TEMPLATE.json.template",
+    "projects/calamum-moltbook-observer/template_library/ssot/SSOT_FEATURE_CANONICAL_TEMPLATE.md.template",
+    "projects/calamum-moltbook-observer/template_library/ssot/SSOT_FEATURE_CANONICAL_TEMPLATE.json.template"
+  ],
+  "name": "calamum-moltbook-template-library",
+  "paths": {
+    "job_complexity_templates": "template_library/job_complexity_templates",
+    "reports": "template_library/reports",
+    "ssot": "template_library/ssot"
+  },
+  "seed_source": {
+    "policy": "copied into subtree for standalone usability",
+    "root": "codesentinel/assets/VAULT_templates"
+  },
+  "version": "1.0"
+}

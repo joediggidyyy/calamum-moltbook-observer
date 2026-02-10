@@ -1,0 +1,104 @@
+# SSOT Feature Canonical Document Template
+
+## Metadata
+
+| Field | Value |
+| --- | --- |
+| Document Title | <FEATURE>_CANONICAL |
+| Domain / Scope | <DOMAIN> / <FEATURE> |
+| Artifact Type | Feature Canonical (SSOT-scoped) |
+| Classification | Internal |
+| Version | 0.1 |
+| Status | draft |
+| Owner | ORACL-Prime |
+| Stakeholder | joediggidyyy |
+| Last Updated (UTC) | <YYYY-MM-DD> |
+| Location | CodeSentinel/docs/operations/ssot/<DOMAIN>/<FEATURE>_CANONICAL.md |
+| Machine-Readable (optional) | CodeSentinel/docs/operations/ssot/<DOMAIN>/<FEATURE>_CANONICAL.json |
+
+---
+
+## 1. Purpose
+
+This document is the single canonical reference for the <FEATURE> feature.
+
+It defines:
+
+- what the feature is
+- what contracts it must satisfy (schemas/endpoints)
+- how it is operated safely
+- how to validate, debug, and audit it
+
+---
+
+## 2. Feature boundaries
+
+### What this feature owns
+
+- <list>
+
+### What this feature does not own
+
+- <list>
+
+---
+
+## 3. Contracts
+
+### Public interfaces
+
+| Interface | Contract | Where defined | Notes |
+| --- | --- | --- | --- |
+| <endpoint/schema/file> | <summary> | <path> | <notes> |
+
+### Events / schemas
+
+- Schema name: <schema>
+  - Required fields: <list>
+  - Optional fields: <list>
+  - Redaction: <rules>
+
+---
+
+## 4. Operating procedures
+
+### Preconditions
+
+- <gate/assumption>
+
+### Routine operation
+
+1. <step>
+2. <step>
+
+### Validation
+
+- <tests/gates>
+
+---
+
+## 5. Debugging
+
+- Logs to inspect:
+  - <paths>
+
+- Common failures and fixes:
+  - <symptom> -> <fix>
+
+---
+
+## 6. Audit and evidence
+
+- Evidence sources:
+  - <paths>
+
+- Required invariants:
+  - <list>
+
+---
+
+## 7. Change log
+
+| Date (UTC) | Version | Change | Author |
+| --- | --- | --- | --- |
+| <YYYY-MM-DD> | 0.1 | Initial draft | ORACL-Prime |

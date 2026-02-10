@@ -1,54 +1,54 @@
 # QuestStack: QS-CALAMUM-MOLTBOOK-OPS-WIDGET-20260203
 
-**Title**: Calamum Ops Widget: Ghost Console (TUI)
+> DEPRECATION NOTICE: The terminal TUI plan is deprecated. The Ghost Console is implemented as a browser-rendered ops dashboard (NiceGUI + ECharts) launched via Edge app-mode.
+
+**Title**: Calamum Ops Widget: Ghost Console (Web UI)
 **Owner**: ORACL-Prime
 **Date**: 2026-02-03
-**Status**: DRAFT
-**Context**: Implementation of the "Digital Brutalism" TUI console for Calamum Observer.
+**Status**: ACTIVE
+**Context**: Implementation and hardening of the "Digital Brutalism" ops dashboard for Calamum Observer.
 
 ---
 
 ## 1. Context & Objectives
 
-**Goal**: Provide a high-fidelity, "Hacker/Sentinel" aesthetic Terminal User Interface (TUI) for monitoring the Calamum Moltbook Observer.
+**Goal**: Provide a fixed-size, high-fidelity "Digital Brutalism" ops dashboard for monitoring the Calamum Moltbook Observer (names-only telemetry).
 **Reference**: [DESIGN_CALAMUM_SANDBOX_OPS_WIDGET.md](../planning/DESIGN_CALAMUM_SANDBOX_OPS_WIDGET.md)
 
 **Key Components**:
-1.  **Ghost Console**: A `textual` app running in the terminal.
-2.  **Integrity Diamond**: `plotext` radar chart for health visualization.
-3.  **Control Deck**: Slide-out panel for safe operator interventions (`SIGKILL`, `PAUSE`).
+1.  **Ghost Console UI**: NiceGUI + ECharts (browser-rendered, Edge app-mode).
+2.  **Integrity Diamond**: Radar chart health visualization.
+3.  **Control Deck**: Slide-out panel for safe operator interventions via file-based intents.
 
 ---
 
 ## 2. QuestFrame Sequence
 
-### Phase 1: Foundation (The Shell)
-*   **Frame**: `QF-CALAMUM-MOLTBOOK-OPS-WIDGET-20260203.json`
-*   **Focus**: Dependencies, App Skeleton, and Layout.
-*   **Tasks**:
-    1.  Install `textual` and `plotext`.
-    2.  Create `src/ops_console.py` with the "Ghost Console" layout (Header, Main Grid, Log Footer).
-    3.  Implement the static "Integrity Diamond" chart placeholder.
+### Phase 1: Foundation (Backend + Layout)
+*   **Focus**: Dependencies, app skeleton, fixed-size layout, and clean labels.
+*   **Primary artifacts**:
+    *   `src/ops_dashboard.py`
+    *   `src/ops/telemetry.py`
+    *   `launch_ghost_console.ps1`
 
 ### Phase 2: The "Live Wire" (Data Connection)
-*   **Focus**: Wiring charts to real data.
+*   **Focus**: Wire charts to real signals (names-only).
 *   **Tasks**:
-    1.  Connect `Integrity Diamond` to mocked or real container stats.
-    2.  Implement `Bio-Rhythm` scrolling ECG (Heartbeat).
-    3.  Implement `Density Histogram` (Collection Volume).
+    1.  Implement Integrity Diamond from computed indicators.
+    2.  Implement Bio-Rhythm heartbeat and freshness.
+    3.  Implement Density Histogram from JSONL metrics (counts only).
 
 ### Phase 3: Control Surface (Interaction)
-*   **Focus**: Operator Controls.
+*   **Focus**: Operator controls via file-based intents (fail-closed).
 *   **Tasks**:
-    1.  Implement `Shift+K` (Kill Switch) with confirmation modal.
-    2.  Implement `P` (Pause/Resume).
-    3.  Implement Slide-Out "Control Deck" Overlay.
+    1.  Implement kill/isolate/refresh intents as JSON control signals under `logs/control/calamum/`.
+    2.  Ensure UI remains non-authoritative (not SSOT) and never fabricates liveness.
 
 ---
 
 ## 3. Acceptance Criteria
 
-*   [ ] Application launches via `python src/ops_console.py`.
-*   [ ] TUI renders correctly in VS Code Integrated Terminal (Dark Mode).
-*   [ ] "Integrity Diamond" renders as a diamond shape using Braille characters.
-*   [ ] Kill Switch successfully stops the Docker container (simulated or real).
+*   [ ] UI launches via `projects/calamum-moltbook-observer/launch_ghost_console.ps1`.
+*   [ ] Dashboard renders as a fixed-size canvas (no scrollbars) in Edge app-mode.
+*   [ ] "Integrity Diamond", "Bio-Rhythm", and "Density Histogram" render with names-only labels.
+*   [ ] Control Deck emits file-based intents (no raw content) and is fail-closed.

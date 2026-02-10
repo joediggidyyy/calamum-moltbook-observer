@@ -1,0 +1,59 @@
+# Calamum Runtime Artifacts Audit
+
+- timestamp_utc: `{{ timestamp_utc }}`
+- run_id: `{{ run_id }}`
+- auditor: `{{ auditor }}`
+- git_branch: `{{ git_branch }}`
+- git_head: `{{ git_head }}`
+- git_is_dirty: `{{ git_is_dirty }}`
+
+## Scope
+
+This audit is **offline** and **names-only**:
+
+- No raw service log tails are embedded in this report.
+- Evidence includes `sha256_tail` for up to the last 64 KiB of each log/telemetry file to support change detection without exposing contents.
+
+Repo root: `{{ repo_root }}`
+
+Project root: `{{ project_root }}`
+
+Logs root: `{{ log_dir }}`
+
+## Heartbeats
+
+{{ heartbeats_block }}
+
+## Telemetry (JSONL + archive manifest)
+
+{{ telemetry_block }}
+
+## Control signals
+
+{{ control_signals_block }}
+
+## Service logs (stats only)
+
+{{ service_logs_block }}
+
+## Stray runtime artifacts scout (optional)
+
+{{ stray_artifacts_block }}
+
+## Record volume hint
+
+- canary: {{ record_volume_canary }}
+- live: {{ record_volume_live }}
+- samples_obfuscated: {{ record_volume_samples_obfuscated }}
+- archive_records: {{ record_volume_archive_records }}
+- sum (rough): {{ record_volume_sum_rough }}
+
+## Evidence pointers
+
+- evidence_json: `{{ evidence_path }}`
+- audit_jsonl: `{{ audit_jsonl_path }}`
+- audit_index: `{{ audit_index_path }}`
+
+## Template
+
+Rendered from: `{{ template_path }}`

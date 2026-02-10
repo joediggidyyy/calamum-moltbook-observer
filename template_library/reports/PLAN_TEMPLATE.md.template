@@ -1,0 +1,44 @@
+# Plan: <PLAN_TITLE>
+
+## Metadata
+
+- Template ID: `VAULT_TEMPLATE_PLAN_V1`
+- Paired authoritative template: `PLAN_TEMPLATE.json.template`
+- Status: `planned`
+- Owner: `<OWNER_OR_TEAM>`
+- Created: `<YYYY-MM-DD>`
+
+## Policy links
+
+- `PP_GOV_PROTOCOL_POL_CORE_POLICY_20251122`
+- `PP_GOV_PROTOCOL_POL_AGENT_ACTION_WORKFLOW_20251122`
+
+## Summary
+
+<ONE_PARAGRAPH_SUMMARY>
+
+## Assumptions
+
+- <ASSUMPTION_1>
+
+## Risks
+
+- <RISK_1>
+
+## Milestones
+
+### <MILESTONE_NAME>
+
+Definition of done:
+
+- <DOD_1>
+
+## Tasks
+
+- [ ] (1) <TASK_TITLE> (status: not-started)
+  - Evidence:
+    - <PATH_OR_EMPTY>
+
+## Success metrics
+
+- <METRIC_1>

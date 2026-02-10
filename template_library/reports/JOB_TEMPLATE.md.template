@@ -1,0 +1,131 @@
+# Job: <JOB_ID> - <JOB_TITLE>
+
+## Metadata
+
+- Template ID: `VAULT_TEMPLATE_JOB_V1`
+- Paired authoritative template: `JOB_TEMPLATE.json.template`
+- Status: `<open|in-progress|blocked|completed>`
+- Owner: `<OWNER_OR_TEAM>`
+- Created: `<YYYY-MM-DD>`
+- Project: `<PROJECT_OR_DOMAIN>`
+- Phase: `<PHASE>`
+- Priority: `<PRIORITY>`
+- Depends on: `<UPSTREAM_JOB_IDS_OR_NONE>`
+- Blocks: `<DOWNSTREAM_IDS_OR_NONE>`
+
+## Policy links
+
+- `PP_GOV_PROTOCOL_POL_CORE_POLICY_20251122`
+- `PP_GOV_PROTOCOL_POL_AGENT_ACTION_WORKFLOW_20251122`
+- `PP_GOV_PROTOCOL_POL_JOB_COMPLEXITY_REQUIREMENT_20251126`
+
+## Redaction palette (use these placeholders)
+
+Never paste private IPs, MAC addresses, org-internal hostnames/domains, or tokens into job docs.
+
+Use placeholders consistently:
+- Network endpoints:
+	- `<edge_host_ip>` / `<edge_secure_ip>` / `<edge_parent_net_ip>`
+	- `<core_host_ip>` / `<core_secure_ip>`
+	- `<port>`
+	- `<secure_subnet>` / `<parent_net_subnet>`
+- DNS:
+	- `<dashboard_dns_name>` / `<optional_api_dns_name>`
+- Secrets:
+	- `<redacted_password>` / `<redacted_token>` / `<redacted>`
+- Identifiers:
+	- `<mac_redacted>` / `<host_redacted>`
+
+If you need a concrete example IP for documentation, use RFC 5737 TEST-NET:
+- `192.0.2.0/24`, `198.51.100.0/24`, `203.0.113.0/24`
+
+## Summary
+
+<ONE_PARAGRAPH_SUMMARY>
+
+## Status update (compact; required for pauses/closeout)
+
+Use this format when reporting progress in logs/job reports/chat. It must answer: job? SSOT? QuestStack? QuestFrame? next action?
+
+```text
+STATUS_UPDATE_V1
+job.id=<JOB_ID_OR_SSOT_TASK_ID>
+job.doc=<CodeSentinel/jobs/...md OR CodeSentinel/docs/...md>
+ssot.path=CodeSentinel/operations/tasks.json
+ssot.status=<open|in-progress|blocked|completed|n/a>
+qs.id=<QS_ID_OR_EMPTY>
+qs.doc=<CodeSentinel/docs/operations/queststacks/...md OR EMPTY>
+qf.id=<QF_ID_OR_EMPTY>
+gates.last=<PREFLIGHT|BOD|POST_JOB|EOD|NONE>@<YYYY-MM-DDThh:mmZ>:<PASS|FAIL|SKIP>
+evidence.gates=CodeSentinel/logs/behavioral/gates/gate_events.jsonl
+evidence.qs=<CodeSentinel/logs/queststack/..._evidence.jsonl OR EMPTY>
+next.action=<ONE_LINE_DETERMINISTIC_NEXT_STEP>
+```
+
+## Problem statement
+
+**Current state**:
+- <BULLET>
+
+**Root cause**:
+- <BULLET>
+
+**Impact**:
+- <BULLET>
+
+## Proposed solution
+
+### Architecture
+
+```
+<component_a> (<host_redacted>)
+└─ <notes>
+
+<component_b> (<host_redacted>)
+└─ <notes>
+```
+
+### Implementation steps
+
+1. <STEP_1>
+
+## Requirements
+
+- <REQ_1>
+
+## Acceptance criteria
+
+- <AC_1>
+
+## Validation
+
+- [ ] Names-only env var presence checks (do not echo values)
+- [ ] Smoke test(s): <WHAT>
+- [ ] Gate evidence updated (PREFLIGHT/BOD/EOD/POST_JOB as applicable)
+
+## SEAM analysis
+
+### Security
+- <BULLET>
+
+### Efficiency
+- <BULLET>
+
+### Awareness
+- <BULLET>
+
+### Minimalism
+- <BULLET>
+
+## Rollback plan
+
+<ROLLBACK_PLAN>
+
+## Verification
+
+- <VERIFY_1>
+
+## References
+
+- Related QuestStack: <QS_ID_OR_EMPTY>
+- Related docs: <PATHS>

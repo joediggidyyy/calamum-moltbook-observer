@@ -1,0 +1,48 @@
+{
+  "template_id": "VAULT_TEMPLATE_JOB_REPORT_V1",
+  "doc_type": "job_report",
+  "job_id": "<JOB_ID>",
+  "title": "<JOB_REPORT_TITLE>",
+  "status": "in-progress",
+  "created_at": "<YYYY-MM-DD>",
+  "owner": "<OWNER_OR_TEAM>",
+  "links": {
+    "policies": [
+      "PP_GOV_PROTOCOL_POL_CORE_POLICY_20251122",
+      "PP_GOV_PROTOCOL_POL_AGENT_ACTION_WORKFLOW_20251122",
+      "PP_GOV_PROTOCOL_POL_DETERMINISTIC_WORKFLOW_20251127"
+    ],
+    "job_path": "<JOBS_MD_PATH>",
+    "evidence_paths": []
+  },
+  "deterministic_closure": {
+    "next_action": {
+      "id": "<NEXT_ACTION_ID_OR_EMPTY>",
+      "title": "<NEXT_ACTION_TITLE_OR_EMPTY>",
+      "owner": "<NEXT_ACTION_OWNER_OR_EMPTY>",
+      "pointers": ["<CodeSentinel/PATH/TO/NEXT_QF_OR_DOCS_OR_EMPTY>"]
+    },
+    "explicit_schedule": {
+      "trigger": "<DATE_TIME_EVENT_OR_RUNBOOK_TRIGGER_OR_EMPTY>"
+    },
+    "next_up_scheduled": {
+      "id": "<NEXT_SCHEDULED_ID_OR_EMPTY>",
+      "title": "<NEXT_SCHEDULED_TITLE_OR_EMPTY>",
+      "owner": "<NEXT_SCHEDULED_OWNER_OR_EMPTY>",
+      "trigger": "<DATE_TIME_EVENT_OR_EMPTY>",
+      "pointers": ["<CodeSentinel/PATH/TO/NEXT_QF_OR_DOCS_OR_EMPTY>"]
+    },
+    "completion_state": "<CONCLUDED_NO_NEXT_SCHEDULED|PAUSED_NO_NEXT_SCHEDULED|BLOCKED_NO_NEXT_SCHEDULED>",
+    "completion_message": "<ONE_LINE_EXPLANATION>"
+  },
+  "log": {
+    "summary": "<ONE_PARAGRAPH_SUMMARY>",
+    "actions_taken": ["<ACTION_1>"],
+    "results": ["<RESULT_1>"],
+    "issues": ["<ISSUE_1_OR_EMPTY>"],
+    "follow_ups": ["<FOLLOW_UP_1_OR_EMPTY>"]
+  },
+  "validation": {
+    "tests_run": ["<TEST_COMMAND_OR_TASK>"]
+  }
+}

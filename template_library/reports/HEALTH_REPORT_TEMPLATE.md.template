@@ -1,0 +1,130 @@
+# Health Report
+
+## Metadata
+
+- Template ID: `VAULT_TEMPLATE_HEALTH_REPORT_V1`
+- Paired authoritative template: `REPO:codesentinel/assets/VAULT_templates/reports/HEALTH_REPORT_TEMPLATE.json.template`
+- Title: `HEALTH_REPORT_<SCOPE>_<YYYYMMDD>`
+- Domain / scope: `<OPS|QUESTSTACK|PROJECT>`
+- Lifecycle phase: `<Snapshot|Closeout>`
+- Classification: `Internal`
+- Execution window (UTC): `<YYYY-MM-DD>`
+- Operator / author: `<AUTHOR>`
+
+## K / C / S coefficients (required)
+
+| Coefficient | Meaning | Value (0.0-1.0) |
+| --- | --- | --- |
+| K | Confidence / Knowledge | <0.00-1.00> |
+| C | Compliance | <0.00-1.00> |
+| S | Security posture | <0.00-1.00> |
+
+> These values MUST be computed by the reporting tool or agent at runtime.
+
+## 1) Title & summary (2 lines)
+
+- <SHORT_TITLE>
+- <ONE_SENTENCE_EXEC_SUMMARY>
+
+## 2) Snapshot & health summary
+
+- Tests: <pass|fail> (<details>)
+- Artifacts: <pass|fail> (<details>)
+- Signing: <pass|fail> (<details>)
+- Mirrors: <pass|fail> (<details>)
+- Pipeline guard: <pass|fail> (<details>)
+
+## 3) Environment & ORACL health (required)
+
+| Name | Value |
+| --- | --- |
+| OS | <value> |
+| Python | <value> |
+| CPU | <value> |
+| Memory | <value> |
+| Disk | <value> |
+| ORACL model | <value> |
+| ORACL last sync | <value> |
+| ORACL latency P50/P95 | <value> |
+
+## 4) ORACL / agent behavior metrics
+
+| Metric | Value |
+| --- | --- |
+| sessions (24h) | <value> |
+| responses | <value> |
+| tokens total | <value> |
+| latency P50/P95/P99 (ms) | <value> |
+| error rate | <value> |
+| cache hit rate | <value> |
+| hallucination rate | <value> |
+| model drift score | <value> |
+
+## 5) Behavioral determiners
+
+- Collaboration index: <value>
+- Engineer feedback summary: <value>
+- Learning curve snapshot: <value>
+
+## 6) Artifacts & evidence
+
+- <artifact_path> (sha256: <hash>)
+
+## 7) Metrics & observability
+
+- Retrieval latency P50/P95: <value>
+- Resolution rate: <value>
+- Cost trend: <value>
+- Alerts/anomalies: <value>
+
+## 8) Primary work pointer (compact)
+
+```text
+STATUS_UPDATE_V1
+job.id=<JOB_ID_OR_SSOT_TASK_ID>
+job.doc=<CodeSentinel/jobs/...md OR CodeSentinel/docs/...md>
+ssot.path=CodeSentinel/operations/tasks.json
+ssot.status=<open|in-progress|blocked|completed|n/a>
+qs.id=<QS_ID_OR_EMPTY>
+qs.doc=<CodeSentinel/docs/operations/queststacks/...md OR EMPTY>
+qf.id=<QF_ID_OR_EMPTY>
+gates.last=<PREFLIGHT|BOD|POST_JOB|EOD|NONE>@<YYYY-MM-DDThh:mmZ>:<PASS|FAIL|SKIP>
+evidence.gates=CodeSentinel/logs/behavioral/gates/gate_events.jsonl
+evidence.qs=<CodeSentinel/logs/queststack/..._evidence.jsonl OR EMPTY>
+next.action=<ONE_LINE_DETERMINISTIC_NEXT_STEP>
+```
+
+## 9) Next action (deterministic)
+
+If work continues, specify the next deterministic step (no invented schedule):
+
+- ID: <NEXT_ACTION_ID_OR_EMPTY>
+- Title: <NEXT_ACTION_TITLE_OR_EMPTY>
+- Owner: <NEXT_ACTION_OWNER_OR_EMPTY>
+- Pointer(s): <CodeSentinel/PATH/TO/NEXT_QF_OR_DOCS_OR_EMPTY>
+
+## 10) Explicit schedule (optional)
+
+Only fill this section if there is a true external schedule (calendar/event/runbook), because SSOT does not encode scheduling by default.
+
+- Trigger: <DATE_TIME_EVENT_OR_RUNBOOK_TRIGGER_OR_EMPTY>
+
+## 11) Completion state (when no next action exists)
+
+If no next stage is explicitly scheduled, do NOT invent one. Use one of:
+
+- `CONCLUDED_NO_NEXT_SCHEDULED`
+- `PAUSED_NO_NEXT_SCHEDULED`
+- `BLOCKED_NO_NEXT_SCHEDULED`
+
+Completion: <STATE_TOKEN>
+Message: <ONE_LINE_EXPLANATION>
+
+## 12) Follow-ups (unscheduled)
+
+1. <FOLLOW_UP> — <OWNER> — <OPTIONAL_TARGET_DATE>
+
+## 13) Sign-off
+
+- Author: <AUTHOR>
+- Date (UTC): <YYYY-MM-DD>

@@ -1,0 +1,94 @@
+{
+  "template_id": "VAULT_TEMPLATE_JOB_V1",
+  "doc_type": "job",
+  "job_id": "<JOB_ID>",
+  "title": "<JOB_TITLE>",
+  "status": "open",
+  "created_at": "<YYYY-MM-DD>",
+  "owner": "<OWNER_OR_TEAM>",
+  "project": "<PROJECT_OR_DOMAIN>",
+  "phase": "<PHASE>",
+  "priority": "<PRIORITY>",
+  "depends_on": ["<UPSTREAM_JOB_ID_OR_EMPTY>"],
+  "blocks": ["<DOWNSTREAM_ID_OR_EMPTY>"],
+  "links": {
+    "policies": [
+      "PP_GOV_PROTOCOL_POL_CORE_POLICY_20251122",
+      "PP_GOV_PROTOCOL_POL_AGENT_ACTION_WORKFLOW_20251122",
+      "PP_GOV_PROTOCOL_POL_JOB_COMPLEXITY_REQUIREMENT_20251126"
+    ],
+    "plan_paths": ["<PLAN_PATH_OR_EMPTY>"],
+    "evidence_paths": []
+  },
+  "summary": "<ONE_PARAGRAPH_SUMMARY>",
+  "status_update": {
+    "format": "STATUS_UPDATE_V1",
+    "ssot": {
+      "task_id": "<SSOT_TASK_ID_OR_EMPTY>",
+      "path": "CodeSentinel/operations/tasks.json",
+      "status": "<open|in-progress|blocked|completed|n/a>"
+    },
+    "queststack": {
+      "id": "<QS_ID_OR_EMPTY>",
+      "doc_path": "<CodeSentinel/docs/operations/queststacks/...md_OR_EMPTY>",
+      "evidence_path": "<CodeSentinel/logs/queststack/..._evidence.jsonl_OR_EMPTY>"
+    },
+    "questframe": {
+      "id": "<QF_ID_OR_EMPTY>"
+    },
+    "gates": {
+      "last": "<PREFLIGHT|BOD|POST_JOB|EOD|NONE>",
+      "last_at": "<YYYY-MM-DDThh:mmZ>",
+      "last_result": "<PASS|FAIL|SKIP>",
+      "gate_events_path": "CodeSentinel/logs/behavioral/gates/gate_events.jsonl"
+    },
+    "next_action": "<ONE_LINE_DETERMINISTIC_NEXT_STEP>"
+  },
+  "redaction_palette": {
+    "network_endpoints": [
+      "<edge_host_ip>",
+      "<edge_secure_ip>",
+      "<edge_parent_net_ip>",
+      "<core_host_ip>",
+      "<core_secure_ip>",
+      "<port>",
+      "<secure_subnet>",
+      "<parent_net_subnet>"
+    ],
+    "dns": ["<dashboard_dns_name>", "<optional_api_dns_name>"],
+    "secrets": ["<redacted_password>", "<redacted_token>", "<redacted>"],
+    "identifiers": ["<mac_redacted>", "<host_redacted>"]
+  },
+  "problem": {
+    "current_state": ["<BULLET>"],
+    "root_cause": ["<BULLET>"],
+    "impact": ["<BULLET>"],
+    "architecture": "<ARCHITECTURE_TEXT_OR_CODE_BLOCK>",
+    "implementation_steps": ["<STEP_1>"]
+  },
+  "requirements": ["<REQ_1>"],
+  "acceptance_criteria": ["<AC_1>"],
+  "execution": {
+    "preflight": ["<CHECK_1>"],
+    "steps": ["<STEP_1>"]
+  },
+  "rollout": {
+    "rollback_plan": "<ROLLBACK_PLAN>",
+    "verification": ["<VERIFY_1>"]
+  },
+  "validation": {
+    "env_var_names_only_checks": true,
+    "smoke_tests": ["<WHAT>"],
+    "gate_evidence_updated": false
+  },
+  "seam": {
+    "security": ["<BULLET>"],
+    "efficiency": ["<BULLET>"],
+    "awareness": ["<BULLET>"],
+    "minimalism": ["<BULLET>"]
+  },
+  "references": {
+    "queststack_id": "<QS_ID_OR_EMPTY>",
+    "paths": ["<PATH_OR_EMPTY>"]
+  }
+}

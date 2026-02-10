@@ -19,24 +19,41 @@ import os
 import sys
 import time
 from dataclasses import dataclass
-from datetime import datetime
+from datetime import datetime, timezone
 from pathlib import Path
-from typing import Any, Dict, Optional, Tuple
+from typing import Any, Dict, Optional, Tuple, cast
 
 # Local imports
 try:
     import calamum_sampler
     import obfuscator_lib
+    from calamum_keepalive import KeepaliveHelper
 except ImportError:
     # Allow running even if siblings are tricky to import (e.g. specialized envs)
     calamum_sampler = None
     obfuscator_lib = None
+    KeepaliveHelper = None
 
 from calamum_config import get_calamum_data_dir, get_calamum_control_dir, get_calamum_health_dir
 
 
 def _utc_now_iso() -> str:
-    return datetime.utcnow().isoformat() + 'Z'
+    return datetime.now(timezone.utc).isoformat().replace('+00:00', 'Z')
+
+
+def _get_stdout_keepalive_interval_sec() -> float:
+    """Return the stdout keepalive interval in seconds.
+
+    0 disables keepalive.
+    """
+    raw = os.getenv('CALAMUM_STDOUT_KEEPALIVE_SEC', '60')
+    try:
+        val = float(raw)
+        if val < 0:
+            return 0.0
+        return val
+    except Exception:
+        return 60.0
 
 
 def _find_repo_root(start: Path) -> Path:
@@ -50,6 +67,34 @@ def _find_repo_root(start: Path) -> Path:
 def _touch(path: Path) -> None:
     path.parent.mkdir(parents=True, exist_ok=True)
     path.touch(exist_ok=True)
+
+
+def _is_watchdog_alive(path: Optional[Path], max_age: float = 30.0) -> bool:
+    if not path or not path.exists():
+        return False
+        
+    try:
+        # 1. Age Check (using filesystem metadata first for speed)
+        mtime = path.stat().st_mtime
+        if time.time() - mtime > max_age:
+            # Stale file
+            return False
+            
+        # 2. Signature Validation (Prevent Impersonation)
+        if obfuscator_lib:
+            try:
+                data = json.loads(path.read_text(encoding='utf-8'))
+                if not obfuscator_lib.Obfuscator.verify_record(data):
+                    print(f"[{_utc_now_iso()}] [SECURITY] Watchdog heartbeat signature INVALID!", file=sys.stderr)
+                    return False
+            except Exception:
+                # Malformed JSON or read error -> treat as dead/untrusted
+                return False
+                
+        return True
+    
+    except Exception:
+        return False
 
 
 def _read_json(path: Path) -> Optional[Dict[str, Any]]:
@@ -104,11 +149,11 @@ def load_config(argv_repo_root: Optional[str], mode: str, interval_sec: float, n
         'CALAMUM_OBSERVER_HEARTBEAT_PATH',
         str(health_dir / 'calamum_observer.heartbeat'),
     ))
-    # Watchdog responsibility moved to dedicated supervisor process.
-    # watchdog_heartbeat = Path(os.getenv(
-    #     'CALAMUM_WATCHDOG_HEARTBEAT_PATH',
-    #     str(health_dir / 'calamum_ops_watchdog.heartbeat'),
-    # ))
+    # Watchdog responsibility: we monitor IT, it monitors US.
+    watchdog_heartbeat = Path(os.getenv(
+        'CALAMUM_WATCHDOG_HEARTBEAT_PATH',
+        str(health_dir / 'calamum_ops_watchdog.heartbeat'),
+    ))
 
     return AgentConfig(
         repo_root=repo_root,
@@ -119,7 +164,7 @@ def load_config(argv_repo_root: Optional[str], mode: str, interval_sec: float, n
         output_jsonl=output_jsonl,
         control_dir=control_dir,
         observer_heartbeat=observer_heartbeat,
-        watchdog_heartbeat=None, # Deprecated
+        watchdog_heartbeat=watchdog_heartbeat,
     )
 
 
@@ -175,21 +220,38 @@ def handle_control_signals(control_dir: Path, node_id: str) -> Tuple[bool, Optio
 
 
 # Global generator state
-_FEED_GEN = None
+_GEN_BY_MODE: Dict[str, Any] = {}
 
-def _get_next_sample() -> Optional[Dict[str, Any]]:
-    global _FEED_GEN
+
+def _get_next_item(mode: str) -> Optional[Dict[str, Any]]:
+    """Return the next raw item for the configured mode.
+
+    Stage mapping:
+    - CANARY: inbound-only notifications (dm/follow/mention)
+    - other modes: public feed samples (post/reply/repost)
+    """
     if not calamum_sampler:
         return None
+
+    sampler = cast(Any, calamum_sampler)
+
+    m = (mode or '').strip().lower()
+    gen_key = m or 'default'
+
+    def _new_gen() -> Any:
+        if m == 'canary' and hasattr(sampler, 'simulate_moltbook_notifications'):
+            return sampler.simulate_moltbook_notifications()
+        return sampler.simulate_moltbook_feed()
+
     try:
-        if _FEED_GEN is None:
-            _FEED_GEN = calamum_sampler.simulate_moltbook_feed()
-        return next(_FEED_GEN)
+        if gen_key not in _GEN_BY_MODE or _GEN_BY_MODE[gen_key] is None:
+            _GEN_BY_MODE[gen_key] = _new_gen()
+        return next(_GEN_BY_MODE[gen_key])
     except Exception:
         # Restart generator on error or exhaustion
         try:
-            _FEED_GEN = calamum_sampler.simulate_moltbook_feed()
-            return next(_FEED_GEN)
+            _GEN_BY_MODE[gen_key] = _new_gen()
+            return next(_GEN_BY_MODE[gen_key])
         except Exception:
             return None
 
@@ -215,7 +277,7 @@ def rotate_active_log(jsonl_path: Path, data_dir: Path) -> None:
     archive_dir = data_dir / 'archive'
     archive_dir.mkdir(parents=True, exist_ok=True)
     
-    ts_str = datetime.utcnow().strftime('%Y%m%dT%H%M%S')
+    ts_str = datetime.now(timezone.utc).strftime('%Y%m%dT%H%M%S')
     new_name = f"moltbook_canary_{ts_str}.jsonl"
     dest = archive_dir / new_name
     
@@ -239,27 +301,38 @@ def append_record(jsonl_path: Path, node_id: str, mode: str, control_dir: Path, 
         except OSError:
             pass # Skipping rotation check on stat fail
 
-    # 1. Get sample
-    sample = _get_next_sample()
-    if not sample:
+    # 1. Get raw item
+    raw = _get_next_item(mode)
+    if not raw:
         # Fallback if sampler unavailable
         return
 
     # 2. Obfuscate & Sign
     if obfuscator_lib:
         try:
-            record = obfuscator_lib.Obfuscator.obfuscate_sample(sample)
+            if (mode or '').strip().lower() == 'canary':
+                # Stage 3: strict inbound-only schema
+                record = obfuscator_lib.Obfuscator.obfuscate_notification(raw)
+                # Preserve a stable "type" field for downstream consumers that
+                # expect it, while retaining the canonical event_type.
+                if 'type' not in record and 'event_type' in record:
+                    record['type'] = record.get('event_type', 'unknown')
+            else:
+                record = obfuscator_lib.Obfuscator.obfuscate_sample(raw)
             record = obfuscator_lib.Obfuscator.sign_record(record)
         except Exception:
             # Code safety: fail safe if obfuscation crashes
             return
     else:
-        record = sample
+        record = raw
 
     # Envelope
     record['node_id'] = node_id
     record['mode'] = mode.upper()
-    record['kind'] = 'obfuscated_content' 
+    if (mode or '').strip().lower() == 'canary':
+        record['kind'] = 'obfuscated_inbound_event'
+    else:
+        record['kind'] = 'obfuscated_content'
     # Ensure timestamp is preserved or added
     if 'ts' not in record:
          record['ts'] = _utc_now_iso()
@@ -278,21 +351,51 @@ def run_agent(cfg: AgentConfig, max_iterations: Optional[int] = None) -> int:
     i = 0
     # Health log path (separated from data)
     health_log = get_calamum_health_dir() / 'calamum_observer.heartbeat.jsonl'
-    
+
+    # Initialize shared keepalive helper (if available)
+    keepalive_helper = None
+    if KeepaliveHelper:
+        interval = _get_stdout_keepalive_interval_sec()
+        if interval > 0:
+            keepalive_helper = KeepaliveHelper("CalamumAgent", interval_seconds=interval)
+
     while True:
+        # Operator-friendly liveness signal (stdout; rate-limited)
+        if keepalive_helper:
+            out_size = None
+            out_age_s = None
+            try:
+                if cfg.output_jsonl.exists():
+                    st = cfg.output_jsonl.stat()
+                    out_size = int(st.st_size)
+                    out_age_s = round(max(0.0, time.time() - float(st.st_mtime)), 1)
+            except Exception:
+                pass
+            
+            metrics = {
+                "mode": cfg.mode.upper(),
+                "tick": i,
+                "out_size": out_size,
+                "age_s": out_age_s
+            }
+            keepalive_helper.emit("RUNNING", metrics)
+
         # Heartbeats (File Touch)
         _touch(cfg.observer_heartbeat)
-        if cfg.watchdog_heartbeat is not None:
-            _touch(cfg.watchdog_heartbeat)
-
+        
+        # Security: Verify Watchdog Presence (Isolation Logic)
+        # If Watchdog is dead or missing, we must Isolate (stop emitting data).
+        watchdog_ok = _is_watchdog_alive(cfg.watchdog_heartbeat, max_age=45.0)
+        
         # Heartbeats (Log - separated)
         try:
             health_log.parent.mkdir(parents=True, exist_ok=True)
+            status_str = 'alive' if watchdog_ok else 'isolated_no_watchdog'
             with health_log.open('a', encoding='utf-8') as f:
                 f.write(json.dumps({
                     'ts': _utc_now_iso(),
                     'node_id': cfg.node_id, 
-                    'status': 'alive',
+                    'status': status_str,
                     'uptime_ticks': i
                 }) + '\n')
         except Exception:
@@ -307,8 +410,13 @@ def run_agent(cfg: AgentConfig, max_iterations: Optional[int] = None) -> int:
         if should_exit:
             return 0
 
-        # Emit a sample record (Real Data)
-        append_record(cfg.output_jsonl, cfg.node_id, cfg.mode, cfg.control_dir, cfg.data_dir)
+        # Emit a sample record (Real Data) - ONLY if Watchdog is healthy
+        if watchdog_ok:
+            append_record(cfg.output_jsonl, cfg.node_id, cfg.mode, cfg.control_dir, cfg.data_dir)
+        else:
+            # Rate-limited whine about isolation
+            if i % 10 == 0:
+                print(f"[{_utc_now_iso()}] [ISOLATION] Watchdog missing/stale. Data emission paused.", file=sys.stderr)
 
         i += 1
         if max_iterations is not None and i >= max_iterations:

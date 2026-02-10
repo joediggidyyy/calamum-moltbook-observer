@@ -3,7 +3,7 @@
   "doc_type": "job",
   "job_id": "CALAMUM_JOB_0001",
   "title": "Moltbook Observer - Preparation and Setup (Calamum, read-only, obfuscated)",
-  "status": "open",
+  "status": "completed",
   "created_at": "2026-02-01",
   "owner": "ORACL-Prime",
   "project": "calamum / security experiment",
@@ -39,7 +39,7 @@
     "ssot": {
       "task_id": "calamum-moltbook-observer-prep-20260201",
       "path": "CodeSentinel/operations/tasks.json",
-      "status": "open"
+      "status": "completed"
     },
     "queststack": {
       "id": "",

@@ -2,24 +2,45 @@ import os
 from pathlib import Path
 
 def _find_repo_root(start: Path) -> Path:
-    """Best-effort repo root discovery for consistent Calamum log locations.
+    """Best-effort Calamum *project* root discovery.
+
+    The Calamum operational root is intentionally the project root
+    (`projects/calamum-moltbook-observer/`), not the workspace root.
 
     Preference order:
-    1) directory containing `codesentinel.json`
-    2) directory containing `.git/`
-    3) directory containing `logs/`
-    4) fallback to `start`
+      1) CALAMUM_REPO_ROOT (explicit override)
+      2) directory containing `PROJECT_MANIFEST.json` (Calamum project marker)
+      3) directory containing `logs/` (project-local logs)
+      4) fallback to workspace-level repo markers (`codesentinel.json`, `.git/`)
+      5) fallback to `start`
     """
+    env_root = os.getenv('CALAMUM_REPO_ROOT')
+    if env_root:
+        try:
+            p = Path(env_root).resolve()
+            if p.exists():
+                return p
+        except Exception:
+            pass
+
     cur = start.resolve()
+
+    # Project-first markers
+    for parent in [cur] + list(cur.parents):
+        if (parent / 'PROJECT_MANIFEST.json').exists():
+            return parent
+    for parent in [cur] + list(cur.parents):
+        if (parent / 'logs').exists() and (parent / 'src').exists():
+            return parent
+
+    # Workspace-level fallbacks (for dev/test)
     for parent in [cur] + list(cur.parents):
         if (parent / 'codesentinel.json').exists():
             return parent
     for parent in [cur] + list(cur.parents):
         if (parent / '.git').exists():
             return parent
-    for parent in [cur] + list(cur.parents):
-        if (parent / 'logs').exists():
-            return parent
+
     return cur
 
 
@@ -33,19 +54,14 @@ def get_calamum_log_dir() -> Path:
     Priority:
     1. CALAMUM_LOG_DIR environment variable.
     2. repo-root 'logs/' (best-effort discovery)
-    3. fallback to 'logs/' directory relative to this file (src/logs/).
+    3. (no src-local fallback) return the discovered repo-root logs path even if it does not exist yet.
     """
     env_val = os.getenv('CALAMUM_LOG_DIR')
     if env_val:
         return Path(env_val).resolve()
 
     repo_root = _find_repo_root(Path(__file__).resolve())
-    repo_logs = repo_root / 'logs'
-    if repo_logs.exists():
-        return repo_logs
-
-    # Fallback: src/logs/
-    return Path(__file__).resolve().parent / 'logs'
+    return (repo_root / 'logs')
 
 def get_calamum_data_dir() -> Path:
     """Return the data subdirectory."""

@@ -1,0 +1,63 @@
+# Calamum Moltbook Observer — Repo Health Audit
+
+Timestamp (UTC): {{ timestamp_utc }}
+Run ID: {{ run_id }}
+Auditor: {{ auditor }}
+
+## Scope
+
+This audit validates the **repository hygiene** of the Calamum Moltbook Observer subtree:
+
+- Redundant directory candidates for consolidation
+- Tracked vs. ignored expectations
+- Presence (or creation) of a project manifest
+- Provenance capture into an offline JSONL audit log
+
+## Context
+
+- Repo root: {{ repo_root }}
+- Project root: {{ project_root }}
+- Git branch: {{ git_branch }}
+- Git HEAD: {{ git_head }}
+- Dirty working tree: {{ git_is_dirty }}
+
+## Summary
+
+{{ summary_line }}
+
+## Findings
+
+### Tracked files that look like they should NOT be tracked
+
+{{ tracked_should_not_be_tracked_block }}
+
+### Ignored paths that are NOT ignored (policy drift)
+
+{{ ignore_policy_violations_block }}
+
+### Redundant / consolidatable directory candidates
+
+{{ redundant_dir_candidates_block }}
+
+### Job status sync (SSOT vs. docs)
+
+{{ job_status_sync_summary }}
+
+{{ job_status_sync_block }}
+
+### Manifest
+
+- Manifest path: {{ manifest_path }}
+- Manifest existed: {{ manifest_existed }}
+- Manifest created by audit: {{ manifest_created }}
+
+## Recommendations
+
+{{ recommendations_block }}
+
+## Evidence Bundle
+
+A JSON evidence bundle was written alongside this report.
+
+- Evidence path: {{ evidence_path }}
+- JSONL audit log: {{ audit_jsonl_path }}

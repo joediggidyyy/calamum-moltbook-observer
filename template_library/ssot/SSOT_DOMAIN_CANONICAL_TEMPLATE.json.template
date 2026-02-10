@@ -1,0 +1,80 @@
+{
+  "template_id": "VAULT_TEMPLATE_SSOT_DOMAIN_CANONICAL_V1",
+  "description": "Authoritative JSON template for a domain-scoped SSOT canonical document.",
+  "metadata": {
+    "document_title": "<DOMAIN>_SSOT",
+    "domain": "<DOMAIN>",
+    "artifact_type": "ssot_canonical",
+    "classification": "internal",
+    "version": "0.1",
+    "status": "draft",
+    "owner": "ORACL-Prime",
+    "stakeholder": "joediggidyyy",
+    "last_updated_utc": "<YYYY-MM-DD>",
+    "location_md": "CodeSentinel/docs/operations/ssot/<DOMAIN>_SSOT.md",
+    "location_json": "CodeSentinel/docs/operations/ssot/<DOMAIN>_SSOT.json"
+  },
+  "scope": {
+    "in_scope": [],
+    "out_of_scope": []
+  },
+  "ssot_boundary": {
+    "authoritative_artifacts": [
+      {
+        "truth": "work_status",
+        "path": "CodeSentinel/operations/tasks.json",
+        "notes": "Status is not a paragraph inside docs."
+      },
+      {
+        "truth": "gate_evidence",
+        "path": "CodeSentinel/logs/behavioral/gates/gate_events.jsonl",
+        "notes": "Append-only gate evidence."
+      }
+    ],
+    "derived_artifacts": []
+  },
+  "security": {
+    "rules": [
+      "No secrets in repo.",
+      "Env-var only authentication.",
+      "Names-only placeholders in docs; do not commit identifiers by default.",
+      "If the domain has a Top Secret UI boundary, document it."
+    ]
+  },
+  "workflows": {
+    "routine_operation": {
+      "preconditions": [],
+      "steps": [],
+      "expected_outputs": []
+    },
+    "safe_edits": {
+      "allowed_edit_surfaces": [],
+      "required_validation": []
+    }
+  },
+  "maintenance_tasks": [],
+  "audit": {
+    "required_evidence_paths": [
+      "CodeSentinel/logs/behavioral/gates/gate_events.jsonl"
+    ],
+    "auditor_checks": []
+  },
+  "debug": {
+    "common_symptoms": []
+  },
+  "interfaces_and_contracts": [],
+  "related_documents": {
+    "plans": [],
+    "runbooks": [],
+    "guides": [],
+    "reports": []
+  },
+  "change_log": [
+    {
+      "date_utc": "<YYYY-MM-DD>",
+      "version": "0.1",
+      "change": "Initial draft",
+      "author": "ORACL-Prime"
+    }
+  ]
+}

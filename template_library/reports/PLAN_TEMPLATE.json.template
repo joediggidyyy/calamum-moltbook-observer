@@ -1,0 +1,36 @@
+{
+  "template_id": "VAULT_TEMPLATE_PLAN_V1",
+  "doc_type": "plan",
+  "title": "<PLAN_TITLE>",
+  "status": "planned",
+  "created_at": "<YYYY-MM-DD>",
+  "owner": "<OWNER_OR_TEAM>",
+  "links": {
+    "policies": [
+      "PP_GOV_PROTOCOL_POL_CORE_POLICY_20251122",
+      "PP_GOV_PROTOCOL_POL_AGENT_ACTION_WORKFLOW_20251122"
+    ],
+    "related_proposals": ["<PROPOSAL_ID_OR_EMPTY>"],
+    "related_jobs": ["<JOB_ID_OR_EMPTY>"]
+  },
+  "context": {
+    "summary": "<ONE_PARAGRAPH_SUMMARY>",
+    "assumptions": ["<ASSUMPTION_1>"],
+    "risks": ["<RISK_1>"]
+  },
+  "milestones": [
+    {
+      "name": "<MILESTONE_NAME>",
+      "definition_of_done": ["<DOD_1>"]
+    }
+  ],
+  "tasks": [
+    {
+      "id": 1,
+      "title": "<TASK_TITLE>",
+      "status": "not-started",
+      "evidence_paths": []
+    }
+  ],
+  "success_metrics": ["<METRIC_1>"]
+}

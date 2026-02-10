@@ -1,0 +1,20 @@
+[Unit]
+Description=Calamum Watchdog Supervisor
+After=network.target
+
+[Service]
+Type=simple
+User=codesentinel
+Group=codesentinel
+WorkingDirectory=/opt/codesentinel/projects/calamum-moltbook-observer
+ExecStart=/opt/codesentinel/.venv/bin/python3 src/calamum_watchdog.py
+Restart=always
+RestartSec=5
+Environment=CALAMUM_OPS_MODE=prod
+Environment=CALAMUM_ALLOW_DEV_SIGNING_KEY=0
+# Security Hardening
+ProtectSystem=full
+PrivateTmp=true
+
+[Install]
+WantedBy=multi-user.target

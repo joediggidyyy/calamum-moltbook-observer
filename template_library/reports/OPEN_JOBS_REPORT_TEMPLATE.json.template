@@ -1,0 +1,30 @@
+{
+  "template_id": "open_jobs_snapshot",
+  "template_version": "2025-12-23",
+  "output": {
+    "type": "markdown",
+    "suggested_output_dir": "docs/reports/<year>/<month>/readiness",
+    "suggested_filename_pattern": "OPEN_JOBS_SNAPSHOT_YYYYMMDD.md"
+  },
+  "rendering": {
+    "engine": "string_replace",
+    "placeholder_syntax": "{{ name }}"
+  },
+  "placeholders": [
+    "timestamp",
+    "status_filter_list",
+    "owners",
+    "priorities",
+    "sort_key",
+    "sort_direction",
+    "limit",
+    "job.id",
+    "job.summary",
+    "job.owner",
+    "job.priority",
+    "job.status",
+    "job.category",
+    "job.due_within_hours"
+  ],
+  "notes": "This template is often pasted into completed snapshots. Canonical lives in VAULT; doc-side copies should be pointers only."
+}

@@ -1,0 +1,82 @@
+On branch master
+Changes not staged for commit:
+  (use "git add/rm <file>..." to update what will be committed)
+  (use "git restore <file>..." to discard changes in working directory)
+	modified:   .gitignore
+	modified:   README.md
+	modified:   SECURITY.md
+	deleted:    archive/CONCEPT_TUI_CONSOLE-deprecated.md
+	deleted:    archive/ops_console_tui_deprecated.py
+	modified:   calamum_agent.pid
+	modified:   calamum_librarian.pid
+	modified:   calamum_watchdog.pid
+	modified:   deliverables/DATA780/README.md
+	modified:   ghost_console.pid
+	modified:   jobs/CALAMUM_JOB_0001_MOLTBOOK_OBSERVER_PREPARATION_AND_SETUP_20260201.json
+	modified:   jobs/CALAMUM_JOB_0001_MOLTBOOK_OBSERVER_PREPARATION_AND_SETUP_20260201.md
+	modified:   jobs/CALAMUM_JOB_0002_MOLTBOOK_OBSERVER_STAGE1_OBSERVE_AND_SAMPLE_20260201.json
+	modified:   jobs/CALAMUM_JOB_0002_MOLTBOOK_OBSERVER_STAGE1_OBSERVE_AND_SAMPLE_20260201.md
+	modified:   jobs/CALAMUM_JOB_0003_MOLTBOOK_OBSERVER_STAGE2_CONTAINER_HARDENING_20260201.json
+	modified:   jobs/CALAMUM_JOB_0003_MOLTBOOK_OBSERVER_STAGE2_CONTAINER_HARDENING_20260201.md
+	modified:   jobs/CALAMUM_JOB_0004_MOLTBOOK_OBSERVER_STAGE3_PASSIVE_CANARY_20260201.json
+	modified:   jobs/CALAMUM_JOB_0004_MOLTBOOK_OBSERVER_STAGE3_PASSIVE_CANARY_20260201.md
+	modified:   jobs/CALAMUM_JOB_0005_MOLTBOOK_OBSERVER_STAGE4_ACTIVE_MAGNET_GATED_20260201.json
+	modified:   jobs/CALAMUM_JOB_0005_MOLTBOOK_OBSERVER_STAGE4_ACTIVE_MAGNET_GATED_20260201.md
+	modified:   jobs/CALAMUM_JOB_0006_MOLTBOOK_OBSERVER_STAGE1_TO_STAGE3_EXECUTION_PLAN_20260203.json
+	modified:   jobs/CALAMUM_JOB_0006_MOLTBOOK_OBSERVER_STAGE1_TO_STAGE3_EXECUTION_PLAN_20260203.md
+	modified:   jobs/CALAMUM_JOB_0007_MOLTBOOK_OPS_WIDGET_IMPLEMENTATION_20260203.json
+	modified:   jobs/CALAMUM_JOB_0009_MOLTBOOK_OBSERVER_RECOVERY_AND_STABILIZATION_20260205.json
+	modified:   jobs/CALAMUM_JOB_0009_MOLTBOOK_OBSERVER_RECOVERY_AND_STABILIZATION_20260205.md
+	modified:   launch_ghost_console.ps1
+	modified:   queststacks/QS-CALAMUM-MOLTBOOK-OBSERVER-PREP-20260201.md
+	modified:   queststacks/QS-CALAMUM-MOLTBOOK-OBSERVER-RECOVERY-AND-STABILIZATION-20260205.md
+	modified:   queststacks/QS-CALAMUM-MOLTBOOK-OBSERVER-REMEDIATION-20260203.md
+	modified:   queststacks/QS-CALAMUM-MOLTBOOK-OBSERVER-STAGE1-20260201.md
+	modified:   queststacks/QS-CALAMUM-MOLTBOOK-OBSERVER-STAGE4-20260201.md
+	modified:   queststacks/QS-CALAMUM-MOLTBOOK-OPS-WIDGET-20260203.md
+	modified:   src/calamum_config.py
+	modified:   src/calamum_librarian.py
+	modified:   src/calamum_observer_agent.py
+	modified:   src/calamum_sampler.py
+	modified:   src/calamum_watchdog.py
+	deleted:    src/docs/audits/CALAMUM_MOLTBOOK_OBSERVER_CODE_QUALITY_AUDIT_2026-02-04.md
+	deleted:    src/docs/audits/calamum_code_quality_audit_2026-02-04.md
+	deleted:    src/docs/audits/remediation_roadmap_2026.md
+	modified:   src/obfuscator_lib.py
+	modified:   src/ops/controller.py
+	modified:   src/tests/test_obfuscator.py
+
+Untracked files:
+  (use "git add <file>..." to include in what will be committed)
+	.env.example
+	PROJECT_MANIFEST.json
+	assets/branding/calamum_tile.png
+	deliverables/DATA780/ML_READINESS_ASSESSMENT_2026-02-10.md
+	deliverables/DATA780/MODEL_TRAINING_NARRATIVE_REPORT_STRUCTURE.md
+	deployment/
+	docs/
+	jobs/CALAMUM_JOB_0010_AUDIT_TOOLING_SECURITY_AND_PROVENANCE_UPGRADES_20260209.json
+	jobs/CALAMUM_JOB_0010_AUDIT_TOOLING_SECURITY_AND_PROVENANCE_UPGRADES_20260209.md
+	jobs/CALAMUM_JOB_0011_ACTIVE_LOGGING_KEEPALIVE_AND_BLIND_ML_EXECUTION_20260210.json
+	jobs/CALAMUM_JOB_0011_ACTIVE_LOGGING_KEEPALIVE_AND_BLIND_ML_EXECUTION_20260210.md
+	planning/CALAMUM_BLIND_ML_EXECUTION_PLAN_2026-02-10.md
+	planning/CALAMUM_MOLTBOOK_OBSERVER_STAGE_4_REVISED_PLAN_2026.md
+	questframes/QF-CALAMUM-MOLTBOOK-OBSERVER-ACTIVE-LOGGING-KEEPALIVE-AND-BLIND-ML-EXECUTION-20260210.json
+	questframes/QF-CALAMUM-MOLTBOOK-OBSERVER-AUDIT-TOOLING-SECURITY-AND-PROVENANCE-UPGRADES-20260209.json
+	queststacks/QS-CALAMUM-MOLTBOOK-OBSERVER-ACTIVE-LOGGING-KEEPALIVE-AND-BLIND-ML-EXECUTION-20260210.md
+	queststacks/QS-CALAMUM-MOLTBOOK-OBSERVER-AUDIT-TOOLING-SECURITY-AND-PROVENANCE-UPGRADES-20260209.md
+	src/analysis/
+	src/calamum_keepalive.py
+	src/stage4_features.py
+	src/tests/test_analysis_tools.py
+	src/tests/test_observer_agent_canary_records.py
+	src/tests/test_ops_parameters_report.py
+	src/tests/test_watchdog_scheduler.py
+	src/tests/test_watchdog_security.py
+	status.txt
+	template_library/
+	tools/
+
+no changes added to commit (use "git add" and/or "git commit -a")
+  origin/HEAD -> origin/main
+  origin/main

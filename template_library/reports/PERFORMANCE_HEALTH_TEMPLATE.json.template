@@ -1,0 +1,18 @@
+{
+  "timestamp": "{{ timestamp }}",
+  "system_metrics": {{ system_metrics }},
+  "process_metrics": {{ process_metrics }},
+  "health_status": "{{ health_status }}",
+  "performance_indicators": {
+    "cpu_threshold": 80,
+    "memory_threshold": 85,
+    "disk_threshold": 90,
+    "overall_health_score": 0
+  },
+  "trends": {
+    "cpu_trend": "stable",
+    "memory_trend": "stable",
+    "performance_trend": "stable"
+  },
+  "recommendations": []
+}

@@ -3,10 +3,11 @@
 # Stack Protocol: Agent -> Librarian -> Dashboard -> Frontend
 
 # --- CONFIGURATION ---
-$RepoRoot = Resolve-Path "$PSScriptRoot\..\.." 
-$VenvPython = Join-Path $RepoRoot ".venv-core\Scripts\python.exe"
+$CalamumRoot = Resolve-Path "$PSScriptRoot" 
+$WorkspaceRoot = Resolve-Path "$PSScriptRoot\..\.." 
+$VenvPython = Join-Path $WorkspaceRoot ".venv-core\Scripts\python.exe"
 $SrcDir = Join-Path $PSScriptRoot "src"
-$LogDir = Join-Path $RepoRoot "logs"
+$LogDir = Join-Path $CalamumRoot "logs"
 
 # Artifacts
 $DashboardScript = Join-Path $SrcDir "ops_dashboard.py"
@@ -117,6 +118,10 @@ function Stop-OrphanInstances ($name, $scriptPath, $expectedPid) {
 
 Write-Host "=== CALAMUM OPS STACK LAUNCHER ===" -ForegroundColor Green
 
+# Ensure child processes treat the Calamum project as the operational root.
+$env:CALAMUM_REPO_ROOT = "$CalamumRoot"
+$env:CALAMUM_LOG_DIR = "$LogDir"
+
 # 1. CORE PROCESS CHECK (Daemon/Watchdog/Librarian)
 
 # Helper to read a pidfile and return the PID if the process is running.
@@ -193,9 +198,7 @@ if ($dashboardPid) {
     $ownerNow = Get-PortOwningPid $Port
     if ($ownerNow) {
         if ($dashboardPid -ne $ownerNow) {
-            Write-Host "    [!] Dashboard PID mismatch detected (pidfile=$dashboardPid, port_owner=$ownerNow). Reconciling..." -ForegroundColor Yellow
-            Set-Content -Path $DashboardPidFile -Value $ownerNow -Encoding ASCII
-            $dashboardPid = $ownerNow
+            Write-Host "    [!] Dashboard PID mismatch detected (pidfile=$dashboardPid, port_owner=$ownerNow). Keeping pidfile on script PID to avoid killing the parent process." -ForegroundColor Yellow
         }
     } else {
         Write-Host "    [!] Dashboard PID present but port $Port is not LISTENing. Restarting..." -ForegroundColor Yellow
@@ -204,8 +207,12 @@ if ($dashboardPid) {
     }
 }
 
-# Only enforce single-instance semantics after the port-owner is known (or after restart decision).
-Stop-OrphanInstances "Dashboard Backend" $DashboardScript $dashboardPid
+# NOTE: NiceGUI/Uvicorn may spawn helper/worker processes on Windows.
+# Enforcing single-instance semantics by script-path can accidentally kill the real server.
+# Opt-in only.
+if ($env:CALAMUM_ENFORCE_DASHBOARD_SINGLE_INSTANCE -eq '1') {
+    Stop-OrphanInstances "Dashboard Backend" $DashboardScript $dashboardPid
+}
 
 if (-not $dashboardPid) {
     Write-Host "    [!] Dashboard Backend not running. Starting..." -ForegroundColor Yellow
@@ -268,15 +275,15 @@ if (-not $ready) {
 # Reconcile dashboard PID tracking: some servers spawn a child process that owns the port.
 if ($portOwnerPid) {
     if ($dashboardPid -and ($dashboardPid -ne $portOwnerPid)) {
-        Write-Host "    [!] Dashboard PID mismatch detected (pidfile=$dashboardPid, port_owner=$portOwnerPid). Reconciling..." -ForegroundColor Yellow
+        Write-Host "    [!] Dashboard PID mismatch detected (pidfile=$dashboardPid, port_owner=$portOwnerPid). Leaving pidfile unchanged; port owner PID is informational." -ForegroundColor Yellow
     }
-    Set-Content -Path $DashboardPidFile -Value $portOwnerPid -Encoding ASCII
-    $dashboardPid = $portOwnerPid
-    Write-Host "    [+] Dashboard Backend PORT OWNER is ACTIVE (PID: $dashboardPid)" -ForegroundColor Green
+    Write-Host "    [+] Dashboard Backend PORT OWNER is ACTIVE (PID: $portOwnerPid)" -ForegroundColor Green
 }
 
-# Final single-instance enforcement for the dashboard after port-owner reconciliation.
-Stop-OrphanInstances "Dashboard Backend" $DashboardScript $dashboardPid
+# Final single-instance enforcement for the dashboard after port-owner reconciliation (opt-in only).
+if ($env:CALAMUM_ENFORCE_DASHBOARD_SINGLE_INSTANCE -eq '1') {
+    Stop-OrphanInstances "Dashboard Backend" $DashboardScript $dashboardPid
+}
 
 # 4. LAUNCH FRONTEND (Edge App Mode)
 Write-Host "[*] Launching Ghost Console Interface..." -ForegroundColor Green

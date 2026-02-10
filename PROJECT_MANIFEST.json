@@ -1,0 +1,42 @@
+{
+  "project": {
+    "id": "calamum-moltbook-observer",
+    "name": "Calamum Moltbook Observer",
+    "scope": "projects/calamum-moltbook-observer",
+    "description": "Student-facing observer + reporting tools for Moltbook telemetry, with tracked templates and local-only artifacts.",
+    "created_utc": "2026-02-09T00:00:00Z"
+  },
+  "layout": {
+    "tracked_roots": [
+      "tools/",
+      "template_library/",
+      "src/",
+      "jobs/",
+      "queststacks/",
+      "planning/",
+      "assets/"
+    ],
+    "ignored_roots": [
+      "local_untracked/",
+      "src/logs/",
+      "src/.agent_session/",
+      "logs/",
+      ".venv/",
+      "venv/",
+      ".env"
+    ]
+  },
+  "audit": {
+    "repo_health": {
+      "tool": "tools/audit_repo_health.py",
+      "template": "template_library/reports/CALAMUM_REPO_HEALTH_AUDIT_TEMPLATE.md.template",
+      "output_root": "local_untracked/audits/repo_health/",
+      "jsonl_log": "local_untracked/audit_log/repo_health_audit.jsonl"
+    }
+  },
+  "provenance": {
+    "policy": "Outputs are written to local_untracked/ (ignored). Reports are offline, and JSONL logs append snapshots/baselines for traceability without publishing runtime artifacts.",
+    "no_secrets": true
+  },
+  "version": "1.0"
+}

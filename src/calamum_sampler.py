@@ -3,7 +3,7 @@ import os
 import json
 import random
 import time
-from datetime import datetime
+from datetime import datetime, timezone
 from pathlib import Path
 
 # Setup import path for sibling modules
@@ -13,6 +13,7 @@ sys.path.append(str(current_dir))
 try:
     import obfuscator_lib
     from moltbook_client import MoltbookAPIClient, MockMoltbookClient
+    from stage4_features import extract_stage4_features
 except ImportError:
     print("Error: Could not import local modules. Ensure they are in the same directory.")
     sys.exit(1)
@@ -32,7 +33,7 @@ def simulate_moltbook_feed():
     # Generate 50 samples
     for _ in range(50):
         yield {
-            "timestamp": datetime.utcnow().isoformat(),
+            "timestamp": datetime.now(timezone.utc).isoformat(),
             "author": random.choice(users),
             "type": random.choice(types),
             "content": random.choice(contents),
@@ -54,7 +55,7 @@ def simulate_moltbook_notifications():
     for _ in range(10):
         evt_type = random.choice(events)
         notification = {
-            "timestamp": datetime.utcnow().isoformat(),
+            "timestamp": datetime.now(timezone.utc).isoformat(),
             "sender": random.choice(senders),
             "event_type": evt_type,
         }
@@ -64,6 +65,38 @@ def simulate_moltbook_notifications():
         yield notification
 
 import argparse
+
+
+def _find_repo_root(start: Path) -> Path:
+    """Find the real repository root.
+
+    Calamum's operational root is the project root
+    (`projects/calamum-moltbook-observer/`).
+
+    We intentionally do NOT treat a nested `src/logs/` directory as a root
+    marker, because local dev/test runs may create it and it must not become a
+    persistent output target.
+    """
+    env_root = os.getenv('CALAMUM_REPO_ROOT')
+    if env_root:
+        try:
+            p = Path(env_root).resolve()
+            if p.exists():
+                return p
+        except Exception:
+            pass
+
+    cur = start.resolve()
+    for parent in [cur] + list(cur.parents):
+        if (parent / 'PROJECT_MANIFEST.json').exists():
+            return parent
+
+    # Fallback to workspace root if running outside the project tree.
+    for parent in [cur] + list(cur.parents):
+        if (parent / 'codesentinel.json').exists():
+            return parent
+
+    return cur
 
 def main():
     parser = argparse.ArgumentParser(description="Moltbook Sampler")
@@ -78,11 +111,9 @@ def main():
         output_dir.mkdir(parents=True, exist_ok=True)
     else:
         # Define output path relative to repo root
-        repo_root = current_dir
-        while not (repo_root / "logs").exists():
-            if repo_root.parent == repo_root:
-                raise FileNotFoundError("Could not find repo root with 'logs' directory")
-            repo_root = repo_root.parent
+        repo_root = _find_repo_root(current_dir)
+        if not (repo_root / 'logs').exists():
+            (repo_root / 'logs').mkdir(parents=True, exist_ok=True)
             
         output_dir = repo_root / "logs" / "data" / "calamum"
         output_dir.mkdir(parents=True, exist_ok=True)
@@ -110,6 +141,14 @@ def main():
 
             for sample in generator:
                 safe_record = obfuscator_lib.Obfuscator.obfuscate_sample(sample)
+                
+                # STAGE 4: Feature Extraction Upgrade
+                # Extract dual-vector features BEFORE full signature hashing if possible, 
+                # or from raw sample while we have it (since it stays in memory/edge).
+                # Note: stage4_features does not return PII, only scalars.
+                features = extract_stage4_features(sample.get("content", ""), sample.get("timestamp", ""))
+                safe_record.update(features)
+                
                 f.write(json.dumps(safe_record) + "\n")
                 count += 1
         elif args.mode == "canary":
@@ -127,6 +166,11 @@ def main():
 
             for notification in generator:
                 safe_record = obfuscator_lib.Obfuscator.obfuscate_notification(notification)
+                
+                # STAGE 4: Feature Extraction Upgrade (Canary)
+                features = extract_stage4_features(notification.get("content", ""), notification.get("timestamp", ""))
+                safe_record.update(features)
+                
                 f.write(json.dumps(safe_record) + "\n")
                 count += 1
             

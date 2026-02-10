@@ -1,0 +1,47 @@
+{
+  "template_id": "VAULT_TEMPLATE_SSOT_FEATURE_CANONICAL_V1",
+  "description": "Authoritative JSON template for a feature-scoped canonical SSOT document.",
+  "metadata": {
+    "document_title": "<FEATURE>_CANONICAL",
+    "domain": "<DOMAIN>",
+    "feature": "<FEATURE>",
+    "artifact_type": "feature_canonical",
+    "classification": "internal",
+    "version": "0.1",
+    "status": "draft",
+    "owner": "ORACL-Prime",
+    "stakeholder": "joediggidyyy",
+    "last_updated_utc": "<YYYY-MM-DD>",
+    "location_md": "CodeSentinel/docs/operations/ssot/<DOMAIN>/<FEATURE>_CANONICAL.md",
+    "location_json": "CodeSentinel/docs/operations/ssot/<DOMAIN>/<FEATURE>_CANONICAL.json"
+  },
+  "boundaries": {
+    "owns": [],
+    "does_not_own": []
+  },
+  "contracts": {
+    "interfaces": [],
+    "schemas": []
+  },
+  "operations": {
+    "preconditions": [],
+    "routine_steps": [],
+    "validation": []
+  },
+  "debug": {
+    "logs": [],
+    "common_failures": []
+  },
+  "audit": {
+    "evidence_sources": [],
+    "required_invariants": []
+  },
+  "change_log": [
+    {
+      "date_utc": "<YYYY-MM-DD>",
+      "version": "0.1",
+      "change": "Initial draft",
+      "author": "ORACL-Prime"
+    }
+  ]
+}

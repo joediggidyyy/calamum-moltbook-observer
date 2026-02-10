@@ -2,6 +2,7 @@
 *.log
 *.jsonl
 *.sqlite
+*.pid
 logs/
 src/logs/
 src/.agent_session/
@@ -21,6 +22,7 @@ venv/
 # Environment Variables & Secrets
 .env
 .env.*
+!.env.example
 *.key
 *.pem
 secrets/
@@ -36,3 +38,6 @@ Desktop.ini
 
 # Project Specific
 log/
+
+# Local-only (intentionally not tracked)
+local_untracked/

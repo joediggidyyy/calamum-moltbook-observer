@@ -1,0 +1,57 @@
+# Calamum GUI Audit Report
+
+- timestamp_utc: {{ timestamp_utc }}
+- target_url: {{ target_url }}
+- audit_scope: {{ audit_scope }}
+- auditor: {{ auditor }}
+
+## Summary
+
+{{ summary }}
+
+## Reachability
+
+- GET / status: {{ http_root_status }}
+- GET /_ghost_console/snapshot status: {{ http_snapshot_status }}
+- GET /_ghost_console/js_error_tail status: {{ http_js_tail_status }}
+
+## Branding / Taskbar Tile
+
+- tile_path: {{ tile_path }}
+- GET tile status: {{ tile_http_status }}
+- tile_content_type: {{ tile_content_type }}
+- tile_sha256: {{ tile_sha256 }}
+
+Head tag checks (from GET / HTML):
+
+- has msapplication-TileImage: {{ head_has_ms_tile_image }}
+- has favicon link: {{ head_has_favicon }}
+- references calamum_tile.png: {{ head_refs_tile_png }}
+
+## Snapshot (selected)
+
+- server_boot_id: {{ snapshot_server_boot_id }}
+- cpu: {{ snapshot_cpu }}
+- mem: {{ snapshot_mem }}
+- total_records: {{ snapshot_total_records }}
+- new_records: {{ snapshot_new_records }}
+- watchdog_active: {{ snapshot_watchdog_active }}
+- observer_active: {{ snapshot_observer_active }}
+- librarian_active: {{ snapshot_librarian_active }}
+- scores: {{ snapshot_scores_json }}
+- js_diag: {{ snapshot_js_diag_json }}
+
+## Client JS Diagnostics Tail (policy)
+
+- note: {{ js_error_tail_note }}
+- js_error_tail_sha256: {{ js_error_tail_sha256 }}
+- js_error_tail_len: {{ js_error_tail_len }}
+
+## Notes / Findings
+
+{{ findings }}
+
+## Evidence Bundle
+
+- evidence_json_path: {{ evidence_json_path }}
+- report_path: {{ report_path }}
