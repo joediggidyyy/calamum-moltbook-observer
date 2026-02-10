@@ -13,8 +13,8 @@ if str(SRC_DIR) not in sys.path:
 
 from obfuscator_lib import Obfuscator
 
-from analysis.build_dataset import build_dataset
-from analysis.evaluate_baseline import evaluate
+from analysis.dataset_builder import build_dataset
+from analysis.evaluation_harness import evaluate
 from analysis.validate_jsonl import validate_jsonl_file
 
 

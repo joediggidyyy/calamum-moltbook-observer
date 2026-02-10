@@ -1,0 +1,28 @@
+{
+  "meta": {
+    "type": "questframe",
+    "version": "1.0.0",
+    "id": "QF-CALAMUM-MOLTBOOK-OBSERVER-SRC-ANALYSIS-REMEDIATION-20260210",
+    "parent_queststack": "QS-CALAMUM-MOLTBOOK-OBSERVER-SRC-ANALYSIS-REMEDIATION-20260210",
+    "created_at": "2026-02-10T12:00:00Z",
+    "status": "completed"
+  },
+  "spec": {
+    "title": "Moltbook Observer - Remediation: Src Analysis Tooling Unification",
+    "owner": "ORACL-Prime",
+    "participants": [
+      "joediggidyyy",
+      "ORACL-Prime"
+    ],
+    "goals": [
+      "Eliminate code duplication in src/analysis/ ML tools",
+      "Align implementation inputs/outputs with DATA780 architectural plan",
+      "Verify test suite integrity after refactoring"
+    ],
+    "deliverables": [
+      "projects/calamum-moltbook-observer/src/analysis/dataset_builder.py",
+      "projects/calamum-moltbook-observer/src/analysis/evaluation_harness.py",
+      "projects/calamum-moltbook-observer/src/tests/test_analysis_tools.py"
+    ]
+  }
+}

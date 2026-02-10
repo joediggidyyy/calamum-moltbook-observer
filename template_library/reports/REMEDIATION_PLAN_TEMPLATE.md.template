@@ -1,0 +1,58 @@
+# Remediation Plan: <TITLE>
+
+## Metadata
+
+- Template ID: `VAULT_TEMPLATE_REMEDIATION_PLAN_V1`
+- Instigating Analysis: `<LINK_TO_AUDIT_OR_REPORT>`
+- Status: `<DRAFT|APPROVED|IN_PROGRESS|COMPLETED>`
+- Owner: `<OWNER>`
+- Created: `<YYYY-MM-DD>`
+- Target Component: `<PATH_TO_COMPONENT>`
+
+## 1. Problem Statement
+
+*Summary of the analysis findings necessitating this remediation.*
+
+- **Source Issue**: `<ISSUE_DESCRIPTION>`
+- **Severity**: `<HIGH|MEDIUM|LOW>`
+- **Evidence**: `<LINK_TO_LOGS_OR_FILES>`
+
+## 2. Remediation Strategy
+
+*High-level approach to resolving the issue.*
+
+- **Goal**: `<GOAL_DESCRIPTION>`
+- **Constraint**: `<CONSTRAINT_DESCRIPTION>` (e.g., Names-only, Zero-downtime)
+
+### 2.1 Artifact Selection / Change Matrix
+
+| Target | Current State | Proposed State | Action |
+| :--- | :--- | :--- | :--- |
+| `<FILE_PATH>` | `<CURRENT_STATUS>` | `<FUTURE_STATUS>` | `<ACTION>` |
+
+## 3. Execution Steps
+
+1.  **Safety**: `<PRE_OP_CHECK>`
+2.  **Action**: `<STEP_1>`
+3.  **Action**: `<STEP_2>`
+4.  **Verification**: `<VERIFICATION_COMMAND>`
+
+## 4. Job/Plan Alignment
+
+*Does this require updating existing Job or Plan documentation?*
+
+- [ ] Job Update Required: `<JOB_ID>`
+- [ ] Plan Update Required: `<PLAN_ID>`
+- [ ] No Doc Updates (Maintenance Only)
+
+## 5. Risk Assessment
+
+- **Risk**: `<RISK_DESCRIPTION>`
+- **Mitigation**: `<MITIGATION_STRATEGY>`
+- **Estimator**:
+    - complexity: `<1-100>`
+    - tests_needed: `<COUNT>`
+
+---
+
+**Approval Required**: `<ROLE_OR_PERSON>`

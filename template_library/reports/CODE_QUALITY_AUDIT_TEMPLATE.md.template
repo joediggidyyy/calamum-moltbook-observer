@@ -68,6 +68,20 @@ This weekly audit evaluates code quality across the CodeSentinel codebase, focus
 - Function length distribution
 - Class coupling metrics
 
+## Project Filesystem Review
+
+{{ filesystem_review }}
+
+### Structural Integrity
+
+- Directory hierarchy logical consistency
+- `local_untracked` vs tracked separation
+- Temporary file hygiene
+
+### Purpose Duplication
+
+- Logic/File usage overlap (e.g., duplicate entrypoints)
+
 ## Recommendations
 
 ### Immediate Actions (High Priority)
