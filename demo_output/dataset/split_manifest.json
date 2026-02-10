@@ -1,0 +1,16 @@
+{
+  "counts": {
+    "test": 11,
+    "train": 42,
+    "val": 7
+  },
+  "created_at_utc": "2026-02-10T18:14:26.890259Z",
+  "seed": 123,
+  "split": {
+    "test": 0.15,
+    "train": 0.7,
+    "val": 0.15
+  },
+  "splits_csv": "demo_output\\dataset\\splits.csv",
+  "splits_sha256": "21c19277f20c366a4382b2145e5d6ed156e69c8d73458fce47f11e2a46adf77a"
+}

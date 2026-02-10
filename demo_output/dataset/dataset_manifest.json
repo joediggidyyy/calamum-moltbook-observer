@@ -1,0 +1,46 @@
+{
+  "created_at_utc": "2026-02-10T18:14:26.924217Z",
+  "feature_columns": [
+    "record_id",
+    "ts_epoch",
+    "content_length",
+    "has_code_block",
+    "has_link",
+    "tags_count",
+    "mentions_count",
+    "f_complexity",
+    "f_code_density",
+    "f_toxicity",
+    "is_canary",
+    "type_post",
+    "type_reply",
+    "type_repost",
+    "type_dm",
+    "type_follow",
+    "type_mention",
+    "type_unknown"
+  ],
+  "features_csv": "demo_output\\dataset\\features.csv",
+  "git_sha": "c81fb1ca2cbd9a24f6dc6764d05b874cb22686bc",
+  "has_labels": true,
+  "inputs": [
+    {
+      "bytes": 15870,
+      "mtime": 1770747266.8679395,
+      "path": "demo_output\\telemetry_input.jsonl",
+      "records": 60,
+      "sha256": "0b0a1e8063e19d9117921a8dd638ba826f878fb64438f59a812edf2ac80f84e5"
+    }
+  ],
+  "labels_csv": "demo_output\\dataset\\labels.csv",
+  "schema_version": "obfuscated_record_v1",
+  "seed": 123,
+  "split": {
+    "test": 0.15,
+    "train": 0.7,
+    "val": 0.15
+  },
+  "split_manifest_json": "demo_output\\dataset\\split_manifest.json",
+  "splits_csv": "demo_output\\dataset\\splits.csv",
+  "total_records": 60
+}

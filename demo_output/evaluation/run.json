@@ -1,0 +1,51 @@
+{
+  "code": {
+    "git_sha": "c81fb1ca2cbd9a24f6dc6764d05b874cb22686bc"
+  },
+  "context": {
+    "constraints": {
+      "max_fpr": 0.01
+    },
+    "course_targets": [
+      "DATA780",
+      "DATA740"
+    ]
+  },
+  "data": {
+    "dataset_manifest": null,
+    "dataset_manifest_sha256": null,
+    "features_csv": "demo_output\\dataset\\features.csv",
+    "labels_csv": "demo_output\\dataset\\labels.csv"
+  },
+  "evaluation": {
+    "counts": {
+      "fn": 0,
+      "fp": 0,
+      "tn": 50,
+      "tp": 10
+    },
+    "has_labels": true,
+    "metrics": {
+      "f1": 1.0,
+      "fpr": 0.0,
+      "precision": 1.0,
+      "recall": 1.0
+    },
+    "thresholding": "fpr_constrained_best_f1"
+  },
+  "governance": {
+    "notes": "Names-only evaluation. No semantic payload consumed or emitted.",
+    "privacy_review": "pass"
+  },
+  "identity": {
+    "created_at_utc": "2026-02-10T18:14:27.489305Z",
+    "operator": "ORACL-Prime",
+    "run_id": "demo_run_001"
+  },
+  "model": {
+    "class": "RandomForestClassifier",
+    "family": "trained_sklearn",
+    "name": "model.joblib",
+    "source": "demo_output\\models\\supervised\\model.joblib"
+  }
+}
