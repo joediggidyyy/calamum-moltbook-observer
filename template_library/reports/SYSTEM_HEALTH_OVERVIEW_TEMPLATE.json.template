@@ -1,9 +1,0 @@
-{
-  "timestamp": "{{ timestamp }}",
-  "period": "{{ period }}",
-  "uptime_percentage": 0,
-  "performance_trends": {},
-  "error_rates": {},
-  "resource_utilization": {},
-  "health_score": "{{ health_score }}"
-}
