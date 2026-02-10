@@ -83,7 +83,10 @@ def load_dataset(manifest_path: Path) -> Tuple[List[Dict[str, Any]], Dict[str, s
             with labels_path.open('r', encoding='utf-8', newline='') as f:
                 reader = csv.DictReader(f)
                 for row in reader:
-                    labels_map[row['record_id']] = row['label']
+                    # Support 'tv_id' or 'label' column
+                    lbl = row.get('tv_id') or row.get('label')
+                    if lbl:
+                        labels_map[row['record_id']] = lbl
 
     return features, record_split_map, labels_map, manifest['feature_columns']
 
