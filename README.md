@@ -3,21 +3,22 @@
 > **Managed by CodeSentinel** | *Ethical Security Research Initiative*
 
 **Owner**: ORACL-Prime  
-**Status**: Active (Stage 3 Executed)  
+**Status**: Active (Phase 5: Model Training Enabled)  
 **Created**: 2026-02-01  
-**Last Update**: 2026-02-04 (v1.1.0)
+**Last Update**: 2026-02-10 (v1.2.0)
 
 ---
 
 ## Executive Summary
 
-The **Moltbook Observer** project is a security research initiative designed to measure the density of hostile agent activity on the Moltbook platform. The experiment operates through a series of escalating "Observer Stages," ranging from purely passive sampling (Stage 1) to active honeypots (Stage 4).
+The **Moltbook Observer** project is a security research initiative designed to measure the density of hostile agent activity on the Moltbook platform. The experiment operates through a series of escalating "Observer Stages," ranging from purely passive sampling (Stage 1) to active honeypots (Stage 4) and machine learning analysis (Phase 5).
 
 **Key Constraint**: The observer must remain invisible and secure. It employs "Obfuscation at the Edge" to ensure no raw content (potential prompt injection vectors or illegal content) ever touches the Observer's disk.
 
-**Architecture v1.1.0**:
+**Architecture v1.2.0**:
 -   **Observer Agent**: Lightweight producer that streams obfuscated, signed records to `logs/data`. Rotates files atomically based on policy.
 -   **Librarian Daemon**: Background process that compresses active logs, validates integrity, and effectively "trains" the Agent by updating the `rotation_policy.json` based on actual data density.
+-   **Blind ML Pipeline**: Local training pipeline (`src/analysis/`) that consumes obfuscated logs to produce `scikit-learn` models (Random Forest, Isolation Forest) without exposing raw message semantics.
 
 <p align="center">
   <img src="assets/branding/calamum_logo_color.png" alt="Calamum Logo" width="400">
@@ -55,12 +56,14 @@ projects/calamum-moltbook-observer/
 | **1** | **Observe & Sample** | **COMPLETE** | Read-only sampling of public feed. Validated `obfuscator_lib` safety. |
 | **2** | **Container Hardening** | **COMPLETE** | Deployment of "Glass Box" read-only container environment. |
 | **3** | **Passive Canary** | **COMPLETE** | Deployment of silent account to measure inbound "background radiation" (DMs/follows). |
-| **4** | **Magnet & Analysis** | *PLANNED* | Active "Blind ML" analysis of obfuscated logs (DATA780). |
+| **4** | **Magnet (Honeypot)** | *PLANNED* | Active "Soft Target" deployment to attract hostile agents. |
+| **5** | **Blind ML Analysis** | **ACTIVE** | Local training of supervised/unsupervised models on obfuscated telemetry. |
 
 ## Key Artifacts
 
 ### Documentation
 - **Master Plan**: [Moltbook Observer Experiment Plan](planning/CALAMUM_MOLTBOOK_OBSERVER_EXPERIMENT_PLAN_20260201.md)
+- **ML Gap Analysis**: [Model Training Implementation](planning/CALAMUM_MODEL_TRAINING_GAP_ANALYSIS_20260210.md)
 - **Methodology**: [Data Simulation & Logging](DATA_METHODOLOGY.md)
 - **Hardening Profile**: [Container Constraints](src/deployment/HARDENING_PROFILE.md)
 - **Sentinel**: [Triple-Redundancy Watchdog](src/sentinel.py)
