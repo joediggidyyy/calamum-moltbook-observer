@@ -3,9 +3,15 @@ from __future__ import annotations
 import argparse
 import csv
 import json
+import sys
 from dataclasses import asdict, dataclass
 from pathlib import Path
-from typing import Any, Dict, List, Optional, Sequence, Tuple
+from typing import Any, Callable, Dict, List, Optional, Sequence, Tuple
+
+try:
+    import joblib
+except ImportError:
+    joblib = None
 
 from ._util import default_analysis_dir, sha256_path, try_get_git_sha, utc_now_iso
 
@@ -17,6 +23,65 @@ class EvalResult:
     has_labels: bool
     counts: Dict[str, int]
     metrics: Dict[str, float]
+
+
+FEATURE_COLUMNS: List[str] = [
+    'record_id',
+    'ts_epoch',
+    'content_length',
+    'has_code_block',
+    'has_link',
+    'tags_count',
+    'mentions_count',
+    'f_complexity',
+    'f_code_density',
+    'f_toxicity',
+    'is_canary',
+    'type_post',
+    'type_reply',
+    'type_repost',
+    'type_dm',
+    'type_follow',
+    'type_mention',
+    'type_unknown',
+]
+
+
+def make_model_scorer(model: Any) -> ScorerFunc:
+    train_cols = [c for c in FEATURE_COLUMNS if c != 'record_id']
+
+    def scorer(row: Dict[str, Any]) -> float:
+        try:
+            vec = []
+            for c in train_cols:
+                val = row.get(c, 0)
+                try:
+                    vec.append(float(val))
+                except (ValueError, TypeError):
+                    vec.append(0.0)
+            
+            # Handle different sklearn APIs
+            if hasattr(model, "predict_proba"):
+                # Classifier: return probability of positive class (index 1)
+                # Handle binary classification case
+                probas = model.predict_proba([vec])[0]
+                if len(probas) > 1:
+                    return float(probas[1])
+                return float(probas[0])
+            elif hasattr(model, "decision_function"):
+                # Isolation Forest / SVM: return raw score
+                return float(model.decision_function([vec])[0])
+            elif hasattr(model, "predict"):
+                return float(model.predict([vec])[0])
+            return 0.0
+        except Exception:
+            return 0.0
+            
+    return scorer
+
+
+ScorerArgs = Dict[str, Any]
+ScorerFunc = Callable[[ScorerArgs], float]
 
 
 def _read_features(path: Path) -> List[Dict[str, Any]]:
@@ -127,6 +192,7 @@ def evaluate(
     *,
     labels_csv: Optional[Path] = None,
     max_fpr: float = 0.01,
+    scorer: ScorerFunc = baseline_score,
 ) -> EvalResult:
     rows = _read_features(features_csv)
     labels: Dict[str, str] = {}
@@ -138,7 +204,7 @@ def evaluate(
     has_labels = bool(labels)
 
     for row in rows:
-        s = baseline_score(row)
+        s = scorer(row)
         scores.append(s)
         if has_labels:
             rid = (row.get('record_id') or '').strip()
@@ -185,6 +251,7 @@ def write_run_artifacts(
     result: EvalResult,
     dataset_manifest_path: Optional[Path] = None,
     operator: str = 'ORACL-Prime',
+    model_meta: Optional[Dict[str, Any]] = None,
 ) -> None:
     out_dir.mkdir(parents=True, exist_ok=True)
 
@@ -196,6 +263,15 @@ def write_run_artifacts(
         project_root = find_project_root(out_dir)
     except Exception:
         project_root = out_dir
+
+    if model_meta is None:
+        model_meta = {
+            'family': 'heuristic',
+            'name': 'baseline_score_v1',
+            'hyperparameters': {
+                'threshold': float(result.threshold),
+            },
+        }
 
     run_json = {
         'identity': {
@@ -213,13 +289,7 @@ def write_run_artifacts(
             'dataset_manifest': str(dataset_manifest_path) if dataset_manifest_path else None,
             'dataset_manifest_sha256': sha256_path(dataset_manifest_path) if dataset_manifest_path and dataset_manifest_path.exists() else None,
         },
-        'model': {
-            'family': 'heuristic',
-            'name': 'baseline_score_v1',
-            'hyperparameters': {
-                'threshold': float(result.threshold),
-            },
-        },
+        'model': model_meta,
         'evaluation': {
             'has_labels': bool(result.has_labels),
             'metrics': dict(result.metrics),
@@ -228,7 +298,7 @@ def write_run_artifacts(
         },
         'governance': {
             'privacy_review': 'pass',
-            'notes': 'Names-only baseline evaluation. No semantic payload consumed or emitted.',
+            'notes': 'Names-only evaluation. No semantic payload consumed or emitted.',
         },
         'code': {
             'git_sha': try_get_git_sha(project_root),
@@ -244,15 +314,15 @@ def write_run_artifacts(
     md.append(f'**Operator**: {operator}  ')
     md.append('')
     md.append('## Abstract')
-    md.append('A stdlib-only heuristic baseline was evaluated to validate end-to-end reporting artifacts.')
+    md.append('Evaluation run artifacts.')
     md.append('')
     md.append('## Data provenance and governance')
     md.append('- Inputs are obfuscated JSONL telemetry (no raw message bodies).')
     md.append('- Reports are names-only; no secrets or internal endpoints are included.')
     md.append('')
     md.append('## Model')
-    md.append('- Family: heuristic')
-    md.append('- Scorer: baseline_score_v1 (explainable weighted sum)')
+    md.append(f'- Family: {model_meta.get("family", "unknown")}')
+    md.append(f'- Name: {model_meta.get("name", "unknown")}')
     md.append(f'- Threshold: {result.threshold}')
     md.append('')
     md.append('## Evaluation')
@@ -282,9 +352,37 @@ def main(argv: Optional[List[str]] = None) -> int:
     p.add_argument('--max-fpr', type=float, default=0.01)
     p.add_argument('--out-dir', type=Path, default=None)
     p.add_argument('--run-id', type=str, default=None)
+    p.add_argument('--model-path', type=Path, default=None, help='Path to serialized scikit-learn model')
     args = p.parse_args(argv)
 
-    res = evaluate(args.features_csv, labels_csv=args.labels_csv, max_fpr=float(args.max_fpr))
+    scorer = baseline_score
+    model_meta = None
+
+    if args.model_path:
+        if joblib is None:
+            print("Error: scikit-learn/joblib required to load model. Install with pip install scikit-learn")
+            return 1
+            
+        print(f"Loading model from {args.model_path}...")
+        try:
+            model = joblib.load(args.model_path)
+            scorer = make_model_scorer(model)
+            model_meta = {
+                'family': 'trained_sklearn',
+                'name': args.model_path.name,
+                'class': type(model).__name__,
+                'source': str(args.model_path),
+            }
+        except Exception as e:
+            print(f"Error loading model: {e}")
+            return 1
+
+    res = evaluate(
+        args.features_csv,
+        labels_csv=args.labels_csv,
+        max_fpr=float(args.max_fpr),
+        scorer=scorer,
+    )
 
     out_dir = args.out_dir
     if out_dir is None:
@@ -302,6 +400,7 @@ def main(argv: Optional[List[str]] = None) -> int:
         labels_csv=args.labels_csv,
         result=res,
         dataset_manifest_path=args.dataset_manifest,
+        model_meta=model_meta,
     )
 
     print(json.dumps(asdict(res), indent=2, sort_keys=True))
