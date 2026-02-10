@@ -78,7 +78,7 @@ def test_end_to_end_model_training_and_eval(tmp_path: Path) -> None:
         seed=123,
         split={'train': 0.6, 'val': 0.2, 'test': 0.2}
     )
-    manifest_path = dataset_dir / 'manifest.json'
+    manifest_path = dataset_dir / 'dataset_manifest.json'
     assert manifest_path.exists()
 
     # 3. Train Model (Supervised)
