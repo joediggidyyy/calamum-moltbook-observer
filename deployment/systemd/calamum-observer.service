@@ -1,20 +1,21 @@
 [Unit]
-Description=Calamum Watchdog Supervisor
-After=network.target
+Description=Calamum Observer Agent (Stage 4 Active Gated)
+After=network.target calamum-watchdog.service
+Requires=calamum-watchdog.service
 
 [Service]
 Type=simple
 User=codesentinel
 Group=codesentinel
 WorkingDirectory=/opt/codesentinel/projects/calamum-moltbook-observer
-ExecStart=/opt/codesentinel/.venv/bin/python3 src/calamum_watchdog.py
+ExecStart=/opt/codesentinel/.venv/bin/python3 src/calamum_observer_agent.py --mode active-gated --interval-sec 5.0 --node-id calamum-magnet-01
 Restart=always
 RestartSec=5
 # Optional environment file (do not commit secrets into unit files)
 # Example path: /etc/calamum/calamum.env
 EnvironmentFile=-/etc/calamum/calamum.env
-Environment=CALAMUM_OPS_MODE=prod
-Environment=CALAMUM_ALLOW_DEV_SIGNING_KEY=0
+Environment=CALAMUM_OPS_MODE=active-gated
+Environment=CALAMUM_ACTIVE_MAGNET_THRESHOLD=-0.0451
 # Security Hardening
 ProtectSystem=full
 PrivateTmp=true

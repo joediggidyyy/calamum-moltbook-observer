@@ -21,6 +21,6 @@
   "deliverables": [
     "src/analysis/train_model.py",
     "src/tests/test_model_pipeline.py",
-    "planning/STAGE_5_READINESS_REPORT_20260210.md"
+    "docs/reports/STAGE_5_READINESS_REPORT_20260210.md"
   ]
 }

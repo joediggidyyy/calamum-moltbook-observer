@@ -82,3 +82,36 @@ def get_calamum_control_dir() -> Path:
 def get_calamum_health_dir() -> Path:
     """Return the health/heartbeat subdirectory."""
     return get_calamum_log_dir() / 'health'
+
+# Blind ML Configuration
+# Threshold for Active Magnet Gating (Stage 4)
+# Selected via Run 001 (Canary V1)
+_DEFAULT_ACTIVE_MAGNET_THRESHOLD = -0.0451  # <1% FPR on benign baseline (Canary V1)
+
+
+def _float_env(name: str):
+    """Parse a float from an env var.
+
+    Returns None when unset or unparsable.
+    """
+    val = os.getenv(name)
+    if val is None:
+        return None
+    val = val.strip()
+    if not val:
+        return None
+    try:
+        return float(val)
+    except ValueError:
+        return None
+
+
+# Allow deployment to pin/override the gating threshold without editing source.
+# Prefer namespaced env var, but accept legacy name for compatibility.
+_env_threshold = _float_env('CALAMUM_ACTIVE_MAGNET_THRESHOLD')
+if _env_threshold is None:
+    _env_threshold = _float_env('ACTIVE_MAGNET_THRESHOLD')
+
+ACTIVE_MAGNET_THRESHOLD = (
+    _env_threshold if _env_threshold is not None else _DEFAULT_ACTIVE_MAGNET_THRESHOLD
+)

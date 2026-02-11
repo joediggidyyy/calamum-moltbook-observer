@@ -1,0 +1,26 @@
+{
+  "job_id": "CALAMUM_JOB_0013_MOLTBOOK_OBSERVER_INFERENCE_IMPL_20260210",
+  "project": "calamum-moltbook-observer",
+  "created_at_utc": "2026-02-10T15:00:00Z",
+  "status": "OPEN",
+  "owner": "ORACL-Prime",
+  "metadata": {
+    "title": "Inference & Threshold Implementation (Phase 6)",
+    "description": "Implementation of unsupervised scoring and automatic threshold selection for <1% FPR.",
+    "quest_stack": "queststacks/QS-CALAMUM-MOLTBOOK-OBSERVER-INFERENCE-IMPL-20260210.md",
+    "quest_frame": "questframes/QF-CALAMUM-MOLTBOOK-OBSERVER-INFERENCE-IMPL-20260210.json"
+  },
+  "objectives": [
+    "Implement score_unsupervised.py",
+    "Implement threshold_selection.py",
+    "Establish Training Ledger"
+  ],
+  "dependencies": [
+    "CALAMUM_JOB_0012_MOLTBOOK_OBSERVER_MODEL_TRAINING_IMPL_20260210"
+  ],
+  "deliverables": [
+    "src/analysis/score_unsupervised.py",
+    "src/analysis/threshold_selection.py",
+    "deliverables/DATA780/TRAINING_LEDGER.md"
+  ]
+}

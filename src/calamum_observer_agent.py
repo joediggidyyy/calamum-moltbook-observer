@@ -34,7 +34,7 @@ except ImportError:
     obfuscator_lib = None
     KeepaliveHelper = None
 
-from calamum_config import get_calamum_data_dir, get_calamum_control_dir, get_calamum_health_dir
+from calamum_config import get_calamum_data_dir, get_calamum_control_dir, get_calamum_health_dir, ACTIVE_MAGNET_THRESHOLD
 
 
 def _utc_now_iso() -> str:
@@ -383,6 +383,12 @@ def run_agent(cfg: AgentConfig, max_iterations: Optional[int] = None) -> int:
         # Heartbeats (File Touch)
         _touch(cfg.observer_heartbeat)
         
+        # STAGE 4: Active Magnet Gating Check
+        if cfg.mode == 'active-gated':
+            # This verifies the threshold is loaded and consulted.
+            # Since strict Read-Only is enforced, we log the gating decision.
+            print(f"[{_utc_now_iso()}] [STAGE4] Gating Check: Threshold {ACTIVE_MAGNET_THRESHOLD} active. Status: MONITORING (Read-Only)", file=sys.stderr)
+
         # Security: Verify Watchdog Presence (Isolation Logic)
         # If Watchdog is dead or missing, we must Isolate (stop emitting data).
         watchdog_ok = _is_watchdog_alive(cfg.watchdog_heartbeat, max_age=45.0)

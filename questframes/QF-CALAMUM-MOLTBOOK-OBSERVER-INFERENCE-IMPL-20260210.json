@@ -1,0 +1,28 @@
+{
+  "meta": {
+    "type": "questframe",
+    "version": "1.0.0",
+    "id": "QF-CALAMUM-MOLTBOOK-OBSERVER-INFERENCE-IMPL-20260210",
+    "parent_queststack": "QS-CALAMUM-MOLTBOOK-OBSERVER-INFERENCE-IMPL-20260210",
+    "created_at": "2026-02-10T15:00:00Z",
+    "status": "planned"
+  },
+  "spec": {
+    "title": "Moltbook Observer - Inference & Threshold Implementation",
+    "owner": "ORACL-Prime",
+    "participants": [
+      "joediggidyyy",
+      "ORACL-Prime"
+    ],
+    "goals": [
+      "Implement unsupervised scoring application",
+      "Implement automatic threshold selection based on FPR constraints",
+      "Generate formal Training Ledger entries"
+    ],
+    "deliverables": [
+      "projects/calamum-moltbook-observer/src/analysis/score_unsupervised.py",
+      "projects/calamum-moltbook-observer/src/analysis/threshold_selection.py",
+      "projects/calamum-moltbook-observer/deliverables/DATA780/TRAINING_LEDGER.md"
+    ]
+  }
+}

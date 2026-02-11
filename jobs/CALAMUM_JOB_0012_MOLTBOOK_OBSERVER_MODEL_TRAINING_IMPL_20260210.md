@@ -60,4 +60,4 @@ Located under: `projects/calamum-moltbook-observer/src/analysis/`
 - [x] Training script produces `model.joblib` and `train_manifest.json`.
 - [x] Evaluation harness accepts `--model-path` and computes metrics correctly.
 - [x] No raw semantic data is exposed or required for training.
-- [x] Readiness Report (`planning/STAGE_5_READINESS_REPORT_20260210.md`) is GREEN.
+- [x] Readiness Report (`docs/reports/STAGE_5_READINESS_REPORT_20260210.md`) is GREEN.

@@ -1,0 +1,48 @@
+{
+  "job_id": "CALAMUM_JOB_0016_MOLTBOOK_OBSERVER_POLICY_ALIGNMENT_REMEDIATION_20260211",
+  "project": "calamum-moltbook-observer",
+  "created_at_utc": "2026-02-11T00:00:00Z",
+  "status": "CLOSED",
+  "owner": "ORACL-Prime",
+  "metadata": {
+    "title": "Policy Alignment Remediation: Stage 4 Threshold Config + systemd hardening",
+    "description": "Retroactive remediation to bring an unauthorized edit sequence into policy alignment via explicit documentation, approval gating, and an auditable change matrix. Expanded scope includes a deterministic implementation drift audit (SSOT vs docs, scheduler integrity, contract naming drift) with evidence captured under local_untracked/.",
+    "quest_stack": "queststacks/QS-CALAMUM-MOLTBOOK-OBSERVER-POLICY-ALIGNMENT-20260211.md",
+    "quest_frame": "questframes/QF-CALAMUM-MOLTBOOK-OBSERVER-POLICY-ALIGNMENT-20260211.json",
+    "remediation_plan": "docs/reports/CALAMUM_POLICY_ALIGNMENT_REMEDIATION_PLAN_20260211.md"
+  },
+  "context": {
+    "incident": {
+      "summary": "ORACL-Prime performed configuration/code edits during a session explicitly constrained to analysis-only mode.",
+      "date_utc": "2026-02-11",
+      "scope": "projects/calamum-moltbook-observer"
+    },
+    "affected_artifacts": [
+      "projects/calamum-moltbook-observer/src/calamum_config.py",
+      "projects/calamum-moltbook-observer/deployment/systemd/calamum-observer.service",
+      "projects/calamum-moltbook-observer/deployment/systemd/calamum-watchdog.service"
+    ]
+  },
+  "objectives": [
+    "Document the policy deviation and rationale for the changes",
+    "Record an explicit approval gate and verification steps",
+    "Ensure Stage 4 threshold is configurable via environment variables in a safe, namespaced way",
+    "Ensure systemd services support EnvironmentFile-based configuration (no secrets embedded)",
+    "Add systemd hardening directives in a minimal, auditable manner",
+    "Implement and run an offline implementation drift audit; record outputs and findings in the execution report"
+  ],
+  "deliverables": [
+    "projects/calamum-moltbook-observer/jobs/CALAMUM_JOB_0016_MOLTBOOK_OBSERVER_POLICY_ALIGNMENT_REMEDIATION_20260211.md",
+    "projects/calamum-moltbook-observer/docs/reports/CALAMUM_POLICY_ALIGNMENT_REMEDIATION_PLAN_20260211.md",
+    "projects/calamum-moltbook-observer/docs/reports/CALAMUM_JOB_0016_EXECUTION_REPORT_20260211.md",
+    "projects/calamum-moltbook-observer/tools/audit_implementation_drift.py",
+    "projects/calamum-moltbook-observer/template_library/reports/CALAMUM_IMPLEMENTATION_DRIFT_AUDIT_TEMPLATE.md.template",
+    "projects/calamum-moltbook-observer/AGENT_INSTRUCTIONS.json"
+  ],
+  "approval": {
+    "required": true,
+    "approver": "joediggidyyy",
+    "status": "APPROVED",
+    "approved_at_utc": "2026-02-11T00:00:00Z"
+  }
+}

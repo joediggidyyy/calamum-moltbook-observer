@@ -33,8 +33,8 @@ Confirmed clean install via `pip install -r src/requirements.txt`.
 ### 2.2 Data Availability
 | Data Source | Status | Path |
 | :--- | :--- | :--- |
-| **Stage 1 (Public)** | Available | `logs/data/calamum/moltbook_samples_obfuscated.jsonl` |
-| **Stage 3 (Canary)** | Available | `logs/data/calamum/moltbook_canary_metrics.jsonl` |
+| **Stage 1 (Public)** | Available | `projects/calamum-moltbook-observer/data/moltbook_samples_obfuscated.jsonl` |
+| **Stage 3 (Canary)** | Available | `projects/calamum-moltbook-observer/data/moltbook_canary_metrics.jsonl` |
 | **Synthetic (TV-3)** | Available (Gen) | Can be generated via `obfuscator_lib` for anomaly training. |
 
 ## 3. Execution Plan (Phase 5)

@@ -1,0 +1,66 @@
+# Calamum / CodeSentinel - Implementation Drift Audit
+
+Timestamp (UTC): {{ timestamp_utc }}
+Run ID: {{ run_id }}
+Auditor: {{ auditor }}
+
+## Scope
+
+This audit looks for **implementation drift** ("what we say" vs. "what exists") across the repository.
+
+Checks performed:
+
+- SSOT status drift: `operations/tasks.json` vs. QuestStacks vs. job docs vs. Jobs Dashboard
+- Watchdog scheduler integrity (Calamum): referenced tool scripts exist at their expected repo-relative paths
+- Calamum Stage 4 threshold contract drift: env var naming across code / systemd / deployment configs / job docs
+- Instruction pairing: `AGENT_INSTRUCTIONS.md` files have corresponding `.json` sidecars
+
+## Context
+
+- Repo root: {{ repo_root }}
+- Project root: {{ project_root }}
+- Git branch: {{ git_branch }}
+- Git HEAD: {{ git_head }}
+- Dirty working tree: {{ git_is_dirty }}
+
+## Summary
+
+{{ summary_line }}
+
+## Findings
+
+### SSOT status drift (tasks.json vs. docs)
+
+- Checked tasks: {{ ssot_checked_task_count }}
+- Mismatches found: {{ ssot_violation_count }}
+
+{{ ssot_violations_block }}
+
+### Watchdog scheduler integrity (Calamum)
+
+- Scheduled scripts checked: {{ watchdog_script_count }}
+- Missing scripts: {{ watchdog_missing_count }}
+
+{{ watchdog_missing_block }}
+
+### Stage 4 threshold contract drift (Calamum)
+
+{{ stage4_threshold_drift_block }}
+
+### Instruction pairing (AGENT_INSTRUCTIONS.md ↔ .json)
+
+- Instruction files found: {{ instruction_md_count }}
+- Missing JSON sidecars: {{ instruction_missing_json_count }}
+
+{{ instruction_missing_json_block }}
+
+## Recommendations
+
+{{ recommendations_block }}
+
+## Evidence Bundle
+
+A JSON evidence bundle was written alongside this report.
+
+- Evidence path: {{ evidence_path }}
+- JSONL audit log: {{ audit_jsonl_path }}

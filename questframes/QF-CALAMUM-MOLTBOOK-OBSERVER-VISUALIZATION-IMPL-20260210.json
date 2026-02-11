@@ -1,0 +1,10 @@
+{
+  "frame_id": "QF-CALAMUM-MOLTBOOK-OBSERVER-VISUALIZATION-IMPL-20260210",
+  "quest_stack_id": "QS-CALAMUM-MOLTBOOK-OBSERVER-VISUALIZATION-IMPL-20260210",
+  "status": "CLOSED",
+  "current_step": "CLOSED",
+  "context_snapshot": {
+    "plan": "planning/CALAMUM_BLIND_ML_VISUALIZATION_PLAN_2026-02-10.md",
+    "job": "jobs/CALAMUM_JOB_0014_MOLTBOOK_OBSERVER_VISUALIZATION_IMPL_20260210.json"
+  }
+}

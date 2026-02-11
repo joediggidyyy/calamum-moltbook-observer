@@ -1,0 +1,14 @@
+{
+  "description": "Stage 4 Active Magnet (Gated) Configuration",
+  "features": {
+    "active_magnet": true,
+    "gated_response": true,
+    "threshold_enforced": true
+  },
+  "env": {
+    "CALAMUM_OPS_MODE": "active-gated",
+    "CALAMUM_ACTIVE_MAGNET_THRESHOLD": "-0.0451",
+    "ACTIVE_MAGNET_THRESHOLD": "-0.0451",
+    "MOLTBOOK_API_LEVEL": "read-only-safety"
+  }
+}

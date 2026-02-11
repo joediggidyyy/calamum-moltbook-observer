@@ -1,0 +1,7 @@
+{
+  "threshold": -0.04508874361599792,
+  "target_fpr": 0.01,
+  "actual_fpr": 0.010004707218482184,
+  "n_samples": 133837,
+  "algo": "iforest_lower_is_anomaly"
+}

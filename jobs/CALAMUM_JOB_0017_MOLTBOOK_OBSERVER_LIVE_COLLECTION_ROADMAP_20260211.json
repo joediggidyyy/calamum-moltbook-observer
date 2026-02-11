@@ -1,0 +1,36 @@
+{
+  "job_id": "CALAMUM_JOB_0017_MOLTBOOK_OBSERVER_LIVE_COLLECTION_ROADMAP_20260211",
+  "project": "calamum-moltbook-observer",
+  "created_at_utc": "2026-02-11T00:00:00Z",
+  "status": "OPEN",
+  "owner": "ORACL-Prime",
+  "metadata": {
+    "title": "Live Collection Roadmap (Honeypot Activation)",
+    "description": "Ops/config + validation job to bring the Moltbook observer backend into LIVE COLLECTION today without making backend source changes. Includes CRITICAL-only Windows popup alerting prototype and evidence bundle generation.",
+    "scope": "analysis + diagnostics + operator environment configuration; no source code changes",
+    "notes": [
+      "Record GUI intent only: yellow warn border glow; flashing red critical border. Implement later during GUI pivot."
+    ]
+  },
+  "dependencies": [
+    "CALAMUM_JOB_0015_MOLTBOOK_OBSERVER_STAGE4_ACTIVATION_20260210",
+    "CALAMUM_JOB_0005_MOLTBOOK_OBSERVER_STAGE4_ACTIVE_MAGNET_GATED_20260201"
+  ],
+  "objectives": [
+    "Enable live collection by injecting required environment variables (air-gapped)",
+    "Verify observer exits CANARY mode and produces fresh live metrics",
+    "Enable CRITICAL-only Windows popup alerts for security trigger, observer down, watchdog down",
+    "Produce an evidence bundle under report_tmp/ proving end-state"
+  ],
+  "deliverables": [
+    "projects/calamum-moltbook-observer/jobs/CALAMUM_JOB_0017_MOLTBOOK_OBSERVER_LIVE_COLLECTION_ROADMAP_20260211.md",
+    "report_tmp/calamum_moltbook_backend_diag_*.{md,json}",
+    "report_tmp/calamum_job_status_audit_*.{md,json}",
+    "report_tmp/calamum_alert_outbox.jsonl"
+  ],
+  "approval": {
+    "required": true,
+    "approver": "joediggidyyy",
+    "status": "PENDING"
+  }
+}

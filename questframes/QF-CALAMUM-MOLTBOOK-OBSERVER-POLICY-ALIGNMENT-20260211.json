@@ -1,0 +1,33 @@
+{
+  "meta": {
+    "type": "questframe",
+    "version": "1.0.0",
+    "id": "QF-CALAMUM-MOLTBOOK-OBSERVER-POLICY-ALIGNMENT-20260211",
+    "parent_queststack": "QS-CALAMUM-MOLTBOOK-OBSERVER-POLICY-ALIGNMENT-20260211",
+    "created_at": "2026-02-11T00:00:00Z",
+    "status": "completed"
+  },
+  "spec": {
+    "title": "Policy Alignment Remediation: unauthorized edit sequence",
+    "owner": "ORACL-Prime",
+    "participants": [
+      "joediggidyyy",
+      "ORACL-Prime"
+    ],
+    "goals": [
+      "Create remediation plan + change matrix",
+      "Obtain explicit approval before commit/push",
+      "Record verification evidence and closure report",
+      "Execute an offline implementation drift audit and record its outputs"
+    ],
+    "deliverables": [
+      "projects/calamum-moltbook-observer/jobs/CALAMUM_JOB_0016_MOLTBOOK_OBSERVER_POLICY_ALIGNMENT_REMEDIATION_20260211.json",
+      "projects/calamum-moltbook-observer/jobs/CALAMUM_JOB_0016_MOLTBOOK_OBSERVER_POLICY_ALIGNMENT_REMEDIATION_20260211.md",
+      "projects/calamum-moltbook-observer/docs/reports/CALAMUM_POLICY_ALIGNMENT_REMEDIATION_PLAN_20260211.md",
+      "projects/calamum-moltbook-observer/docs/reports/CALAMUM_JOB_0016_EXECUTION_REPORT_20260211.md",
+      "projects/calamum-moltbook-observer/tools/audit_implementation_drift.py",
+      "projects/calamum-moltbook-observer/template_library/reports/CALAMUM_IMPLEMENTATION_DRIFT_AUDIT_TEMPLATE.md.template",
+      "projects/calamum-moltbook-observer/AGENT_INSTRUCTIONS.json"
+    ]
+  }
+}

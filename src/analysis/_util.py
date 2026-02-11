@@ -75,10 +75,18 @@ class JsonlLine:
     error: Optional[str]
 
 
+import gzip
+
 def iter_jsonl(path: Path, max_lines: Optional[int] = None) -> Iterator[JsonlLine]:
-    """Stream JSONL lines from a file (best-effort, names-only)."""
+    """Stream JSONL lines from a file (best-effort, names-only) supporting optional GZIP."""
     i = 0
-    with path.open('r', encoding='utf-8') as f:
+    
+    if path.suffix == '.gz':
+        opener = lambda p: gzip.open(p, 'rt', encoding='utf-8')
+    else:
+        opener = lambda p: p.open('r', encoding='utf-8')
+
+    with opener(path) as f:
         for line_no, raw in enumerate(f, start=1):
             if max_lines is not None and i >= max_lines:
                 break
