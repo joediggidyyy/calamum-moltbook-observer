@@ -19,6 +19,12 @@
 - `PP_GOV_PROTOCOL_POL_AGENT_ACTION_WORKFLOW_20251122`
 - `PP_GOV_PROTOCOL_POL_JOB_COMPLEXITY_REQUIREMENT_20251126`
 
+## Project execution expectations (Calamum)
+
+- Canonical ops policy (names-only):
+	- `projects/calamum-moltbook-observer/docs/CALAMUM_CODESENTINEL_JOB_EXECUTION_EXPECTATIONS.md`
+- Secret handling doctrine: KEYSMITH (claim_url-only human ceremony; sealed-drop secret import). Never write/print secrets; validate env vars by presence only.
+
 ## Redaction palette (use these placeholders)
 
 Never paste private IPs, MAC addresses, org-internal hostnames/domains, or tokens into job docs.

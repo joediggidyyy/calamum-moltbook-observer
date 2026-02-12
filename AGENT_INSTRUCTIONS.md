@@ -4,6 +4,14 @@
 > **Scope**: `projects/calamum-moltbook-observer/`  
 > **Inheritance**: Extends `CodeSentinel-1` root instructions
 
+## 0. CodeSentinel job execution expectations
+
+This project is executed under the CodeSentinel job lifecycle (task SSOT, PRE_JOB gating, and evidence spine).
+
+**Policy (names-only, canonical for Calamum execution expectations)**:
+
+- `projects/calamum-moltbook-observer/docs/CALAMUM_CODESENTINEL_JOB_EXECUTION_EXPECTATIONS.md`
+
 ## 1. File Locality & Hygiene (CRITICAL)
 
 **Directives**:

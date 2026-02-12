@@ -17,6 +17,9 @@
       "PP_GOV_PROTOCOL_POL_AGENT_ACTION_WORKFLOW_20251122",
       "PP_GOV_PROTOCOL_POL_JOB_COMPLEXITY_REQUIREMENT_20251126"
     ],
+    "execution_expectations_policy_paths": [
+      "projects/calamum-moltbook-observer/docs/CALAMUM_CODESENTINEL_JOB_EXECUTION_EXPECTATIONS.md"
+    ],
     "plan_paths": ["<PLAN_PATH_OR_EMPTY>"],
     "evidence_paths": []
   },

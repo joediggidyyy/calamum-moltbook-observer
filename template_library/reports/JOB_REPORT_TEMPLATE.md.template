@@ -3,7 +3,7 @@
 ## Metadata
 
 - Template ID: `VAULT_TEMPLATE_JOB_REPORT_V1`
-- Paired authoritative template: `REPO:codesentinel/assets/VAULT_templates/reports/JOB_REPORT_TEMPLATE.json.template`
+- Paired authoritative template: `JOB_REPORT_TEMPLATE.json.template`
 - Status: `in-progress`
 - Owner: `<OWNER_OR_TEAM>`
 - Created: `<YYYY-MM-DD>`
@@ -13,6 +13,11 @@
 - `PP_GOV_PROTOCOL_POL_CORE_POLICY_20251122`
 - `PP_GOV_PROTOCOL_POL_AGENT_ACTION_WORKFLOW_20251122`
 - `PP_GOV_PROTOCOL_POL_DETERMINISTIC_WORKFLOW_20251127`
+
+## Project execution expectations (Calamum)
+
+- Canonical ops policy (names-only):
+	- `projects/calamum-moltbook-observer/docs/CALAMUM_CODESENTINEL_JOB_EXECUTION_EXPECTATIONS.md`
 
 ## Summary
 

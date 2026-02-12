@@ -9,18 +9,24 @@
 | Field | Value |
 | --- | --- |
 | Document Title | security audit |
-| Domain / Scope | OPS |
+| Domain / Scope | Calamum Moltbook Observer / CodeSentinel integration |
 | Artifact Type | Report |
 | Classification | Internal |
-| Execution Window | 2025-11-26 |
-| Operator / Author | ORACL-Prime |
-| Location | REPO:codesentinel/assets/VAULT_templates/reports/SECURITY_AUDIT_TEMPLATE.md.template |
+| Execution Window | <YYYY-MM-DD> |
+| Operator / Author | <OWNER_OR_TEAM> |
+| Location | projects/calamum-moltbook-observer/template_library/reports/SECURITY_AUDIT_TEMPLATE.md.template |
 
 ---
 
 ## Executive Summary
 
-This bi-weekly comprehensive security audit evaluates the CodeSentinel system for security vulnerabilities, configuration issues, and compliance with security best practices.
+This comprehensive security audit evaluates the Calamum Moltbook Observer (and its CodeSentinel-managed operations posture) for vulnerabilities, configuration issues, and compliance with security best practices.
+
+Names-only requirements:
+
+- Never embed secrets/tokens/keys/hostnames/usernames/private IPs in this report.
+- For Calamum execution expectations (including KEYSMITH doctrine for `MOLTBOOK_API_KEY`), see:
+	- `projects/calamum-moltbook-observer/docs/CALAMUM_CODESENTINEL_JOB_EXECUTION_EXPECTATIONS.md`
 
 ## Critical Findings
 

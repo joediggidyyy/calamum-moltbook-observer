@@ -1,5 +1,8 @@
 # Calamum Operations Parameters Report
 
+- Policy (names-only): `projects/calamum-moltbook-observer/docs/CALAMUM_CODESENTINEL_JOB_EXECUTION_EXPECTATIONS.md`
+- Secret handling: never embed secret values (presence-only env checks).
+
 - Timestamp (UTC): `{{ timestamp_utc }}`
 - Run ID: `{{ run_id }}`
 - Auditor: `{{ auditor }}`

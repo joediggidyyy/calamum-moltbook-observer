@@ -7,6 +7,15 @@ This folder is the **project-local template library** for the Calamum Moltbook O
 - Keep reporting/audit templates *inside the Moltbook subtree* so contributors can run audits and generate deliverables without hunting across the monorepo.
 - Seed from the canonical CodeSentinel VAULT templates (copied, not referenced live) so this project remains usable even when extracted/published standalone.
 
+## Normalized documentation pointers (Calamum)
+
+When authoring or rendering documents from these templates, follow the project’s normalized execution expectations:
+
+- **Operations policy (CodeSentinel-managed execution; names-only)**:
+	- `projects/calamum-moltbook-observer/docs/CALAMUM_CODESENTINEL_JOB_EXECUTION_EXPECTATIONS.md`
+
+This includes the KEYSMITH doctrine for `MOLTBOOK_API_KEY` (claim_url-only human ceremony; sealed-drop secret handling; presence-only env validation).
+
 ## Structure
 
 - `reports/` — Markdown/JSON report templates used by Moltbook tools.

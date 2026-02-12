@@ -155,7 +155,7 @@ After closing a job:
 
 ### 5.2 Secret handling (KEYSMITH doctrine)
 
-For LIVE collection, `MOLTBOOK_API_KEY` must be obtained without humans handling the secret.
+For LIVE collection, `MOLTBOOK_API_KEY` must be obtained without operator handling the secret and without the host system interacting with the moltbook vendor directly.
 
 Approved model:
 

@@ -63,6 +63,7 @@ projects/calamum-moltbook-observer/
 
 ### Documentation
 - **Master Plan**: [Moltbook Observer Experiment Plan](planning/CALAMUM_MOLTBOOK_OBSERVER_EXPERIMENT_PLAN_20260201.md)
+- **Operations Policy (CodeSentinel job execution)**: [Job Execution Expectations](docs/CALAMUM_CODESENTINEL_JOB_EXECUTION_EXPECTATIONS.md)
 - **ML Gap Analysis**: [Model Training Implementation](planning/CALAMUM_MODEL_TRAINING_GAP_ANALYSIS_20260210.md)
 - **Methodology**: [Data Simulation & Logging](DATA_METHODOLOGY.md)
 - **Hardening Profile**: [Container Constraints](src/deployment/HARDENING_PROFILE.md)
@@ -139,7 +140,7 @@ For local testing without a live container, `src/calamum_observer_agent.py` can:
 - `CALAMUM_DATA_DIR`: directory containing JSONL metrics
 - `CALAMUM_DENSITY_SLICE_SEC`: histogram time-slice width (default: `15`)
 - `CALAMUM_MOLTBOOK_SOURCE`: observer agent source selector (`sim` or `live`; default: `sim`)
-- `MOLTBOOK_API_KEY`: required for live collection (presence-only; never commit values)
+- `MOLTBOOK_API_KEY`: required for live collection (presence-only; never commit values). For key acquisition and handling doctrine, see: [Job Execution Expectations](docs/CALAMUM_CODESENTINEL_JOB_EXECUTION_EXPECTATIONS.md)
 - `MOLTBOOK_HOST`: optional override for the Moltbook API base URL (default: `https://api.moltbook.com/v1`)
 - `CALAMUM_LIVE_BATCH_LIMIT`: live feed batch size cap (default: `50`; clamped)
 - `CALAMUM_LIVE_EMPTY_BACKOFF_SEC`: backoff time when live fetch yields zero items (default: `10`)

@@ -1,5 +1,7 @@
 # Calamum Moltbook Observer — Repo Health Audit
 
+Policy (names-only): `projects/calamum-moltbook-observer/docs/CALAMUM_CODESENTINEL_JOB_EXECUTION_EXPECTATIONS.md`
+
 Timestamp (UTC): {{ timestamp_utc }}
 Run ID: {{ run_id }}
 Auditor: {{ auditor }}

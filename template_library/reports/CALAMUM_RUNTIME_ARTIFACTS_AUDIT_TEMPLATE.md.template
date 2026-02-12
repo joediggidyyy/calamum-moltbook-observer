@@ -1,5 +1,8 @@
 # Calamum Runtime Artifacts Audit
 
+- Policy (names-only): `projects/calamum-moltbook-observer/docs/CALAMUM_CODESENTINEL_JOB_EXECUTION_EXPECTATIONS.md`
+- Secret handling: never embed secret values; evidence is presence-based and sha256-based.
+
 - timestamp_utc: `{{ timestamp_utc }}`
 - run_id: `{{ run_id }}`
 - auditor: `{{ auditor }}`

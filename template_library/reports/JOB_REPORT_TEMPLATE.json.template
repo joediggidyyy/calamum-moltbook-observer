@@ -12,6 +12,9 @@
       "PP_GOV_PROTOCOL_POL_AGENT_ACTION_WORKFLOW_20251122",
       "PP_GOV_PROTOCOL_POL_DETERMINISTIC_WORKFLOW_20251127"
     ],
+    "execution_expectations_policy_paths": [
+      "projects/calamum-moltbook-observer/docs/CALAMUM_CODESENTINEL_JOB_EXECUTION_EXPECTATIONS.md"
+    ],
     "job_path": "<JOBS_MD_PATH>",
     "evidence_paths": []
   },

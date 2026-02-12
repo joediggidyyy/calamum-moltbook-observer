@@ -96,7 +96,7 @@
       "never_write_tracked": true,
       "live_collection_key": {
         "env_var": "MOLTBOOK_API_KEY",
-        "approved_acquisition": "KEYSMITH (sandbox minting; claim_url-only human ceremony; sealed-drop import into VAULT/OS secret storage)",
+        "approved_acquisition": "KEYSMITH (sandbox minting; claim_url-only human ceremony; sealed-drop import into VAULT/OS secret storage; no host-vendor interaction outside sandbox)",
         "hard_stops": [
           "api key printed to stdout/stderr",
           "api key written to tracked path",

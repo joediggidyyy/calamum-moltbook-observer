@@ -6,6 +6,8 @@
 - [QuestFrame: Preparation](projects/calamum-moltbook-observer/questframes/QF-CALAMUM-MOLTBOOK-OBSERVER-PREP-20260201.json)
 - [Job: Preparation](projects/calamum-moltbook-observer/jobs/CALAMUM_JOB_0001_MOLTBOOK_OBSERVER_PREPARATION_AND_SETUP_20260201.md)
 - [Plan: Experiment Plan](projects/calamum-moltbook-observer/planning/CALAMUM_MOLTBOOK_OBSERVER_EXPERIMENT_PLAN_20260201.md)
+- [Operations Policy (CodeSentinel-managed execution expectations)](projects/calamum-moltbook-observer/docs/CALAMUM_CODESENTINEL_JOB_EXECUTION_EXPECTATIONS.md)
+- [Project-local Template Library](projects/calamum-moltbook-observer/template_library/README.md)
 
 ## Live Collection (Stage 4 / Job 0017)
 
@@ -31,8 +33,10 @@
 ## Next steps toward live-collection
 
 1. **Confirm environment is ready (no secrets in repo)**
-	- Ensure `projects/calamum-moltbook-observer/.env` remains local-only and untracked.
-	- Prefer VAULT/OS secret store loading for `MOLTBOOK_API_KEY`.
+	- Do not store `MOLTBOOK_API_KEY` in any tracked file (including `.env`).
+	- Use VAULT / OS secret storage and inject via environment variables (presence-only checks; never echo values).
+	- Credential acquisition must follow KEYSMITH doctrine (claim_url-only humans; sealed-drop secret handling). See:
+	  - `projects/calamum-moltbook-observer/docs/CALAMUM_CODESENTINEL_JOB_EXECUTION_EXPECTATIONS.md`
 
 2. **Set the live-collection toggles (air-gapped injection)**
 	- `CALAMUM_MOLTBOOK_SOURCE=live`

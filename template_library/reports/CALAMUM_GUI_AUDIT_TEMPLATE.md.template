@@ -1,5 +1,8 @@
 # Calamum GUI Audit Report
 
+- Policy (names-only): `projects/calamum-moltbook-observer/docs/CALAMUM_CODESENTINEL_JOB_EXECUTION_EXPECTATIONS.md`
+- Evidence discipline: names-only; no secret values in output.
+
 - timestamp_utc: {{ timestamp_utc }}
 - target_url: {{ target_url }}
 - audit_scope: {{ audit_scope }}
