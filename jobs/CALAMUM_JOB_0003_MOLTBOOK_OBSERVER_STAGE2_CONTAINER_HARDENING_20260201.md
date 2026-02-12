@@ -83,7 +83,8 @@ The container was executed with a strict set of Docker runtime flags (`src/deplo
 To validate these constraints, we executed a "breakout suite" (`src/tests/test_container_constraints.py`) against the live container:
 
 - **Immutability Test**: Attempting `touch /app/test` inside the container resulted in `Permission denied`, confirming the read-only rootfs.
-- **Network Minimalization**: Attempting `ping 8.8.8.8` failed due to missing binaries and lack of capability, confirming the reduced surface area.
+- **Tooling Minimalism**: Attempting to invoke `ping` failed because the binary is not present in the minimal image, supporting the reduced surface area claim.
+	- Note: ICMP/ping is not an approved connectivity check in secured environments; we treat this as a *tooling presence* probe only.
 - **Identity Assurance**: Validated that the process runs as UID 10001.
 
 Detailed forensic logs of this verification are stored in `deliverables/DATA740/CALAMUM_CONTAINER_HARDENING_EVIDENCE.md`.

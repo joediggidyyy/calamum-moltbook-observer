@@ -54,6 +54,27 @@ function Start-ServiceScript ($name, $scriptPath, $pidFile, $argsList=@()) {
     # Ensure logs exist
     New-Item -ItemType Directory -Force -Path $LogDir | Out-Null
     
+    # On Windows, venv python.exe can act as a launcher that spawns the real interpreter.
+    # We prefer to track the child (real) PID in pidfiles, and treat the parent launcher
+    # as part of the same service instance.
+    function Resolve-RealPythonChildPid ($parentPid, $scriptPath) {
+        try {
+            if (-not $parentPid) { return $null }
+            $needle = [System.IO.Path]::GetFileName($scriptPath)
+            $deadline = (Get-Date).AddSeconds(2)
+            while ((Get-Date) -lt $deadline) {
+                try {
+                    $kids = Get-CimInstance Win32_Process -Filter "ParentProcessId=$parentPid" -ErrorAction SilentlyContinue
+                    foreach ($k in ($kids | Where-Object { $_.CommandLine -and ($_.CommandLine -like "*${needle}*") })) {
+                        if ($k.ProcessId) { return [int]$k.ProcessId }
+                    }
+                } catch { }
+                Start-Sleep -Milliseconds 100
+            }
+        } catch { }
+        return $null
+    }
+
     try {
         $proc = Start-Process -FilePath $VenvPython `
             -ArgumentList (@("-u", $scriptPath) + $argsList) `
@@ -61,14 +82,56 @@ function Start-ServiceScript ($name, $scriptPath, $pidFile, $argsList=@()) {
             -PassThru `
             -RedirectStandardOutput $logOut `
             -RedirectStandardError $logErr
-            
+
         if ($proc -and $proc.Id) {
-            Set-Content -Path $pidFile -Value $proc.Id -Encoding ASCII
-            Write-Host "    -> Started (PID: $($proc.Id))" -ForegroundColor Green
+            $realPid = Resolve-RealPythonChildPid $proc.Id $scriptPath
+            if (-not $realPid) { $realPid = [int]$proc.Id }
+            Set-Content -Path $pidFile -Value $realPid -Encoding ASCII
+            if ($realPid -ne [int]$proc.Id) {
+                Write-Host "    -> Started (PID: $realPid) [launcher_pid: $($proc.Id)]" -ForegroundColor Green
+            } else {
+                Write-Host "    -> Started (PID: $realPid)" -ForegroundColor Green
+            }
         } else {
             Write-Host "    [!] Failed to start $name" -ForegroundColor Red
         }
     } catch {
+        # Some processes can hold an exclusive lock on the log files (common on Windows).
+        # If we cannot open the stable log file, fall back to a timestamped alternate.
+        $msg = "$_"
+        if ($msg -like "*cannot access the file*being used by another process*") {
+            $ts = (Get-Date).ToString('yyyyMMdd_HHmmss_fff')
+            $altOut = Join-Path $LogDir "${name}.stdout.${ts}.log"
+            $altErr = Join-Path $LogDir "${name}.stderr.${ts}.log"
+            Write-Host "    [!] Log file lock detected for ${name}. Using alternate logs:" -ForegroundColor Yellow
+            Write-Host "        stdout -> $altOut" -ForegroundColor Yellow
+            Write-Host "        stderr -> $altErr" -ForegroundColor Yellow
+
+            try {
+                $proc = Start-Process -FilePath $VenvPython `
+                    -ArgumentList (@("-u", $scriptPath) + $argsList) `
+                    -WindowStyle Hidden `
+                    -PassThru `
+                    -RedirectStandardOutput $altOut `
+                    -RedirectStandardError $altErr
+
+                if ($proc -and $proc.Id) {
+                    $realPid = Resolve-RealPythonChildPid $proc.Id $scriptPath
+                    if (-not $realPid) { $realPid = [int]$proc.Id }
+                    Set-Content -Path $pidFile -Value $realPid -Encoding ASCII
+                    if ($realPid -ne [int]$proc.Id) {
+                        Write-Host "    -> Started (PID: $realPid) [launcher_pid: $($proc.Id)]" -ForegroundColor Green
+                    } else {
+                        Write-Host "    -> Started (PID: $realPid)" -ForegroundColor Green
+                    }
+                    return
+                }
+            } catch {
+                Write-Host "    [!] Error starting ${name} (alt logs): $($_)" -ForegroundColor Red
+                return
+            }
+        }
+
         Write-Host "    [!] Error starting ${name}: $($_)" -ForegroundColor Red
     }
 }
@@ -100,8 +163,21 @@ function Get-PidsByScript ($scriptPath) {
 # Enforce single-instance semantics: kill any extra instances beyond the expected PID.
 function Stop-OrphanInstances ($name, $scriptPath, $expectedPid) {
     $pids = Get-PidsByScript $scriptPath
+
+    # Protect the expected PID and its parent launcher PID (venv python.exe -> base python.exe).
+    $protected = @{}
+    if ($expectedPid) {
+        $protected[[int]$expectedPid] = $true
+        try {
+            $ci = Get-CimInstance Win32_Process -Filter "ProcessId=$expectedPid" -ErrorAction SilentlyContinue
+            if ($ci -and $ci.ParentProcessId) {
+                $protected[[int]$ci.ParentProcessId] = $true
+            }
+        } catch { }
+    }
+
     foreach ($procId in $pids) {
-        if ($expectedPid -and ($procId -eq $expectedPid)) {
+        if ($protected.ContainsKey([int]$procId)) {
             continue
         }
         try {
@@ -117,6 +193,120 @@ function Stop-OrphanInstances ($name, $scriptPath, $expectedPid) {
 # --- EXECUTION ---
 
 Write-Host "=== CALAMUM OPS STACK LAUNCHER ===" -ForegroundColor Green
+
+# Normalize agent args so common operator inputs (CANARY, HONEYPOT, ACTIVE_GATED, etc.)
+# map cleanly to what the Python agent expects.
+function Normalize-AgentMode($raw) {
+    if ($null -eq $raw) { return "canary" }
+    $v = ("$raw").Trim()
+    if (-not $v) { return "canary" }
+    $lower = $v.ToLowerInvariant().Replace(' ', '_')
+
+    if ($lower -eq "canary") { return "canary" }
+    if ($lower -eq "active_gated" -or $lower -eq "activegated" -or $lower -eq "active-gated") { return "active-gated" }
+
+    # Default: preserve intent but keep it shell-safe + consistent.
+    return $lower.Replace('_', '-')
+}
+
+function Normalize-AgentSource($raw) {
+    if ($null -eq $raw) { return "sim" }
+    $v = ("$raw").Trim()
+    if (-not $v) { return "sim" }
+    $lower = $v.ToLowerInvariant()
+    if ($lower -eq "live") { return "live" }
+    return "sim"
+}
+
+function Resolve-AgentIntervalSec() {
+    $defaultVal = "2.0"
+    try {
+        if (Test-Path env:CALAMUM_AGENT_INTERVAL_SEC) {
+            $raw = (Get-Item env:CALAMUM_AGENT_INTERVAL_SEC).Value
+            if (-not [string]::IsNullOrWhiteSpace($raw)) {
+                $f = [double]::Parse($raw, [System.Globalization.CultureInfo]::InvariantCulture)
+                if ($f -gt 0) {
+                    return $raw
+                }
+            }
+        }
+    } catch { }
+    return $defaultVal
+}
+
+# Load a project-local .env (gitignored) if present.
+# - Names-only discipline: do not print values.
+# - Do not overwrite non-empty env vars already present in the session.
+function Import-ProjectDotEnv($dotenvPath) {
+    if (-not (Test-Path $dotenvPath)) { return }
+    try {
+        $lines = Get-Content -Path $dotenvPath -ErrorAction Stop
+    } catch {
+        return
+    }
+
+    foreach ($rawLine in $lines) {
+        if ($null -eq $rawLine) { continue }
+        $line = ("$rawLine").Trim()
+        if (-not $line) { continue }
+        if ($line.StartsWith('#')) { continue }
+
+        $m = [regex]::Match($line, '^(?<k>[A-Za-z_][A-Za-z0-9_]*)\s*=\s*(?<v>.*)$')
+        if (-not $m.Success) { continue }
+
+        $k = $m.Groups['k'].Value
+        $v = $m.Groups['v'].Value
+        if ($null -eq $k -or -not $k) { continue }
+
+        # Strip optional surrounding quotes.
+        $v = $v.Trim()
+        if ($v.StartsWith('"') -and $v.EndsWith('"') -and $v.Length -ge 2) { $v = $v.Substring(1, $v.Length - 2) }
+        if ($v.StartsWith("'") -and $v.EndsWith("'") -and $v.Length -ge 2) { $v = $v.Substring(1, $v.Length - 2) }
+
+        if ([string]::IsNullOrWhiteSpace($v)) { continue }
+
+        $existing = $null
+        try {
+            if (Test-Path "env:$k") { $existing = (Get-Item "env:$k").Value }
+        } catch { }
+
+        if (-not [string]::IsNullOrWhiteSpace($existing)) {
+            continue
+        }
+
+        try {
+            Set-Item -Path "env:$k" -Value $v
+        } catch { }
+    }
+}
+
+$DotEnv = Join-Path $CalamumRoot '.env'
+if (Test-Path $DotEnv) {
+    Write-Host "[*] Found project .env (gitignored): $DotEnv" -ForegroundColor Gray
+    Import-ProjectDotEnv $DotEnv
+} else {
+    Write-Host "[*] Project .env not found (OK if env is injected elsewhere)." -ForegroundColor Gray
+}
+
+# Names-only presence checks (do not print values)
+$signingPresent = (Test-Path env:CALAMUM_DATA_SIGNING_KEY) -and -not [string]::IsNullOrWhiteSpace((Get-Item env:CALAMUM_DATA_SIGNING_KEY).Value)
+$moltKeyPresent = (Test-Path env:MOLTBOOK_API_KEY) -and -not [string]::IsNullOrWhiteSpace((Get-Item env:MOLTBOOK_API_KEY).Value)
+Write-Host ("[*] Env presence: CALAMUM_DATA_SIGNING_KEY=" + $(if ($signingPresent) { 'present' } else { 'MISSING' })) -ForegroundColor Gray
+Write-Host ("[*] Env presence: MOLTBOOK_API_KEY=" + $(if ($moltKeyPresent) { 'present' } else { 'MISSING' })) -ForegroundColor Gray
+
+# Determine desired agent configuration from env (or safe defaults)
+$desiredMode = Normalize-AgentMode $(if (Test-Path env:CALAMUM_OPS_MODE) { (Get-Item env:CALAMUM_OPS_MODE).Value } else { $null })
+$desiredSource = Normalize-AgentSource $(if (Test-Path env:CALAMUM_MOLTBOOK_SOURCE) { (Get-Item env:CALAMUM_MOLTBOOK_SOURCE).Value } else { $null })
+$desiredInterval = Resolve-AgentIntervalSec
+
+Write-Host ("[*] Agent config (names-only): mode=${desiredMode}, source=${desiredSource}, interval_sec=${desiredInterval}") -ForegroundColor Gray
+
+# Fail closed: if LIVE is explicitly requested, require the key.
+if ($desiredSource -eq 'live' -and -not $moltKeyPresent) {
+    Write-Host "[!] LIVE requested (CALAMUM_MOLTBOOK_SOURCE=live) but MOLTBOOK_API_KEY is missing. Refusing to start observer agent." -ForegroundColor Red
+    Write-Host "    -> Fix: inject env vars via VAULT tooling or populate project .env (gitignored), then re-run this launcher." -ForegroundColor Yellow
+    exit 2
+}
 
 # Ensure child processes treat the Calamum project as the operational root.
 $env:CALAMUM_REPO_ROOT = "$CalamumRoot"
@@ -172,9 +362,40 @@ $agentPid = Get-RunningPid $AgentPidFile
 Stop-OrphanInstances "Observer Agent" $AgentScript $agentPid
 if (-not $agentPid) {
     Write-Host "    [!] Observer Agent not running. Starting..." -ForegroundColor Yellow
-    Start-ServiceScript "calamum_agent" $AgentScript $AgentPidFile @("--mode", "canary", "--interval-sec", "2.0")
+    Start-ServiceScript "calamum_agent" $AgentScript $AgentPidFile @(
+        "--mode", $desiredMode,
+        "--source", $desiredSource,
+        "--interval-sec", $desiredInterval
+    )
 } else {
-    Write-Host "    [+] Observer Agent is ACTIVE (PID: $agentPid)" -ForegroundColor Green
+    # If the agent is running but not in the desired config, restart it.
+    $needsRestart = $false
+    try {
+        $ci = Get-CimInstance Win32_Process -Filter "ProcessId=$agentPid" -ErrorAction SilentlyContinue
+        $cmd = $null
+        if ($ci) { $cmd = $ci.CommandLine }
+        if ($cmd) {
+            if ($cmd -notlike "*--mode*${desiredMode}*") { $needsRestart = $true }
+            if ($cmd -notlike "*--source*${desiredSource}*") { $needsRestart = $true }
+        } else {
+            # If we can't see the command line, be conservative and restart.
+            $needsRestart = $true
+        }
+    } catch {
+        $needsRestart = $true
+    }
+
+    if ($needsRestart) {
+        Write-Host "    [!] Observer Agent config mismatch or unknown. Restarting to apply env-driven settings..." -ForegroundColor Yellow
+        Stop-ByPidFile $AgentPidFile "Observer Agent"
+        Start-ServiceScript "calamum_agent" $AgentScript $AgentPidFile @(
+            "--mode", $desiredMode,
+            "--source", $desiredSource,
+            "--interval-sec", $desiredInterval
+        )
+    } else {
+        Write-Host "    [+] Observer Agent is ACTIVE (PID: $agentPid)" -ForegroundColor Green
+    }
 }
 
 # Check/Start Librarian
@@ -298,10 +519,14 @@ $EdgeArgs = @(
 )
 
 # Start Edge (detached)
-try {
-    Start-Process "msedge" -ArgumentList $EdgeArgs
-} catch {
-    Write-Host "[!] Could not launch Edge. Open $Url manually." -ForegroundColor Yellow
+if ($env:CALAMUM_SKIP_BROWSER -eq '1') {
+    Write-Host "[*] Browser launch skipped (CALAMUM_SKIP_BROWSER=1)." -ForegroundColor Gray
+} else {
+    try {
+        Start-Process "msedge" -ArgumentList $EdgeArgs
+    } catch {
+        Write-Host "[!] Could not launch Edge. Open $Url manually." -ForegroundColor Yellow
+    }
 }
 
 Write-Host "[+] CALAMUM STACK OPERATIONAL." -ForegroundColor Green

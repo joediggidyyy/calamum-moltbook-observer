@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import os
 import sys
+import json
 from pathlib import Path
 import time
 
@@ -11,6 +12,12 @@ if str(_SRC_DIR) not in sys.path:
     sys.path.insert(0, str(_SRC_DIR))
 
 from ops.telemetry import TelemetryProvider, load_config
+
+
+try:
+    import obfuscator_lib  # type: ignore
+except ImportError:  # pragma: no cover
+    obfuscator_lib = None
 
 
 def test_telemetry_counts_jsonl_and_heartbeats(tmp_path: Path, monkeypatch) -> None:
@@ -25,7 +32,14 @@ def test_telemetry_counts_jsonl_and_heartbeats(tmp_path: Path, monkeypatch) -> N
 
     wd = health_dir / 'wd.heartbeat'
     obs = health_dir / 'obs.heartbeat'
-    wd.touch()
+    # If signature verification is available, watchdog heartbeat must be signed.
+    if obfuscator_lib:
+        monkeypatch.setenv('CALAMUM_DATA_SIGNING_KEY', 'test-secret-key')
+        payload = {"component": "calamum_watchdog", "ts": "2026-01-01T00:00:00Z", "status": "alive"}
+        payload = obfuscator_lib.Obfuscator.sign_record(payload)
+        wd.write_text(json.dumps(payload), encoding='utf-8')
+    else:
+        wd.touch()
     obs.touch()
 
     jsonl = data_dir / 'moltbook_canary_metrics.jsonl'

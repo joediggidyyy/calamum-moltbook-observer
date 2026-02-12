@@ -48,6 +48,32 @@ if (-not (Test-Path $WatchdogScript)) {
 # Ensure logs exist.
 New-Item -ItemType Directory -Force -Path $LogDir | Out-Null
 
+function Import-ProjectDotEnv($dotenvPath) {
+    if (-not (Test-Path $dotenvPath)) { return }
+    try { $lines = Get-Content -Path $dotenvPath -ErrorAction Stop } catch { return }
+    foreach ($rawLine in $lines) {
+        if ($null -eq $rawLine) { continue }
+        $line = ("$rawLine").Trim()
+        if (-not $line) { continue }
+        if ($line.StartsWith('#')) { continue }
+        $m = [regex]::Match($line, '^(?<k>[A-Za-z_][A-Za-z0-9_]*)\s*=\s*(?<v>.*)$')
+        if (-not $m.Success) { continue }
+        $k = $m.Groups['k'].Value
+        $v = $m.Groups['v'].Value
+        if ($null -eq $k -or -not $k) { continue }
+        $v = $v.Trim()
+        if ($v.StartsWith('"') -and $v.EndsWith('"') -and $v.Length -ge 2) { $v = $v.Substring(1, $v.Length - 2) }
+        if ($v.StartsWith("'") -and $v.EndsWith("'") -and $v.Length -ge 2) { $v = $v.Substring(1, $v.Length - 2) }
+        if ([string]::IsNullOrWhiteSpace($v)) { continue }
+        $existing = $null
+        try { if (Test-Path "env:$k") { $existing = (Get-Item "env:$k").Value } } catch { }
+        if (-not [string]::IsNullOrWhiteSpace($existing)) { continue }
+        try { Set-Item -Path "env:$k" -Value $v } catch { }
+    }
+}
+
+Import-ProjectDotEnv (Join-Path $CalamumRoot '.env')
+
 # Ensure child process can locate project root deterministically.
 $env:CALAMUM_REPO_ROOT = $CalamumRoot
 $env:CALAMUM_LOG_DIR = $LogDir

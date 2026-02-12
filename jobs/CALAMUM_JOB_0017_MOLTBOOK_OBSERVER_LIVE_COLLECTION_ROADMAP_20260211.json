@@ -7,14 +7,32 @@
   "metadata": {
     "title": "Live Collection Roadmap (Honeypot Activation)",
     "description": "Ops/config + validation job to bring the Moltbook observer backend into LIVE COLLECTION today without making backend source changes. Includes CRITICAL-only Windows popup alerting prototype and evidence bundle generation.",
-    "scope": "analysis + diagnostics + operator environment configuration; no source code changes",
+    "scope": "analysis + diagnostics + operator environment configuration; no source code changes (see implementation_delta for recorded deviation)",
     "notes": [
       "Record GUI intent only: yellow warn border glow; flashing red critical border. Implement later during GUI pivot."
     ]
   },
+  "implementation_delta": {
+    "observed": true,
+    "summary": "A minimal observer-agent wiring change was performed to align live collection validation with the canonical live metrics filename expected by Stage 4/Job 0017.",
+    "commit": "eeba7f35",
+    "files_changed": [
+      "projects/calamum-moltbook-observer/src/calamum_observer_agent.py",
+      "projects/calamum-moltbook-observer/src/ops_dashboard.py",
+      "projects/calamum-moltbook-observer/.env.example",
+      "projects/calamum-moltbook-observer/src/tests/test_observer_agent_live_source.py"
+    ],
+    "validation": {
+      "pytest": "projects/calamum-moltbook-observer/src/tests (full)"
+    },
+    "notes": [
+      "This delta requires explicit approver acknowledgment because the job was originally scoped as ops/config only."
+    ]
+  },
   "dependencies": [
     "CALAMUM_JOB_0015_MOLTBOOK_OBSERVER_STAGE4_ACTIVATION_20260210",
-    "CALAMUM_JOB_0005_MOLTBOOK_OBSERVER_STAGE4_ACTIVE_MAGNET_GATED_20260201"
+    "CALAMUM_JOB_0005_MOLTBOOK_OBSERVER_STAGE4_ACTIVE_MAGNET_GATED_20260201",
+    "CALAMUM_JOB_0018_MOLTBOOK_KEYSMITH_IMPLEMENTATION_20260212"
   ],
   "objectives": [
     "Enable live collection by injecting required environment variables (air-gapped)",

@@ -29,7 +29,8 @@ Standard Docker default profile is sufficient for Python runtime. To be tightene
 
 ## Verification Checklist
 1. Try `touch /app/test` -> **PASS** (Result: `Permission denied`)
-2. Try `ping 8.8.8.8` -> **PASS** (Result: `executable file not found` - Surface area minimized)
+2. Try to invoke `ping` -> **PASS** (Result: `executable file not found` - Surface area minimized)
+  - Note: ICMP/ping is not an approved connectivity check; this is a tooling-minimalism probe only.
 3. Check User -> **PASS** (Result: `uid=10001(observer)`)
 
 ## Provenance

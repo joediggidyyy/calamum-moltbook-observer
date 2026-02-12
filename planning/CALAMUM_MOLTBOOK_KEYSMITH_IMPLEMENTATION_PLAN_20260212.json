@@ -1,0 +1,122 @@
+{
+  "template_id": "VAULT_TEMPLATE_PLAN_V1",
+  "doc_type": "plan",
+  "title": "Calamum KEYSMITH: Sandboxed Moltbook key minting (claim-url only humans; sealed-drop secrets)",
+  "status": "planned",
+  "created_at": "2026-02-12",
+  "owner": "ORACL-Prime",
+  "links": {
+    "policies": [
+      "PP_GOV_PROTOCOL_POL_CORE_POLICY_20251122",
+      "PP_GOV_PROTOCOL_POL_AGENT_ACTION_WORKFLOW_20251122",
+      "PP_GOV_PROTOCOL_POL_DETERMINISTIC_WORKFLOW_20251127",
+      "PP_SEC_PROTOCOL_POL_AGENT_SOCIAL_NETWORKS_20260201",
+      "PP_SEC_VAULT_PROTECTION_20251208"
+    ],
+    "related_proposals": [
+      "projects/calamum-moltbook-observer/docs/reports/CALAMUM_KEYSMITH_SANDBOXED_MOLTBOOK_KEY_MINTING_PROPOSAL_20260212.md"
+    ],
+    "related_jobs": [
+      "CALAMUM_JOB_0017",
+      "CALAMUM_JOB_0018"
+    ]
+  },
+  "context": {
+    "summary": "KEYSMITH is a sandboxed utility/container that registers a Moltbook agent and obtains an api_key without exposing secrets to humans. Humans may complete a vendor claim ceremony using claim_url only (non-secret). The secret must be transferred via sealed drop and imported into VAULT/OS secret storage.",
+    "assumptions": [
+      "Vendor provides an agent registration endpoint that returns a claim_url and an api_key.",
+      "The claim step requires human action or external verification, but does not require the human to ever see the api_key.",
+      "Network access for registration can be constrained to the sandbox; operators do not run vendor-provided curl on the host.",
+      "Observer runtime consumes credentials strictly via environment variable presence (MOLTBOOK_API_KEY)."
+    ],
+    "risks": [
+      "Secret exposure via stdout/stderr, debug logs, or exception traces.",
+      "Accidental persistence of api_key to tracked files or commit history.",
+      "Redirect or non-canonical host during registration leading to credential theft.",
+      "Over-automation of the claim ceremony beyond authorized human involvement."
+    ],
+    "stop_conditions": [
+      "api_key appears in any log/stdout/stderr output.",
+      "api_key is written to a tracked path or an unsealed plaintext file.",
+      "Any workflow requires a human to copy/paste or view the api_key.",
+      "Unexpected host/redirect/non-canonical endpoint is observed during registration."
+    ]
+  },
+  "milestones": [
+    {
+      "name": "Contract + safety envelope",
+      "definition_of_done": [
+        "KEYSMITH input/output contract documented (schema + versions).",
+        "Allowlist + stop-conditions captured and tested (no-secret logging).",
+        "Human ceremony documented as claim_url-only; secret handling is sealed-drop only."
+      ]
+    },
+    {
+      "name": "Sandboxed registration client",
+      "definition_of_done": [
+        "Registration call executes inside sandbox only.",
+        "Only allowlisted artifacts are persisted (claim_url in plaintext; api_key sealed).",
+        "Connectivity validation uses HTTPS-level probes; no ICMP assumptions."
+      ]
+    },
+    {
+      "name": "Sealed drop + VAULT import",
+      "definition_of_done": [
+        "Sealed-drop artifact implemented for api_key.",
+        "Operator can import into VAULT/OS secret store with presence-only validation (no secret display).",
+        "Import step integrates with existing vault/env tooling surfaces."
+      ]
+    },
+    {
+      "name": "Tests + evidence",
+      "definition_of_done": [
+        "Automated tests cover fail-closed behavior, redaction, and secret non-exposure.",
+        "Evidence pointers recorded (names-only) for gate events + job report."
+      ]
+    }
+  ],
+  "tasks": [
+    {
+      "id": 1,
+      "title": "Create KEYSMITH job + quest paperwork (Job 0018, QS/QF, job report stub)",
+      "status": "completed",
+      "evidence_paths": [
+        "projects/calamum-moltbook-observer/jobs/CALAMUM_JOB_0018_MOLTBOOK_KEYSMITH_IMPLEMENTATION_20260212.md",
+        "projects/calamum-moltbook-observer/jobs/CALAMUM_JOB_0018_MOLTBOOK_KEYSMITH_IMPLEMENTATION_20260212.json",
+        "projects/calamum-moltbook-observer/queststacks/QS-CALAMUM-MOLTBOOK-KEYSMITH-IMPLEMENTATION-20260212.md",
+        "projects/calamum-moltbook-observer/questframes/QF-CALAMUM-MOLTBOOK-KEYSMITH-IMPLEMENTATION-20260212.json",
+        "docs/reports/operations/JOB_REPORT_QS-CALAMUM-MOLTBOOK-KEYSMITH-IMPLEMENTATION-20260212.md"
+      ]
+    },
+    {
+      "id": 2,
+      "title": "Select sealed-drop mechanism and define artifact formats",
+      "status": "not-started",
+      "evidence_paths": []
+    },
+    {
+      "id": 3,
+      "title": "Implement sandboxed register client with allowlisted outputs",
+      "status": "not-started",
+      "evidence_paths": []
+    },
+    {
+      "id": 4,
+      "title": "Implement VAULT/OS import glue and presence-only validation",
+      "status": "not-started",
+      "evidence_paths": []
+    },
+    {
+      "id": 5,
+      "title": "Add tests for fail-closed and no-secret logging",
+      "status": "not-started",
+      "evidence_paths": []
+    }
+  ],
+  "success_metrics": [
+    "Humans never view/copy/paste the api_key; claim_url-only ceremony is sufficient.",
+    "No secret values appear in logs, stdout, stderr, or tracked files.",
+    "Operator can populate MOLTBOOK_API_KEY into runtime environment using sealed drop + VAULT/OS secret storage.",
+    "Observer continues to fail-closed if LIVE is requested without MOLTBOOK_API_KEY present."
+  ]
+}

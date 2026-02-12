@@ -18,9 +18,17 @@ import json
 import time
 from dataclasses import dataclass
 from pathlib import Path
-from typing import List, Optional, Tuple
+from typing import Any, List, Optional, Tuple
 
 import psutil
+
+
+# Optional: if available, validate watchdog heartbeat signatures.
+# This prevents a freshness-only false-green when the agent will isolate due to untrusted watchdog heartbeats.
+try:
+    import obfuscator_lib  # type: ignore
+except ImportError:  # pragma: no cover
+    obfuscator_lib = None
 
 try:
     from calamum_config import get_calamum_data_dir, get_calamum_health_dir
@@ -53,6 +61,31 @@ def _is_fresh(path: Path, max_age_sec: float, now_ts: Optional[float] = None) ->
     except OSError:
         return False
     return age <= max_age_sec
+
+
+def _verify_signed_record_best_effort(path: Path) -> Tuple[Optional[bool], str]:
+    """Return (signature_valid_or_None_if_unavailable, detail_string).
+
+    - If verifier isn't available, return (None, 'unavailable').
+    - If JSON is malformed or verification fails, return (False, <reason>).
+    - If verification succeeds, return (True, 'ok').
+    """
+    if not obfuscator_lib:
+        return None, 'unavailable'
+    if not path.exists():
+        return False, 'missing'
+    try:
+        raw = path.read_text(encoding='utf-8', errors='replace')
+        data: Any = json.loads(raw or '{}')
+        if not isinstance(data, dict):
+            return False, 'not-a-dict'
+        # If unsigned/tampered, verify_record should return False.
+        ok = bool(obfuscator_lib.Obfuscator.verify_record(data))
+        if ok:
+            return True, 'ok'
+        return False, 'invalid'
+    except Exception:
+        return False, 'error'
 
 
 def _safe_touch(path: Path) -> None:
@@ -523,6 +556,11 @@ class TelemetryProvider:
         wd_fresh, wd_age, wd_age_str = self._get_freshness_age(self.config.watchdog_heartbeat_path, now)
         obs_fresh, obs_age, obs_age_str = self._get_freshness_age(self.config.observer_heartbeat_path, now)
         lib_fresh, lib_age, lib_age_str = self._get_freshness_age(self.config.librarian_heartbeat_path, now)
+
+        # Heartbeat trust (signature validity)
+        wd_sig_ok, wd_sig_detail = _verify_signed_record_best_effort(self.config.watchdog_heartbeat_path)
+        # If signature verification is available, require it.
+        wd_trusted = bool(wd_fresh and (wd_sig_ok is True)) if wd_sig_ok is not None else bool(wd_fresh)
         
         # Fallback for Observer if file lock prevents reading its heartbeat but data is flowing
         if not obs_fresh and active_jsonl is not None:
@@ -543,8 +581,15 @@ class TelemetryProvider:
             'density_bins': density_bins,
             'density_raw_window': list(self._density_window),
             'density_slice_sec': float(self.config.density_slice_sec),
-            'watchdog_active': bool(wd_fresh),
-            'watchdog_stats': {'age': wd_age, 'age_str': wd_age_str, 'path': str(self.config.watchdog_heartbeat_path.name)},
+            'watchdog_active': bool(wd_trusted),
+            'watchdog_stats': {
+                'age': wd_age,
+                'age_str': wd_age_str,
+                'path': str(self.config.watchdog_heartbeat_path.name),
+                'signature_check_available': bool(obfuscator_lib),
+                'signature_valid': wd_sig_ok,
+                'signature_detail': wd_sig_detail,
+            },
             'observer_active': bool(obs_fresh),
             'observer_stats': {'age': obs_age, 'age_str': obs_age_str, 'path': str(self.config.observer_heartbeat_path.name)},
             'librarian_active': bool(lib_fresh),

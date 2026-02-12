@@ -14,6 +14,8 @@ All contributors must adhere to the Ethical Matrix defined in `deliverables/DATA
 - **DO NOT** remove the `obfuscator_lib` safety constraints.
 
 ## Development Workflow
-1. Use `src/deployment/secure_run.ps1` to build the environment locally.
+1. Use `src/deployment/secure_run.ps1` to build/run the hardened container locally.
+	- Safe default (no live creds required): `src/deployment/secure_run.ps1 -Mode canary -Source sim`
+	- Live source (requires env-injected `MOLTBOOK_API_KEY`; names-only): `src/deployment/secure_run.ps1 -Mode sampler -Source live`
 2. Run tests via `pytest src/tests/`.
 3. Ensure the 'Sentinel' watchdog is active during any live-wire testing.

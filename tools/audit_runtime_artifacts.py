@@ -33,8 +33,47 @@ from typing import Any, Dict, Iterable, List, Optional, Sequence, Tuple
 AUDITOR = "ORACL-Prime"
 
 
+def _ensure_project_src_on_path() -> None:
+    """Best-effort: allow importing project-local modules without installing the package."""
+    try:
+        project_root = Path(__file__).resolve().parents[1]
+        src_dir = project_root / "src"
+        if src_dir.is_dir():
+            s = str(src_dir)
+            if s not in sys.path:
+                sys.path.insert(0, s)
+    except Exception:
+        pass
+
+
 def _utc_now() -> str:
     return datetime.now(timezone.utc).isoformat().replace("+00:00", "Z")
+
+
+# Optional: verify watchdog heartbeat signatures when verifier is available.
+_ensure_project_src_on_path()
+try:
+    import obfuscator_lib  # type: ignore
+except ImportError:  # pragma: no cover
+    obfuscator_lib = None
+
+
+def _verify_signed_record_best_effort(path: Path) -> Tuple[Optional[bool], str]:
+    """Return (signature_valid_or_None_if_unavailable, detail)."""
+    if not obfuscator_lib:
+        return None, "unavailable"
+    if not path.exists():
+        return False, "missing"
+    try:
+        raw = path.read_text(encoding="utf-8", errors="replace")
+        data = json.loads(raw or "{}")
+        if not isinstance(data, dict):
+            return False, "not-a-dict"
+        ok = bool(obfuscator_lib.Obfuscator.verify_record(data))
+        return (True, "ok") if ok else (False, "invalid")
+    except Exception:
+        return False, "error"
+
 
 
 def _run(cmd: Sequence[str], cwd: Path, timeout_sec: float = 12.0) -> Tuple[int, str, str]:
@@ -373,6 +412,15 @@ def audit_runtime_artifacts(
         st = _safe_stat(p)
         age = _age_seconds(st.mtime, now)
         status = _status_from_age(age, exists=bool(st.exists), warn_s=hb_warn_seconds, err_s=hb_err_seconds)
+
+        sig_ok: Optional[bool] = None
+        sig_detail = "unavailable"
+        if name == "watchdog":
+            sig_ok, sig_detail = _verify_signed_record_best_effort(p)
+            # If signature verification is available and fails, treat watchdog as ERR even if fresh.
+            if sig_ok is False:
+                status = "err"
+
         heartbeats.append(
             {
                 "name": name,
@@ -381,6 +429,9 @@ def audit_runtime_artifacts(
                 "size_bytes": int(st.size_bytes),
                 "age_seconds": None if age is None else round(float(age), 3),
                 "status": status,
+                "signature_check_available": bool(obfuscator_lib) if name == "watchdog" else False,
+                "signature_valid": sig_ok if name == "watchdog" else None,
+                "signature_detail": sig_detail if name == "watchdog" else None,
             }
         )
 

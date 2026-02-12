@@ -44,7 +44,7 @@ qs.doc=projects/calamum-moltbook-observer/queststacks/QS-CALAMUM-MOLTBOOK-OBSERV
 qf.id=QF-CALAMUM-MOLTBOOK-OBSERVER-STAGE4-20260201
 gates.last=POST_JOB@2026-02-03
 evidence.gates=CodeSentinel/logs/behavioral/gates/gate_events.jsonl
-evidence.qs=logs/data/calamum/moltbook_live_metrics.jsonl
+evidence.qs=logs/data/calamum/moltbook_samples_obfuscated.jsonl
 next.action=Monitor weekly logs; await Stage 5 authorization.
 ```
 
@@ -77,7 +77,9 @@ To execute this transition while maintaining academic reproducibility and securi
 1.  **Interface Activation (The Code Switch)**: The `src/moltbook_client.py` simulation stub is replaced with a live REST adapter using `requests`. **Constraint**: The client must strictly adhere to `GET` requests only.
 2.  **Credential Injection (Air-Gapped)**: Real credentials (`MOLTBOOK_API_KEY`) are injected via exported environment variables (preferred) or a local-only `projects/calamum-moltbook-observer/.env` file (project root), ensuring no secrets are ever committed to the repository.
 	- Note: Calamum does not auto-load dotenv files; the operator must explicitly load/export env vars.
-3.  **Execution (Glass Box)**: The system launches using the Stage 2 containment script (`deployment/secure_run.ps1 -Mode live`), ensuring the runtime remains ephemeral and immutable.
+3.  **Execution (Glass Box)**: The system launches using the Stage 2 containment script (`src/deployment/secure_run.ps1 -Mode sampler -Source live`), ensuring the runtime remains ephemeral and immutable.
+
+	NOTE (narrative integrity): In Stage 2/4 container runs, "live" is a *source selector* (`-Source live`), not a collector mode. The hardened container executes `calamum_sampler.py` in `--mode sampler` with `--source live`, producing the obfuscated samples stream.
 
 ### 3. Strategic Justification
 Historical data capture is prioritized over perfect feature completeness ("Smash and Grab" tactics authorized). The risk of platform evaporation necessitates this immediate deployment.
@@ -94,7 +96,8 @@ Live API (GET) -> MoltbookClient -> Obfuscator -> logs/calamum/moltbook_samples_
 
 1. Enable `requests` in `moltbook_client.py`.
 2. Inject air-gapped credentials via exported env vars (or project-root `.env`).
-3. Launch `secure_run.ps1 -Mode live`.
+3. Launch the hardened container sampler in live source mode:
+	- `src/deployment/secure_run.ps1 -Mode sampler -Source live`
 4. Monitor via Sentinel.
 
 ## Requirements

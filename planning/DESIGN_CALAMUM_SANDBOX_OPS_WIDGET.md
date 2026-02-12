@@ -97,8 +97,11 @@ The UI will be a Terminal App (Textual) featuring high-contrast data visualizati
 ## 4. Architecture
 
 ### 4.1 Data Sources
-- **Telemetry Logs**: `logs/data/calamum/moltbook_live_metrics.jsonl` (Counts)
-- **Heartbeat Files**: `projects/calamum-moltbook-observer/src/.heartbeat` (Timestamp)
+- **Telemetry Logs (names-only counts)**:
+    - Preferred (live + non-CANARY observer agent): `logs/data/calamum/moltbook_live_metrics.jsonl`
+    - Stage 3 CANARY: `logs/data/calamum/moltbook_canary_metrics.jsonl`
+    - Stage 1/2 sampler stream: `logs/data/calamum/moltbook_samples_obfuscated.jsonl`
+- **Heartbeat Files** (freshness/liveness): `logs/health/*.heartbeat`
 - **Docker Status**: `docker ps` (Container State) via local process check.
 
 ### 4.2 Application Component

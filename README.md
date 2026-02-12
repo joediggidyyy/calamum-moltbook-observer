@@ -138,6 +138,11 @@ For local testing without a live container, `src/calamum_observer_agent.py` can:
 - `CALAMUM_OBSERVER_HEARTBEAT_PATH`: path to observer heartbeat marker
 - `CALAMUM_DATA_DIR`: directory containing JSONL metrics
 - `CALAMUM_DENSITY_SLICE_SEC`: histogram time-slice width (default: `15`)
+- `CALAMUM_MOLTBOOK_SOURCE`: observer agent source selector (`sim` or `live`; default: `sim`)
+- `MOLTBOOK_API_KEY`: required for live collection (presence-only; never commit values)
+- `MOLTBOOK_HOST`: optional override for the Moltbook API base URL (default: `https://api.moltbook.com/v1`)
+- `CALAMUM_LIVE_BATCH_LIMIT`: live feed batch size cap (default: `50`; clamped)
+- `CALAMUM_LIVE_EMPTY_BACKOFF_SEC`: backoff time when live fetch yields zero items (default: `10`)
 - `CALAMUM_BRAND_THUMB_PATH`, `CALAMUM_BRAND_PANEL_PATH`: optional branding asset overrides
 
 ## Academic Reproducibility
@@ -148,3 +153,11 @@ This project maintains rigorous separation between:
 3.  **Observation** (Logs): The raw data (with PII hashed).
 
 See `docs/reports/operations/` for narrative reports on methodology.
+
+## Live collection contract (names-only)
+
+When `CALAMUM_MOLTBOOK_SOURCE=live` and `CALAMUM_OPS_MODE` is not `CANARY`, the observer agent writes the canonical live metrics stream:
+
+- `logs/data/calamum/moltbook_live_metrics.jsonl`
+
+This path is referenced by Stage 4/Job 0017 validation tooling.

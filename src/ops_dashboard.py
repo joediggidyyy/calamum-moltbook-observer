@@ -1,4 +1,55 @@
-from nicegui import ui, app
+"""Ghost Console Ops Dashboard.
+
+NOTE: NiceGUI is an optional dependency.
+
+The repository test suite expects this module to be importable in minimal
+environments that do not have `nicegui` installed. When NiceGUI is missing we
+install a small no-op shim so imports succeed; the dashboard cannot be run in
+that state.
+"""
+
+try:
+    from nicegui import ui, app  # type: ignore
+    _NICEGUI_AVAILABLE = True
+except ModuleNotFoundError:  # pragma: no cover
+    _NICEGUI_AVAILABLE = False
+
+    class _NullNiceGUI:
+        """No-op NiceGUI stand-in.
+
+        This is intentionally permissive to allow module import in test/CI.
+        Calling any UI APIs will effectively do nothing.
+        """
+
+        def __getattr__(self, name: str):
+            def _noop(*args, **kwargs):
+                # Decorator-style APIs (e.g., @ui.page('/')).
+                if name in {"page", "refreshable"}:
+                    # Used as @ui.page without params
+                    if len(args) == 1 and callable(args[0]) and not kwargs:
+                        return args[0]
+
+                    def _decorator(fn):
+                        return fn
+
+                    return _decorator
+
+                # Context-manager or builder-style APIs.
+                return self
+
+            return _noop
+
+        def __call__(self, *args, **kwargs):
+            return self
+
+        def __enter__(self):
+            return self
+
+        def __exit__(self, exc_type, exc, tb):
+            return False
+
+    ui = _NullNiceGUI()  # type: ignore
+    app = _NullNiceGUI()  # type: ignore
 from datetime import datetime, timezone
 import base64
 import os
@@ -627,6 +678,8 @@ def create_header(toggle_drawer_fn):
             watchdog_badge = ui.badge('WD: ACTIVE', color='green-10')\
                 .props('id="cids-wd-badge"')\
                 .classes('font-bold text-[10px]')
+            # TODO(pivot-gates): enrich on-hover status to include age + signature validity/trust + reason.
+            # Until then, ensure the *server snapshot* drives trusted WD status (no freshness-only false-green).
             watchdog_badge.tooltip('Watchdog: monitors the observer loop heartbeat. Reset in Control Deck.')
 
             # Observer indicator

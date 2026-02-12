@@ -73,7 +73,7 @@
     "implementation_steps": [
       "Enable requests in moltbook_client.py.",
       "Inject air-gapped credentials via exported env vars (or project-root .env).",
-      "Launch secure_run.ps1 -Mode live.",
+      "Launch src/deployment/secure_run.ps1 -Mode sampler -Source live.",
       "Monitor via Sentinel."
     ]
   },

@@ -40,7 +40,8 @@ Execution of Stage 2 (Container Hardening) for the Calamum-scoped Moltbook obser
 4.  **Security Constraint Verification**:
     -   **FileSystem**: `touch /app/test` -> `Permission denied` (CONFIRMED Read-Only).
     -   **Identity**: `id` -> `uid=10001(observer)` (CONFIRMED non-root).
-    -   **Network/Tools**: `ping 8.8.8.8` -> `executable file not found` (CONFIRMED minimal surface).
+    -   **Tooling Minimalism**: attempting to invoke `ping` -> `executable file not found` (CONFIRMED minimal surface).
+        - Note: ICMP/ping is not used as a connectivity check in secured environments; this evidence is about reduced tooling/attack surface.
 
 **Outcome**: Stage 2 Hardening profile fully verified. Image is ready for Stage 3 deployment.
 

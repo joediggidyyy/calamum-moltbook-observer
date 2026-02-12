@@ -85,4 +85,48 @@ Reproducing the experiment requires no access to the live target, ensuring acade
 | **Outer** | `sentinel.py` | Triple-Redundancy Watchdog monitoring logs for keywords. | **Fail-Closed (SIGKILL)** |
 
 ---
+
+## 6. Live Collection Methodology (GET-only; names-only)
+
+When the project is transitioned from simulation to live collection, the system must preserve the same safety contract:
+
+- **GET-only** network behavior (no mutation calls)
+- **Names-only** persistence (no raw Moltbook content written to disk)
+- **Credentials via environment variables** only (presence checks; never commit values)
+
+### 6.1 Source selection
+
+The local observer agent supports selecting a data source:
+
+- `CALAMUM_MOLTBOOK_SOURCE=sim` (default): deterministic synthetic generator
+- `CALAMUM_MOLTBOOK_SOURCE=live`: Moltbook API client (requires `MOLTBOOK_API_KEY`)
+
+### 6.2 Canonical output streams
+
+This project has two collection entry points that produce different (but compatible) streams:
+
+1) **Sampler (`calamum_sampler.py`)**
+     - Stage 1/2: produces obfuscated sample records at:
+         - `logs/data/calamum/moltbook_samples_obfuscated.jsonl`
+     - Stage 3: produces inbound-canary metrics at:
+         - `logs/data/calamum/moltbook_canary_metrics.jsonl`
+
+2) **Local observer agent (`calamum_observer_agent.py`)**
+     - For Stage 4 / Job 0017 live validation (live + non-CANARY), the canonical metrics stream is:
+         - `logs/data/calamum/moltbook_live_metrics.jsonl`
+
+This file is the primary “freshness + non-empty” proof used by current ops diagnostics and acceptance checks for the live-collection roadmap.
+
+### 6.3 Rate limiting + empty backoff
+
+To avoid hammering a dead endpoint (or a network-restricted environment), live collection supports:
+
+- `CALAMUM_LIVE_BATCH_LIMIT` (default `50`; clamped): cap feed fetch size
+- `CALAMUM_LIVE_EMPTY_BACKOFF_SEC` (default `10`; clamped): sleep/backoff window when a live fetch yields no items
+
+### 6.4 Failure posture
+
+If `CALAMUM_MOLTBOOK_SOURCE=live` is selected but `MOLTBOOK_API_KEY` is absent, the observer must fail closed for live ingest (no crash; no secret prompts) and continue to operate safely in a no-write posture for live items.
+
+---
 *Verified by ORACL-Prime on 2026-02-02.*

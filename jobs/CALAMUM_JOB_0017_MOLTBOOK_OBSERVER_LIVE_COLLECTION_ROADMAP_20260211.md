@@ -13,6 +13,7 @@
 - Depends on:
   - `CALAMUM_JOB_0015` (Stage 4 Activation)
   - `CALAMUM_JOB_0005` (Stage 4 Live Wire strategy)
+  - `CALAMUM_JOB_0018` (KEYSMITH: sandboxed key minting; humans never handle secrets)
 - Blocks: `(none)`
 
 ## Policy links
@@ -47,10 +48,40 @@ Evidence artifacts:
 - `report_tmp/calamum_moltbook_backend_diag_20260211T184713Z.md`
 - `report_tmp/calamum_job_status_audit_20260211T190142Z.md`
 
+## Implementation delta (deviation record; names-only)
+
+This job was scoped as **ops/config + validation only** (no source changes). During execution, a minimal observer-agent wiring change was performed to align validation with the canonical live metrics filename expected by Stage 4 / this job.
+
+Machine record (authoritative):
+- `projects/calamum-moltbook-observer/jobs/CALAMUM_JOB_0017_MOLTBOOK_OBSERVER_LIVE_COLLECTION_ROADMAP_20260211.json` (`implementation_delta`)
+
+Recorded commit (names-only):
+- `eeba7f35`
+
+Validation noted (names-only):
+- Project test suite passed under `projects/calamum-moltbook-observer/src/tests`
+
+Narrative + provenance (publish-grade pointers):
+- QuestStack: `projects/calamum-moltbook-observer/queststacks/QS-CALAMUM-MOLTBOOK-OBSERVER-LIVE-COLLECTION-ROADMAP-20260211.md`
+- Job report: `docs/reports/operations/JOB_REPORT_QS-CALAMUM-MOLTBOOK-OBSERVER-LIVE-COLLECTION-ROADMAP-20260211.md`
+
+External links visited (public):
+
+- Durable ledger (SSOT): `docs/external/AGENT_EXTERNAL_LINKS_VISITED_LEDGER.md` (see 2026-02-11 entries)
+- Links provided by primary stakeholder (captured 2026-02-11):
+  - https://www.technologyreview.com/2026/02/09/1132537/a-lesson-from-pokemon/
+  - https://www.webpronews.com/moltbook-and-the-grand-illusion-how-a-social-network-for-bots-became-the-internets-most-revealing-mirror/
+  - https://www.msn.com/en-in/money/topstories/moltbook-hype-unravels-viral-posts-were-human-written-not-ai-finds-mit-technology-review/ar-AA1VTUsR?apiversion=v2&domshim=1&noservercache=1&noservertelemetry=1&batchservertelemetry=1&renderwebcomponents=1&wcseo=1
+  - https://github.com/openclaw/openclaw
+  - https://steipete.me/
+  - https://openclaw.ai/
+
+Safety note: the stakeholder reported a PowerShell script download prompt was blocked/rejected while reviewing OpenClaw install guidance. Treat any one-liner installer that downloads a script as executable code; do not run `iwr ... | iex` without inspection.
+
 ## Preflight checklist (no code changes)
 
 1) Confirm this environment is intended to run LIVE today.
-2) Confirm the operator has access to air-gapped credentials for `MOLTBOOK_API_KEY`.
+2) Confirm the operator has access to a **non-human secret handling path** for `MOLTBOOK_API_KEY` (KEYSMITH + sealed drop + VAULT/OS import).
 3) Confirm network constraints are understood (ICMP disabled; use TCP/SSH checks only).
 
 ## Execution steps
@@ -73,7 +104,7 @@ Decision needed:
 ### Step 2 — Inject live-collection env vars (air-gapped)
 
 Required (presence only; never commit values):
-- `MOLTBOOK_API_KEY`
+- `MOLTBOOK_API_KEY` (populated via KEYSMITH sealed drop + VAULT/OS import; humans must not view/copy/paste the key)
 
 Recommended:
 - `MOLTBOOK_HOST` (if non-default is required)
@@ -81,7 +112,10 @@ Recommended:
 
 Notes:
 - A project `.env.example` exists; Calamum does **not** auto-load dotenv.
-- Use operator-controlled env export / vault tooling to load env vars.
+- Use operator-controlled VAULT/env tooling to load env vars.
+- KEYSMITH flow (claim-url only humans; sealed secret handoff):
+  - Job: `projects/calamum-moltbook-observer/jobs/CALAMUM_JOB_0018_MOLTBOOK_KEYSMITH_IMPLEMENTATION_20260212.md`
+  - Plan: `projects/calamum-moltbook-observer/planning/CALAMUM_MOLTBOOK_KEYSMITH_IMPLEMENTATION_PLAN_20260212.md`
 
 ### Step 3 — Validate backend flips out of CANARY mode
 

@@ -17,6 +17,8 @@ This component MUST run as a distinct process with its own PID.
 
 __version__ = "1.1.0"
 
+import atexit
+import hashlib
 import json
 import os
 import sys
@@ -97,6 +99,12 @@ class WatchdogSupervisor:
         self.health_dir = get_calamum_health_dir()
         self.control_dir = get_calamum_control_dir()
 
+        # Single-instance guard (prevents duplicate watchdogs and confusing telemetry).
+        self._instance_lock_path: Optional[Path] = None
+        self._instance_lock_acquired: bool = False
+        self._instance_mutex_handle: Any = None
+        self._last_converge_check_ts: float = 0.0
+
         # Resolve project/repo roots for running scheduled reports.
         # health_dir -> logs/health; project_root -> logs/..; repo_root -> project_root/../..
         self.project_root = self.health_dir.resolve().parents[1]
@@ -165,6 +173,318 @@ class WatchdogSupervisor:
             # Dashboard is checked via URL/Process in typical setups, 
             # but we can look for a heartbeat file if we implement one there.
         }
+
+
+    def _pid_looks_like_watchdog(self, pid: int) -> Optional[bool]:
+        """Best-effort check: does a PID appear to be a calamum_watchdog process?
+
+        Returns:
+            True/False if determinable, None if unknown (e.g., access denied).
+        """
+        try:
+            p = psutil.Process(int(pid))
+            if not p.is_running():
+                return False
+            try:
+                cmd = " ".join(p.cmdline() or [])
+            except Exception:
+                cmd = ""
+            if "calamum_watchdog.py" in cmd.replace("\\", "/"):
+                return True
+            # If we cannot match command line, fall back to process name heuristics.
+            try:
+                nm = (p.name() or "").lower()
+            except Exception:
+                nm = ""
+            if nm in {"python.exe", "python"}:
+                return None
+            return None
+        except psutil.NoSuchProcess:
+            return False
+        except psutil.AccessDenied:
+            return None
+        except Exception:
+            return None
+
+
+    def _release_instance_lock_best_effort(self) -> None:
+        if not self._instance_lock_acquired:
+            return
+        p = self._instance_lock_path
+        if not p:
+            return
+
+
+    def _release_instance_mutex_best_effort(self) -> None:
+        h = self._instance_mutex_handle
+        if not h:
+            return
+        try:
+            import ctypes  # local import; only meaningful on Windows
+
+            kernel32 = ctypes.WinDLL("kernel32", use_last_error=True)
+            try:
+                kernel32.ReleaseMutex(h)
+            except Exception:
+                pass
+            kernel32.CloseHandle(h)
+        except Exception:
+            return
+        finally:
+            self._instance_mutex_handle = None
+        try:
+            # Only delete if we still own it (PID match).
+            raw = p.read_text(encoding="utf-8", errors="ignore")
+            obj = json.loads(raw or "{}") if raw else {}
+            pid_in_file = int(obj.get("pid") or 0) if isinstance(obj, dict) else 0
+            if pid_in_file == os.getpid():
+                p.unlink(missing_ok=True)  # type: ignore[call-arg]
+        except Exception:
+            # Never crash on cleanup.
+            return
+
+
+    def _ensure_single_instance(self) -> bool:
+        """Acquire a single-instance lock; return False if another instance is active."""
+        if (os.getenv("CALAMUM_WATCHDOG_ALLOW_MULTI") or "").strip() == "1":
+            return True
+
+        # Prefer a robust OS primitive on Windows to avoid startup race conditions.
+        if os.name == "nt":
+            try:
+                import ctypes
+                from ctypes import wintypes
+
+                # Mutex name is stable per project root to avoid collisions.
+                root_tag = hashlib.sha256(str(self.project_root).lower().encode("utf-8")).hexdigest()[:12]
+                mutex_name = f"Local\\CalamumWatchdogSingleInstance_{root_tag}"
+
+                kernel32 = ctypes.WinDLL("kernel32", use_last_error=True)
+                CreateMutexW = kernel32.CreateMutexW
+                CreateMutexW.argtypes = [wintypes.LPVOID, wintypes.BOOL, wintypes.LPCWSTR]
+                CreateMutexW.restype = wintypes.HANDLE
+
+                ERROR_ALREADY_EXISTS = 183
+                ctypes.set_last_error(0)
+                # Take initial ownership if newly created.
+                h = CreateMutexW(None, True, mutex_name)
+                last = int(ctypes.get_last_error())
+                if h:
+                    # One-time, names-only diagnostic (helps explain duplicate watchdog instances).
+                    try:
+                        print(
+                            f"[{_utc_now_iso()}] [WATCHDOG] mutex_acquire pid={os.getpid()} last_error={last}",
+                            file=sys.stderr,
+                            flush=True,
+                        )
+                    except Exception:
+                        pass
+                    if last == int(ERROR_ALREADY_EXISTS):
+                        print(
+                            f"[{_utc_now_iso()}] [WATCHDOG] Another watchdog instance holds mutex. Exiting.",
+                            file=sys.stderr,
+                            flush=True,
+                        )
+                        try:
+                            kernel32.CloseHandle(h)
+                        except Exception:
+                            pass
+                        return False
+
+                    self._instance_mutex_handle = h
+                    atexit.register(self._release_instance_mutex_best_effort)
+                    return True
+            except Exception as e:
+                # Fall back to lock file approach.
+                print(
+                    f"[{_utc_now_iso()}] [WATCHDOG] Mutex guard unavailable: {e}",
+                    file=sys.stderr,
+                    flush=True,
+                )
+                pass
+
+        lock_path = (self.project_root / "local_untracked" / "locks" / "calamum_watchdog.lock").resolve()
+        try:
+            lock_path.parent.mkdir(parents=True, exist_ok=True)
+        except Exception:
+            # If we cannot create the lock dir, proceed rather than fail closed.
+            return True
+
+        def _try_create() -> bool:
+            try:
+                fd = os.open(str(lock_path), os.O_CREAT | os.O_EXCL | os.O_WRONLY)
+                with os.fdopen(fd, "w", encoding="utf-8") as f:
+                    rec = {
+                        "pid": int(os.getpid()),
+                        "started_at_utc": _utc_now_iso(),
+                        "component": "calamum_watchdog",
+                        "host": (os.getenv("COMPUTERNAME") or ""),
+                    }
+                    f.write(json.dumps(rec, sort_keys=True) + "\n")
+                self._instance_lock_path = lock_path
+                self._instance_lock_acquired = True
+                atexit.register(self._release_instance_lock_best_effort)
+                return True
+            except FileExistsError:
+                return False
+            except Exception as e:
+                # If locking fails for unexpected reasons, fail closed to avoid duplicate
+                # watchdog instances producing conflicting telemetry.
+                print(
+                    f"[{_utc_now_iso()}] [WATCHDOG] Lock acquisition error: {e}",
+                    file=sys.stderr,
+                    flush=True,
+                )
+                return False
+
+        if _try_create():
+            return True
+
+        # Lock file exists; determine whether it is stale.
+        existing_pid = 0
+        started_at_utc = ""
+        try:
+            raw = lock_path.read_text(encoding="utf-8", errors="ignore")
+            obj = json.loads(raw or "{}") if raw else {}
+            if isinstance(obj, dict):
+                existing_pid = int(obj.get("pid") or 0)
+                started_at_utc = str(obj.get("started_at_utc") or "")
+        except Exception:
+            existing_pid = 0
+
+        # Guard against startup races: if the lock is very new, treat it as held
+        # even if we cannot validate the PID yet.
+        try:
+            started_dt = _parse_utc_iso(started_at_utc)
+            if started_dt is not None:
+                age_s = (datetime.now(timezone.utc) - started_dt).total_seconds()
+                if age_s >= 0.0 and age_s < 30.0:
+                    print(
+                        f"[{_utc_now_iso()}] [WATCHDOG] Lock is recent (age_s={age_s:.1f}); another instance is starting. Exiting.",
+                        file=sys.stderr,
+                        flush=True,
+                    )
+                    return False
+        except Exception:
+            pass
+
+        if existing_pid > 0:
+            looks = self._pid_looks_like_watchdog(existing_pid)
+            if looks is True or looks is None:
+                # Another instance appears to be running (or we cannot safely disprove it).
+                print(
+                    f"[{_utc_now_iso()}] [WATCHDOG] Another watchdog instance is active (pid={existing_pid}). Exiting.",
+                    file=sys.stderr,
+                    flush=True,
+                )
+                return False
+
+        # Stale lock: remove and retry once.
+        try:
+            lock_path.unlink(missing_ok=True)  # type: ignore[call-arg]
+        except Exception:
+            pass
+        if _try_create():
+            return True
+
+        print(
+            f"[{_utc_now_iso()}] [WATCHDOG] Unable to acquire single-instance lock. Exiting.",
+            file=sys.stderr,
+            flush=True,
+        )
+        return False
+
+
+    def _converge_duplicate_instances_best_effort(self) -> bool:
+        """Best-effort convergence to a single watchdog instance.
+
+        Observed failure mode (Windows): a watchdog process can spawn a second
+        watchdog process (parent->child) with the same command line.
+
+        Policy: prefer to keep the *child* (higher PID) when parent-child is detected.
+        For non-parent/child duplicates, keep the highest PID (most recent).
+
+        Returns:
+            True if this process should continue running.
+            False if this process should exit to avoid duplicates.
+        """
+        try:
+            my_pid = int(os.getpid())
+            my_ppid = int(os.getppid())
+
+            # Fast path: if I have a direct child watchdog process, I am the parent stub.
+            # Exit so only the child remains.
+            try:
+                me = psutil.Process(my_pid)
+                for c in me.children(recursive=False):
+                    try:
+                        cmd = " ".join(c.cmdline() or [])
+                    except Exception:
+                        cmd = ""
+                    if "calamum_watchdog.py" in cmd.replace("\\", "/"):
+                        print(
+                            f"[{_utc_now_iso()}] [WATCHDOG] Detected direct watchdog child pid={c.pid}; parent pid={my_pid} exiting to converge.",
+                            file=sys.stderr,
+                            flush=True,
+                        )
+                        return False
+            except Exception:
+                pass
+
+            # Collect watchdog-like PIDs.
+            watchdog_pids: List[int] = []
+            watchdog_ppids: Dict[int, int] = {}
+
+            for p in psutil.process_iter(attrs=["pid", "ppid", "cmdline"]):
+                try:
+                    pid = int(p.info.get("pid") or 0)
+                    if pid <= 0:
+                        continue
+                    cmd = p.info.get("cmdline") or []
+                    cmd_str = " ".join([str(x) for x in cmd if x])
+                    if "calamum_watchdog.py" not in cmd_str.replace("\\", "/"):
+                        continue
+                    watchdog_pids.append(pid)
+                    watchdog_ppids[pid] = int(p.info.get("ppid") or 0)
+                except (psutil.NoSuchProcess, psutil.AccessDenied):
+                    continue
+                except Exception:
+                    continue
+
+            watchdog_pids = sorted(set(watchdog_pids))
+            if len(watchdog_pids) <= 1:
+                return True
+
+            # If I spawned another watchdog instance, I should exit.
+            for pid in watchdog_pids:
+                if pid == my_pid:
+                    continue
+                if int(watchdog_ppids.get(pid) or 0) == my_pid:
+                    print(
+                        f"[{_utc_now_iso()}] [WATCHDOG] Detected watchdog child pid={pid}; parent pid={my_pid} exiting to converge.",
+                        file=sys.stderr,
+                        flush=True,
+                    )
+                    return False
+
+            # If my parent is also a watchdog, prefer to keep running as the child.
+            if my_ppid in watchdog_pids:
+                return True
+
+            # Otherwise (siblings), keep the newest-ish instance (highest PID).
+            keep_pid = max(watchdog_pids)
+            if my_pid != keep_pid:
+                print(
+                    f"[{_utc_now_iso()}] [WATCHDOG] Duplicate watchdogs detected pids={watchdog_pids}; keeping pid={keep_pid}. Exiting pid={my_pid}.",
+                    file=sys.stderr,
+                    flush=True,
+                )
+                return False
+
+            return True
+        except Exception:
+            # Never crash on convergence logic.
+            return True
 
 
     def _load_schedule_state(self) -> Dict[str, Any]:
@@ -361,11 +681,18 @@ class WatchdogSupervisor:
             "status": "alive"
         }
         
-        if obfuscator_lib:
-            try:
-                payload = obfuscator_lib.Obfuscator.sign_record(payload)
-            except Exception as e:
-                print(f"[WATCHDOG] Signing failed: {e}", file=sys.stderr)
+        # Compliance: watchdog heartbeat MUST be signed.
+        # If signing is unavailable or fails, do not overwrite the heartbeat with
+        # an unsigned payload (stale is safer than untrusted fresh).
+        if not obfuscator_lib:
+            print("[WATCHDOG] Signing unavailable: obfuscator_lib not importable", file=sys.stderr)
+            return
+
+        try:
+            payload = obfuscator_lib.Obfuscator.sign_record(payload)
+        except Exception as e:
+            print(f"[WATCHDOG] Signing failed: {e}", file=sys.stderr)
+            return
         
         try:
             # Atomic write pattern
@@ -409,6 +736,10 @@ class WatchdogSupervisor:
         # Also could emit a signal or write to a centralized status file
 
     def loop(self):
+        if not self._ensure_single_instance():
+            return
+        if not self._converge_duplicate_instances_best_effort():
+            return
         print(f"[{_utc_now_iso()}] Watchdog Supervisor 1.0 Started. Authority established.")
 
         # Initialize shared keepalive helper (if available)
@@ -426,6 +757,14 @@ class WatchdogSupervisor:
 
         while True:
             try:
+                # Periodic convergence guard: if a duplicate watchdog appears after startup,
+                # the parent instance will exit and the child will remain.
+                now_s = time.time()
+                if (now_s - float(self._last_converge_check_ts)) >= 10.0:
+                    self._last_converge_check_ts = now_s
+                    if not self._converge_duplicate_instances_best_effort():
+                        return
+
                 self._touch_heartbeat()
                 self._check_team()
 

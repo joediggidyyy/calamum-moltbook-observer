@@ -14,6 +14,7 @@ from __future__ import annotations
 __version__ = "1.1.0"
 
 import argparse
+import hashlib
 import json
 import os
 import sys
@@ -28,11 +29,13 @@ try:
     import calamum_sampler
     import obfuscator_lib
     from calamum_keepalive import KeepaliveHelper
+    from moltbook_client import MoltbookAPIClient
 except ImportError:
     # Allow running even if siblings are tricky to import (e.g. specialized envs)
     calamum_sampler = None
     obfuscator_lib = None
     KeepaliveHelper = None
+    MoltbookAPIClient = None
 
 from calamum_config import get_calamum_data_dir, get_calamum_control_dir, get_calamum_health_dir, ACTIVE_MAGNET_THRESHOLD
 
@@ -123,8 +126,17 @@ class AgentConfig:
     observer_heartbeat: Path
     watchdog_heartbeat: Optional[Path]
 
+    # Data source (sim/live)
+    source: str = "sim"
 
-def load_config(argv_repo_root: Optional[str], mode: str, interval_sec: float, node_id: str) -> AgentConfig:
+
+def load_config(
+    argv_repo_root: Optional[str],
+    mode: str,
+    interval_sec: float,
+    node_id: str,
+    source: str = "sim",
+) -> AgentConfig:
     # Use consolidated config
     data_dir = get_calamum_data_dir()
     data_dir.mkdir(parents=True, exist_ok=True)
@@ -135,11 +147,19 @@ def load_config(argv_repo_root: Optional[str], mode: str, interval_sec: float, n
     else:
         repo_root = Path(__file__).resolve().parents[1]
 
-    if mode.lower() == 'canary':
+    src = (source or "sim").strip().lower()
+    m = (mode or "").strip().lower()
+
+    if m == 'canary':
         output_jsonl = data_dir / 'moltbook_canary_metrics.jsonl'
     else:
-        # Keep a generic filename for future modes
-        output_jsonl = data_dir / f'moltbook_{mode.lower()}_metrics.jsonl'
+        # Canonical live collection target (Stage 4 / Job 0017):
+        # logs/data/calamum/moltbook_live_metrics.jsonl
+        if src == "live":
+            output_jsonl = data_dir / 'moltbook_live_metrics.jsonl'
+        else:
+            # Keep a generic filename for future modes
+            output_jsonl = data_dir / f'moltbook_{m}_metrics.jsonl'
 
     control_dir = get_calamum_control_dir()
     control_dir.mkdir(parents=True, exist_ok=True)
@@ -160,6 +180,7 @@ def load_config(argv_repo_root: Optional[str], mode: str, interval_sec: float, n
         node_id=node_id,
         interval_sec=interval_sec,
         mode=mode,
+        source=src,
         data_dir=data_dir,
         output_jsonl=output_jsonl,
         control_dir=control_dir,
@@ -219,41 +240,132 @@ def handle_control_signals(control_dir: Path, node_id: str) -> Tuple[bool, Optio
     return False, None
 
 
-# Global generator state
-_GEN_BY_MODE: Dict[str, Any] = {}
+_GEN_BY_KEY: Dict[str, Any] = {}
+_BACKOFF_UNTIL_TS: Dict[str, float] = {}
+
+# Live client cache (never logged; used to avoid re-creating sessions).
+_LIVE_CLIENT: Any = None
+_LIVE_CLIENT_HOST: str = ""
+_LIVE_CLIENT_FP8: str = ""
 
 
-def _get_next_item(mode: str) -> Optional[Dict[str, Any]]:
+def _get_live_client_best_effort() -> Optional[Any]:
+    """Return a cached MoltbookAPIClient, or None if live mode is unavailable.
+
+    Requirements:
+    - MoltbookAPIClient importable
+    - MOLTBOOK_API_KEY present
+    """
+    global _LIVE_CLIENT, _LIVE_CLIENT_HOST, _LIVE_CLIENT_FP8
+
+    if MoltbookAPIClient is None:
+        return None
+
+    api_key = (os.getenv("MOLTBOOK_API_KEY") or "").strip()
+    if not api_key:
+        return None
+
+    host = (os.getenv("MOLTBOOK_HOST") or "https://api.moltbook.com/v1").strip()
+    try:
+        fp8 = hashlib.sha256(api_key.encode("utf-8")).hexdigest()[:8]
+    except Exception:
+        fp8 = ""
+
+    if _LIVE_CLIENT is None or host != _LIVE_CLIENT_HOST or fp8 != _LIVE_CLIENT_FP8:
+        _LIVE_CLIENT = MoltbookAPIClient(host, api_key)
+        _LIVE_CLIENT_HOST = host
+        _LIVE_CLIENT_FP8 = fp8
+    return _LIVE_CLIENT
+
+
+def _get_live_empty_backoff_sec() -> float:
+    raw = os.getenv("CALAMUM_LIVE_EMPTY_BACKOFF_SEC", "10")
+    try:
+        v = float(raw)
+        if v < 0:
+            return 0.0
+        return float(min(300.0, v))
+    except Exception:
+        return 10.0
+
+
+def _get_live_batch_limit() -> int:
+    raw = os.getenv("CALAMUM_LIVE_BATCH_LIMIT", "50")
+    try:
+        n = int(raw)
+    except Exception:
+        n = 50
+    return int(max(1, min(200, n)))
+
+
+def _get_next_item(mode: str, source: str = "sim") -> Optional[Dict[str, Any]]:
     """Return the next raw item for the configured mode.
 
     Stage mapping:
     - CANARY: inbound-only notifications (dm/follow/mention)
     - other modes: public feed samples (post/reply/repost)
     """
-    if not calamum_sampler:
+    m = (mode or '').strip().lower()
+    src = (source or 'sim').strip().lower()
+    gen_key = f"{src}:{m or 'default'}"
+
+    # Backoff when live returns empty (prevents hammering a dead endpoint).
+    now = time.time()
+    until = float(_BACKOFF_UNTIL_TS.get(gen_key, 0.0) or 0.0)
+    if until and now < until:
         return None
 
-    sampler = cast(Any, calamum_sampler)
-
-    m = (mode or '').strip().lower()
-    gen_key = m or 'default'
-
     def _new_gen() -> Any:
+        if src == "live":
+            client = _get_live_client_best_effort()
+            if not client:
+                return None
+            if m == 'canary':
+                return client.fetch_notifications()
+            return client.fetch_feed(limit=_get_live_batch_limit())
+
+        # Sim mode
+        if not calamum_sampler:
+            return None
+        sampler = cast(Any, calamum_sampler)
         if m == 'canary' and hasattr(sampler, 'simulate_moltbook_notifications'):
             return sampler.simulate_moltbook_notifications()
         return sampler.simulate_moltbook_feed()
 
-    try:
-        if gen_key not in _GEN_BY_MODE or _GEN_BY_MODE[gen_key] is None:
-            _GEN_BY_MODE[gen_key] = _new_gen()
-        return next(_GEN_BY_MODE[gen_key])
-    except Exception:
-        # Restart generator on error or exhaustion
+    # Stored as: { "gen": iterator_or_None, "yielded": int }
+    state = _GEN_BY_KEY.get(gen_key)
+    if not isinstance(state, dict):
+        state = {"gen": None, "yielded": 0}
+
+    for _ in range(2):
+        gen = state.get("gen")
+        if gen is None:
+            state = {"gen": _new_gen(), "yielded": 0}
+            gen = state.get("gen")
+            if gen is None:
+                _GEN_BY_KEY[gen_key] = state
+                return None
+
         try:
-            _GEN_BY_MODE[gen_key] = _new_gen()
-            return next(_GEN_BY_MODE[gen_key])
+            item = next(gen)
+            state["yielded"] = int(state.get("yielded") or 0) + 1
+            _GEN_BY_KEY[gen_key] = state
+            return item
+        except StopIteration:
+            # Empty batch (no yields) => backoff in live mode.
+            if src == "live" and int(state.get("yielded") or 0) == 0:
+                backoff = _get_live_empty_backoff_sec()
+                if backoff > 0:
+                    _BACKOFF_UNTIL_TS[gen_key] = time.time() + float(backoff)
+            state = {"gen": None, "yielded": 0}
+            _GEN_BY_KEY[gen_key] = state
+            continue
         except Exception:
-            return None
+            state = {"gen": None, "yielded": 0}
+            _GEN_BY_KEY[gen_key] = state
+            continue
+
+    return None
 
 
 def get_dynamic_rotation_limit(control_dir: Path) -> int:
@@ -272,13 +384,21 @@ def get_dynamic_rotation_limit(control_dir: Path) -> int:
         return DEFAULT
 
 
+def _rotation_prefix_for(path: Path) -> str:
+    stem = (path.stem or "active").strip()
+    if stem.endswith("_metrics"):
+        stem = stem[: -len("_metrics")]
+    return stem or "active"
+
+
 def rotate_active_log(jsonl_path: Path, data_dir: Path) -> None:
-    """Atomic rotation: Rename active -> archive/moltbook_canary_<ts>.jsonl"""
+    """Atomic rotation: Rename active -> archive/<prefix>_<ts>.jsonl"""
     archive_dir = data_dir / 'archive'
     archive_dir.mkdir(parents=True, exist_ok=True)
     
     ts_str = datetime.now(timezone.utc).strftime('%Y%m%dT%H%M%S')
-    new_name = f"moltbook_canary_{ts_str}.jsonl"
+    prefix = _rotation_prefix_for(jsonl_path)
+    new_name = f"{prefix}_{ts_str}.jsonl"
     dest = archive_dir / new_name
     
     try:
@@ -290,7 +410,14 @@ def rotate_active_log(jsonl_path: Path, data_dir: Path) -> None:
         pass
 
 
-def append_record(jsonl_path: Path, node_id: str, mode: str, control_dir: Path, data_dir: Path) -> None:
+def append_record(
+    jsonl_path: Path,
+    node_id: str,
+    mode: str,
+    control_dir: Path,
+    data_dir: Path,
+    source: str = "sim",
+) -> None:
     # 0. Check Rotation FIRST
     if jsonl_path.exists():
         try:
@@ -302,7 +429,7 @@ def append_record(jsonl_path: Path, node_id: str, mode: str, control_dir: Path, 
             pass # Skipping rotation check on stat fail
 
     # 1. Get raw item
-    raw = _get_next_item(mode)
+    raw = _get_next_item(mode, source=source)
     if not raw:
         # Fallback if sampler unavailable
         return
@@ -374,6 +501,7 @@ def run_agent(cfg: AgentConfig, max_iterations: Optional[int] = None) -> int:
             
             metrics = {
                 "mode": cfg.mode.upper(),
+                "source": (cfg.source or "sim").upper(),
                 "tick": i,
                 "out_size": out_size,
                 "age_s": out_age_s
@@ -418,7 +546,14 @@ def run_agent(cfg: AgentConfig, max_iterations: Optional[int] = None) -> int:
 
         # Emit a sample record (Real Data) - ONLY if Watchdog is healthy
         if watchdog_ok:
-            append_record(cfg.output_jsonl, cfg.node_id, cfg.mode, cfg.control_dir, cfg.data_dir)
+            append_record(
+                cfg.output_jsonl,
+                cfg.node_id,
+                cfg.mode,
+                cfg.control_dir,
+                cfg.data_dir,
+                source=cfg.source,
+            )
         else:
             # Rate-limited whine about isolation
             if i % 10 == 0:
@@ -435,12 +570,13 @@ def main() -> int:
     parser = argparse.ArgumentParser(description='Calamum Observer Agent (local daemon)')
     parser.add_argument('--repo-root', help='Override repo root (must contain logs/)')
     parser.add_argument('--mode', default=os.getenv('CALAMUM_OPS_MODE', 'canary'))
+    parser.add_argument('--source', default=os.getenv('CALAMUM_MOLTBOOK_SOURCE', 'sim'), choices=['sim', 'live'])
     parser.add_argument('--interval-sec', type=float, default=float(os.getenv('CALAMUM_AGENT_INTERVAL_SEC', '2.0')))
     parser.add_argument('--node-id', default=os.getenv('CALAMUM_NODE_ID', 'calamum-node-01'))
     parser.add_argument('--max-iterations', type=int, help='For tests: stop after N iterations')
     args = parser.parse_args()
 
-    cfg = load_config(args.repo_root, args.mode, args.interval_sec, args.node_id)
+    cfg = load_config(args.repo_root, args.mode, args.interval_sec, args.node_id, source=args.source)
     return run_agent(cfg, max_iterations=args.max_iterations)
 
 
