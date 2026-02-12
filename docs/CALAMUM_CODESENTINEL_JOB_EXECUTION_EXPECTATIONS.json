@@ -1,0 +1,108 @@
+{
+  "meta": {
+    "type": "operations_policy",
+    "version": "1.0.0",
+    "id": "CALAMUM_CODESENTINEL_JOB_EXECUTION_EXPECTATIONS_20260212",
+    "scope": "projects/calamum-moltbook-observer",
+    "owner": "ORACL-Prime",
+    "primary_stakeholder_approver": "joediggidyyy",
+    "status": "ACTIVE",
+    "last_updated_utc": "2026-02-12"
+  },
+  "purpose": "Define Calamum-scoped job execution expectations when CodeSentinel is the job orchestrator (names-only, fail-closed).",
+  "ssot": {
+    "tasks_file": "operations/tasks.json",
+    "queststack_parse_surface": "projects/calamum-moltbook-observer/queststacks/*.md"
+  },
+  "gate_contract": {
+    "gate": "PRE_JOB",
+    "policy": "fail_closed",
+    "notes": [
+      "PRE_JOB parses QuestStack markdown to locate required artifacts.",
+      "The first occurrence of 'jobs/' in the QuestStack is treated as the repo-root job stub link."
+    ],
+    "required_artifacts": [
+      {
+        "name": "questframe_spec",
+        "path_prefix": "projects/calamum-moltbook-observer/questframes/",
+        "path_pattern_hint": "QF-*.json"
+      },
+      {
+        "name": "job_doc_stub_repo_root",
+        "path_prefix": "jobs/",
+        "path_pattern_hint": "CALAMUM_JOB_*.md"
+      },
+      {
+        "name": "job_report",
+        "path_prefix": "docs/reports/operations/",
+        "path_pattern_hint": "JOB_REPORT_<QS-ID>.md"
+      },
+      {
+        "name": "queststack_log",
+        "path_prefix": "logs/queststack/",
+        "path_pattern_hint": "<QS-ID>_log.md"
+      },
+      {
+        "name": "queststack_evidence",
+        "path_prefix": "logs/queststack/",
+        "path_pattern_hint": "<QS-ID>_evidence.jsonl"
+      }
+    ],
+    "recommended_artifacts": [
+      {
+        "name": "gate_evidence_stream",
+        "path": "logs/behavioral/gates/gate_events.jsonl"
+      }
+    ]
+  },
+  "artifact_spine": {
+    "queststack_must_link": [
+      "projects/calamum-moltbook-observer/questframes/<QF-ID>.json",
+      "jobs/<CALAMUM_JOB_xxxx...>.md",
+      "projects/calamum-moltbook-observer/jobs/<CALAMUM_JOB_xxxx...>.md",
+      "projects/calamum-moltbook-observer/jobs/<CALAMUM_JOB_xxxx...>.json",
+      "docs/reports/operations/JOB_REPORT_<QS-ID>.md",
+      "logs/queststack/<QS-ID>_log.md",
+      "logs/queststack/<QS-ID>_evidence.jsonl"
+    ],
+    "conflict_resolution": {
+      "project_locality": {
+        "must_live_under_project_tree": [
+          "projects/calamum-moltbook-observer/local_untracked/",
+          "projects/calamum-moltbook-observer/logs/"
+        ]
+      },
+      "system_level_evidence": {
+        "must_live_at_repo_root": [
+          "docs/reports/operations/",
+          "logs/queststack/",
+          "logs/behavioral/gates/"
+        ]
+      }
+    }
+  },
+  "lifecycle": {
+    "start": "codesentinel job start <task_id>",
+    "close": "codesentinel job close <task_id>",
+    "post_close_required": [
+      "codesentinel memory health --json"
+    ]
+  },
+  "security": {
+    "names_only": true,
+    "icmp_assumed_disabled": true,
+    "secrets": {
+      "never_print_or_log": true,
+      "never_write_tracked": true,
+      "live_collection_key": {
+        "env_var": "MOLTBOOK_API_KEY",
+        "approved_acquisition": "KEYSMITH (sandbox minting; claim_url-only human ceremony; sealed-drop import into VAULT/OS secret storage)",
+        "hard_stops": [
+          "api key printed to stdout/stderr",
+          "api key written to tracked path",
+          "human copy/paste or viewing required"
+        ]
+      }
+    }
+  }
+}
