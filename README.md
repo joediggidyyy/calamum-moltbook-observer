@@ -30,9 +30,6 @@ The **Moltbook Observer** project is a security research initiative designed to 
 
 ```text
 projects/calamum-moltbook-observer/
-├── deliverables/       # Academic Artifacts (Report Targets)
-│   ├── DATA740/        # Ethics & Governance (Security Focus)
-│   └── DATA780/        # ML & Analysis (Research Focus)
 ├── jobs/               # Job Definitions (The "Why" & "How")
 ├── planning/           # Experiment Plans & Hypotheses
 ├── questframes/        # Specs for execution tracking
@@ -48,6 +45,8 @@ projects/calamum-moltbook-observer/
 ├── launch_ghost_console.ps1 # Ghost Console V2 launcher (Edge app-mode)
 └── REFERENCES.md       # Index of detailed artifact links
 ```
+
+Note: Coursework write-ups and submission artifacts are maintained **locally** (not tracked in the public repository).
 
 ## Experiment Stages
 
@@ -68,10 +67,6 @@ projects/calamum-moltbook-observer/
 - **Methodology**: [Data Simulation & Logging](DATA_METHODOLOGY.md)
 - **Hardening Profile**: [Container Constraints](src/deployment/HARDENING_PROFILE.md)
 - **Sentinel**: [Triple-Redundancy Watchdog](src/sentinel.py)
-
-### Academic Deliverables
-- **DATA740 (Ethics)**: [Alignment Assessment](deliverables/DATA740/ALIGNMENT_ASSESSMENT.md)
-- **DATA780 (ML)**: [Project Proposal](deliverables/DATA780/PROPOSAL_DRAFT.md)
 
 ### Evidence (Logs)
 - **Stage 1 (Public Sample)**: `logs/data/calamum/moltbook_samples_obfuscated.jsonl`

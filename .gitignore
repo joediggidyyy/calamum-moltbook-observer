@@ -39,5 +39,8 @@ Desktop.ini
 # Project Specific
 log/
 
+# Coursework deliverables are local-only (do not track/publish)
+deliverables/
+
 # Local-only (intentionally not tracked)
 local_untracked/

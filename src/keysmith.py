@@ -51,6 +51,7 @@ class KeysmithArtifacts:
     sealed_drop_bin: Path
     audit_jsonl: Path
     import_helper_ps1: Path
+    persist_user_env_ps1: Path
 
 
 def _utc_timestamp_compact() -> str:
@@ -229,6 +230,28 @@ def _render_import_helper_ps1(sealed_drop_path: Path) -> str:
     )
 
 
+def _render_persist_user_env_ps1(sealed_drop_path: Path) -> str:
+    # Important: this script must never print the secret.
+    # It prints presence-only evidence.
+    return (
+        "# KEYSMITH persistence helper (names-only)\n"
+        "# Reads a sealed-drop file and persists MOLTBOOK_API_KEY to the current user environment (Windows).\n"
+        "# WARNING: Do not open the sealed-drop file in an editor.\n"
+        "# NOTE: This stores the key in the user environment so it can be used by future sessions.\n"
+        "\n"
+        f"$sealedDropPath = '{sealed_drop_path.as_posix()}'\n"
+        "if (-not (Test-Path -LiteralPath $sealedDropPath)) {\n"
+        "  Write-Error 'Sealed-drop file not found'\n"
+        "  exit 2\n"
+        "}\n"
+        "$bytes = [System.IO.File]::ReadAllBytes($sealedDropPath)\n"
+        "$value = [System.Text.Encoding]::UTF8.GetString($bytes)\n"
+        "[System.Environment]::SetEnvironmentVariable('MOLTBOOK_API_KEY', $value, 'User')\n"
+        "$env:MOLTBOOK_API_KEY = $value\n"
+        "Write-Output 'MOLTBOOK_API_KEY persisted to User env: true'\n"
+    )
+
+
 def moltbook_register(
     *,
     base_url: str,
@@ -295,6 +318,7 @@ def run_keysmith(config: KeysmithConfig) -> KeysmithArtifacts:
         sealed_drop_bin=config.output_dir / "sealed_drop.bin",
         audit_jsonl=config.output_dir / "keysmith_audit.jsonl",
         import_helper_ps1=config.output_dir / "Import-MoltbookApiKeyFromSealedDrop.ps1",
+        persist_user_env_ps1=config.output_dir / "Persist-MoltbookApiKeyToUserEnv.ps1",
     )
 
     _append_jsonl(
@@ -328,6 +352,7 @@ def run_keysmith(config: KeysmithConfig) -> KeysmithArtifacts:
 
     # Import helper lives alongside the sealed drop (both must remain untracked).
     _write_text(artifacts.import_helper_ps1, _render_import_helper_ps1(artifacts.sealed_drop_bin))
+    _write_text(artifacts.persist_user_env_ps1, _render_persist_user_env_ps1(artifacts.sealed_drop_bin))
 
     _append_jsonl(
         artifacts.audit_jsonl,
@@ -338,6 +363,7 @@ def run_keysmith(config: KeysmithConfig) -> KeysmithArtifacts:
             "sealed_drop_path": str(artifacts.sealed_drop_bin.as_posix()),
             "sealed_drop_len_bytes": int(secret_len),
             "import_helper_path": str(artifacts.import_helper_ps1.as_posix()),
+            "persist_user_env_path": str(artifacts.persist_user_env_ps1.as_posix()),
         },
     )
 
@@ -356,6 +382,7 @@ def run_keysmith(config: KeysmithConfig) -> KeysmithArtifacts:
                 "sealed_drop_bin": str(artifacts.sealed_drop_bin.as_posix()),
                 "audit_jsonl": str(artifacts.audit_jsonl.as_posix()),
                 "import_helper_ps1": str(artifacts.import_helper_ps1.as_posix()),
+                "persist_user_env_ps1": str(artifacts.persist_user_env_ps1.as_posix()),
             },
             "notes": {
                 "secrets": "api_key is stored only in sealed_drop_bin; never printed/logged",
@@ -438,6 +465,7 @@ def main(argv: Optional[Iterable[str]] = None) -> int:
         print(f"claim_url_path={artifacts.claim_url_txt.as_posix()}")
         print(f"sealed_drop_path={artifacts.sealed_drop_bin.as_posix()}")
         print(f"import_helper_path={artifacts.import_helper_ps1.as_posix()}")
+        print(f"persist_user_env_path={artifacts.persist_user_env_ps1.as_posix()}")
         print(f"audit_path={artifacts.audit_jsonl.as_posix()}")
         return 0
 

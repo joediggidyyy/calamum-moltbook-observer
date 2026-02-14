@@ -8,7 +8,7 @@ This project is part of a university coursework submission (DATA740/DATA780).
 - **External**: Pull requests are welcome but may not be merged until after the semester grading period to preserve the fidelity of the simplified "Submission State".
 
 ## Code of Conduct
-All contributors must adhere to the Ethical Matrix defined in `deliverables/DATA740/ALIGNMENT_ASSESSMENT.md`.
+All contributors must adhere to the project’s privacy/safety constraints and ethical posture as documented in `DATA_METHODOLOGY.md`.
 - **DO NOT** commit raw data from the Moltbook platform.
 - **DO NOT** commit real credentials or API tokens.
 - **DO NOT** remove the `obfuscator_lib` safety constraints.

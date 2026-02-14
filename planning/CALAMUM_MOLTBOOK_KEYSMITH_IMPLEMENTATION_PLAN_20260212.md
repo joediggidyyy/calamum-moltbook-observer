@@ -4,7 +4,7 @@
 
 - Template ID: `VAULT_TEMPLATE_PLAN_V1`
 - Paired authoritative template: `PLAN_TEMPLATE.json.template`
-- Status: `planned`
+- Status: `in-progress`
 - Owner: `ORACL-Prime`
 - Created: `2026-02-12`
 
@@ -94,13 +94,37 @@ Definition of done:
     - `projects/calamum-moltbook-observer/questframes/QF-CALAMUM-MOLTBOOK-KEYSMITH-IMPLEMENTATION-20260212.json`
     - `docs/reports/operations/JOB_REPORT_QS-CALAMUM-MOLTBOOK-KEYSMITH-IMPLEMENTATION-20260212.md`
 
-- [ ] (2) Select sealed-drop mechanism and define artifact formats (status: not-started)
+- [x] (2) Select sealed-drop mechanism and define artifact formats (status: completed)
+  - Implemented artifact set (names-only; secrets sealed):
+    - `sealed_drop.bin` (api_key bytes; never printed)
+    - `claim_url.txt` (non-secret)
+    - `keysmith_audit.jsonl` (names-only)
+    - `keysmith_result.json` (names-only)
+    - `Import-MoltbookApiKeyFromSealedDrop.ps1` (session import; presence-only output)
+    - `Persist-MoltbookApiKeyToUserEnv.ps1` (Windows User env persistence; presence-only output)
+  - Evidence:
+    - `projects/calamum-moltbook-observer/src/keysmith.py`
 
-- [ ] (3) Implement sandboxed register client with allowlisted outputs (status: not-started)
+- [x] (3) Implement sandboxed register client with allowlisted outputs (status: completed)
+  - Sandbox enforcement (fail-closed): non-dry-run requires `KEYSMITH_SANDBOX=1` (or explicit break-glass override).
+  - Container lane:
+    - `projects/calamum-moltbook-observer/deployment/keysmith/Dockerfile`
+    - `projects/calamum-moltbook-observer/deployment/keysmith/requirements.txt`
+    - `projects/calamum-moltbook-observer/tools/windows/Invoke-KeysmithSandbox.ps1`
+  - Evidence:
+    - `projects/calamum-moltbook-observer/src/keysmith.py`
 
-- [ ] (4) Implement VAULT/OS import glue and presence-only validation (status: not-started)
+- [x] (4) Implement VAULT/OS import glue and presence-only validation (status: completed)
+  - OS lane (Windows): KEYSMITH emits PowerShell helpers that set `MOLTBOOK_API_KEY` without printing it.
+  - Notes:
+    - Full CodeSentinel VAULT SSOT integration for `MOLTBOOK_API_KEY` is pending policy/SSOT expansion.
+    - Current implementation satisfies the "OS secret storage" lane.
+  - Evidence:
+    - `projects/calamum-moltbook-observer/src/keysmith.py`
 
-- [ ] (5) Add tests for fail-closed and no-secret logging (status: not-started)
+- [x] (5) Add tests for fail-closed and no-secret logging (status: completed)
+  - Evidence:
+    - `projects/calamum-moltbook-observer/src/tests/test_keysmith.py`
 
 ## Success metrics
 

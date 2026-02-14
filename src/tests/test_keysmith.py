@@ -53,12 +53,14 @@ def test_keysmith_dry_run_writes_artifacts_and_never_prints_secret_placeholder()
         sealed_path = out_dir / "sealed_drop.bin"
         audit_path = out_dir / "keysmith_audit.jsonl"
         import_ps1 = out_dir / "Import-MoltbookApiKeyFromSealedDrop.ps1"
+        persist_ps1 = out_dir / "Persist-MoltbookApiKeyToUserEnv.ps1"
         result_json = out_dir / "keysmith_result.json"
 
         assert claim_path.exists()
         assert sealed_path.exists()
         assert audit_path.exists()
         assert import_ps1.exists()
+        assert persist_ps1.exists()
         assert result_json.exists()
 
         claim_text = claim_path.read_text(encoding="utf-8")
