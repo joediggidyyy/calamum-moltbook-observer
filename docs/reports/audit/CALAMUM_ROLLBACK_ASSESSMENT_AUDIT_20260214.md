@@ -194,3 +194,23 @@ Outstanding high-priority remediation still open after this continuation:
 
 - F3 code-path correction in `src/keysmith.py` (sandbox-only secret output semantics).
 - Reconciliation of unapproved wording in Job 0018 report + queststack references.
+
+### Execution progress logged (2026-02-15, F3 code remediation)
+
+F3 has been advanced in-code with targeted, doctrine-aligned changes:
+
+- `projects/calamum-moltbook-observer/src/keysmith.py`
+  - Default output behavior now prefers a sandbox-local root when `KEYSMITH_SANDBOX=1` (via `KEYSMITH_SANDBOX_OUTPUT_ROOT`, default `/tmp/calamum_keysmith_exports`).
+  - Added fail-closed guard: sandbox runs reject `output_dir` outside `KEYSMITH_SANDBOX_OUTPUT_ROOT`.
+  - Removed host-oriented helper artifact emission (`Import-MoltbookApiKeyFromSealedDrop.ps1`, `Persist-MoltbookApiKeyToUserEnv.ps1`).
+  - Updated result/audit metadata to reflect sandbox-contained sealed-drop handoff and no host helper script generation.
+
+- `projects/calamum-moltbook-observer/src/tests/test_keysmith.py`
+  - Updated artifact expectations (helper scripts no longer expected).
+  - Added fail-closed test for sandbox output root enforcement.
+
+Validation evidence:
+
+- Targeted test run PASS:
+  - `pytest -q projects/calamum-moltbook-observer/src/tests/test_keysmith.py`
+  - Result: `5 passed`

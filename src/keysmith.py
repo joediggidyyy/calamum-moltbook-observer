@@ -50,8 +50,6 @@ class KeysmithArtifacts:
     claim_url_txt: Path
     sealed_drop_bin: Path
     audit_jsonl: Path
-    import_helper_ps1: Path
-    persist_user_env_ps1: Path
 
 
 def _utc_timestamp_compact() -> str:
@@ -207,6 +205,11 @@ def _default_register_path() -> str:
 
 
 def _default_output_dir() -> Path:
+    # Default to a sandbox-internal ephemeral location when running in sandbox.
+    # For non-sandbox dry-runs, preserve local_untracked for developer ergonomics.
+    if _sandbox_flag():
+        root = Path(os.environ.get("KEYSMITH_SANDBOX_OUTPUT_ROOT", "/tmp/calamum_keysmith_exports"))
+        return root / _utc_timestamp_compact()
     return _local_untracked_root() / "keysmith_exports" / _utc_timestamp_compact()
 
 
@@ -300,6 +303,17 @@ def run_keysmith(config: KeysmithConfig) -> KeysmithArtifacts:
     host = ensure_allowlisted_host(config.base_url, config.allowed_hosts)
     _require_sandbox_for_live_mint(dry_run=config.dry_run)
 
+    # Fail closed for sandbox lane: require a sandbox-local output root.
+    # This prevents writing sealed-drop artifacts to likely host-mounted targets.
+    if _sandbox_flag():
+        sandbox_root = Path(os.environ.get("KEYSMITH_SANDBOX_OUTPUT_ROOT", "/tmp/calamum_keysmith_exports")).resolve()
+        out = config.output_dir.resolve()
+        if not _is_within(out, sandbox_root):
+            raise KeysmithError(
+                "Refusing sandbox KEYSMITH output_dir outside KEYSMITH_SANDBOX_OUTPUT_ROOT. "
+                f"output_dir={out} sandbox_root={sandbox_root}"
+            )
+
     if config.output_dir.exists():
         # Fail closed to avoid overwriting or reusing sealed-drop artifacts.
         try:
@@ -317,8 +331,6 @@ def run_keysmith(config: KeysmithConfig) -> KeysmithArtifacts:
         claim_url_txt=config.output_dir / "claim_url.txt",
         sealed_drop_bin=config.output_dir / "sealed_drop.bin",
         audit_jsonl=config.output_dir / "keysmith_audit.jsonl",
-        import_helper_ps1=config.output_dir / "Import-MoltbookApiKeyFromSealedDrop.ps1",
-        persist_user_env_ps1=config.output_dir / "Persist-MoltbookApiKeyToUserEnv.ps1",
     )
 
     _append_jsonl(
@@ -350,10 +362,6 @@ def run_keysmith(config: KeysmithConfig) -> KeysmithArtifacts:
     _write_text(artifacts.claim_url_txt, claim_url + "\n")
     secret_len = _seal_drop_write(artifacts.sealed_drop_bin, api_key)
 
-    # Import helper lives alongside the sealed drop (both must remain untracked).
-    _write_text(artifacts.import_helper_ps1, _render_import_helper_ps1(artifacts.sealed_drop_bin))
-    _write_text(artifacts.persist_user_env_ps1, _render_persist_user_env_ps1(artifacts.sealed_drop_bin))
-
     _append_jsonl(
         artifacts.audit_jsonl,
         {
@@ -362,8 +370,7 @@ def run_keysmith(config: KeysmithConfig) -> KeysmithArtifacts:
             "claim_url_path": str(artifacts.claim_url_txt.as_posix()),
             "sealed_drop_path": str(artifacts.sealed_drop_bin.as_posix()),
             "sealed_drop_len_bytes": int(secret_len),
-            "import_helper_path": str(artifacts.import_helper_ps1.as_posix()),
-            "persist_user_env_path": str(artifacts.persist_user_env_ps1.as_posix()),
+            "handoff_model": "sandbox-contained sealed_drop",
         },
     )
 
@@ -381,12 +388,11 @@ def run_keysmith(config: KeysmithConfig) -> KeysmithArtifacts:
                 "claim_url_txt": str(artifacts.claim_url_txt.as_posix()),
                 "sealed_drop_bin": str(artifacts.sealed_drop_bin.as_posix()),
                 "audit_jsonl": str(artifacts.audit_jsonl.as_posix()),
-                "import_helper_ps1": str(artifacts.import_helper_ps1.as_posix()),
-                "persist_user_env_ps1": str(artifacts.persist_user_env_ps1.as_posix()),
             },
             "notes": {
                 "secrets": "api_key is stored only in sealed_drop_bin; never printed/logged",
                 "claim_url": "claim_url is non-secret and stored in claim_url.txt",
+                "host_helpers": "No host import/persist helper scripts are emitted by KEYSMITH.",
             },
         },
     )
@@ -464,8 +470,6 @@ def main(argv: Optional[Iterable[str]] = None) -> int:
         print(f"output_dir={artifacts.output_dir.as_posix()}")
         print(f"claim_url_path={artifacts.claim_url_txt.as_posix()}")
         print(f"sealed_drop_path={artifacts.sealed_drop_bin.as_posix()}")
-        print(f"import_helper_path={artifacts.import_helper_ps1.as_posix()}")
-        print(f"persist_user_env_path={artifacts.persist_user_env_ps1.as_posix()}")
         print(f"audit_path={artifacts.audit_jsonl.as_posix()}")
         return 0
 

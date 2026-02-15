@@ -52,15 +52,11 @@ def test_keysmith_dry_run_writes_artifacts_and_never_prints_secret_placeholder()
         claim_path = out_dir / "claim_url.txt"
         sealed_path = out_dir / "sealed_drop.bin"
         audit_path = out_dir / "keysmith_audit.jsonl"
-        import_ps1 = out_dir / "Import-MoltbookApiKeyFromSealedDrop.ps1"
-        persist_ps1 = out_dir / "Persist-MoltbookApiKeyToUserEnv.ps1"
         result_json = out_dir / "keysmith_result.json"
 
         assert claim_path.exists()
         assert sealed_path.exists()
         assert audit_path.exists()
-        assert import_ps1.exists()
-        assert persist_ps1.exists()
         assert result_json.exists()
 
         claim_text = claim_path.read_text(encoding="utf-8")
@@ -69,6 +65,10 @@ def test_keysmith_dry_run_writes_artifacts_and_never_prints_secret_placeholder()
         # Audit log must never contain the placeholder secret.
         audit_text = audit_path.read_text(encoding="utf-8")
         assert "DRY_RUN_PLACEHOLDER_DO_NOT_USE" not in audit_text
+
+        # Host helper scripts are intentionally no longer emitted.
+        assert not (out_dir / "Import-MoltbookApiKeyFromSealedDrop.ps1").exists()
+        assert not (out_dir / "Persist-MoltbookApiKeyToUserEnv.ps1").exists()
 
 
 def test_keysmith_non_dry_run_requires_sandbox_env_flag():
@@ -86,3 +86,27 @@ def test_keysmith_non_dry_run_requires_sandbox_env_flag():
             keysmith.run_keysmith(cfg)
 
         assert "sandbox" in str(e.value).lower()
+
+
+def test_keysmith_sandbox_rejects_output_outside_sandbox_root(monkeypatch):
+    with tempfile.TemporaryDirectory() as td:
+        sandbox_root = Path(td) / "sandbox"
+        sandbox_root.mkdir(parents=True, exist_ok=True)
+        unsafe = Path(td) / "outside"
+
+        monkeypatch.setenv("KEYSMITH_SANDBOX", "1")
+        monkeypatch.setenv("KEYSMITH_SANDBOX_OUTPUT_ROOT", str(sandbox_root))
+
+        cfg = keysmith.KeysmithConfig(
+            base_url="https://api.moltbook.com/v1",
+            register_path="agents/register",
+            output_dir=unsafe,
+            dry_run=True,
+            allowed_hosts=("api.moltbook.com",),
+            agent_metadata={"agent_name": "test"},
+        )
+
+        with pytest.raises(keysmith.KeysmithError) as e:
+            keysmith.run_keysmith(cfg)
+
+        assert "sandbox_output_root" in str(e.value).lower() or "sandbox" in str(e.value).lower()

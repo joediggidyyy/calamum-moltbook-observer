@@ -21,7 +21,8 @@ This QuestStack implements the Option-2 decision:
 - KEYSMITH runs in a sandbox/container.
 - KEYSMITH mints/obtains an agent `api_key` via the vendor registration endpoint.
 - Humans may complete a vendor claim/verification ceremony via `claim_url` only (non-secret).
-- The secret `api_key` is handed off via sealed drop for import into VAULT / OS secret storage.
+- The secret `api_key` is handled via a sandbox-contained sealed-drop flow with fail-closed output-root enforcement.
+- Host import/persist helper-script workflows are not part of the approved KEYSMITH artifact surface.
 
 Source proposal (analysis-only):
 - `projects/calamum-moltbook-observer/docs/reports/CALAMUM_KEYSMITH_SANDBOXED_MOLTBOOK_KEY_MINTING_PROPOSAL_20260212.md`
@@ -68,7 +69,7 @@ These artifacts are expected to exist and remain fresh during execution:
 - Run `codesentinel memory health --json` after close.
 - Treat all KEYSMITH outputs as allowlisted artifacts:
   - `claim_url` may be recorded in plaintext.
-  - `api_key` must be sealed; never printed; never tracked.
+  - `api_key` must be sealed; never printed; never tracked; and output paths must remain within sandbox-approved roots.
 
 ---
 
