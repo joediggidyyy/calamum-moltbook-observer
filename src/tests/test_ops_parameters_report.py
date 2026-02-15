@@ -16,9 +16,6 @@ def test_ops_parameters_report_includes_figures_and_density(tmp_path: Path, monk
     repo_root = tmp_path
     project_root = tmp_path
 
-    # Mark the temp tree as a Calamum project root so calamum_config will trust it.
-    (project_root / "PROJECT_MANIFEST.json").write_text("{}\n", encoding="utf-8")
-
     # Minimal tracked template
     tpl_rel = "tpl.md.template"
     tpl_path = repo_root / tpl_rel

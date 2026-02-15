@@ -8,6 +8,18 @@
 
 **Security posture:** Names-only. Do not paste secrets to chat, logs, job reports, or repo-tracked files.
 
+## Doctrine alignment addendum (2026-02-15)
+
+This proposal is retained as historical design analysis, but it is **not authoritative** where it conflicts with current operator doctrine.
+
+Current doctrine clarification:
+
+- No host directory should contain Moltbook-originated secret material.
+- KEYSMITH secret handling must remain sandbox-contained for mint/validation/tamper checks, with direct secure import workflows that avoid host persistence.
+- Observer remains Moltbook-facing only from the hardened container lane.
+
+Accordingly, any wording below that implies host-mounted secret export should be interpreted as legacy feasibility exploration, not approved production behavior.
+
 ---
 
 ## Problem statement

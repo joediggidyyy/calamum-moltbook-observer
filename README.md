@@ -127,6 +127,10 @@ For local testing without a live container, `src/calamum_observer_agent.py` can:
 - append JSONL records
 - consume/acknowledge control signals
 
+**Doctrine alignment note (2026-02-15):**
+- The above local demo lane is telemetry simulation only and is **not** authorized for Moltbook-facing collection.
+- Any Moltbook-facing observer execution is container-only per `docs/CALAMUM_CODESENTINEL_JOB_EXECUTION_EXPECTATIONS.md`.
+
 ## Environment variables (optional overrides)
 - `CALAMUM_OPS_MODE`: dashboard mode label (normalized; defaults to `CANARY`)
 - `CALAMUM_FRESHNESS_SEC`: heartbeat freshness threshold (default: `15`)

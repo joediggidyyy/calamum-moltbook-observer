@@ -13,7 +13,6 @@ if str(_SRC_DIR) not in sys.path:
 def test_watchdog_scheduler_due_and_catchup(tmp_path: Path, monkeypatch) -> None:
     # Arrange a minimal Calamum runtime tree.
     project_root = tmp_path
-    (project_root / "PROJECT_MANIFEST.json").write_text("{}\n", encoding="utf-8")
     log_dir = project_root / "logs"
     health_dir = log_dir / "health"
     ctrl_dir = log_dir / "control" / "calamum"
@@ -55,7 +54,6 @@ def test_watchdog_scheduler_due_and_catchup(tmp_path: Path, monkeypatch) -> None
 
 def test_watchdog_scheduler_state_file_created(tmp_path: Path, monkeypatch) -> None:
     project_root = tmp_path
-    (project_root / "PROJECT_MANIFEST.json").write_text("{}\n", encoding="utf-8")
     log_dir = project_root / "logs"
     health_dir = log_dir / "health"
     ctrl_dir = log_dir / "control" / "calamum"

@@ -1,36 +1,6 @@
 import os
 from pathlib import Path
 
-def _truthy_env(name: str) -> bool:
-    v = os.getenv(name)
-    if v is None:
-        return False
-    v = v.strip().lower()
-    return v in {"1", "true", "yes", "y", "on"}
-
-
-def _allow_nonlocal_paths() -> bool:
-    """Return True only when an operator explicitly allows non-project-local paths."""
-    # Default is fail-closed: project-local only.
-    return _truthy_env("CALAMUM_ALLOW_NONLOCAL_PATHS")
-
-
-def _is_calamum_project_root(p: Path) -> bool:
-    """Project root must contain the Calamum project marker."""
-    try:
-        return (p / "PROJECT_MANIFEST.json").exists()
-    except Exception:
-        return False
-
-
-def _is_within(child: Path, parent: Path) -> bool:
-    try:
-        child.resolve().relative_to(parent.resolve())
-        return True
-    except Exception:
-        return False
-
-
 def _find_repo_root(start: Path) -> Path:
     """Best-effort Calamum *project* root discovery.
 
@@ -48,11 +18,7 @@ def _find_repo_root(start: Path) -> Path:
     if env_root:
         try:
             p = Path(env_root).resolve()
-            # Security/consistency: only trust an explicit override if it looks like
-            # the Calamum project root. This prevents accidental writes to the
-            # workspace root (e.g., repo-root logs/) when CALAMUM_REPO_ROOT is
-            # set globally.
-            if p.exists() and _is_calamum_project_root(p):
+            if p.exists():
                 return p
         except Exception:
             pass
@@ -79,7 +45,7 @@ def _find_repo_root(start: Path) -> Path:
 
 
 # Consolidate log directory logic.
-# Convention: Default to project-root `logs/` unless overridden.
+# Convention: Default to repo-root `logs/` unless overridden.
 # This can be injected via CALAMUM_LOG_DIR.
 
 def get_calamum_log_dir() -> Path:
@@ -92,10 +58,7 @@ def get_calamum_log_dir() -> Path:
     """
     env_val = os.getenv('CALAMUM_LOG_DIR')
     if env_val:
-        p = Path(env_val).resolve()
-        project_root = _find_repo_root(Path(__file__).resolve())
-        if _allow_nonlocal_paths() or _is_within(p, project_root):
-            return p
+        return Path(env_val).resolve()
 
     repo_root = _find_repo_root(Path(__file__).resolve())
     return (repo_root / 'logs')
@@ -105,10 +68,7 @@ def get_calamum_data_dir() -> Path:
     # Allow explicit override of data dir, or fall back to log_dir/data/calamum
     env_val = os.getenv('CALAMUM_DATA_DIR')
     if env_val:
-        p = Path(env_val).resolve()
-        project_root = _find_repo_root(Path(__file__).resolve())
-        if _allow_nonlocal_paths() or _is_within(p, project_root):
-            return p
+        return Path(env_val).resolve()
     # Updated to enforce subdirectory per V2 Design
     return get_calamum_log_dir() / 'data' / 'calamum'
 
@@ -116,10 +76,7 @@ def get_calamum_control_dir() -> Path:
     """Return the control signal subdirectory."""
     env_val = os.getenv('CALAMUM_CONTROL_DIR')
     if env_val:
-        p = Path(env_val).resolve()
-        project_root = _find_repo_root(Path(__file__).resolve())
-        if _allow_nonlocal_paths() or _is_within(p, project_root):
-            return p
+        return Path(env_val).resolve()
     return get_calamum_log_dir() / 'control' / 'calamum'
 
 def get_calamum_health_dir() -> Path:
