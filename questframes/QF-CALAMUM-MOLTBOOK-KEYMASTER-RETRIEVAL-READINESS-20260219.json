@@ -1,0 +1,33 @@
+{
+  "meta": {
+    "type": "questframe",
+    "version": "1.0.0",
+    "id": "QF-CALAMUM-MOLTBOOK-KEYMASTER-RETRIEVAL-READINESS-20260219",
+    "parent_queststack": "QS-CALAMUM-MOLTBOOK-KEYMASTER-RETRIEVAL-READINESS-20260219",
+    "created_at": "2026-02-19T00:00:00Z",
+    "status": "planned"
+  },
+  "spec": {
+    "title": "Keymaster retrieval readiness (high-value lane)",
+    "owner": "ORACL-Prime",
+    "participants": [
+      "joediggidyyy",
+      "ORACL-Prime"
+    ],
+    "goals": [
+      "Establish standalone Keymaster lane with strict policy guardrails",
+      "Complete analyze/dry-run/validate before any live attempt",
+      "Produce explicit gas-pedal indicators for go/no-go decision"
+    ],
+    "deliverables": [
+      "projects/calamum-moltbook-observer/queststacks/QS-CALAMUM-MOLTBOOK-KEYMASTER-RETRIEVAL-READINESS-20260219.md",
+      "projects/calamum-moltbook-observer/questframes/QF-CALAMUM-MOLTBOOK-KEYMASTER-RETRIEVAL-READINESS-20260219.json",
+      "jobs/CALAMUM_JOB_0021_MOLTBOOK_KEYMASTER_RETRIEVAL_READINESS_20260219.md",
+      "projects/calamum-moltbook-observer/jobs/CALAMUM_JOB_0021_MOLTBOOK_KEYMASTER_RETRIEVAL_READINESS_20260219.md",
+      "projects/calamum-moltbook-observer/jobs/CALAMUM_JOB_0021_MOLTBOOK_KEYMASTER_RETRIEVAL_READINESS_20260219.json",
+      "docs/reports/operations/JOB_REPORT_QS-CALAMUM-MOLTBOOK-KEYMASTER-RETRIEVAL-READINESS-20260219.md",
+      "logs/queststack/QS-CALAMUM-MOLTBOOK-KEYMASTER-RETRIEVAL-READINESS-20260219_log.md",
+      "logs/queststack/QS-CALAMUM-MOLTBOOK-KEYMASTER-RETRIEVAL-READINESS-20260219_evidence.jsonl"
+    ]
+  }
+}
