@@ -168,6 +168,18 @@ def _norm_status(raw: str) -> str:
     return v
 
 
+def _norm_status_source_strategy(raw: Any) -> str:
+    """Normalize task-level status source strategy.
+
+    - doc_enforced: compare SSOT task status against task path + referenced docs + dashboard.
+    - ssot_only: treat operations/tasks.json as authoritative and skip document/dashboard checks.
+    """
+    v = str(raw or "").strip().lower().replace("-", "_")
+    if v in {"ssot_only", "ssot", "ssotonly"}:
+        return "ssot_only"
+    return "doc_enforced"
+
+
 def _extract_status_from_markdown(text: str) -> str:
     if not text:
         return ""
@@ -258,6 +270,8 @@ def _check_status_sync_global(repo_root: Path) -> Dict[str, Any]:
         "tasks_path": str(tasks_path),
         "dashboard_path": str((repo_root / "docs" / "dashboards" / "room" / "JOBS_DASHBOARD.md").resolve()),
         "checked_task_count": 0,
+        "status_source_strategy_counts": {"doc_enforced": 0, "ssot_only": 0},
+        "ssot_only_task_ids": [],
         "violations": [],
         "notes": [],
     }
@@ -280,6 +294,11 @@ def _check_status_sync_global(repo_root: Path) -> Dict[str, Any]:
         if not task_id or not t_path or not expected:
             continue
 
+        strategy = _norm_status_source_strategy(t.get("status_source_strategy") or t.get("status_source"))
+        strategy_counts = result.get("status_source_strategy_counts")
+        if isinstance(strategy_counts, dict):
+            strategy_counts[strategy] = int(strategy_counts.get(strategy, 0) or 0) + 1
+
         def add_violation(doc_path: str, found: str, expected_status: str, reason: str) -> None:
             result["violations"].append(
                 {
@@ -290,6 +309,12 @@ def _check_status_sync_global(repo_root: Path) -> Dict[str, Any]:
                     "reason": reason,
                 }
             )
+
+        if strategy == "ssot_only":
+            ids = result.get("ssot_only_task_ids")
+            if isinstance(ids, list):
+                ids.append(task_id)
+            continue
 
         dash_found = dashboard_status.get(task_id, "")
         if dash_found and dash_found != expected:
@@ -341,6 +366,12 @@ def _check_status_sync_global(repo_root: Path) -> Dict[str, Any]:
                 add_violation(rel_norm, "(missing)", expected, "status not found in referenced job document")
             elif found != expected:
                 add_violation(rel_norm, found, expected, "referenced job document status mismatch")
+
+    ssot_only_ids = result.get("ssot_only_task_ids")
+    if isinstance(ssot_only_ids, list) and ssot_only_ids:
+        result["notes"].append(
+            f"[INFO] status_source_strategy=ssot_only applied to {len(ssot_only_ids)} task(s); doc/dashboard checks skipped for those ids"
+        )
 
     return result
 
@@ -596,8 +627,14 @@ def audit_implementation_drift(
         "git_is_dirty": str(bool(git.is_dirty)),
         "summary_line": summary_line,
         "ssot_checked_task_count": str(ssot.get("checked_task_count", "?")),
+        "ssot_strategy_doc_enforced_count": str(((ssot.get("status_source_strategy_counts") or {}).get("doc_enforced", 0) if isinstance(ssot, dict) else 0)),
+        "ssot_strategy_ssot_only_count": str(((ssot.get("status_source_strategy_counts") or {}).get("ssot_only", 0) if isinstance(ssot, dict) else 0)),
         "ssot_violation_count": str(len(ssot_viol_list)),
         "ssot_violations_block": _block(viol_lines, empty_msg="(no mismatches found)"),
+        "ssot_ssot_only_ids_block": _block(
+            [str(x) for x in (ssot.get("ssot_only_task_ids") or [])] if isinstance(ssot, dict) else [],
+            empty_msg="(none)",
+        ),
         "watchdog_script_count": str(watchdog.get("script_count", "?")),
         "watchdog_missing_count": str(len(watchdog_missing_list)),
         "watchdog_missing_block": _block(watchdog_missing_list, empty_msg="(none missing)"),

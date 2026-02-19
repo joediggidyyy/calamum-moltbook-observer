@@ -13,6 +13,18 @@
 - Depends on: `<UPSTREAM_JOB_IDS_OR_NONE>`
 - Blocks: `<DOWNSTREAM_IDS_OR_NONE>`
 
+### Valid status values (canonical)
+
+- `open` — approved/queued; work not actively executing.
+- `in-progress` — active execution is underway.
+- `blocked` — execution cannot proceed due to dependency/approval/incident.
+- `completed` — execution finished and required evidence is recorded.
+
+When this job is registered in `operations/tasks.json`, set `status_source_strategy` explicitly:
+
+- `doc_enforced` — keep task/path/docs/dashboard status in sync (default).
+- `ssot_only` — treat `operations/tasks.json` as authoritative and skip doc/dashboard checks for that task.
+
 ## Policy links
 
 - `PP_GOV_PROTOCOL_POL_CORE_POLICY_20251122`
@@ -59,6 +71,7 @@ job.id=<JOB_ID_OR_SSOT_TASK_ID>
 job.doc=<CodeSentinel/jobs/...md OR CodeSentinel/docs/...md>
 ssot.path=CodeSentinel/operations/tasks.json
 ssot.status=<open|in-progress|blocked|completed|n/a>
+ssot.status_source_strategy=<doc_enforced|ssot_only>
 qs.id=<QS_ID_OR_EMPTY>
 qs.doc=<CodeSentinel/docs/operations/queststacks/...md OR EMPTY>
 qf.id=<QF_ID_OR_EMPTY>

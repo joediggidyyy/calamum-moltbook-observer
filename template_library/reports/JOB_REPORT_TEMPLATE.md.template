@@ -8,6 +8,13 @@
 - Owner: `<OWNER_OR_TEAM>`
 - Created: `<YYYY-MM-DD>`
 
+### Valid status values (canonical)
+
+- `open` — report opened, execution not yet active.
+- `in-progress` — execution currently active.
+- `blocked` — execution paused by dependency/approval/incident.
+- `completed` — execution complete with evidence captured.
+
 ## Policy links
 
 - `PP_GOV_PROTOCOL_POL_CORE_POLICY_20251122`
@@ -31,6 +38,7 @@ job.id=<JOB_ID_OR_SSOT_TASK_ID>
 job.doc=<CodeSentinel/jobs/...md OR CodeSentinel/docs/...md>
 ssot.path=CodeSentinel/operations/tasks.json
 ssot.status=<open|in-progress|blocked|completed|n/a>
+ssot.status_source_strategy=<doc_enforced|ssot_only>
 qs.id=<QS_ID_OR_EMPTY>
 qs.doc=<CodeSentinel/docs/operations/queststacks/...md OR EMPTY>
 qf.id=<QF_ID_OR_EMPTY>

@@ -1,0 +1,33 @@
+{
+  "meta": {
+    "type": "questframe",
+    "version": "1.0.0",
+    "id": "QF-CALAMUM-MOLTBOOK-OBSERVER-STAGE4-RUNTIME-PROVENANCE-LANE-20260219",
+    "parent_queststack": "QS-CALAMUM-MOLTBOOK-OBSERVER-STAGE4-RUNTIME-PROVENANCE-LANE-20260219",
+    "created_at": "2026-02-19T00:00:00Z",
+    "status": "planned"
+  },
+  "spec": {
+    "title": "Stage 4 runtime provenance lane (active-gated)",
+    "owner": "ORACL-Prime",
+    "participants": [
+      "joediggidyyy",
+      "ORACL-Prime"
+    ],
+    "goals": [
+      "Open a governed Stage 4 runtime lane with PRE_JOB-compliant artifact spine",
+      "Converge to deterministic single-instance runtime topology",
+      "Capture publication-grade provenance packet for Stage 4 activation window"
+    ],
+    "deliverables": [
+      "projects/calamum-moltbook-observer/queststacks/QS-CALAMUM-MOLTBOOK-OBSERVER-STAGE4-RUNTIME-PROVENANCE-LANE-20260219.md",
+      "projects/calamum-moltbook-observer/questframes/QF-CALAMUM-MOLTBOOK-OBSERVER-STAGE4-RUNTIME-PROVENANCE-LANE-20260219.json",
+      "jobs/CALAMUM_JOB_0020_MOLTBOOK_OBSERVER_STAGE4_RUNTIME_PROVENANCE_LANE_20260219.md",
+      "projects/calamum-moltbook-observer/jobs/CALAMUM_JOB_0020_MOLTBOOK_OBSERVER_STAGE4_RUNTIME_PROVENANCE_LANE_20260219.md",
+      "projects/calamum-moltbook-observer/jobs/CALAMUM_JOB_0020_MOLTBOOK_OBSERVER_STAGE4_RUNTIME_PROVENANCE_LANE_20260219.json",
+      "docs/reports/operations/JOB_REPORT_QS-CALAMUM-MOLTBOOK-OBSERVER-STAGE4-RUNTIME-PROVENANCE-LANE-20260219.md",
+      "logs/queststack/QS-CALAMUM-MOLTBOOK-OBSERVER-STAGE4-RUNTIME-PROVENANCE-LANE-20260219_log.md",
+      "logs/queststack/QS-CALAMUM-MOLTBOOK-OBSERVER-STAGE4-RUNTIME-PROVENANCE-LANE-20260219_evidence.jsonl"
+    ]
+  }
+}

@@ -4,6 +4,12 @@
   "job_id": "<JOB_ID>",
   "title": "<JOB_REPORT_TITLE>",
   "status": "in-progress",
+  "status_allowed_values": {
+    "open": "report opened, execution not yet active",
+    "in-progress": "execution currently active",
+    "blocked": "execution paused by dependency/approval/incident",
+    "completed": "execution complete with evidence captured"
+  },
   "created_at": "<YYYY-MM-DD>",
   "owner": "<OWNER_OR_TEAM>",
   "links": {
@@ -16,6 +22,7 @@
       "projects/calamum-moltbook-observer/docs/CALAMUM_CODESENTINEL_JOB_EXECUTION_EXPECTATIONS.md"
     ],
     "job_path": "<JOBS_MD_PATH>",
+    "status_source_strategy": "<doc_enforced|ssot_only>",
     "evidence_paths": []
   },
   "deterministic_closure": {

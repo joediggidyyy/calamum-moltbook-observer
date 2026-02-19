@@ -8,6 +8,14 @@
 - Owner: `<OWNER_OR_TEAM>`
 - Created: `<YYYY-MM-DD>`
 
+### Valid status values (canonical)
+
+- `open` — plan is approved and queued for execution.
+- `planned` — backward-compatible alias for `open`.
+- `in-progress` — plan execution is active.
+- `blocked` — execution is blocked by dependency/approval/incident.
+- `completed` — plan execution and closure evidence are complete.
+
 ## Policy links
 
 - `PP_GOV_PROTOCOL_POL_CORE_POLICY_20251122`

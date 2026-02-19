@@ -4,6 +4,12 @@
   "job_id": "<JOB_ID>",
   "title": "<JOB_TITLE>",
   "status": "open",
+  "status_allowed_values": {
+    "open": "approved/queued; not actively executing",
+    "in-progress": "active execution underway",
+    "blocked": "cannot proceed due to dependency/approval/incident",
+    "completed": "execution finished and evidence captured"
+  },
   "created_at": "<YYYY-MM-DD>",
   "owner": "<OWNER_OR_TEAM>",
   "project": "<PROJECT_OR_DOMAIN>",
@@ -29,7 +35,8 @@
     "ssot": {
       "task_id": "<SSOT_TASK_ID_OR_EMPTY>",
       "path": "CodeSentinel/operations/tasks.json",
-      "status": "<open|in-progress|blocked|completed|n/a>"
+      "status": "<open|in-progress|blocked|completed|n/a>",
+      "status_source_strategy": "<doc_enforced|ssot_only>"
     },
     "queststack": {
       "id": "<QS_ID_OR_EMPTY>",

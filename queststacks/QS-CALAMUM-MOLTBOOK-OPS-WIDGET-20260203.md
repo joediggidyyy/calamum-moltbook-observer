@@ -5,7 +5,7 @@
 **Title**: Calamum Ops Widget: Ghost Console (Web UI)
 **Owner**: ORACL-Prime
 **Date**: 2026-02-03
-**Status**: ACTIVE
+**Status**: OPEN
 **Context**: Implementation and hardening of the "Digital Brutalism" ops dashboard for Calamum Observer.
 
 ---

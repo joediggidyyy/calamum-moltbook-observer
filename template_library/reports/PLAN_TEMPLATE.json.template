@@ -3,6 +3,13 @@
   "doc_type": "plan",
   "title": "<PLAN_TITLE>",
   "status": "planned",
+  "status_allowed_values": {
+    "open": "plan approved and queued",
+    "planned": "alias of open (backward compatibility)",
+    "in-progress": "plan execution active",
+    "blocked": "execution blocked by dependency/approval/incident",
+    "completed": "plan execution and closure complete"
+  },
   "created_at": "<YYYY-MM-DD>",
   "owner": "<OWNER_OR_TEAM>",
   "links": {

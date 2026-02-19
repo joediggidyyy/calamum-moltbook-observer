@@ -3,7 +3,7 @@
 ## Metadata
 
 - Template ID: `VAULT_TEMPLATE_JOB_V1`
-- Status: `open`
+- Status: `completed`
 - Owner: `ORACL-Prime`
 - Created: `2026-02-12`
 - Project: `calamum / moltbook observer`

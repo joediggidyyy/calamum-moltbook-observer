@@ -34,7 +34,13 @@ Checks performed:
 ### SSOT status drift (tasks.json vs. docs)
 
 - Checked tasks: {{ ssot_checked_task_count }}
+- Strategy `doc_enforced`: {{ ssot_strategy_doc_enforced_count }}
+- Strategy `ssot_only`: {{ ssot_strategy_ssot_only_count }}
 - Mismatches found: {{ ssot_violation_count }}
+
+Task IDs with `status_source_strategy=ssot_only`:
+
+{{ ssot_ssot_only_ids_block }}
 
 {{ ssot_violations_block }}
 
