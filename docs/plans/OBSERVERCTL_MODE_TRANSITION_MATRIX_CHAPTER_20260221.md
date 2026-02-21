@@ -25,9 +25,13 @@ This specification is normative for `observerctl ops mode gate --to <mode>` and 
 ## 2) Scope boundaries
 
 - **Observer runtime surface**: governed by `observerctl`.
-- **CodeSentinel**: governance/development harness only (not runtime command host).
+- **CodeSentinel**: external governance/orchestration harness only (the only development harness; not a runtime command host).
 - **Security posture**: fail-closed by default.
 - **No secrets**: names-only outputs; no secret values in logs/packets/stdout.
+
+Command-scope clarification (normative):
+- Commands defined in this specification are observer runtime/security operations commands.
+- They are not development-scoped commands and must not imply observer is a dev platform.
 
 ## 3) Canonical state model
 

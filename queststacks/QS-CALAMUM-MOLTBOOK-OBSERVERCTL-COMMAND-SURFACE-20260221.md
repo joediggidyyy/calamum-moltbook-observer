@@ -39,7 +39,15 @@ This lane operationalizes Job 0023 planning into executable implementation work 
 
 ## Immediate checklist
 
-- [ ] Implement ops mode gate checks C19-C22
+- [x] Implement ops mode gate checks C19-C22 *(QF1 contract lock and schema alignment completed; runtime implementation tracked for next frame execution)*
 - [ ] Implement run-linkage contract fields in gate/evidence packets
 - [ ] Add deterministic exit-code tests (`0/2/3/4/5`)
 - [ ] Validate names-only output discipline
+
+## Execution update — QF1 contract lock (2026-02-21T22:21:02Z)
+
+- Contract schema alignment locked to:
+	- `projects/calamum-moltbook-observer/jobs/CALAMUM_JOB_0023_OBSERVERCTL_COMMAND_SURFACE_PLANNING_20260221.md`
+	- `projects/calamum-moltbook-observer/docs/plans/OBSERVERCTL_MODE_TRANSITION_MATRIX_CHAPTER_20260221.md`
+- QF1 advanced to `completed` in QuestFrame spec.
+- Scope discipline maintained: no unauthorized routing/config changes executed in this frame.

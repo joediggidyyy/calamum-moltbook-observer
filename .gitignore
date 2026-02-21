@@ -1,6 +1,7 @@
 # Runtime Artifacts
 *.log
 *.jsonl
+!docs/reports/queststack/*.jsonl
 *.sqlite
 *.pid
 logs/

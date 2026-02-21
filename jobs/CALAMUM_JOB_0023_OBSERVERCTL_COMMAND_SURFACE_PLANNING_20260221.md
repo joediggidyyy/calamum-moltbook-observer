@@ -20,13 +20,17 @@ This document is authoritative for **observer-scoped CLI behavior** and must be 
 
 ## 2) Architectural framing (authoritative)
 
-- CodeSentinel = development/governance harness.
+- CodeSentinel = external governance/orchestration harness (the only development harness).
 - Calamum = security harness.
 - Observer = security test surface (not a development platform).
 
 `observerctl` must remain observer-scoped and standalone from CodeSentinel runtime process surfaces.
 
-## 3) Command topology (approved)
+Normative scope clarification:
+- `observerctl` command families in this document are observer runtime/security operations surfaces.
+- They are **not** development-scoped commands and must not depend on CodeSentinel runtime process surfaces.
+
+## 3) Command topology (approved runtime operations)
 
 ### 3.1 Active-collection control surface: `observerctl ops *`
 

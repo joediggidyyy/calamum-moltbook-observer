@@ -1,0 +1,9 @@
+{
+  "job_id": "CALAMUM_JOB_0025_NEXT_ENUMERATED_OBSERVER_JOB_PLACEHOLDER_20260221",
+  "sequence": 25,
+  "state": "RESERVED",
+  "scope": "observer",
+  "owner": "ORACL-Prime",
+  "activation": "pending_explicit_operator_direction",
+  "note": "One-off Job 0025 multi-root routing content scrubbed from observer public-facing repo. Slot reserved for next enumerated observer job."
+}
