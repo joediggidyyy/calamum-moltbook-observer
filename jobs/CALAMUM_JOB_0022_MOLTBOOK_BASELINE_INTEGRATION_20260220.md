@@ -1,7 +1,7 @@
 # Job 0022: Moltbook Baseline Integration
 
 > **ID**: CALAMUM_JOB_0022_MOLTBOOK_BASELINE_INTEGRATION_20260220
-> **State**: IN_PROGRESS
+> **State**: COMPLETED
 > **Owner**: ORACL-Prime
 > **Date**: 2026-02-20
 
@@ -20,3 +20,12 @@ Bind baseline readiness outputs from CodeSentinel into observer/Keymaster operat
 - Added canonical terminal lane registration helper: `semantics_staging/ops_register_terminal_lanes.ps1`
 - Fail-closed terminal prune behavior is active in: `semantics_staging/ops_prune_vscode_pwsh_shells.ps1`
 - Incident trace and policy canonization linked in lane report.
+
+## 2026-02-21 completion notes
+- Baseline-ready contract evaluated and recorded in publish-grade packet:
+	- `projects/calamum-moltbook-observer/local_untracked/evidence/baseline_integration/baseline_integration_publish_grade_20260221T082452Z.json`
+- Watchdog posture receipt fields captured (names-only):
+	- `projects/calamum-moltbook-observer/local_untracked/evidence/baseline_integration/watchdog_posture_receipt_20260221T082534Z.json`
+- Final SessionMemory health evidence captured:
+	- `projects/calamum-moltbook-observer/local_untracked/evidence/baseline_integration/baseline_integration_memory_health_20260221T082538Z.json`
+- Quest evidence ledger updated with run linkage (`run_id`, `posture_trigger_id`, `posture_trigger`, `security_report_ref`).

@@ -1,9 +1,11 @@
 {
   "id": "CALAMUM_JOB_0022_MOLTBOOK_BASELINE_INTEGRATION_20260220",
   "type": "GOVERNANCE",
-  "status": "IN_PROGRESS",
+  "status": "COMPLETED",
   "updates": [
-    "2026-02-20: terminal lane guard canonization added (helper wrapper + fail-closed prune behavior)"
+    "2026-02-20: terminal lane guard canonization added (helper wrapper + fail-closed prune behavior)",
+    "2026-02-21: publish-grade packet generated with baseline-ready contract + fail-closed validation",
+    "2026-02-21: watchdog posture receipt and final SessionMemory health evidence captured"
   ],
   "dependencies": [
     "OPS_JOB_0032_CODESENTINEL_BASELINE_LOCAL_STABILIZATION_20260220",
