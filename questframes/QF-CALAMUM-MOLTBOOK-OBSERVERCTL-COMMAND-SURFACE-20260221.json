@@ -1,0 +1,25 @@
+{
+  "questframe_id": "QF-CALAMUM-MOLTBOOK-OBSERVERCTL-COMMAND-SURFACE-20260221",
+  "queststack_id": "QS-CALAMUM-MOLTBOOK-OBSERVERCTL-COMMAND-SURFACE-20260221",
+  "title": "ObserverCTL command surface implementation",
+  "status": "open",
+  "owner": "ORACL-Prime",
+  "last_updated_utc": "2026-02-21T20:20:19Z",
+  "frames": [
+    {
+      "frame_id": "qf1_contract_lock",
+      "title": "Contract lock + schema alignment",
+      "status": "open"
+    },
+    {
+      "frame_id": "qf2_gate_enforcement",
+      "title": "Trigger posture + fail-closed gate enforcement",
+      "status": "open"
+    },
+    {
+      "frame_id": "qf3_tests_and_evidence",
+      "title": "Deterministic test coverage and evidence validation",
+      "status": "open"
+    }
+  ]
+}

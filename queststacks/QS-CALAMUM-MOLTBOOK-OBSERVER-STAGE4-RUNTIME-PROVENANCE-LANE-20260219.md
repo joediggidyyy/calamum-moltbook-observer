@@ -71,3 +71,17 @@ No live Keymaster operation should be initiated from this lane.
 - QuestStack evidence: `logs/queststack/QS-CALAMUM-MOLTBOOK-OBSERVER-STAGE4-RUNTIME-PROVENANCE-LANE-20260219_evidence.jsonl`
 - Runtime heartbeat: `projects/calamum-moltbook-observer/logs/health/calamum_observer.heartbeat.jsonl`
 - Runtime data stream: `projects/calamum-moltbook-observer/logs/data/calamum/moltbook_active-gated_metrics.jsonl`
+
+---
+
+## Single-lane handoff block (2026-02-21)
+
+- Active execution lane (only in-progress task): `calamum-moltbook-observer-stage4-runtime-provenance-lane-20260219`
+- Next elevated lane (planned, do not start until Stage4 checkpoint closes): `calamum-job-0023-observerctl-command-surface-planning-20260221`
+- Deferred lane remains deferred: `CALAMUM_JOB_0024_OBSERVER_TEST_COVERAGE_BASELINE_REMEDIATION_20260221`
+
+### Immediate execution sequence
+1. Continue Stage4 runtime-provenance actions with contiguous evidence updates.
+2. Maintain names-only and fail-closed posture checks (`isolation|lockdown` contract).
+3. Record decision + evidence linkage fields for each transition event (`run_id`, `posture_trigger_id`, `posture_trigger`, `security_report_ref`).
+4. After Stage4 checkpoint, begin Job 0023 implementation lane for observerctl command/gate contract hardening.
