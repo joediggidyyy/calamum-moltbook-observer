@@ -468,6 +468,196 @@ def _walk_files(repo_root: Path, filename: str, exclude_dirs: Iterable[str]) -> 
     return out
 
 
+def _norm_root_entry(raw: Any) -> str:
+    v = str(raw or "").strip().replace("\\", "/")
+    if v.startswith("./"):
+        v = v[2:]
+    v = v.rstrip("/")
+    return v
+
+
+def _git_ls_tree_dirs(repo_root: Path, treeish: str) -> List[str]:
+    rc, out, _err = _run(["git", "ls-tree", "--name-only", "-d", treeish], cwd=repo_root)
+    if rc != 0:
+        return []
+    dirs: List[str] = []
+    for ln in out.splitlines():
+        name = str(ln or "").strip().replace("\\", "/")
+        if not name:
+            continue
+        dirs.append(name)
+    return sorted(set(dirs))
+
+
+def _check_project_manifest_layout(repo_root: Path, project_root: Path) -> Dict[str, Any]:
+    manifest_path = (project_root / "PROJECT_MANIFEST.json").resolve()
+    project_rel = _rel_to(project_root, repo_root)
+
+    result: Dict[str, Any] = {
+        "manifest_path": _rel_to(manifest_path, repo_root),
+        "manifest_exists": bool(manifest_path.exists()),
+        "manifest_readable": False,
+        "project_rel": project_rel,
+        "declared_tracked_roots": [],
+        "declared_ignored_roots": [],
+        "actual_tracked_top_level_dirs": [],
+        "missing_from_manifest_tracked_roots": [],
+        "manifest_tracked_roots_not_in_git_tree": [],
+        "tracked_ignored_overlap": [],
+        "required_ignored_roots_missing": [],
+        "violations": [],
+        "notes": [],
+    }
+
+    actual_dirs = _git_ls_tree_dirs(repo_root, f"HEAD:{project_rel}")
+    result["actual_tracked_top_level_dirs"] = actual_dirs
+
+    if not manifest_path.exists():
+        result["violations"].append("PROJECT_MANIFEST.json missing")
+        return result
+
+    try:
+        obj = json.loads(manifest_path.read_text(encoding="utf-8", errors="ignore") or "{}")
+    except Exception as e:
+        result["violations"].append(f"PROJECT_MANIFEST.json unreadable: {e}")
+        return result
+
+    if not isinstance(obj, dict):
+        result["violations"].append("PROJECT_MANIFEST.json is not a JSON object")
+        return result
+
+    result["manifest_readable"] = True
+
+    layout = obj.get("layout")
+    if not isinstance(layout, dict):
+        result["violations"].append("PROJECT_MANIFEST.json missing layout object")
+        return result
+
+    tracked_raw = layout.get("tracked_roots")
+    ignored_raw = layout.get("ignored_roots")
+
+    tracked_roots = sorted(set([_norm_root_entry(x) for x in (tracked_raw if isinstance(tracked_raw, list) else []) if _norm_root_entry(x)]))
+    ignored_roots = sorted(set([_norm_root_entry(x) for x in (ignored_raw if isinstance(ignored_raw, list) else []) if _norm_root_entry(x)]))
+
+    result["declared_tracked_roots"] = tracked_roots
+    result["declared_ignored_roots"] = ignored_roots
+
+    tracked_set = set(tracked_roots)
+    ignored_set = set(ignored_roots)
+    actual_set = set(actual_dirs)
+
+    missing_from_manifest = sorted(actual_set - tracked_set)
+    stale_manifest_entries = sorted(tracked_set - actual_set)
+    overlap = sorted(tracked_set & ignored_set)
+
+    required_ignored = {
+        "local_untracked",
+        "logs",
+        "src/logs",
+        "src/.agent_session",
+    }
+    missing_required_ignored = sorted([x for x in required_ignored if x not in ignored_set])
+
+    result["missing_from_manifest_tracked_roots"] = missing_from_manifest
+    result["manifest_tracked_roots_not_in_git_tree"] = stale_manifest_entries
+    result["tracked_ignored_overlap"] = overlap
+    result["required_ignored_roots_missing"] = missing_required_ignored
+
+    if missing_from_manifest:
+        result["violations"].append(
+            f"tracked top-level dirs missing from layout.tracked_roots: {', '.join(missing_from_manifest)}"
+        )
+    if stale_manifest_entries:
+        result["violations"].append(
+            f"layout.tracked_roots entries not present in tracked git tree: {', '.join(stale_manifest_entries)}"
+        )
+    if overlap:
+        result["violations"].append(
+            f"layout overlap between tracked_roots and ignored_roots: {', '.join(overlap)}"
+        )
+    if missing_required_ignored:
+        result["violations"].append(
+            f"required ignored roots missing from layout.ignored_roots: {', '.join(missing_required_ignored)}"
+        )
+
+    if not result["violations"]:
+        result["notes"].append("PROJECT_MANIFEST layout is consistent with tracked tree and ignore policy minima")
+
+    return result
+
+
+def _git_changed_files(repo_root: Path) -> List[str]:
+    rc, out, _err = _run(["git", "status", "--porcelain"], cwd=repo_root)
+    if rc != 0:
+        return []
+
+    paths: List[str] = []
+    for ln in out.splitlines():
+        line = str(ln or "").rstrip()
+        if not line:
+            continue
+        # Porcelain format: XY <path>  or XY <old> -> <new>
+        payload = line[3:] if len(line) >= 4 else ""
+        if " -> " in payload:
+            payload = payload.split(" -> ", 1)[1]
+        p = payload.strip().replace("\\", "/")
+        if p:
+            paths.append(p)
+    return sorted(set(paths))
+
+
+def _candidate_test_paths_for_module(module_rel: str) -> List[str]:
+    rel = module_rel.replace("\\", "/")
+    stem = Path(rel).stem
+
+    candidates = [
+        f"projects/calamum-moltbook-observer/src/tests/test_{stem}.py",
+    ]
+
+    if rel.startswith("projects/calamum-moltbook-observer/src/"):
+        src_rel = rel[len("projects/calamum-moltbook-observer/src/") :]
+        src_no_ext = str(Path(src_rel).with_suffix(""))
+        candidates.append(f"projects/calamum-moltbook-observer/src/tests/test_{src_no_ext.replace('/', '_')}.py")
+
+    return sorted(set(candidates))
+
+
+def _check_changed_files_unit_test_coverage(repo_root: Path, project_root: Path) -> Dict[str, Any]:
+    changed = _git_changed_files(repo_root)
+    project_prefix = _rel_to(project_root, repo_root).replace("\\", "/") + "/"
+
+    target_py: List[str] = []
+    for rel in changed:
+        r = rel.replace("\\", "/")
+        if not r.startswith(project_prefix):
+            continue
+        if not r.endswith(".py"):
+            continue
+        if "/src/tests/" in r:
+            continue
+        if r.endswith("/__init__.py"):
+            continue
+        target_py.append(r)
+
+    missing: List[Dict[str, Any]] = []
+    for mod in sorted(set(target_py)):
+        candidates = _candidate_test_paths_for_module(mod)
+        exists_any = any((repo_root / c).exists() for c in candidates)
+        if not exists_any:
+            missing.append({"module": mod, "expected_any_of": candidates})
+
+    return {
+        "scope": "changed_python_files_only",
+        "changed_python_files_checked": sorted(set(target_py)),
+        "missing_unit_tests": missing,
+        "missing_unit_tests_count": len(missing),
+        "notes": [
+            "Heuristic check: for each changed python module, expect a corresponding test_* file under src/tests/.",
+            "This does not prove behavioral coverage; it enforces minimum test-presence hygiene.",
+        ],
+    }
+
+
 def _check_agent_instruction_pairs(repo_root: Path) -> Dict[str, Any]:
     exclude = {
         ".git",
@@ -539,6 +729,8 @@ def audit_implementation_drift(
     watchdog = _check_watchdog_script_integrity(repo_root)
     stage4 = _stage4_threshold_drift(repo_root)
     instr = _check_agent_instruction_pairs(repo_root)
+    manifest_layout = _check_project_manifest_layout(repo_root, project_root)
+    test_coverage = _check_changed_files_unit_test_coverage(repo_root, project_root)
 
     ssot_violations = ssot.get("violations") if isinstance(ssot, dict) else None
     ssot_viol_list: List[Dict[str, Any]] = ssot_violations if isinstance(ssot_violations, list) else []
@@ -553,8 +745,19 @@ def audit_implementation_drift(
         recs.append("Normalize Stage 4 threshold env var naming across deployment configs/docs to prefer CALAMUM_ACTIVE_MAGNET_THRESHOLD.")
     if instr.get("missing_json"):
         recs.append("Ensure every AGENT_INSTRUCTIONS.md has a parseable .json sidecar (CI gate expects pairing).")
+    if manifest_layout.get("violations"):
+        recs.append("Align PROJECT_MANIFEST layout.tracked_roots/ignored_roots with the actual tracked tree and approved ignore-policy roots.")
+    if test_coverage.get("missing_unit_tests"):
+        recs.append("Add unit tests for changed python modules before baseline/close; maintain src/tests/test_<module>.py parity.")
 
-    summary_ok = (not ssot_viol_list) and (not (watchdog.get("missing") or [])) and (not stage4.get("drift")) and (not instr.get("missing_json"))
+    summary_ok = (
+        (not ssot_viol_list)
+        and (not (watchdog.get("missing") or []))
+        and (not stage4.get("drift"))
+        and (not instr.get("missing_json"))
+        and (not (manifest_layout.get("violations") or []))
+        and (not (test_coverage.get("missing_unit_tests") or []))
+    )
     summary_line = "[OK] no implementation drift findings detected" if summary_ok else "[WARN] implementation drift findings present"
 
     evidence: Dict[str, Any] = {
@@ -576,6 +779,8 @@ def audit_implementation_drift(
             "watchdog_script_integrity": watchdog,
             "stage4_threshold_contract": stage4,
             "agent_instruction_pairs": instr,
+            "project_manifest_layout": manifest_layout,
+            "changed_files_unit_test_coverage": test_coverage,
         },
         "outputs": {
             "report_path": str(report_path),
@@ -616,6 +821,26 @@ def audit_implementation_drift(
     instr_missing = instr.get("missing_json") if isinstance(instr, dict) else None
     instr_missing_list: List[str] = instr_missing if isinstance(instr_missing, list) else []
 
+    manifest_viol = manifest_layout.get("violations") if isinstance(manifest_layout, dict) else None
+    manifest_viol_list: List[str] = manifest_viol if isinstance(manifest_viol, list) else []
+
+    manifest_missing = manifest_layout.get("missing_from_manifest_tracked_roots") if isinstance(manifest_layout, dict) else None
+    manifest_missing_list: List[str] = manifest_missing if isinstance(manifest_missing, list) else []
+
+    manifest_stale = manifest_layout.get("manifest_tracked_roots_not_in_git_tree") if isinstance(manifest_layout, dict) else None
+    manifest_stale_list: List[str] = manifest_stale if isinstance(manifest_stale, list) else []
+
+    test_missing_raw = test_coverage.get("missing_unit_tests") if isinstance(test_coverage, dict) else None
+    test_missing_list: List[Dict[str, Any]] = test_missing_raw if isinstance(test_missing_raw, list) else []
+    test_missing_lines: List[str] = []
+    for row in test_missing_list:
+        if not isinstance(row, dict):
+            continue
+        mod = str(row.get("module") or "?")
+        exp = row.get("expected_any_of")
+        exp_items = [str(x) for x in exp] if isinstance(exp, list) else []
+        test_missing_lines.append(f"{mod} -> expected any of: {', '.join(exp_items) if exp_items else '(none)'}")
+
     report_vars: Dict[str, Any] = {
         "timestamp_utc": ts,
         "run_id": run_id,
@@ -642,6 +867,14 @@ def audit_implementation_drift(
         "instruction_md_count": str(instr.get("md_count", "?")),
         "instruction_missing_json_count": str(len(instr_missing_list)),
         "instruction_missing_json_block": _block(instr_missing_list, empty_msg="(none missing)"),
+        "manifest_path": str(manifest_layout.get("manifest_path", "")),
+        "manifest_violation_count": str(len(manifest_viol_list)),
+        "manifest_violations_block": _block(manifest_viol_list, empty_msg="(no drift detected)"),
+        "manifest_missing_tracked_roots_block": _block(manifest_missing_list, empty_msg="(none)"),
+        "manifest_stale_tracked_roots_block": _block(manifest_stale_list, empty_msg="(none)"),
+        "changed_py_files_checked_count": str(len(test_coverage.get("changed_python_files_checked") or []) if isinstance(test_coverage, dict) else 0),
+        "missing_unit_tests_count": str(len(test_missing_list)),
+        "missing_unit_tests_block": _block(test_missing_lines, empty_msg="(none)"),
         "recommendations_block": _block(recs, empty_msg="(no recommendations)"),
         "evidence_path": str(evidence_path),
         "audit_jsonl_path": str(jsonl_path),
@@ -790,6 +1023,16 @@ def main(argv: Optional[List[str]] = None) -> int:
     missing_json = instr.get("missing_json") if isinstance(instr, dict) else None
     if isinstance(missing_json, list) and missing_json:
         print(f"[WARN] AGENT_INSTRUCTIONS pairing issues ({len(missing_json)}; see evidence)")
+
+    manifest_layout = (evidence.get("checks", {}) or {}).get("project_manifest_layout")
+    manifest_viol = manifest_layout.get("violations") if isinstance(manifest_layout, dict) else None
+    if isinstance(manifest_viol, list) and manifest_viol:
+        print(f"[WARN] PROJECT_MANIFEST layout drift findings ({len(manifest_viol)}; see evidence)")
+
+    t_cov = (evidence.get("checks", {}) or {}).get("changed_files_unit_test_coverage")
+    t_missing = t_cov.get("missing_unit_tests") if isinstance(t_cov, dict) else None
+    if isinstance(t_missing, list) and t_missing:
+        print(f"[WARN] missing unit tests for changed python files ({len(t_missing)}; see evidence)")
 
     return 0
 

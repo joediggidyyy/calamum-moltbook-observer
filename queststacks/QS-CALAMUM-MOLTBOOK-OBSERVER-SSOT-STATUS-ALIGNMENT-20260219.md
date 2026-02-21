@@ -14,6 +14,8 @@
 
 This QuestStack tracks targeted status-synchronization remediation for Calamum artifacts flagged by implementation drift auditing.
 
+Scope extension (2026-02-21): the implementation drift audit now includes a `PROJECT_MANIFEST.json` layout contract check (tracked/ignored roots vs tracked tree + ignore-policy minima).
+
 Primary SSOT reference:
 
 - `operations/tasks.json`
@@ -29,7 +31,7 @@ Primary audit surface:
 1. Align high-signal Calamum status mismatches (QuestStack + Job 0018 chain).
 2. Run drift audit dry-run.
 3. Run drift audit baseline (`--set-baseline`).
-4. Refresh jobs dashboard and record evidence delta.
+4. Refresh jobs dashboard and record evidence delta (including manifest-layout findings).
 
 ---
 

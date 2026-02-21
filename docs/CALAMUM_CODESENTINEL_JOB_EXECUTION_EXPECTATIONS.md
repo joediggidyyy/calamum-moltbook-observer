@@ -135,6 +135,16 @@ Therefore:
 - A link like `projects/calamum-moltbook-observer/jobs/...` is **not sufficient** by itself.
 - The QuestStack MUST explicitly include `jobs/<...>.md`, and that file MUST exist.
 
+### 3.4 Directory-creation authorization policy (normative)
+
+Within `projects/calamum-moltbook-observer/`, **no new directories may be created without explicit operator authorization**.
+
+Mandatory controls:
+
+- Authorization must be recorded in the active QuestStack and/or the job report **before** directory creation.
+- Any approved directory creation MUST update `projects/calamum-moltbook-observer/PROJECT_MANIFEST.json` layout metadata in the same change set.
+- Unapproved directory creation is a fail-closed policy violation and must be remediated before `codesentinel job close <task_id>`.
+
 ---
 
 ## 4) Job lifecycle expectations (operator workflow)

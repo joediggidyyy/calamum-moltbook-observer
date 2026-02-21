@@ -16,6 +16,7 @@ Checks performed:
 - Watchdog scheduler integrity (Calamum): referenced tool scripts exist at their expected repo-relative paths
 - Calamum Stage 4 threshold contract drift: env var naming across code / systemd / deployment configs / job docs
 - Instruction pairing: `AGENT_INSTRUCTIONS.md` files have corresponding `.json` sidecars
+- Project manifest layout contract: `PROJECT_MANIFEST.json` tracked/ignored roots align with tracked tree + ignore-policy minima
 
 ## Context
 
@@ -61,6 +62,30 @@ Task IDs with `status_source_strategy=ssot_only`:
 - Missing JSON sidecars: {{ instruction_missing_json_count }}
 
 {{ instruction_missing_json_block }}
+
+### Project manifest layout contract (PROJECT_MANIFEST.json)
+
+- Manifest path: {{ manifest_path }}
+- Findings: {{ manifest_violation_count }}
+
+Violations:
+
+{{ manifest_violations_block }}
+
+Tracked top-level dirs missing from `layout.tracked_roots`:
+
+{{ manifest_missing_tracked_roots_block }}
+
+`layout.tracked_roots` entries not present in tracked tree:
+
+{{ manifest_stale_tracked_roots_block }}
+
+### Changed-file unit test coverage (heuristic)
+
+- Changed Python files checked: {{ changed_py_files_checked_count }}
+- Missing unit tests: {{ missing_unit_tests_count }}
+
+{{ missing_unit_tests_block }}
 
 ## Recommendations
 

@@ -1,7 +1,7 @@
 {
   "meta": {
     "type": "operations_policy",
-    "version": "1.0.5",
+    "version": "1.0.6",
     "id": "CALAMUM_CODESENTINEL_JOB_EXECUTION_EXPECTATIONS_20260212",
     "scope": "projects/calamum-moltbook-observer",
     "owner": "ORACL-Prime",
@@ -103,6 +103,16 @@
         ]
       }
     }
+  },
+  "directory_governance": {
+    "policy": "no_new_directories_without_explicit_authorization",
+    "scope": "projects/calamum-moltbook-observer/**",
+    "rules": [
+      "No new directories may be created without explicit operator authorization.",
+      "Authorization must be recorded in the active QuestStack or job report before directory creation.",
+      "When an authorized directory is created, update PROJECT_MANIFEST.json layout metadata in the same change set.",
+      "Unapproved directory creation is a fail-closed policy violation and must be remediated before job close."
+    ]
   },
   "lifecycle": {
     "start": "codesentinel job start <task_id>",

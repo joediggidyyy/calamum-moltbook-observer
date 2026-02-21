@@ -1,6 +1,6 @@
 {
-  "created": "2026-02-21T08:09:13.256160Z",
-  "last_persisted": "2026-02-21T08:11:55.010360Z",
+  "created": "2026-02-21T17:53:52.686438Z",
+  "last_persisted": "2026-02-21T18:00:45.130603Z",
   "files_cached": 0,
   "decisions_logged": 0,
   "tasks_tracked": 0,
@@ -33,9 +33,9 @@
       "c": 1.0,
       "s": 1.0
     },
-    "last_activity": "2026-02-21T08:09:13.322613Z",
-    "virtual_start": "2026-02-21T08:09:13.251069Z",
-    "cycle_start": "2026-02-21T08:09:13.251071Z"
+    "last_activity": "2026-02-21T17:53:52.739616Z",
+    "virtual_start": "2026-02-21T17:53:52.620708Z",
+    "cycle_start": "2026-02-21T17:53:52.620709Z"
   },
   "recovery_state": {
     "active": false,
@@ -43,6 +43,6 @@
     "clean_streak": 0,
     "clean_start": null
   },
-  "last_ops_awareness_at": "2026-02-21T08:09:13.296435Z",
-  "last_ops_awareness_hash": "b0aad861a3b5cdf5f49f2432cba6e52d189619b6d106d4a9eeb90e1368b7cc9b"
+  "last_ops_awareness_at": "2026-02-21T17:53:52.712227Z",
+  "last_ops_awareness_hash": "593c5a994c9894c49b6afa0c104bdcf52da8a28199d9760a9b8dbba2dd658fc6"
 }
