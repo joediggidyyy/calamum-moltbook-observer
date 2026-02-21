@@ -1,0 +1,26 @@
+{
+  "paused": false,
+  "paused_at": null,
+  "pending_since": null,
+  "refractory_until": null,
+  "freeze_attempts": [],
+  "last_event": {
+    "type": "session-memory-persist",
+    "timestamp": "2026-02-21T08:11:55.032770+00:00",
+    "metadata": {
+      "files_cached": 0,
+      "decisions_logged": 0,
+      "tasks_tracked": 0
+    }
+  },
+  "auto_level": null,
+  "mode": null,
+  "baseline_snapshot": null,
+  "thaw_blocked": false,
+  "integrity_warning": false,
+  "mismatch_details": null,
+  "resume_at": null,
+  "total_paused_seconds": 0,
+  "last_pause_window": null,
+  "note": null
+}

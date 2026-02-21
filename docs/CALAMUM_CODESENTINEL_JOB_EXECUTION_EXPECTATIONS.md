@@ -30,6 +30,10 @@ Scope-separation rule (normative):
 - This project's runtime CLI surface is `observerctl`.
 - Runtime interfaces must not use `calamum` / `calamumctl` labels.
 - Historical `CALAMUM_*` IDs remain valid as lineage identifiers only.
+- Runtime source/mode vocabulary is canonicalized as:
+  - source axis: `sim | real`
+  - mode axis: `watch | canary | live | honeypot`
+  - note: `live` is a mode/posture label; real target sourcing uses source=`real`.
 
 This is a policy/operations contract: **it is about execution expectations and compliance**, not architecture prose.
 
@@ -193,12 +197,64 @@ It must:
 - depend only on observer project modules/artifacts and environment variables,
 - emit names-only status/evidence packets compatible with gate artifacts,
 - support fail-closed go/no-go checks for gated job progression.
+- enforce trigger posture policy (`isolation` vs `lockdown`) by mode.
+- include run-level linkage fields in gate/evidence output:
+  - `run_id`
+  - `posture_trigger_id`
+  - `posture_trigger`
+  - `security_report_ref`
 
 It must not:
 
 - depend on CodeSentinel runtime process surfaces,
 - call or require CodeSentinel command surfaces for internal operation,
 - rely on SessionMemory internals.
+
+### 4.6 Ops trigger posture policy (gate-clearing contract)
+
+Trigger posture by mode:
+
+- `watch` -> `isolation`
+- `canary` -> `isolation`
+- `live` -> `lockdown`
+- `honeypot` -> `lockdown`
+
+Isolation (`watch/canary`) minimum reaction:
+
+- quarantine container,
+- block ingress/egress (**no data in or out**),
+- suspend collector/interactor runtime,
+- allow names-only local health/evidence logging only.
+
+Lockdown (`live/honeypot`) minimum reaction (same severity for both modes):
+
+- apply all isolation reactions,
+- increase watchdog + observer heartbeat cadence,
+- tighten stale heartbeat threshold,
+- increase baseline validation cadence,
+- freeze non-essential writes except append-only evidence,
+- deny promotion transitions until recovery checks pass.
+
+Suggested lockdown operating parameters:
+
+- heartbeat interval: `3-5s`
+- stale threshold: `<=2` missed beats
+- baseline validation interval: `30-60s`
+- unlock threshold: `3` consecutive clean validation cycles
+
+Fail-closed gate checks required for posture clearance:
+
+- `watchdog_trigger_posture_valid`
+- `heartbeat_rate_escalated_for_lockdown` (lockdown modes only)
+- `baseline_validation_rate_escalated_for_lockdown` (lockdown modes only)
+- `run_security_report_linked`
+
+Normalized denial reasons:
+
+- `critical_check_failed:watchdog_trigger_posture_invalid`
+- `critical_check_failed:lockdown_heartbeat_rate_not_escalated`
+- `critical_check_failed:lockdown_baseline_rate_not_escalated`
+- `critical_check_failed:run_security_report_missing`
 
 ---
 
@@ -267,6 +323,14 @@ Required packets:
   - rationale
   - evidence references
   - approver checkpoint
+
+Run-linkage requirement (mandatory for gate-clearing posture):
+
+- all collection/gate/evidence records MUST include:
+  - `run_id`
+  - `posture_trigger_id`
+  - `posture_trigger` (`isolation|lockdown`)
+  - `security_report_ref`
 
 Quality gates:
 

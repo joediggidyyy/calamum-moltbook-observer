@@ -1,0 +1,140 @@
+{
+  "id": "CALAMUM_JOB_0023_OBSERVERCTL_COMMAND_SURFACE_PLANNING_20260221",
+  "type": "GOVERNANCE",
+  "status": "PLANNED",
+  "owner": "ORACL-Prime",
+  "date_utc": "2026-02-21",
+  "summary": "Comprehensive implementation specification for observerctl command topology, ops-centric gate semantics, trigger posture enforcement, and publish-grade evidence packets.",
+  "decisions": {
+    "topology": {
+      "ops_contains": [
+        "preflight",
+        "mode gate --to <mode>",
+        "mode current",
+        "mode list",
+        "mode set",
+        "gate-check",
+        "evidence pack",
+        "evidence verify",
+        "evidence index"
+      ],
+      "separate_namespaces": [
+        "baseline",
+        "librarian",
+        "watchdog",
+        "health",
+        "policy"
+      ]
+    },
+    "namespace_model": [
+      "ops",
+      "baseline",
+      "librarian",
+      "watchdog",
+      "health",
+      "policy"
+    ],
+    "renames": {
+      "doctor": "health"
+    },
+    "scope_notes": [
+      "Observer is a security test surface, not a development platform.",
+      "Datastore management is handled under librarian namespace.",
+      "observerctl remains standalone from CodeSentinel runtime process surfaces.",
+      "Mode source is inferred from current state; --from is not used in this release.",
+      "Source vocabulary is sim|real.",
+      "Trigger posture policy is isolation for watch/canary and lockdown for live/honeypot."
+    ]
+  },
+  "mode_model": {
+    "source_axis": [
+      "sim",
+      "real"
+    ],
+    "mode_axis": [
+      "watch",
+      "canary",
+      "live",
+      "honeypot"
+    ]
+  },
+  "trigger_posture_model": {
+    "watch": "isolation",
+    "canary": "isolation",
+    "live": "lockdown",
+    "honeypot": "lockdown",
+    "lockdown_parameters": {
+      "heartbeat_interval_seconds": "3-5",
+      "stale_threshold_missed_beats": 2,
+      "baseline_validation_interval_seconds": "30-60",
+      "recovery_clean_cycles_required": 3
+    }
+  },
+  "data_contract_required_fields": [
+    "run_id",
+    "posture_trigger_id",
+    "posture_trigger",
+    "security_report_ref"
+  ],
+  "required_gate_commands": [
+    "observerctl ops preflight --json",
+    "observerctl ops mode gate --to <mode> --json",
+    "observerctl ops gate-check --json",
+    "observerctl ops evidence pack --event <event> --json",
+    "observerctl ops evidence verify --packet <path> --json"
+  ],
+  "command_definitions": {
+    "baseline": [
+      "status --json",
+      "graph --json",
+      "check --json",
+      "list --json",
+      "set --id <id> --json"
+    ],
+    "librarian": [
+      "stats --json",
+      "stores --json",
+      "rotate --mode <mode> --json",
+      "compact --mode <mode> --json",
+      "verify --mode <mode> --json"
+    ],
+    "watchdog": [
+      "status --json",
+      "check --json",
+      "reasons --json",
+      "ack --code <reason_code> --json"
+    ],
+    "health": [
+      "quick --json",
+      "full --json",
+      "explain --code <reason_code> --json"
+    ],
+    "policy": [
+      "show --json",
+      "validate --json"
+    ]
+  },
+  "exit_code_contract": {
+    "0": "success/go",
+    "2": "fail-closed no-go/policy denial",
+    "3": "invalid command or schema",
+    "4": "required dependency/context missing",
+    "5": "runtime I/O failure"
+  },
+  "dependencies": [
+    "CALAMUM_JOB_0022_MOLTBOOK_BASELINE_INTEGRATION_20260220"
+  ],
+  "deliverables": [
+    "command_contract_matrix",
+    "mode_transition_gate_matrix",
+    "evidence_packet_schema_map",
+    "fail_closed_test_matrix"
+  ],
+  "next_actions": [
+    "Implement ops mode gate checks for trigger posture validity and lockdown parameter enforcement.",
+    "Add run linkage fields (run_id, posture_trigger_id, posture_trigger, security_report_ref) to gate/evidence outputs.",
+    "Add automated tests for isolation/lockdown mapping and fail-closed denial reasons.",
+    "Update examples/docs to use sim|real source terminology.",
+    "Validate end-to-end run linkage from evidence packets to security report artifacts."
+  ]
+}

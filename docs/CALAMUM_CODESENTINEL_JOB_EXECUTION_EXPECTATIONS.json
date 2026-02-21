@@ -1,7 +1,7 @@
 {
   "meta": {
     "type": "operations_policy",
-    "version": "1.0.4",
+    "version": "1.0.5",
     "id": "CALAMUM_CODESENTINEL_JOB_EXECUTION_EXPECTATIONS_20260212",
     "scope": "projects/calamum-moltbook-observer",
     "owner": "ORACL-Prime",
@@ -22,7 +22,20 @@
     "forbidden_runtime_labels": [
       "calamum",
       "calamumctl"
-    ]
+    ],
+    "runtime_mode_model": {
+      "source_axis": [
+        "sim",
+        "real"
+      ],
+      "mode_axis": [
+        "watch",
+        "canary",
+        "live",
+        "honeypot"
+      ],
+      "note": "The term 'live' is reserved for interaction posture under mode_axis; real target sourcing uses source='real'."
+    }
   },
   "gate_contract": {
     "gate": "PRE_JOB",
@@ -129,9 +142,70 @@
         "observerctl preflight emits names-only status packet",
         "observerctl gate-check emits go/no-go with reason codes",
         "observerctl evidence packet references queststack/job artifacts by path",
-        "observerctl output remains compatible with PRE_JOB/POST_JOB fail-closed semantics"
+        "observerctl output remains compatible with PRE_JOB/POST_JOB fail-closed semantics",
+        "observerctl gate/evidence outputs include run linkage fields: run_id, posture_trigger_id, posture_trigger, security_report_ref"
       ]
     }
+  },
+  "ops_posture_policy": {
+    "trigger_posture_by_mode": {
+      "watch": "isolation",
+      "canary": "isolation",
+      "live": "lockdown",
+      "honeypot": "lockdown"
+    },
+    "isolation_profile": {
+      "required_reactions": [
+        "quarantine container",
+        "block ingress and egress (no data in or out)",
+        "suspend collector/interactor runtime",
+        "allow names-only local health and evidence logging only"
+      ]
+    },
+    "lockdown_profile": {
+      "required_reactions": [
+        "apply all isolation reactions",
+        "increase watchdog and observer heartbeat cadence",
+        "tighten stale heartbeat threshold",
+        "increase baseline validation cadence",
+        "freeze non-essential writes except append-only evidence",
+        "deny promotion transitions until recovery checks pass"
+      ],
+      "suggested_parameters": {
+        "heartbeat_interval_seconds": "3-5",
+        "stale_threshold_missed_beats": 2,
+        "baseline_validation_interval_seconds": "30-60",
+        "recovery_clean_cycles_required": 3
+      }
+    },
+    "gate_enforcement": {
+      "policy": "fail_closed",
+      "required_checks": [
+        "watchdog_trigger_posture_valid",
+        "heartbeat_rate_escalated_for_lockdown",
+        "baseline_validation_rate_escalated_for_lockdown",
+        "run_security_report_linked"
+      ],
+      "failure_reason_codes": [
+        "critical_check_failed:watchdog_trigger_posture_invalid",
+        "critical_check_failed:lockdown_heartbeat_rate_not_escalated",
+        "critical_check_failed:lockdown_baseline_rate_not_escalated",
+        "critical_check_failed:run_security_report_missing"
+      ]
+    }
+  },
+  "data_contract": {
+    "required_linkage_fields": [
+      "run_id",
+      "posture_trigger_id",
+      "posture_trigger",
+      "security_report_ref"
+    ],
+    "posture_trigger_allowed_values": [
+      "isolation",
+      "lockdown"
+    ],
+    "rule": "All collection, gate, and evidence records must carry required linkage fields to support run-level security traceability."
   },
   "publication_requirements": {
     "standard": "doctoral_publish_grade",
