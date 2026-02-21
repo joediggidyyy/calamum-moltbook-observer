@@ -12,6 +12,16 @@ Outputs (default; all ignored under local_untracked/):
 
 Run from repo root:
     .venv-core\\Scripts\\python.exe projects\\calamum-moltbook-observer\\tools\\audit_runtime_artifacts.py
+
+Refresh modes:
+    --watchdog-refresh pre
+        Refresh watchdog instance before collecting diagnostics.
+    --watchdog-refresh on-stale
+        Collect heartbeats first; refresh only if watchdog is WARN/ERR.
+
+Default refresh method uses dashboard restart via launch_ghost_console.ps1
+with CALAMUM_SKIP_BROWSER=1. A custom PowerShell refresh command can be
+provided when alternate remediation is preferred.
 """
 
 from __future__ import annotations
@@ -19,6 +29,7 @@ from __future__ import annotations
 import argparse
 import hashlib
 import json
+import os
 import re
 import subprocess
 import time
@@ -345,6 +356,138 @@ def _repo_root_from_here(here: Path) -> Tuple[Path, Path]:
     return repo_root, project_root
 
 
+def _collect_heartbeats(
+    *,
+    health_dir: Path,
+    repo_root: Path,
+    now: float,
+    hb_warn_seconds: Optional[float],
+    hb_err_seconds: Optional[float],
+) -> List[Dict[str, Any]]:
+    hb_targets = {
+        "watchdog": health_dir / "calamum_ops_watchdog.heartbeat",
+        "observer": health_dir / "calamum_observer.heartbeat",
+        "librarian": health_dir / "calamum_librarian.heartbeat",
+    }
+    heartbeats: List[Dict[str, Any]] = []
+    for name, p in hb_targets.items():
+        st = _safe_stat(p)
+        age = _age_seconds(st.mtime, now)
+        status = _status_from_age(age, exists=bool(st.exists), warn_s=hb_warn_seconds, err_s=hb_err_seconds)
+
+        sig_ok: Optional[bool] = None
+        sig_detail = "unavailable"
+        if name == "watchdog":
+            sig_ok, sig_detail = _verify_signed_record_best_effort(p)
+            # If signature verification is available and fails, treat watchdog as ERR even if fresh.
+            if sig_ok is False:
+                status = "ERR"
+
+        heartbeats.append(
+            {
+                "name": name,
+                "path": _rel_to(p, repo_root),
+                "exists": bool(st.exists),
+                "size_bytes": int(st.size_bytes),
+                "age_seconds": None if age is None else round(float(age), 3),
+                "status": status,
+                "signature_check_available": bool(obfuscator_lib) if name == "watchdog" else False,
+                "signature_valid": sig_ok if name == "watchdog" else None,
+                "signature_detail": sig_detail if name == "watchdog" else None,
+            }
+        )
+    return heartbeats
+
+
+def _refresh_watchdog_instance(
+    *,
+    project_root: Path,
+    method: str,
+    custom_command: str,
+    timeout_sec: float,
+    reason: str,
+) -> Dict[str, Any]:
+    started = _now()
+
+    if method == "dashboard-restart":
+        launcher = (project_root / "launch_ghost_console.ps1").resolve()
+        if not launcher.exists():
+            return {
+                "ok": False,
+                "method": method,
+                "reason": reason,
+                "error": f"launcher_missing:{launcher}",
+                "duration_s": round(float(_now() - started), 3),
+            }
+        cmd = [
+            "powershell.exe",
+            "-NoProfile",
+            "-NonInteractive",
+            "-ExecutionPolicy",
+            "Bypass",
+            "-File",
+            str(launcher),
+        ]
+        env = os.environ.copy()
+        # Runtime diagnostics should never pop UI windows.
+        env["CALAMUM_SKIP_BROWSER"] = "1"
+    elif method == "custom-command":
+        if not custom_command.strip():
+            return {
+                "ok": False,
+                "method": method,
+                "reason": reason,
+                "error": "custom_command_missing",
+                "duration_s": round(float(_now() - started), 3),
+            }
+        cmd = [
+            "powershell.exe",
+            "-NoProfile",
+            "-NonInteractive",
+            "-ExecutionPolicy",
+            "Bypass",
+            "-Command",
+            custom_command,
+        ]
+        env = os.environ.copy()
+    else:
+        return {
+            "ok": False,
+            "method": method,
+            "reason": reason,
+            "error": f"unsupported_method:{method}",
+            "duration_s": round(float(_now() - started), 3),
+        }
+
+    try:
+        p = subprocess.run(
+            cmd,
+            cwd=str(project_root),
+            capture_output=True,
+            text=True,
+            timeout=float(timeout_sec),
+            check=False,
+            env=env,
+        )
+        return {
+            "ok": int(p.returncode) == 0,
+            "method": method,
+            "reason": reason,
+            "returncode": int(p.returncode),
+            "duration_s": round(float(_now() - started), 3),
+            "stderr_nonempty": bool((p.stderr or "").strip()),
+            "stdout_nonempty": bool((p.stdout or "").strip()),
+        }
+    except Exception as e:
+        return {
+            "ok": False,
+            "method": method,
+            "reason": reason,
+            "error": repr(e),
+            "duration_s": round(float(_now() - started), 3),
+        }
+
+
 def audit_runtime_artifacts(
     *,
     repo_root: Path,
@@ -355,6 +498,11 @@ def audit_runtime_artifacts(
     max_tail_bytes: int,
     hb_warn_seconds: Optional[float],
     hb_err_seconds: Optional[float],
+    watchdog_refresh: str,
+    watchdog_refresh_method: str,
+    watchdog_refresh_command: str,
+    watchdog_refresh_timeout_sec: float,
+    watchdog_refresh_settle_sec: float,
     scout_strays: bool,
     scout_max_results: int,
     set_baseline: bool,
@@ -401,39 +549,57 @@ def audit_runtime_artifacts(
 
     now = _now()
 
-    # Heartbeats
-    hb_targets = {
-        "watchdog": health_dir / "calamum_ops_watchdog.heartbeat",
-        "observer": health_dir / "calamum_observer.heartbeat",
-        "librarian": health_dir / "calamum_librarian.heartbeat",
-    }
-    heartbeats: List[Dict[str, Any]] = []
-    for name, p in hb_targets.items():
-        st = _safe_stat(p)
-        age = _age_seconds(st.mtime, now)
-        status = _status_from_age(age, exists=bool(st.exists), warn_s=hb_warn_seconds, err_s=hb_err_seconds)
+    refresh_events: List[Dict[str, Any]] = []
+    requested_refresh = str(watchdog_refresh or "none").strip().lower()
 
-        sig_ok: Optional[bool] = None
-        sig_detail = "unavailable"
-        if name == "watchdog":
-            sig_ok, sig_detail = _verify_signed_record_best_effort(p)
-            # If signature verification is available and fails, treat watchdog as ERR even if fresh.
-            if sig_ok is False:
-                status = "err"
-
-        heartbeats.append(
-            {
-                "name": name,
-                "path": _rel_to(p, repo_root),
-                "exists": bool(st.exists),
-                "size_bytes": int(st.size_bytes),
-                "age_seconds": None if age is None else round(float(age), 3),
-                "status": status,
-                "signature_check_available": bool(obfuscator_lib) if name == "watchdog" else False,
-                "signature_valid": sig_ok if name == "watchdog" else None,
-                "signature_detail": sig_detail if name == "watchdog" else None,
-            }
+    if requested_refresh == "pre":
+        evt = _refresh_watchdog_instance(
+            project_root=project_root,
+            method=str(watchdog_refresh_method),
+            custom_command=str(watchdog_refresh_command or ""),
+            timeout_sec=float(watchdog_refresh_timeout_sec),
+            reason="pre_diagnostic_refresh",
         )
+        refresh_events.append(evt)
+        if evt.get("ok") and watchdog_refresh_settle_sec > 0:
+            time.sleep(float(watchdog_refresh_settle_sec))
+        now = _now()
+
+    # Heartbeats
+    heartbeats = _collect_heartbeats(
+        health_dir=health_dir,
+        repo_root=repo_root,
+        now=now,
+        hb_warn_seconds=hb_warn_seconds,
+        hb_err_seconds=hb_err_seconds,
+    )
+
+    if requested_refresh == "on-stale":
+        watchdog_row = next((row for row in heartbeats if str(row.get("name") or "") == "watchdog"), None)
+        stale = False
+        if isinstance(watchdog_row, dict):
+            status = str(watchdog_row.get("status") or "").upper()
+            stale = status in {"WARN", "ERR"}
+
+        if stale:
+            evt = _refresh_watchdog_instance(
+                project_root=project_root,
+                method=str(watchdog_refresh_method),
+                custom_command=str(watchdog_refresh_command or ""),
+                timeout_sec=float(watchdog_refresh_timeout_sec),
+                reason="stale_watchdog_heartbeat",
+            )
+            refresh_events.append(evt)
+            if evt.get("ok") and watchdog_refresh_settle_sec > 0:
+                time.sleep(float(watchdog_refresh_settle_sec))
+            now = _now()
+            heartbeats = _collect_heartbeats(
+                health_dir=health_dir,
+                repo_root=repo_root,
+                now=now,
+                hb_warn_seconds=hb_warn_seconds,
+                hb_err_seconds=hb_err_seconds,
+            )
 
     # Telemetry JSONL
     telemetry: List[Dict[str, Any]] = []
@@ -564,6 +730,14 @@ def audit_runtime_artifacts(
             "heartbeat_thresholds": {
                 "warn_seconds": hb_warn_seconds,
                 "err_seconds": hb_err_seconds,
+            },
+            "watchdog_refresh": {
+                "requested_mode": requested_refresh,
+                "method": str(watchdog_refresh_method),
+                "command_override_present": bool(str(watchdog_refresh_command or "").strip()),
+                "timeout_sec": float(watchdog_refresh_timeout_sec),
+                "settle_sec": float(watchdog_refresh_settle_sec),
+                "events": refresh_events,
             },
             "telemetry": telemetry,
             "control_signals": control,
@@ -781,6 +955,35 @@ def main(argv: Optional[List[str]] = None) -> int:
         help="Heartbeat age (seconds) at/above which status becomes ERR.",
     )
     ap.add_argument(
+        "--watchdog-refresh",
+        choices=["none", "on-stale", "pre"],
+        default="none",
+        help="Watchdog refresh strategy: none, on-stale (refresh only when watchdog heartbeat is WARN/ERR), or pre (refresh before diagnostics).",
+    )
+    ap.add_argument(
+        "--watchdog-refresh-method",
+        choices=["dashboard-restart", "custom-command"],
+        default="dashboard-restart",
+        help="Refresh method. Default dashboard-restart invokes launch_ghost_console.ps1 with CALAMUM_SKIP_BROWSER=1.",
+    )
+    ap.add_argument(
+        "--watchdog-refresh-command",
+        default="",
+        help="PowerShell command used when --watchdog-refresh-method custom-command is selected.",
+    )
+    ap.add_argument(
+        "--watchdog-refresh-timeout-sec",
+        type=float,
+        default=120.0,
+        help="Timeout for watchdog refresh action execution.",
+    )
+    ap.add_argument(
+        "--watchdog-refresh-settle-sec",
+        type=float,
+        default=2.0,
+        help="Wait time after a successful refresh before collecting heartbeats.",
+    )
+    ap.add_argument(
         "--scout-strays",
         action="store_true",
         help="Also scan the project tree for stray runtime artifacts outside logs (names-only).",
@@ -814,6 +1017,11 @@ def main(argv: Optional[List[str]] = None) -> int:
             max_tail_bytes=int(args.max_tail_bytes),
             hb_warn_seconds=float(args.hb_warn_seconds) if args.hb_warn_seconds is not None else None,
             hb_err_seconds=float(args.hb_err_seconds) if args.hb_err_seconds is not None else None,
+            watchdog_refresh=str(args.watchdog_refresh),
+            watchdog_refresh_method=str(args.watchdog_refresh_method),
+            watchdog_refresh_command=str(args.watchdog_refresh_command),
+            watchdog_refresh_timeout_sec=float(args.watchdog_refresh_timeout_sec),
+            watchdog_refresh_settle_sec=float(args.watchdog_refresh_settle_sec),
             scout_strays=bool(args.scout_strays),
             scout_max_results=int(args.scout_max_results),
             set_baseline=bool(args.set_baseline),

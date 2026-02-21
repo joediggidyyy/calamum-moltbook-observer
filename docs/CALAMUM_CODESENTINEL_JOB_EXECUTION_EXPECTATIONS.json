@@ -1,18 +1,28 @@
 {
   "meta": {
     "type": "operations_policy",
-    "version": "1.0.0",
+    "version": "1.0.4",
     "id": "CALAMUM_CODESENTINEL_JOB_EXECUTION_EXPECTATIONS_20260212",
     "scope": "projects/calamum-moltbook-observer",
     "owner": "ORACL-Prime",
     "primary_stakeholder_approver": "joediggidyyy",
     "status": "ACTIVE",
-    "last_updated_utc": "2026-02-12"
+    "last_updated_utc": "2026-02-21"
   },
-  "purpose": "Define Calamum-scoped job execution expectations when CodeSentinel is the job orchestrator (names-only, fail-closed).",
+  "purpose": "Define observer-scoped job execution expectations when CodeSentinel is the job orchestrator (names-only, fail-closed), with strict scope separation from non-observer Calamum systems.",
   "ssot": {
     "tasks_file": "operations/tasks.json",
     "queststack_parse_surface": "projects/calamum-moltbook-observer/queststacks/*.md"
+  },
+  "scope_identity": {
+    "project_runtime_label": "observer",
+    "runtime_cli_surface": "observerctl",
+    "scope_rule": "Observer runtime surfaces must use observer naming and must not rely on codesentinel-scoped process surfaces.",
+    "legacy_identifier_policy": "Historical CALAMUM_* artifact IDs remain valid for lineage and traceability; new runtime interfaces must use observer naming.",
+    "forbidden_runtime_labels": [
+      "calamum",
+      "calamumctl"
+    ]
   },
   "gate_contract": {
     "gate": "PRE_JOB",
@@ -86,11 +96,103 @@
     "close": "codesentinel job close <task_id>",
     "post_close_required": [
       "codesentinel memory health --json"
+    ],
+    "runtime_diagnostic_refresh": {
+      "policy": "refresh watchdog instance before runtime diagnostics when needed",
+      "default_easiest_path": "restart dashboard stack via launch_ghost_console.ps1 (headless/browser-skip for operator runs)",
+      "note": "dashboard restart is easiest but not exclusive; alternate approved refresh methods may be used",
+      "runtime_script": "projects/calamum-moltbook-observer/tools/audit_runtime_artifacts.py",
+      "options": {
+        "watchdog_refresh": [
+          "pre",
+          "on-stale"
+        ],
+        "watchdog_refresh_method": [
+          "dashboard-restart",
+          "custom-command"
+        ]
+      }
+    },
+    "observerctl_contract": {
+      "policy": "observerctl is a standalone observer-scoped CLI and must not depend on CodeSentinel runtime processes.",
+      "allowed_dependencies": [
+        "project-local observer modules",
+        "project-local logs and control artifacts",
+        "environment variables"
+      ],
+      "forbidden_dependencies": [
+        "codesentinel process orchestration",
+        "codesentinel CLI command surfaces",
+        "codesentinel session-memory internals"
+      ],
+      "gated_job_readiness": [
+        "observerctl preflight emits names-only status packet",
+        "observerctl gate-check emits go/no-go with reason codes",
+        "observerctl evidence packet references queststack/job artifacts by path",
+        "observerctl output remains compatible with PRE_JOB/POST_JOB fail-closed semantics"
+      ]
+    }
+  },
+  "publication_requirements": {
+    "standard": "doctoral_publish_grade",
+    "required_packets": [
+      {
+        "name": "provenance",
+        "minimum_fields": [
+          "artifact_path",
+          "artifact_sha256",
+          "generated_at_utc",
+          "producer_process",
+          "upstream_inputs"
+        ]
+      },
+      {
+        "name": "methodology",
+        "minimum_fields": [
+          "sampling_strategy",
+          "runtime_constraints",
+          "data_handling_invariants",
+          "failure_modes",
+          "repro_steps"
+        ]
+      },
+      {
+        "name": "process_log",
+        "minimum_fields": [
+          "phase",
+          "decision",
+          "rationale",
+          "evidence_refs",
+          "approver_checkpoint"
+        ]
+      }
+    ],
+    "quality_gates": [
+      "names-only compliance",
+      "reproducibility from documented steps",
+      "explicit methodology-to-evidence mapping"
     ]
   },
   "security": {
     "names_only": true,
     "icmp_assumed_disabled": true,
+    "naming_convention": {
+      "canonical_roles": {
+        "KEYSMITH": "key mint/bootstrap lane (Job 0018 lineage)",
+        "KEYMASTER": "key retrieval/live-readiness lane (Job 0021 lineage)"
+      },
+      "rule": "KEYSMITH and KEYMASTER are distinct roles and must not be used interchangeably in ids, summaries, status reasons, or gate-critical artifact references.",
+      "casing": {
+        "preferred": [
+          "KEYSMITH",
+          "KEYMASTER"
+        ],
+        "allowed_human_readable": [
+          "Keysmith",
+          "Keymaster"
+        ]
+      }
+    },
     "secrets": {
       "never_print_or_log": true,
       "never_write_tracked": true,

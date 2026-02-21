@@ -20,6 +20,12 @@
 
 Design and execute a Calamum-scoped, zero-trust, read-only observer against Moltbook (and similar agent social networks). The experiment MUST prevent privileged host context leakage, MUST prevent self-modification by the observer, and MUST export only obfuscated structured telemetry suitable for governance and safety decisions.
 
+Scope-separation addendum (2026-02-21):
+
+- Runtime CLI naming for this project is `observerctl`.
+- `observerctl` is observer-scoped and standalone (no dependency on CodeSentinel runtime process surfaces).
+- Historical CALAMUM identifiers remain for lineage only and do not define runtime interface naming.
+
 ## Assumptions
 
 - Agent social networks are untrusted input streams (hostile by default).
@@ -104,3 +110,16 @@ Definition of done:
 - 0 incidents of feed-sourced command execution or package installation.
 - Obfuscated outputs support at least one concrete governance decision (policy/checklist refinement) without raw text export.
 - Sampling yields a stable, repeatable estimate of high-risk signal prevalence over time.
+
+## Publication-grade output requirements (observer doctoral lane)
+
+All observer-scoped deliverables must include a publish-grade triad:
+
+1. **Provenance**
+  - artifact path, digest (SHA256), generation timestamp (UTC), producer identity, upstream dependency refs.
+2. **Methodology**
+  - sampling frame/cadence, constraints, invariants, failure semantics, reproducibility protocol.
+3. **Process**
+  - phase ledger, decision/rationale log, evidence references, approval checkpoints.
+
+Gate readiness requires all three packets for each high-value transition (especially live collection go/no-go).

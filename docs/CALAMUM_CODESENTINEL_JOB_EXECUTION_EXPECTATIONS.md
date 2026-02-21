@@ -2,7 +2,7 @@
 
 > **Audience**: Operators and agents executing Calamum work under CodeSentinel job lifecycle management
 > 
-> **Scope**: `projects/calamum-moltbook-observer/` (Calamum project) under the CodeSentinel-1 umbrella repository
+> **Scope**: `projects/calamum-moltbook-observer/` (observer-scoped project) under the CodeSentinel-1 umbrella repository
 > 
 > **Owner (system operator)**: ORACL-Prime
 > 
@@ -10,20 +10,26 @@
 > 
 > **Status**: ACTIVE POLICY (names-only)
 > 
-> **Last updated (UTC)**: 2026-02-12
+> **Last updated (UTC)**: 2026-02-21
 
 ---
 
 ## 1) Purpose
 
-This document defines **how Calamum work is executed when CodeSentinel is the job orchestrator**.
+This document defines **how observer-scoped work is executed when CodeSentinel is the job orchestrator**.
 
 It is specifically meant to eliminate drift where:
 
 - a QuestStack exists but cannot pass CodeSentinel gates,
 - evidence artifacts exist but are not linked consistently,
-- secrets/env vars are handled in ways that violate Calamum + CodeSentinel policy,
+- secrets/env vars are handled in ways that violate observer + CodeSentinel policy,
 - “project locality” rules conflict with system-level evidence paths.
+
+Scope-separation rule (normative):
+
+- This project's runtime CLI surface is `observerctl`.
+- Runtime interfaces must not use `calamum` / `calamumctl` labels.
+- Historical `CALAMUM_*` IDs remain valid as lineage identifiers only.
 
 This is a policy/operations contract: **it is about execution expectations and compliance**, not architecture prose.
 
@@ -52,6 +58,17 @@ The CodeSentinel PRE_JOB gate parses the QuestStack markdown for artifact refere
 - a job report under `docs/reports/operations/`
 - a QuestStack provenance log under `logs/queststack/`
 - a QuestStack evidence JSONL under `logs/queststack/`
+
+### 2.3 QuestStack as data structure (operational)
+
+Within CodeSentinel job orchestration, a QuestStack is treated as an **operational data structure**, not only narrative prose:
+
+- `operations/tasks.json` stores the task node (`id`, `path`, `status`).
+- `task.path` points to the QuestStack markdown parse surface.
+- PRE_JOB reads the QuestStack to resolve gate-critical links.
+- QuestFrame, job docs, and evidence paths are normalized edges from that node.
+
+If the QuestStack scaffold is malformed or incomplete, start-gate behavior is fail-closed.
 
 ---
 
@@ -127,6 +144,14 @@ For any CodeSentinel-managed Calamum task:
 
 Gates are executed as part of job lifecycle.
 
+Canonical gate sequencing:
+
+1. `codesentinel job start <task_id>` -> enforces PRE_JOB scaffold + references.
+2. Execute lane work while maintaining QuestStack log/evidence continuity.
+3. `codesentinel job close <task_id>` -> enforces POST_JOB prior to SSOT completion.
+
+If close-gate fails, completion is denied and task status must not be treated as closed.
+
 ### 4.2 Mandatory evidence steps
 
 - Gate evidence is append-only and names-only:
@@ -143,6 +168,37 @@ After closing a job:
   - `codesentinel memory health --json`
 
 (Operators should keep `.agent_session/policy_snapshot.*` and `.agent_session/ops_awareness.*` fresh throughout execution.)
+
+### 4.4 Runtime diagnostic heartbeat-refresh policy
+
+Before running runtime diagnostics, operators should ensure the watchdog instance is fresh because observer/librarian heartbeat posture often follows watchdog recovery.
+
+Operational note:
+
+- Easiest refresh path: restart dashboard stack via `launch_ghost_console.ps1` (with browser skip for headless/operator runs).
+- This is not the only valid refresh method; alternate operator-approved refresh commands are allowed.
+
+Runtime diagnostic command support (`tools/audit_runtime_artifacts.py`):
+
+- `--watchdog-refresh pre` -> run refresh before heartbeat collection.
+- `--watchdog-refresh on-stale` -> refresh only when watchdog heartbeat is stale (`WARN`/`ERR`).
+- `--watchdog-refresh-method dashboard-restart|custom-command` with optional `--watchdog-refresh-command` for alternate refresh strategies.
+
+### 4.5 Observer CLI contract (`observerctl`)
+
+`observerctl` is a standalone observer-scoped CLI surface.
+
+It must:
+
+- depend only on observer project modules/artifacts and environment variables,
+- emit names-only status/evidence packets compatible with gate artifacts,
+- support fail-closed go/no-go checks for gated job progression.
+
+It must not:
+
+- depend on CodeSentinel runtime process surfaces,
+- call or require CodeSentinel command surfaces for internal operation,
+- rely on SessionMemory internals.
 
 ---
 
@@ -187,12 +243,47 @@ A Calamum QuestStack is “ready for CodeSentinel execution” when:
 - [ ] It links provenance log/evidence under `logs/queststack/`.
 - [ ] It does not contain secrets or operator instructions that require human secret handling.
 
+## 7) Publication-grade evidence requirements (doctoral standard)
+
+Observer-scoped outputs must support publish-grade review with explicit provenance, methodology, and process traceability.
+
+Required packets:
+
+- **Provenance packet**
+  - artifact path
+  - artifact SHA256
+  - generation timestamp (UTC)
+  - producer process identity
+  - upstream input references
+- **Methodology packet**
+  - sampling strategy
+  - runtime constraints
+  - data-handling invariants
+  - failure modes
+  - reproducibility steps
+- **Process packet**
+  - phase
+  - decision
+  - rationale
+  - evidence references
+  - approver checkpoint
+
+Quality gates:
+
+- names-only compliance,
+- reproducibility from documented process,
+- explicit methodology-to-evidence mapping.
+
 ---
 
-## 7) Terminology
+## 8) Terminology
 
 - **ORACL / ORACL-Prime**: the operating agent persona used for CodeSentinel-managed work.
-- **joediggidyyy**: primary stakeholder / approver identity for Calamum scope.
+- **joediggidyyy**: primary stakeholder / approver identity for observer scope.
+- **observerctl**: standalone observer-scoped runtime CLI surface.
+- **KEYSMITH**: key mint/bootstrap role (Job 0018 lineage); sandboxed acquisition path.
+- **KEYMASTER**: key retrieval/live-readiness role (Job 0021 lineage); high-value execution lane.
+- **Role boundary rule**: KEYSMITH and KEYMASTER are distinct and must not be used interchangeably in task IDs, summaries, status reasons, or gate-critical artifact links.
 - **QuestStack**: human-readable execution narrative + artifact pointers; the gate parse surface.
 - **QuestFrame**: machine-readable frame spec (JSON) referenced by the QuestStack.
 - **Job doc**: job SSOT docs (paired MD/JSON) + a repo-root stub for PRE_JOB discoverability.

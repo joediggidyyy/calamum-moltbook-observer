@@ -29,6 +29,18 @@ param(
 
 $ErrorActionPreference = "Stop"
 
+function Invoke-DockerStrict {
+    param(
+        [string[]]$Args,
+        [string]$Step
+    )
+
+    & docker @Args
+    if ($LASTEXITCODE -ne 0) {
+        throw "Docker step failed: $Step (exit=$LASTEXITCODE)"
+    }
+}
+
 function Test-EnvPresent($name) {
     try {
         return (Test-Path "env:$name") -and -not [string]::IsNullOrWhiteSpace((Get-Item "env:$name").Value)
@@ -54,16 +66,24 @@ if ($Source -eq 'live') {
     }
 }
 
+# Fail closed if Docker daemon is not reachable.
+Invoke-DockerStrict -Args @('info') -Step 'docker daemon availability check'
+
 $outputName = if ($Mode -eq 'canary') { 'moltbook_canary_metrics.jsonl' } else { 'moltbook_samples_obfuscated.jsonl' }
 $containerOut = "/logs/$outputName"
 
 Write-Host "[*] Building container image: $ImageName"
-docker build -t $ImageName -f "$SCRIPT_DIR\Dockerfile" "$SCRIPT_DIR\.."
+Invoke-DockerStrict -Args @('build', '-t', $ImageName, '-f', "$SCRIPT_DIR\Dockerfile", "$SCRIPT_DIR\..") -Step 'docker build'
 
 # Cleanup previous instance if exists
-if (docker ps -a -q -f name=$ContainerName) {
+$existingContainer = & docker ps -a -q -f "name=$ContainerName"
+if ($LASTEXITCODE -ne 0) {
+    throw "Docker step failed: docker ps existing container check (exit=$LASTEXITCODE)"
+}
+
+if ($existingContainer) {
     Write-Host "[*] Removing previous instance..."
-    docker rm -f $ContainerName | Out-Null
+    Invoke-DockerStrict -Args @('rm', '-f', $ContainerName) -Step 'docker rm'
 }
 
 Write-Host "[*] Launching Secure Observer (Glass Box Mode)..."
@@ -80,7 +100,7 @@ if ($Source -eq 'live') {
     }
 }
 
-docker run -d --rm `
+& docker run -d --rm `
     --read-only `
     --cap-drop ALL `
     --security-opt "no-new-privileges:true" `
@@ -90,6 +110,10 @@ docker run -d --rm `
     @envArgs `
     $ImageName `
     python calamum_sampler.py --mode $Mode --source $Source --output $containerOut
+
+if ($LASTEXITCODE -ne 0) {
+    throw "Docker step failed: docker run (exit=$LASTEXITCODE)"
+}
 
 Write-Host "[+] Observer running. ID: $ContainerName"
 Write-Host "[+] Triple-Redundancy Sentinel recommended: python projects/calamum-moltbook-observer/src/sentinel.py"

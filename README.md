@@ -82,6 +82,19 @@ Note: Coursework write-ups and submission artifacts are maintained **locally** (
 
 ## Operation Manual
 
+### Observer runtime CLI (`observerctl`)
+
+Observer runtime operations are exposed through `src/observerctl.py` and are intentionally standalone from CodeSentinel runtime process surfaces.
+
+- Preflight status packet (names-only):
+  - `python src/observerctl.py preflight --source sim --json`
+- Gate decision packet (`go` / `no-go`):
+  - `python src/observerctl.py gate-check --source sim --json`
+- Publication-grade evidence packet (provenance/methodology/process):
+  - `python src/observerctl.py evidence-pack --source sim --json`
+
+Critical note: `gate-check` is fail-closed and returns non-zero when required inputs are missing (for example, no signing-key context).
+
 ### Launching (Windows Host)
 #### A) Ghost Console V2 (Ops Dashboard)
 The Ghost Console is a fixed-size, "digital brutalism" ops dashboard (NiceGUI + ECharts) designed to show **names-only** telemetry.

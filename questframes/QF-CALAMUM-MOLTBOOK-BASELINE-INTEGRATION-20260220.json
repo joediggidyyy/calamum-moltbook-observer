@@ -1,0 +1,49 @@
+{
+  "queststack_id": "qs-calamum-moltbook-baseline-integration-20260220",
+  "questframe_id": "calamum-moltbook-baseline-integration-20260220",
+  "owner": "ORACL-Prime",
+  "created_at": "2026-02-20T00:00:00Z",
+  "updated_at": "2026-02-20T00:00:00Z",
+  "current_focus_frame": "qf1_contract_binding_and_dependency_lock",
+  "frames": [
+    {
+      "frame_id": "qf1_contract_binding_and_dependency_lock",
+      "stage_id": "paperwork",
+      "title": "Contract binding + dependency lock",
+      "status": "not-started",
+      "next_action": "Bind baseline dependency artifacts and acceptance checks into the lane before any runtime transition.",
+      "tasks": [
+        "Reference baseline_scope_contract_v0 and baseline_posture_inputs_v0",
+        "Link gate and quest evidence paths for deterministic traceability",
+        "Confirm live Keymaster remains blocked pending readiness criteria",
+        "Validate artifact spine parse readiness"
+      ]
+    },
+    {
+      "frame_id": "qf2_watchdog_posture_receipt_wiring",
+      "stage_id": "integration",
+      "title": "Wire watchdog posture receipt contract",
+      "status": "not-started",
+      "next_action": "Integrate minimum watchdog posture receipt fields into readiness decisions and report artifacts.",
+      "tasks": [
+        "Require posture_state and reason_codes[]",
+        "Require watchdog_receipt_id and expires_at_utc",
+        "Require baseline_freshness_sec and topology_state",
+        "Require evidence_refs[] cross-links"
+      ]
+    },
+    {
+      "frame_id": "qf3_validation_and_fail_closed_decisions",
+      "stage_id": "validation",
+      "title": "Validate fail-closed go/no-go behavior",
+      "status": "not-started",
+      "next_action": "Validate both healthy and failure/stale baseline cases and enforce fail-closed outcomes.",
+      "tasks": [
+        "Validate healthy baseline-ready decision path",
+        "Validate stale/failure/timeout baseline denial path",
+        "Confirm observability signals never self-authorize control actions",
+        "Capture final gate and SessionMemory health evidence"
+      ]
+    }
+  ]
+}

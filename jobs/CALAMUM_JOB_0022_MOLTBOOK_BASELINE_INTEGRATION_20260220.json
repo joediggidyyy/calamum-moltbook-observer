@@ -1,0 +1,12 @@
+{
+  "id": "CALAMUM_JOB_0022_MOLTBOOK_BASELINE_INTEGRATION_20260220",
+  "type": "GOVERNANCE",
+  "status": "IN_PROGRESS",
+  "updates": [
+    "2026-02-20: terminal lane guard canonization added (helper wrapper + fail-closed prune behavior)"
+  ],
+  "dependencies": [
+    "OPS_JOB_0032_CODESENTINEL_BASELINE_LOCAL_STABILIZATION_20260220",
+    "CALAMUM_JOB_0021_MOLTBOOK_KEYMASTER_RETRIEVAL_READINESS_20260219"
+  ]
+}
