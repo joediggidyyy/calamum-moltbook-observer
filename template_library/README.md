@@ -22,6 +22,11 @@ This includes the KEYSMITH doctrine for `MOLTBOOK_API_KEY` (claim_url-only human
 - `job_complexity_templates/` — Lightweight planning prompts and checklists.
 - `ssot/` — SSOT (single-source-of-truth) canonical template stubs.
 
+ObserverCTL operational templates added for immediate Job0023 execution:
+
+- `reports/OBSERVERCTL_MODE_TRANSITION_RUN_TEMPLATE.{md,json}.template`
+- `reports/OBSERVERCTL_SECURITY_POSTURE_VALIDATION_TEMPLATE.{md,json}.template`
+
 ## Syncing from VAULT
 
 Use the project-local sync tool:

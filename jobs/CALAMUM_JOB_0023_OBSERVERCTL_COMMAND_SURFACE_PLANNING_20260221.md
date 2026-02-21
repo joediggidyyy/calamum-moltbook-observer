@@ -47,6 +47,7 @@ Additional `ops` controls:
 - `observerctl ops mode current --json`
 - `observerctl ops mode list --json`
 - `observerctl ops mode set --to <mode> --json`
+- `observerctl ops mode transition --to <mode> --source <sim|real> --event <event> --output <path> --json`
 - `observerctl ops evidence index --json`
 
 ### 3.2 Baseline and graph management: `observerctl baseline *`
@@ -93,6 +94,7 @@ Renamed from `doctor`.
 |---|---|---|---:|---:|
 | ops | `ops preflight --json` | Collect names-only readiness facts | 0 | 2/4/5 |
 | ops | `ops mode gate --to Y --json` | Evaluate transition authorization from inferred current mode | 0 | 2 |
+| ops | `ops mode transition --to Y --json` | Atomic gate + set + evidence workflow | 0 | 2/3/5 |
 | ops | `ops gate-check --json` | Evaluate global go/no-go | 0 | 2 |
 | ops | `ops evidence pack --event E --json` | Emit triad packet for event E | 0 | 3/5 |
 | ops | `ops evidence verify --packet P --json` | Validate packet schema/hash | 0 | 3 |
@@ -145,6 +147,10 @@ Required checks per transition:
 - reason-code packet generation.
 
 Transition commands must fail closed and must not auto-fallback to warning-only outcomes.
+
+Atomic transition execution contract:
+- `ops mode transition` performs `gate -> set -> evidence` in one operation.
+- If any phase fails, command returns fail-closed and preserves denial evidence.
 
 ### 5.1 Current-mode inference contract
 
@@ -326,6 +332,7 @@ Evidence-producing commands must additionally include triad sections:
 - mode-transition gate matrix,
 - triad packet schema map,
 - fail-closed test matrix and evidence references.
+- reusable transition/posture execution templates under `template_library/reports/`.
 
 ## 12.1 Data contract linkage requirement
 

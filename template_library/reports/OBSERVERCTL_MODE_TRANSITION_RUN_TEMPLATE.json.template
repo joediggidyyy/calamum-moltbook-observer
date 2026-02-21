@@ -1,0 +1,43 @@
+{
+  "template_id": "CALAMUM_OBSERVERCTL_MODE_TRANSITION_RUN_V1",
+  "runtime_cli_surface": "observerctl",
+  "scope": "observer-runtime-operations",
+  "requested_at_utc": "<YYYY-MM-DDThh:mm:ssZ>",
+  "requested_by": "<OPERATOR_OR_AGENT>",
+  "transition": {
+    "from_state": "<sim|real>:<watch|canary|live|honeypot>",
+    "to_state": "<sim|real>:<watch|canary|live|honeypot>",
+    "event": "<event_label>"
+  },
+  "commands": [
+    "observerctl ops mode gate --to <mode> --source <sim|real> --json",
+    "observerctl ops mode transition --to <mode> --source <sim|real> --event <event_label> --output <path> --json",
+    "observerctl ops mode current --json"
+  ],
+  "gate": {
+    "decision": "<go|no-go>",
+    "reason_codes": [],
+    "profile": "<GP-*>",
+    "critical_checks": []
+  },
+  "run_linkage": {
+    "run_id": "<observerctl-...>",
+    "posture_trigger_id": "<pt-...>",
+    "posture_trigger": "<isolation|lockdown>",
+    "security_report_ref": "<docs/reports/operations/...>"
+  },
+  "triad_packet": {
+    "path": "<path>",
+    "sha256": "<sha256>",
+    "provenance": true,
+    "methodology": true,
+    "process": true
+  },
+  "completion": {
+    "gate_recorded": false,
+    "transition_executed": false,
+    "mode_verified": false,
+    "packet_indexed": false,
+    "fail_closed_documented": false
+  }
+}

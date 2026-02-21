@@ -42,6 +42,12 @@
     "reports": "template_library/reports",
     "ssot": "template_library/ssot"
   },
+  "custom_templates": [
+    "projects/calamum-moltbook-observer/template_library/reports/OBSERVERCTL_MODE_TRANSITION_RUN_TEMPLATE.md.template",
+    "projects/calamum-moltbook-observer/template_library/reports/OBSERVERCTL_MODE_TRANSITION_RUN_TEMPLATE.json.template",
+    "projects/calamum-moltbook-observer/template_library/reports/OBSERVERCTL_SECURITY_POSTURE_VALIDATION_TEMPLATE.md.template",
+    "projects/calamum-moltbook-observer/template_library/reports/OBSERVERCTL_SECURITY_POSTURE_VALIDATION_TEMPLATE.json.template"
+  ],
   "seed_source": {
     "policy": "copied into subtree for standalone usability",
     "root": "codesentinel/assets/VAULT_templates"

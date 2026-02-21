@@ -1,0 +1,20 @@
+[build-system]
+requires = ["setuptools>=68", "wheel"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "calamum-moltbook-observer"
+version = "0.1.0"
+description = "Observer-native CLI and runtime operations for Calamum Moltbook Observer"
+readme = "README.md"
+requires-python = ">=3.8"
+dependencies = []
+
+[project.scripts]
+observerctl = "observerctl:main"
+
+[tool.setuptools]
+py-modules = ["observerctl", "calamum_config"]
+
+[tool.setuptools.package-dir]
+"" = "src"

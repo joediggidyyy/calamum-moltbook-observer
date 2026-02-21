@@ -126,7 +126,13 @@ def _load_policy() -> Dict[str, Any]:
     policy = _load_json_file(_control_file(POLICY_FILE), _policy_default())
     if not isinstance(policy.get('allowed_modes'), list):
         policy['allowed_modes'] = list(MODES)
+    if not isinstance(policy.get('forbidden_transitions'), list):
+        policy['forbidden_transitions'] = []
     return policy
+
+
+def _transition_id(from_source: str, from_mode: str, to_source: str, to_mode: str) -> str:
+    return '{0}:{1}->{2}:{3}'.format(from_source, from_mode, to_source, to_mode)
 
 
 def _file_age_seconds(path: Path) -> Optional[float]:
@@ -177,6 +183,7 @@ def collect_runtime_status(source: str = 'sim') -> Dict[str, Any]:
     hb_watchdog = health_dir / 'calamum_ops_watchdog.heartbeat'
     hb_observer = health_dir / 'calamum_observer.heartbeat'
     hb_librarian = health_dir / 'calamum_librarian.heartbeat'
+    store_packet = _store_integrity_packet(mode)
     check_watchdog = _check_heartbeat(hb_watchdog, max_age_sec=45.0)
     check_observer = _check_heartbeat(hb_observer, max_age_sec=60.0)
     check_librarian = _check_heartbeat(hb_librarian, max_age_sec=120.0)
@@ -226,12 +233,24 @@ def collect_runtime_status(source: str = 'sim') -> Dict[str, Any]:
         'exists': (data_dir / 'moltbook_canary_metrics.jsonl').exists(),
         'status': 'ok' if (data_dir / 'moltbook_canary_metrics.jsonl').exists() else 'warn',
     }
+    checks['store.pointer_consistent'] = {
+        'active_store_pointer': store_packet.get('active_store_pointer', ''),
+        'status': 'ok' if store_packet.get('status') == 'ok' else 'err',
+    }
+    checks['store.integrity_ok'] = {
+        'issues': list(store_packet.get('issues', [])),
+        'archive_count': int(store_packet.get('archive_count', 0)),
+        'compacted_count': int(store_packet.get('compacted_count', 0)),
+        'retention_state': str(store_packet.get('retention_state', 'normal')),
+        'status': 'ok' if store_packet.get('status') == 'ok' else 'err',
+    }
 
     return {
         'timestamp_utc': _utc_now(),
         'runtime_label': 'observer',
         'runtime_cli_surface': 'observerctl',
         'source': source_norm,
+        'state_source': str(state.get('source', source_norm)),
         'mode': mode,
         'checks': checks,
     }
@@ -240,6 +259,7 @@ def collect_runtime_status(source: str = 'sim') -> Dict[str, Any]:
 def evaluate_gate_decision(status_packet: Dict[str, Any], target_mode: Optional[str] = None) -> Dict[str, Any]:
     checks = status_packet.get('checks', {}) if isinstance(status_packet, dict) else {}
     source = _normalize_source(str(status_packet.get('source', 'sim')))
+    from_source = _normalize_source(str(status_packet.get('state_source', source)))
     mode = str(status_packet.get('mode', 'watch')).strip().lower()
     to_mode = str(target_mode or mode).strip().lower()
     if to_mode not in MODES:
@@ -248,21 +268,32 @@ def evaluate_gate_decision(status_packet: Dict[str, Any], target_mode: Optional[
             'decision': 'no-go',
             'reason_codes': ['policy_denied:target_mode_unsupported'],
             'critical_checks': [],
-            'from_state': '{0}:{1}'.format(source, mode),
+            'from_state': '{0}:{1}'.format(from_source, mode),
             'to_state': '{0}:{1}'.format(source, to_mode),
             'profile': 'GP-X',
         }
+
+    reasons: List[str] = []
+    if from_source == source and mode == to_mode:
+        reasons.append('policy_denied:no_op_transition')
+
+    policy = _load_policy()
+    forbidden = set(str(x) for x in list(policy.get('forbidden_transitions', [])))
+    transition_key = _transition_id(from_source, mode, source, to_mode)
+    if transition_key in forbidden:
+        reasons.append('policy_denied:transition_forbidden')
 
     critical_keys = [
         'paths.health_dir',
         'heartbeat.watchdog',
         'heartbeat.observer',
         'env.signing_key',
+        'store.pointer_consistent',
+        'store.integrity_ok',
     ]
     if source == 'real':
         critical_keys.append('env.moltbook_api_key')
 
-    reasons: List[str] = []
     for key in critical_keys:
         row = checks.get(key, {}) if isinstance(checks, dict) else {}
         state = str(row.get('status', 'err')).lower()
@@ -301,7 +332,7 @@ def evaluate_gate_decision(status_packet: Dict[str, Any], target_mode: Optional[
         'decision': decision,
         'reason_codes': deduped,
         'critical_checks': critical_keys,
-        'from_state': '{0}:{1}'.format(source, mode),
+        'from_state': '{0}:{1}'.format(from_source, mode),
         'to_state': '{0}:{1}'.format(source, to_mode),
         'profile': profile,
         'runtime_label': 'observer',
@@ -319,6 +350,9 @@ def build_evidence_pack(status_packet: Dict[str, Any], gate_packet: Dict[str, An
         str((checks.get('heartbeat.librarian') or {}).get('path', '')),
     ]
     evidence_refs = [p for p in evidence_refs if p]
+    store_ref = str((checks.get('store.pointer_consistent') or {}).get('active_store_pointer', '')).strip()
+    if store_ref:
+        evidence_refs.append(store_ref)
 
     methodology = {
         'sampling_strategy': 'names-only runtime posture sampling from health/data/control artifacts',
@@ -472,7 +506,9 @@ def _ops_mode_list() -> Dict[str, Any]:
 
 def _ops_mode_set(source: str, to_mode: str) -> Dict[str, Any]:
     gate = _load_json_file(_control_file(LAST_GATE_FILE), {})
-    if gate.get('decision') != 'go' or str(gate.get('to_state', '')).endswith(':{0}'.format(to_mode)) is False:
+    to_state = str(gate.get('to_state', ''))
+    expected_to_state = '{0}:{1}'.format(_normalize_source(source), to_mode)
+    if gate.get('decision') != 'go' or to_state != expected_to_state:
         return {
             'timestamp_utc': _utc_now(),
             'decision': 'no-go',
@@ -493,6 +529,74 @@ def _ops_mode_set(source: str, to_mode: str) -> Dict[str, Any]:
     }
     response.update(_make_run_linkage(state['mode'], event='mode-set'))
     return response
+
+
+def _ops_mode_transition(source: str, to_mode: str, event: str, output: str) -> Dict[str, Any]:
+    status_before = collect_runtime_status(source=source)
+    gate = evaluate_gate_decision(status_before, target_mode=to_mode)
+    _write_json_file(_control_file(LAST_GATE_FILE), gate)
+    if gate.get('decision') != 'go':
+        return {
+            'timestamp_utc': _utc_now(),
+            'runtime_cli_surface': 'observerctl',
+            'decision': 'no-go',
+            'phase': 'mode-transition',
+            'gate_packet': gate,
+            'reason_codes': gate.get('reason_codes', []),
+        }
+
+    mode_set = _ops_mode_set(source, to_mode)
+    if mode_set.get('decision') != 'go':
+        return {
+            'timestamp_utc': _utc_now(),
+            'runtime_cli_surface': 'observerctl',
+            'decision': 'no-go',
+            'phase': 'mode-transition',
+            'gate_packet': gate,
+            'mode_set_packet': mode_set,
+            'reason_codes': mode_set.get('reason_codes', ['critical_check_failed:mode_set_failed']),
+        }
+
+    evidence = build_evidence_pack(status_before, gate, event=event)
+    out_path = Path(str(output).strip()) if str(output).strip() else _default_output_path()
+    evidence = _write_packet(evidence, out_path)
+    _append_jsonl(_project_root() / 'local_untracked' / 'observerctl' / 'evidence' / 'index.jsonl', {
+        'timestamp_utc': _utc_now(),
+        'packet_path': str(out_path).replace('\\', '/'),
+        'decision': gate.get('decision', 'no-go'),
+        'run_id': evidence.get('run_id', ''),
+    })
+    evidence_decision = str(((evidence.get('gate_packet') or {}).get('decision')) or evidence.get('decision', 'no-go')).lower()
+    if evidence_decision != 'go':
+        return {
+            'timestamp_utc': _utc_now(),
+            'runtime_cli_surface': 'observerctl',
+            'decision': 'no-go',
+            'phase': 'mode-transition',
+            'gate_packet': gate,
+            'mode_set_packet': mode_set,
+            'evidence_packet': evidence,
+            'reason_codes': ((evidence.get('gate_packet') or {}).get('reason_codes') or evidence.get('reason_codes') or ['critical_check_failed:evidence_gate_failed']),
+        }
+
+    result = {
+        'timestamp_utc': _utc_now(),
+        'runtime_cli_surface': 'observerctl',
+        'decision': 'go',
+        'phase': 'mode-transition',
+        'gate_packet': gate,
+        'mode_set_packet': mode_set,
+        'evidence_packet': {
+            'provenance': evidence.get('provenance', {}),
+            'process': evidence.get('process', {}),
+        },
+        'from_state': gate.get('from_state', ''),
+        'to_state': mode_set.get('to_state', gate.get('to_state', '')),
+        'reason_codes': [],
+    }
+    for key in ('run_id', 'posture_trigger_id', 'posture_trigger', 'security_report_ref'):
+        result[key] = mode_set.get(key, gate.get(key, ''))
+    return result
 
 
 def _ops_gate_check(source: str) -> Dict[str, Any]:
@@ -634,12 +738,123 @@ def _store_dir_for_mode(mode: str) -> Path:
     return get_calamum_data_dir() / 'stores' / mode
 
 
+def _store_manifest_path(mode: str) -> Path:
+    return _store_dir_for_mode(mode) / 'manifest.json'
+
+
+def _store_default_manifest(mode: str) -> Dict[str, Any]:
+    return {
+        'mode': mode,
+        'active_file': 'active.jsonl',
+        'archives': [],
+        'compacted_files': [],
+        'retention_state': 'normal',
+        'updated_at_utc': _utc_now(),
+    }
+
+
+def _load_store_manifest(mode: str) -> Dict[str, Any]:
+    if mode not in MODES:
+        mode = 'watch'
+    store_dir = _store_dir_for_mode(mode)
+    store_dir.mkdir(parents=True, exist_ok=True)
+    path = _store_manifest_path(mode)
+    manifest = _load_json_file(path, _store_default_manifest(mode))
+    if not path.exists():
+        _write_json_file(path, manifest)
+    if not isinstance(manifest.get('archives'), list):
+        manifest['archives'] = []
+    if not isinstance(manifest.get('compacted_files'), list):
+        manifest['compacted_files'] = []
+    if not manifest.get('active_file'):
+        manifest['active_file'] = 'active.jsonl'
+    if not manifest.get('retention_state'):
+        manifest['retention_state'] = 'normal'
+    active_path = _store_dir_for_mode(mode) / str(manifest.get('active_file', 'active.jsonl'))
+    active_path.parent.mkdir(parents=True, exist_ok=True)
+    if not active_path.exists():
+        active_path.touch()
+        _save_store_manifest(mode, manifest)
+    return manifest
+
+
+def _save_store_manifest(mode: str, manifest: Dict[str, Any]) -> None:
+    manifest['mode'] = mode
+    manifest['updated_at_utc'] = _utc_now()
+    _write_json_file(_store_manifest_path(mode), manifest)
+
+
+def _store_paths(mode: str, manifest: Dict[str, Any]) -> Dict[str, Any]:
+    store_dir = _store_dir_for_mode(mode)
+    active_rel = str(manifest.get('active_file', 'active.jsonl'))
+    active_path = store_dir / active_rel
+    archives = [store_dir / str(name) for name in list(manifest.get('archives', []))]
+    compacted = [store_dir / str(name) for name in list(manifest.get('compacted_files', []))]
+    return {
+        'store_dir': store_dir,
+        'active_path': active_path,
+        'archives': archives,
+        'compacted': compacted,
+    }
+
+
+def _count_jsonl_records(path: Path) -> int:
+    if not path.exists():
+        return 0
+    count = 0
+    with path.open('r', encoding='utf-8', errors='ignore') as f:
+        for line in f:
+            if line.strip():
+                count += 1
+    return count
+
+
+def _store_integrity_packet(mode: str) -> Dict[str, Any]:
+    manifest = _load_store_manifest(mode)
+    paths = _store_paths(mode, manifest)
+    active_exists = paths['active_path'].exists()
+    missing_archives = [str(p.name) for p in paths['archives'] if not p.exists()]
+    missing_compacted = [str(p.name) for p in paths['compacted'] if not p.exists()]
+    issues: List[str] = []
+    if not active_exists:
+        issues.append('missing_active_file')
+    if missing_archives:
+        issues.append('missing_archive_files')
+    if missing_compacted:
+        issues.append('missing_compacted_files')
+    return {
+        'mode': mode,
+        'store_path': str(paths['store_dir']).replace('\\', '/'),
+        'manifest_path': str(_store_manifest_path(mode)).replace('\\', '/'),
+        'active_store_pointer': str(paths['active_path']).replace('\\', '/'),
+        'archive_count': len(paths['archives']),
+        'compacted_count': len(paths['compacted']),
+        'retention_state': str(manifest.get('retention_state', 'normal')),
+        'issues': issues,
+        'status': 'ok' if len(issues) == 0 else 'err',
+    }
+
+
 def _librarian_stats() -> Dict[str, Any]:
     items = []
     for mode in MODES:
-        d = _store_dir_for_mode(mode)
-        recs = len(list(d.glob('*.jsonl'))) if d.exists() else 0
-        items.append({'mode': mode, 'store_path': str(d).replace('\\', '/'), 'record_files': recs})
+        packet = _store_integrity_packet(mode)
+        manifest = _load_store_manifest(mode)
+        paths = _store_paths(mode, manifest)
+        record_count = _count_jsonl_records(paths['active_path'])
+        for p in paths['archives']:
+            record_count += _count_jsonl_records(p)
+        for p in paths['compacted']:
+            record_count += _count_jsonl_records(p)
+        items.append({
+            'mode': mode,
+            'store_path': packet['store_path'],
+            'active_store_pointer': packet['active_store_pointer'],
+            'record_count': record_count,
+            'archive_count': packet['archive_count'],
+            'manifest_integrity': packet['status'],
+            'retention_state': packet['retention_state'],
+        })
     return {'timestamp_utc': _utc_now(), 'runtime_cli_surface': 'observerctl', 'stores': items}
 
 
@@ -647,19 +862,124 @@ def _librarian_stores() -> Dict[str, Any]:
     state = _load_state()
     stores = []
     for mode in MODES:
-        d = _store_dir_for_mode(mode)
-        stores.append({'mode': mode, 'path': str(d).replace('\\', '/'), 'exists': d.exists(), 'active': mode == state.get('mode')})
+        packet = _store_integrity_packet(mode)
+        stores.append({
+            'mode': mode,
+            'path': packet['store_path'],
+            'manifest_path': packet['manifest_path'],
+            'active_store_pointer': packet['active_store_pointer'],
+            'exists': Path(packet['store_path']).exists(),
+            'active': mode == state.get('mode'),
+            'retention_state': packet['retention_state'],
+        })
     return {'timestamp_utc': _utc_now(), 'runtime_cli_surface': 'observerctl', 'stores': stores}
 
 
 def _librarian_action(action: str, mode: str) -> Dict[str, Any]:
     if mode not in MODES:
         return {'timestamp_utc': _utc_now(), 'runtime_cli_surface': 'observerctl', 'decision': 'no-go', 'reason_codes': ['policy_denied:target_mode_unsupported']}
-    d = _store_dir_for_mode(mode)
-    d.mkdir(parents=True, exist_ok=True)
-    marker = d / '{0}_{1}.marker'.format(action, datetime.now(timezone.utc).strftime('%Y%m%dT%H%M%SZ'))
-    marker.write_text('ok\n', encoding='utf-8')
-    return {'timestamp_utc': _utc_now(), 'runtime_cli_surface': 'observerctl', 'decision': 'go', 'action': action, 'mode': mode, 'artifact': str(marker).replace('\\', '/')}
+    manifest = _load_store_manifest(mode)
+    paths = _store_paths(mode, manifest)
+    paths['store_dir'].mkdir(parents=True, exist_ok=True)
+    paths['active_path'].parent.mkdir(parents=True, exist_ok=True)
+    if not paths['active_path'].exists():
+        paths['active_path'].touch()
+
+    ts = datetime.now(timezone.utc).strftime('%Y%m%dT%H%M%SZ')
+
+    if action == 'rotate':
+        before_pointer = str(paths['active_path']).replace('\\', '/')
+        archive_name = 'archive_{0}.jsonl'.format(ts)
+        archive_path = paths['store_dir'] / archive_name
+        if paths['active_path'].exists() and paths['active_path'].stat().st_size > 0:
+            paths['active_path'].replace(archive_path)
+            manifest['archives'] = list(manifest.get('archives', [])) + [archive_name]
+        else:
+            archive_name = ''
+        paths['active_path'].touch()
+        _save_store_manifest(mode, manifest)
+        return {
+            'timestamp_utc': _utc_now(),
+            'runtime_cli_surface': 'observerctl',
+            'decision': 'go',
+            'action': action,
+            'mode': mode,
+            'before_store_pointer': before_pointer,
+            'after_store_pointer': str(paths['active_path']).replace('\\', '/'),
+            'archive_artifact': str(archive_path).replace('\\', '/') if archive_name else '',
+        }
+
+    if action == 'compact':
+        archive_names = [str(x) for x in list(manifest.get('archives', []))]
+        if len(archive_names) == 0:
+            return {
+                'timestamp_utc': _utc_now(),
+                'runtime_cli_surface': 'observerctl',
+                'decision': 'go',
+                'action': action,
+                'mode': mode,
+                'compacted_files': 0,
+                'compacted_records': 0,
+                'compact_artifact': '',
+            }
+
+        compact_name = 'compact_{0}.jsonl'.format(ts)
+        compact_path = paths['store_dir'] / compact_name
+        compacted_files = 0
+        compacted_records = 0
+        with compact_path.open('w', encoding='utf-8') as out_f:
+            for rel_name in archive_names:
+                p = paths['store_dir'] / rel_name
+                if not p.exists():
+                    continue
+                with p.open('r', encoding='utf-8', errors='ignore') as in_f:
+                    for line in in_f:
+                        if line.strip():
+                            out_f.write(line.rstrip('\n') + '\n')
+                            compacted_records += 1
+                p.unlink()
+                compacted_files += 1
+
+        manifest['archives'] = []
+        manifest['compacted_files'] = list(manifest.get('compacted_files', [])) + [compact_name]
+        _save_store_manifest(mode, manifest)
+        return {
+            'timestamp_utc': _utc_now(),
+            'runtime_cli_surface': 'observerctl',
+            'decision': 'go',
+            'action': action,
+            'mode': mode,
+            'compacted_files': compacted_files,
+            'compacted_records': compacted_records,
+            'compact_artifact': str(compact_path).replace('\\', '/'),
+        }
+
+    if action == 'verify':
+        packet = _store_integrity_packet(mode)
+        return {
+            'timestamp_utc': _utc_now(),
+            'runtime_cli_surface': 'observerctl',
+            'decision': 'go' if packet['status'] == 'ok' else 'no-go',
+            'action': action,
+            'mode': mode,
+            'store_path': packet['store_path'],
+            'manifest_path': packet['manifest_path'],
+            'active_store_pointer': packet['active_store_pointer'],
+            'archive_count': packet['archive_count'],
+            'compacted_count': packet['compacted_count'],
+            'retention_state': packet['retention_state'],
+            'reason_codes': [] if packet['status'] == 'ok' else ['critical_check_failed:store_integrity_invalid'],
+            'issues': packet['issues'],
+        }
+
+    return {
+        'timestamp_utc': _utc_now(),
+        'runtime_cli_surface': 'observerctl',
+        'decision': 'no-go',
+        'reason_codes': ['critical_check_failed:unknown_librarian_action'],
+        'action': action,
+        'mode': mode,
+    }
 
 
 def _watchdog_status() -> Dict[str, Any]:
@@ -801,6 +1121,8 @@ def _dispatch(args: argparse.Namespace) -> Dict[str, Any]:
             return _ops_gate(args.source, args.to)
         if args.ops_cmd == 'mode-set':
             return _ops_mode_set(args.source, args.to)
+        if args.ops_cmd == 'mode-transition':
+            return _ops_mode_transition(args.source, args.to, args.event, args.output)
         if args.ops_cmd == 'evidence-pack':
             return _ops_evidence_pack(args.source, args.event, args.output)
         if args.ops_cmd == 'evidence-verify':
@@ -882,6 +1204,11 @@ def _build_parser() -> argparse.ArgumentParser:
     op_set = op_mode_sub.add_parser('set', help='Set target mode after successful gate packet')
     op_set.add_argument('--to', choices=list(MODES), required=True)
     op_set.add_argument('--source', choices=['sim', 'real'], default=os.getenv('CALAMUM_MOLTBOOK_SOURCE', 'sim'))
+    op_transition = op_mode_sub.add_parser('transition', help='Atomic mode transition: gate + set + evidence')
+    op_transition.add_argument('--to', choices=list(MODES), required=True)
+    op_transition.add_argument('--source', choices=['sim', 'real'], default=os.getenv('CALAMUM_MOLTBOOK_SOURCE', 'sim'))
+    op_transition.add_argument('--event', default='mode-transition')
+    op_transition.add_argument('--output', default='')
 
     op_ev = ops_sub.add_parser('evidence', help='Evidence packet operations')
     op_ev_sub = op_ev.add_subparsers(dest='evidence_cmd', required=True)
@@ -947,6 +1274,8 @@ def _normalize_nested_aliases(args: argparse.Namespace) -> argparse.Namespace:
             args.ops_cmd = 'mode-gate'
         elif args.mode_cmd == 'set':
             args.ops_cmd = 'mode-set'
+        elif args.mode_cmd == 'transition':
+            args.ops_cmd = 'mode-transition'
     if args.command == 'ops' and args.ops_cmd == 'evidence':
         if args.evidence_cmd == 'pack':
             args.ops_cmd = 'evidence-pack'
@@ -958,11 +1287,10 @@ def _normalize_nested_aliases(args: argparse.Namespace) -> argparse.Namespace:
 
 
 def _extract_json_flag(argv: Optional[List[str]]) -> Tuple[List[str], bool]:
-    if argv is None:
-        return list(sys.argv[1:]), False
+    raw_argv = list(sys.argv[1:]) if argv is None else list(argv)
     cleaned: List[str] = []
     as_json = False
-    for token in argv:
+    for token in raw_argv:
         if token == '--json':
             as_json = True
             continue

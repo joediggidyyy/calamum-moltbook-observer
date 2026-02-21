@@ -1,0 +1,52 @@
+# ObserverCTL Mode Transition Run Template
+
+## Metadata
+
+- Template ID: `CALAMUM_OBSERVERCTL_MODE_TRANSITION_RUN_V1`
+- Paired JSON template: `OBSERVERCTL_MODE_TRANSITION_RUN_TEMPLATE.json.template`
+- Runtime CLI surface: `observerctl`
+- Scope: observer runtime operations only
+
+## Transition intent
+
+- Requested at (UTC): `<YYYY-MM-DDThh:mm:ssZ>`
+- Requested by: `<OPERATOR_OR_AGENT>`
+- From state (observed): `<sim|real>:<watch|canary|live|honeypot>`
+- To state (requested): `<sim|real>:<watch|canary|live|honeypot>`
+- Event tag: `<event_label>`
+
+## Command sequence (canonical)
+
+1. `observerctl ops mode gate --to <mode> --source <sim|real> --json`
+2. `observerctl ops mode transition --to <mode> --source <sim|real> --event <event_label> --output <path> --json`
+3. `observerctl ops mode current --json`
+
+## Gate decision evidence
+
+- decision: `<go|no-go>`
+- reason_codes: `<[] or list>`
+- profile: `<GP-*>`
+- critical_checks: `<list>`
+
+## Run linkage contract
+
+- run_id: `<observerctl-...>`
+- posture_trigger_id: `<pt-...>`
+- posture_trigger: `<isolation|lockdown>`
+- security_report_ref: `<docs/reports/operations/...>`
+
+## Triad evidence packet
+
+- packet path: `<path>`
+- packet sha256: `<sha256>`
+- provenance present: `<yes|no>`
+- methodology present: `<yes|no>`
+- process present: `<yes|no>`
+
+## Completion checklist
+
+- [ ] gate executed and recorded
+- [ ] transition command executed
+- [ ] mode current confirms target mode
+- [ ] triad evidence packet written and indexed
+- [ ] fail-closed outcome documented if denied

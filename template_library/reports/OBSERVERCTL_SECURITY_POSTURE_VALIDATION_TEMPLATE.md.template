@@ -1,0 +1,49 @@
+# ObserverCTL Security Posture Validation Template
+
+## Metadata
+
+- Template ID: `CALAMUM_OBSERVERCTL_SECURITY_POSTURE_VALIDATION_V1`
+- Paired JSON template: `OBSERVERCTL_SECURITY_POSTURE_VALIDATION_TEMPLATE.json.template`
+- Runtime CLI surface: `observerctl`
+
+## Target posture validation
+
+- Validation timestamp (UTC): `<YYYY-MM-DDThh:mm:ssZ>`
+- Source axis: `<sim|real>`
+- Mode target: `<watch|canary|live|honeypot>`
+- Expected posture: `<isolation|lockdown>`
+
+## Commands run
+
+- `observerctl watchdog status --json`
+- `observerctl watchdog check --json`
+- `observerctl ops mode gate --to <mode> --source <sim|real> --json`
+- `observerctl health full --json`
+
+## Required critical checks
+
+- `watchdog_trigger_posture_valid`
+- `run_security_report_linked`
+- `heartbeat_rate_escalated` (lockdown only)
+- `baseline_validation_rate_escalated` (lockdown only)
+
+## Evidence
+
+- watchdog status packet ref: `<path or inline ref>`
+- gate packet ref: `<path or inline ref>`
+- health packet ref: `<path or inline ref>`
+- reason_codes observed: `<list>`
+
+## Decision
+
+- final decision: `<go|no-go>`
+- denial reason codes (if any): `<list>`
+- containment action taken: `<none|isolate|lockdown|manual quarantine>`
+
+## Acceptance checklist
+
+- [ ] posture mapping matches mode target
+- [ ] fail-closed behavior verified
+- [ ] run linkage fields present
+- [ ] lockdown escalation checks recorded when applicable
+- [ ] evidence references captured

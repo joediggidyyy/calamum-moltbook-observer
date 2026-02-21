@@ -86,14 +86,22 @@ Note: Coursework write-ups and submission artifacts are maintained **locally** (
 
 Observer runtime operations are exposed through `src/observerctl.py` and are intentionally standalone from CodeSentinel runtime process surfaces.
 
-- Preflight status packet (names-only):
-  - `python src/observerctl.py preflight --source sim --json`
-- Gate decision packet (`go` / `no-go`):
-  - `python src/observerctl.py gate-check --source sim --json`
-- Publication-grade evidence packet (provenance/methodology/process):
-  - `python src/observerctl.py evidence-pack --source sim --json`
+Install native CLI entrypoint (one-time per environment):
 
-Critical note: `gate-check` is fail-closed and returns non-zero when required inputs are missing (for example, no signing-key context).
+- `python -m pip install -e .`
+
+After installation, use the observer-native command surface directly:
+
+- Preflight status packet (names-only):
+  - `observerctl ops preflight --source sim --json`
+- Gate decision packet (`go` / `no-go`):
+  - `observerctl ops gate-check --source sim --json`
+- Publication-grade evidence packet (provenance/methodology/process):
+  - `observerctl ops evidence pack --source sim --json`
+- Atomic transition workflow (gate + set + evidence):
+  - `observerctl ops mode transition --to canary --source sim --event transition-canary --output local_untracked/observerctl/evidence/transition_canary.json --json`
+
+Critical note: `ops gate-check` is fail-closed and returns non-zero when required inputs are missing (for example, no signing-key context).
 
 ### Launching (Windows Host)
 #### A) Ghost Console V2 (Ops Dashboard)
@@ -151,7 +159,7 @@ For local testing without a live container, `src/calamum_observer_agent.py` can:
 - `CALAMUM_OBSERVER_HEARTBEAT_PATH`: path to observer heartbeat marker
 - `CALAMUM_DATA_DIR`: directory containing JSONL metrics
 - `CALAMUM_DENSITY_SLICE_SEC`: histogram time-slice width (default: `15`)
-- `CALAMUM_MOLTBOOK_SOURCE`: observer agent source selector (`sim` or `live`; default: `sim`)
+- `CALAMUM_MOLTBOOK_SOURCE`: observer agent source selector (`sim` or `real`; default: `sim`)
 - `MOLTBOOK_API_KEY`: required for live collection (presence-only; never commit values). For key acquisition and handling doctrine, see: [Job Execution Expectations](docs/CALAMUM_CODESENTINEL_JOB_EXECUTION_EXPECTATIONS.md)
 - `MOLTBOOK_HOST`: optional override for the Moltbook API base URL (default: `https://api.moltbook.com/v1`)
 - `CALAMUM_LIVE_BATCH_LIMIT`: live feed batch size cap (default: `50`; clamped)

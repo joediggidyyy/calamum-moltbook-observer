@@ -20,7 +20,11 @@ It defines:
 - rollback and safety behavior,
 - test coverage requirements.
 
-This specification is normative for `observerctl ops mode gate --to <mode>` and `observerctl ops mode set --to <mode>` behavior in the current release.
+This specification is normative for `observerctl ops mode gate --to <mode>`, `observerctl ops mode set --to <mode>`, and `observerctl ops mode transition --to <mode>` behavior in the current release.
+
+Automation contract (current release):
+- `ops mode transition` is the canonical atomic transition command (`gate -> set -> evidence`).
+- Any failure in gate/set/evidence must return fail-closed (`no-go`) with deterministic reason codes.
 
 ## 2) Scope boundaries
 

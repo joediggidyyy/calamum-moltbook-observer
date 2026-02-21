@@ -39,9 +39,31 @@ def test_gate_check_go_in_sim_mode(tmp_path: Path, monkeypatch) -> None:
     monkeypatch.setenv('CALAMUM_DATA_SIGNING_KEY', 'unit-test-signing-key')
 
     status = collect_runtime_status(source='sim')
-    gate = evaluate_gate_decision(status)
+    gate = evaluate_gate_decision(status, target_mode='canary')
     assert gate['decision'] == 'go'
     assert gate['reason_codes'] == []
+
+
+def test_gate_noop_transition_denied(tmp_path: Path, monkeypatch) -> None:
+    log_dir = tmp_path / 'logs'
+    health = log_dir / 'health'
+    data = log_dir / 'data' / 'calamum'
+    control = log_dir / 'control' / 'calamum'
+
+    for d in [health, data, control]:
+        d.mkdir(parents=True, exist_ok=True)
+
+    _touch(health / 'calamum_ops_watchdog.heartbeat')
+    _touch(health / 'calamum_observer.heartbeat')
+    _touch(health / 'calamum_librarian.heartbeat')
+
+    monkeypatch.setenv('CALAMUM_LOG_DIR', str(log_dir))
+    monkeypatch.setenv('CALAMUM_DATA_SIGNING_KEY', 'unit-test-signing-key')
+
+    status = collect_runtime_status(source='sim')
+    gate = evaluate_gate_decision(status, target_mode='watch')
+    assert gate['decision'] == 'no-go'
+    assert 'policy_denied:no_op_transition' in gate['reason_codes']
 
 
 def test_gate_check_real_requires_api_key(tmp_path: Path, monkeypatch) -> None:
@@ -122,6 +144,35 @@ def test_ops_mode_gate_and_set_flow(tmp_path: Path, monkeypatch) -> None:
     assert rc_current == 0
 
 
+def test_ops_mode_transition_atomic_flow(tmp_path: Path, monkeypatch) -> None:
+    log_dir = tmp_path / 'logs'
+    health = log_dir / 'health'
+    data = log_dir / 'data' / 'calamum'
+    control = log_dir / 'control' / 'calamum'
+
+    for d in [health, data, control]:
+        d.mkdir(parents=True, exist_ok=True)
+
+    _touch(health / 'calamum_ops_watchdog.heartbeat')
+    _touch(health / 'calamum_observer.heartbeat')
+    _touch(health / 'calamum_librarian.heartbeat')
+
+    monkeypatch.setenv('CALAMUM_LOG_DIR', str(log_dir))
+    monkeypatch.setenv('CALAMUM_DATA_SIGNING_KEY', 'unit-test-signing-key')
+
+    out = tmp_path / 'transition_evidence.json'
+    rc = main([
+        'ops', 'mode', 'transition',
+        '--to', 'canary',
+        '--source', 'sim',
+        '--event', 'unit-transition',
+        '--output', str(out),
+        '--json',
+    ])
+    assert rc == 0
+    assert out.exists()
+
+
 def test_ops_evidence_verify_schema_failure(tmp_path: Path, monkeypatch) -> None:
     bad_packet = tmp_path / 'bad_packet.json'
     bad_packet.write_text('{"timestamp_utc":"2026-02-21T00:00:00Z"}\n', encoding='utf-8')
@@ -167,3 +218,36 @@ def test_baseline_librarian_watchdog_health_policy_commands(tmp_path: Path, monk
 
     assert main(['policy', 'show', '--json']) == 0
     assert main(['policy', 'validate', '--json']) in (0, 2)
+
+
+def test_librarian_rotate_compact_verify_operational(tmp_path: Path, monkeypatch) -> None:
+    log_dir = tmp_path / 'logs'
+    data = log_dir / 'data' / 'calamum'
+    store = data / 'stores' / 'watch'
+    store.mkdir(parents=True, exist_ok=True)
+
+    active = store / 'active.jsonl'
+    active.write_text('{"x":1}\n{"x":2}\n', encoding='utf-8')
+
+    monkeypatch.setenv('CALAMUM_LOG_DIR', str(log_dir))
+    monkeypatch.setenv('CALAMUM_DATA_SIGNING_KEY', 'unit-test-signing-key')
+
+    assert main(['librarian', 'rotate', '--mode', 'watch', '--json']) == 0
+
+    manifest_path = store / 'manifest.json'
+    assert manifest_path.exists()
+    manifest = json.loads(manifest_path.read_text(encoding='utf-8'))
+    assert isinstance(manifest.get('archives'), list)
+
+    # Create another segment then compact archives.
+    active.write_text('{"x":3}\n', encoding='utf-8')
+    assert main(['librarian', 'rotate', '--mode', 'watch', '--json']) == 0
+    assert main(['librarian', 'compact', '--mode', 'watch', '--json']) == 0
+    assert main(['librarian', 'verify', '--mode', 'watch', '--json']) == 0
+
+    manifest_after = json.loads(manifest_path.read_text(encoding='utf-8'))
+    assert manifest_after.get('archives') == []
+    assert len(manifest_after.get('compacted_files', [])) >= 1
+
+    # Ensure former marker-stub artifacts are not used.
+    assert list(store.glob('*.marker')) == []
