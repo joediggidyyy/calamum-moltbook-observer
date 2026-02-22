@@ -13,9 +13,10 @@ def _read(path: Path) -> dict:
 def test_controller_emits_signals(tmp_path: Path, monkeypatch) -> None:
     repo_root = tmp_path
     (repo_root / 'logs').mkdir(parents=True, exist_ok=True)
+    out_dir = repo_root / 'logs' / 'control' / 'calamum'
+    monkeypatch.setenv('CALAMUM_CONTROL_DIR', str(out_dir))
 
     c = CalamumController()
-    monkeypatch.setattr(c, '_find_repo_root', lambda: repo_root)
 
     ok, _ = c.force_refresh()
     assert ok is True
@@ -26,7 +27,6 @@ def test_controller_emits_signals(tmp_path: Path, monkeypatch) -> None:
     ok, _ = c.kill_signal()
     assert ok is True
 
-    out_dir = repo_root / 'logs' / 'control' / 'calamum'
     assert (out_dir / 'refresh.signal.json').exists()
     assert (out_dir / 'isolate.signal.json').exists()
     assert (out_dir / 'watchdog_reset.signal.json').exists()

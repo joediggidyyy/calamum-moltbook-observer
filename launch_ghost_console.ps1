@@ -36,9 +36,63 @@ function Stop-ByPidFile ($pidFile, $name) {
                 $proc = Get-Process -Id $id -ErrorAction SilentlyContinue
                 if ($proc) {
                     Write-Host "    -> Stopping $name (PID: $id)..." -ForegroundColor Yellow
-                    Stop-Process -Id $id -Force -ErrorAction SilentlyContinue
-                    # Ensure it's dead
-                    Start-Sleep -Milliseconds 200
+                    function Get-ProcessTreePids($rootPid) {
+                        $all = @()
+                        $seen = @{}
+                        $queue = New-Object System.Collections.Generic.Queue[int]
+                        $queue.Enqueue([int]$rootPid)
+                        while ($queue.Count -gt 0) {
+                            $cur = $queue.Dequeue()
+                            if ($seen.ContainsKey($cur)) { continue }
+                            $seen[$cur] = $true
+                            $all += $cur
+                            try {
+                                $kids = Get-CimInstance Win32_Process -Filter "ParentProcessId=$cur" -ErrorAction SilentlyContinue
+                                foreach ($k in $kids) {
+                                    if ($k.ProcessId) {
+                                        $queue.Enqueue([int]$k.ProcessId)
+                                    }
+                                }
+                            } catch { }
+                        }
+                        return ($all | Select-Object -Unique)
+                    }
+
+                    function Wait-PidsExit($pidList, $timeoutMs) {
+                        $deadline = (Get-Date).AddMilliseconds([int]$timeoutMs)
+                        while ((Get-Date) -lt $deadline) {
+                            $alive = @()
+                            foreach ($pidItem in $pidList) {
+                                if (Get-Process -Id ([int]$pidItem) -ErrorAction SilentlyContinue) {
+                                    $alive += [int]$pidItem
+                                }
+                            }
+                            if ($alive.Count -eq 0) {
+                                return $true
+                            }
+                            Start-Sleep -Milliseconds 100
+                        }
+                        return $false
+                    }
+
+                    $tree = Get-ProcessTreePids $id
+                    # Graceful first: request stop without force, children first.
+                    foreach ($pidItem in ($tree | Sort-Object -Descending)) {
+                        try {
+                            Stop-Process -Id ([int]$pidItem) -ErrorAction SilentlyContinue
+                        } catch { }
+                    }
+
+                    $exited = Wait-PidsExit $tree 3000
+                    if (-not $exited) {
+                        Write-Host "    [!] $name did not exit cleanly in grace window. Escalating..." -ForegroundColor Yellow
+                        foreach ($pidItem in ($tree | Sort-Object -Descending)) {
+                            try {
+                                Stop-Process -Id ([int]$pidItem) -Force -ErrorAction SilentlyContinue
+                            } catch { }
+                        }
+                        [void](Wait-PidsExit $tree 1500)
+                    }
                 }
             }
         } catch { }
@@ -163,6 +217,7 @@ function Get-PidsByScript ($scriptPath) {
 # Enforce single-instance semantics: kill any extra instances beyond the expected PID.
 function Stop-OrphanInstances ($name, $scriptPath, $expectedPid) {
     $pids = Get-PidsByScript $scriptPath
+    $needle = [System.IO.Path]::GetFileName($scriptPath)
 
     # Protect the expected PID and its parent launcher PID (venv python.exe -> base python.exe).
     $protected = @{}
@@ -171,7 +226,18 @@ function Stop-OrphanInstances ($name, $scriptPath, $expectedPid) {
         try {
             $ci = Get-CimInstance Win32_Process -Filter "ProcessId=$expectedPid" -ErrorAction SilentlyContinue
             if ($ci -and $ci.ParentProcessId) {
-                $protected[[int]$ci.ParentProcessId] = $true
+                $parentId = [int]$ci.ParentProcessId
+                # Only protect parent if it is a launcher wrapper (does NOT look like same script).
+                $parentLooksLikeSameScript = $false
+                try {
+                    $pi = Get-CimInstance Win32_Process -Filter "ProcessId=$parentId" -ErrorAction SilentlyContinue
+                    if ($pi -and $pi.CommandLine -and ($pi.CommandLine -like "*${needle}*")) {
+                        $parentLooksLikeSameScript = $true
+                    }
+                } catch { }
+                if (-not $parentLooksLikeSameScript) {
+                    $protected[$parentId] = $true
+                }
             }
         } catch { }
     }
@@ -232,6 +298,21 @@ function Resolve-AgentIntervalSec() {
         }
     } catch { }
     return $defaultVal
+}
+
+function Resolve-ObserverAutostart() {
+    # GUI-safe default: observer does NOT autostart unless explicitly enabled.
+    $raw = $null
+    try {
+        if (Test-Path env:CALAMUM_GUI_AUTOSTART_OBSERVER) {
+            $raw = (Get-Item env:CALAMUM_GUI_AUTOSTART_OBSERVER).Value
+        }
+    } catch { }
+
+    if ($null -eq $raw) { return $false }
+    $v = ("$raw").Trim().ToLowerInvariant()
+    if (-not $v) { return $false }
+    return ($v -in @('1', 'true', 'yes', 'on', 'enable', 'enabled'))
 }
 
 # Load a project-local .env (gitignored) if present.
@@ -298,8 +379,10 @@ Write-Host ("[*] Env presence: MOLTBOOK_API_KEY=" + $(if ($moltKeyPresent) { 'pr
 $desiredMode = Normalize-AgentMode $(if (Test-Path env:CALAMUM_OPS_MODE) { (Get-Item env:CALAMUM_OPS_MODE).Value } else { $null })
 $desiredSource = Normalize-AgentSource $(if (Test-Path env:CALAMUM_MOLTBOOK_SOURCE) { (Get-Item env:CALAMUM_MOLTBOOK_SOURCE).Value } else { $null })
 $desiredInterval = Resolve-AgentIntervalSec
+$autoStartObserver = Resolve-ObserverAutostart
 
 Write-Host ("[*] Agent config (names-only): mode=${desiredMode}, source=${desiredSource}, interval_sec=${desiredInterval}") -ForegroundColor Gray
+Write-Host ("[*] GUI observer autostart: " + $(if ($autoStartObserver) { 'ENABLED' } else { 'DISABLED (default)' })) -ForegroundColor Gray
 
 # Fail closed: if LIVE is explicitly requested, require the key.
 if ($desiredSource -eq 'live' -and -not $moltKeyPresent) {
@@ -359,42 +442,50 @@ if (-not $watchdogPid) {
 
 # Check/Start Agent
 $agentPid = Get-RunningPid $AgentPidFile
-Stop-OrphanInstances "Observer Agent" $AgentScript $agentPid
-if (-not $agentPid) {
-    Write-Host "    [!] Observer Agent not running. Starting..." -ForegroundColor Yellow
-    Start-ServiceScript "calamum_agent" $AgentScript $AgentPidFile @(
-        "--mode", $desiredMode,
-        "--source", $desiredSource,
-        "--interval-sec", $desiredInterval
-    )
-} else {
-    # If the agent is running but not in the desired config, restart it.
-    $needsRestart = $false
-    try {
-        $ci = Get-CimInstance Win32_Process -Filter "ProcessId=$agentPid" -ErrorAction SilentlyContinue
-        $cmd = $null
-        if ($ci) { $cmd = $ci.CommandLine }
-        if ($cmd) {
-            if ($cmd -notlike "*--mode*${desiredMode}*") { $needsRestart = $true }
-            if ($cmd -notlike "*--source*${desiredSource}*") { $needsRestart = $true }
-        } else {
-            # If we can't see the command line, be conservative and restart.
-            $needsRestart = $true
-        }
-    } catch {
-        $needsRestart = $true
+if (-not $autoStartObserver) {
+    if ($agentPid) {
+        Write-Host "    [+] Observer Agent is ACTIVE (PID: $agentPid) [autostart disabled; leaving as-is]" -ForegroundColor Green
+    } else {
+        Write-Host "    [*] Observer Agent autostart disabled for GUI launch (set CALAMUM_GUI_AUTOSTART_OBSERVER=1 to enable)." -ForegroundColor Gray
     }
-
-    if ($needsRestart) {
-        Write-Host "    [!] Observer Agent config mismatch or unknown. Restarting to apply env-driven settings..." -ForegroundColor Yellow
-        Stop-ByPidFile $AgentPidFile "Observer Agent"
+} else {
+    Stop-OrphanInstances "Observer Agent" $AgentScript $agentPid
+    if (-not $agentPid) {
+        Write-Host "    [!] Observer Agent not running. Starting..." -ForegroundColor Yellow
         Start-ServiceScript "calamum_agent" $AgentScript $AgentPidFile @(
             "--mode", $desiredMode,
             "--source", $desiredSource,
             "--interval-sec", $desiredInterval
         )
     } else {
-        Write-Host "    [+] Observer Agent is ACTIVE (PID: $agentPid)" -ForegroundColor Green
+        # If the agent is running but not in the desired config, restart it.
+        $needsRestart = $false
+        try {
+            $ci = Get-CimInstance Win32_Process -Filter "ProcessId=$agentPid" -ErrorAction SilentlyContinue
+            $cmd = $null
+            if ($ci) { $cmd = $ci.CommandLine }
+            if ($cmd) {
+                if ($cmd -notlike "*--mode*${desiredMode}*") { $needsRestart = $true }
+                if ($cmd -notlike "*--source*${desiredSource}*") { $needsRestart = $true }
+            } else {
+                # If we can't see the command line, be conservative and restart.
+                $needsRestart = $true
+            }
+        } catch {
+            $needsRestart = $true
+        }
+
+        if ($needsRestart) {
+            Write-Host "    [!] Observer Agent config mismatch or unknown. Restarting to apply env-driven settings..." -ForegroundColor Yellow
+            Stop-ByPidFile $AgentPidFile "Observer Agent"
+            Start-ServiceScript "calamum_agent" $AgentScript $AgentPidFile @(
+                "--mode", $desiredMode,
+                "--source", $desiredSource,
+                "--interval-sec", $desiredInterval
+            )
+        } else {
+            Write-Host "    [+] Observer Agent is ACTIVE (PID: $agentPid)" -ForegroundColor Green
+        }
     }
 }
 

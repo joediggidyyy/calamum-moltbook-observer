@@ -43,14 +43,10 @@ class CalamumController:
         return cur.parent
 
     def _emit_signal(self, name: str, payload: Optional[dict] = None) -> Path:
-        # Control-plane location should be workspace-stable and testable.
-        # - Honor explicit CALAMUM_CONTROL_DIR overrides.
-        # - Otherwise default to repo-root `logs/control/calamum`.
-        if os.getenv('CALAMUM_CONTROL_DIR'):
-            out_dir = get_calamum_control_dir()
-        else:
-            repo_root = self._find_repo_root()
-            out_dir = repo_root / 'logs' / 'control' / 'calamum'
+        # Always use canonical Calamum control-dir resolution.
+        # `get_calamum_control_dir()` already honors CALAMUM_CONTROL_DIR and
+        # otherwise defaults to the Calamum project control plane.
+        out_dir = get_calamum_control_dir()
         out_dir.mkdir(parents=True, exist_ok=True)
 
         ts = datetime.datetime.now(datetime.timezone.utc).isoformat().replace('+00:00', 'Z')

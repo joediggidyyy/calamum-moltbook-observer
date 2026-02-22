@@ -1,0 +1,63 @@
+{
+  "job_id": "CALAMUM_JOB_0026_OBSERVER_OPERATIONAL_READINESS_AUDIT_20260222",
+  "sequence": 26,
+  "state": "IN_PROGRESS",
+  "status": "in-progress",
+  "status_reason": "readiness lane active via canonical codesentinel job start",
+  "started_at_utc": "2026-02-22T18:51:18.858308Z",
+  "qf2_gui_remediation_utc": "2026-02-22T19:10:49Z",
+  "qf2_gui_remediation_summary": [
+    "kill switch control-signal routing aligned to canonical calamum control dir",
+    "watchdog stale display logic corrected via per-component freshness thresholds",
+    "unauthorized AUTO-PURGE dashboard control removed"
+  ],
+  "qf2_gui_hardening_utc": "2026-02-22T19:44:30Z",
+  "qf2_gui_hardening_summary": [
+    "GUI launcher no longer auto-starts observer by default",
+    "observer auto-start now requires explicit CALAMUM_GUI_AUTOSTART_OBSERVER opt-in",
+    "system log upgraded to heads-up narrative (ingest summaries + stall/resume + heartbeat/signature transitions)"
+  ],
+  "qf2_launcher_live_check_utc": "2026-02-22T19:45:12Z",
+  "qf2_launcher_live_check": {
+    "autostart_env": "unset-default",
+    "observer_python_proc_count": 0,
+    "result": "pass"
+  },
+  "qf2_targeted_regression_utc": "2026-02-22T19:45:49Z",
+  "qf2_targeted_regression": {
+    "tests": [
+      "tests/test_calamum_launcher_script_safety.py",
+      "tests/test_calamum_ops_dashboard_smoke.py"
+    ],
+    "status": "updated",
+    "note": "final static contract assertions added; prior verified in-session targeted run was green at 5 passed before these final additions"
+  },
+  "qf2_observerctl_runtime_integration_utc": "2026-02-22T20:22:18Z",
+  "qf2_observerctl_runtime_integration_summary": [
+    "added observerctl ops runtime namespace with status/stop/start commands",
+    "runtime stop emits canonical kill signal into Calamum control dir",
+    "runtime start delegates through launch_ghost_console.ps1 with observer autostart opt-in and browser skip"
+  ],
+  "qf2_observerctl_runtime_validation_utc": "2026-02-22T20:22:18Z",
+  "qf2_observerctl_runtime_validation": {
+    "tests": [
+      "projects/calamum-moltbook-observer/src/tests/test_observerctl.py"
+    ],
+    "status": "passing-assertions-observed",
+    "note": "pytest terminal sessions were interrupted externally (KeyboardInterrupt) after reporting passing assertions; no failures were reported before interruption"
+  },
+  "scope": "observer",
+  "owner": "ORACL-Prime",
+  "primary_stakeholder_approver": "joediggidyyy",
+  "date_utc": "2026-02-22",
+  "canonical_job_content": [
+    "projects/calamum-moltbook-observer/docs/reports/operations/audits/OBSERVER_OPERATIONAL_READINESS_JOB_AUDIT_20260222.md",
+    "projects/calamum-moltbook-observer/docs/reports/operations/audits/OBSERVER_OPERATIONAL_READINESS_JOB_AUDIT_20260222.json"
+  ],
+  "queststack": "projects/calamum-moltbook-observer/queststacks/QS-CALAMUM-MOLTBOOK-OBSERVER-OPERATIONAL-READINESS-AUDIT-20260222.md",
+  "evidence": {
+    "gate_events": "logs/behavioral/gates/gate_events.jsonl",
+    "queststack_log": "logs/queststack/QS-CALAMUM-MOLTBOOK-OBSERVER-OPERATIONAL-READINESS-AUDIT-20260222_log.md",
+    "queststack_evidence": "logs/queststack/QS-CALAMUM-MOLTBOOK-OBSERVER-OPERATIONAL-READINESS-AUDIT-20260222_evidence.jsonl"
+  }
+}

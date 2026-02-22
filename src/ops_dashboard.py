@@ -239,6 +239,15 @@ class SystemState:
         self._last_wd_active: Optional[bool] = None
         self._last_lib_active: Optional[bool] = None  # NEW
         self._last_archive_count: int = 0  # NEW
+        self._last_ingest_event_at: Optional[float] = None
+        self._ingest_window_started_at: float = time.time()
+        self._ingest_window_records: int = 0
+        self._ingest_window_sources: Dict[str, int] = {}
+        self._ingest_stalled: bool = False
+        self._wd_sig_ok: Optional[bool] = None
+        self._wd_sig_detail: Optional[str] = None
+        self._obs_heartbeat_stale: Optional[bool] = None
+        self._lib_heartbeat_stale: Optional[bool] = None
         # UI push throttles (monotonic seconds)
         self._last_density_push_at: float = 0.0
         self._last_charts_push_at: float = 0.0
@@ -263,6 +272,21 @@ def add_log(msg: str) -> None:
     # keep bounded
     if len(state.log_items) > 400:
         state.log_items = state.log_items[-400:]
+
+
+def _ingest_summary_period_sec() -> float:
+    """Periodic cadence for low-signal ingest summaries in SYSTEM LOG.
+
+    Default is intentionally moderate to reduce feed clutter while preserving
+    periodic operator confirmation that ingest is still moving.
+    """
+    raw = os.getenv('CALAMUM_INGEST_SUMMARY_PERIOD_SEC', '45')
+    try:
+        value = float(raw)
+    except Exception:
+        value = 45.0
+    # Keep this in a sane, operator-friendly range.
+    return max(30.0, min(60.0, value))
 
 state = SystemState()
 
@@ -463,7 +487,9 @@ def _compute_snapshot() -> dict:
     total = int(snap.get('total_records', state.records_collected) or 0)
     total_display = int(snap.get('records_total_display', total) or 0)
     new = int(snap.get('new_records', 0) or 0)
-    state.records_collected = total_display
+    # UI runtime counter should reflect live ingest (including sim mode) so
+    # operators can see movement when the stream is healthy.
+    state.records_collected = total
 
     bins = snap.get('density_bins')
     if isinstance(bins, list):
@@ -519,13 +545,45 @@ def _compute_snapshot() -> dict:
     else:
         status = {'text': 'NOMINAL', 'color': 'green'}
 
-    # Log narrative
+    # Log narrative (heads-up oriented): aggregate ingest bursts and surface transitions.
+    now_ts = time.time()
+    ingest_summary_period_sec = _ingest_summary_period_sec()
+    ingest_stall_threshold_sec = 45.0
+
     if new > 0:
-        src = snap.get('active_jsonl_path')
-        if src:
-            add_log(f"Ingested +{new} records ({Path(src).name})")
-        else:
-            add_log(f"Ingested +{new} records")
+        src_name = 'unknown'
+        try:
+            src = snap.get('active_jsonl_path')
+            if src:
+                src_name = Path(str(src)).name
+        except Exception:
+            src_name = 'unknown'
+
+        state._ingest_window_records += int(new)
+        state._ingest_window_sources[src_name] = int(state._ingest_window_sources.get(src_name, 0)) + int(new)
+        state._last_ingest_event_at = now_ts
+
+        if state._ingest_stalled:
+            add_log('[SYS] Ingest activity resumed')
+            state._ingest_stalled = False
+
+    window_age = max(0.0, float(now_ts - state._ingest_window_started_at))
+    if state._ingest_window_records > 0 and window_age >= ingest_summary_period_sec:
+        top_sources = sorted(state._ingest_window_sources.items(), key=lambda kv: kv[1], reverse=True)
+        src_summary = ', '.join([f"{name}:{count}" for (name, count) in top_sources[:3]]) if top_sources else 'unknown'
+        add_log(
+            f"[INGEST] +{state._ingest_window_records} records/{int(round(window_age))}s "
+            f"(sources: {src_summary})"
+        )
+        state._ingest_window_records = 0
+        state._ingest_window_sources = {}
+        state._ingest_window_started_at = now_ts
+
+    if state.is_running and state._last_ingest_event_at is not None:
+        ingest_idle_age = now_ts - float(state._last_ingest_event_at)
+        if ingest_idle_age >= ingest_stall_threshold_sec and not state._ingest_stalled:
+            add_log(f"[WARN] Ingest stream idle for {int(round(ingest_idle_age))}s")
+            state._ingest_stalled = True
 
     if state._last_obs_active is None: state._last_obs_active = state.is_running
     if state._last_wd_active is None: state._last_wd_active = state.watchdog_active
@@ -540,6 +598,55 @@ def _compute_snapshot() -> dict:
     if state.librarian_active != state._last_lib_active:
         add_log(f"[SYS] Librarian state -> {'ACTIVE' if state.librarian_active else 'DOWN'}")
         state._last_lib_active = state.librarian_active
+
+    wd_stats = snap.get('watchdog_stats', {}) if isinstance(snap.get('watchdog_stats', {}), dict) else {}
+    if bool(wd_stats.get('signature_check_available', False)):
+        sig_ok = bool(wd_stats.get('signature_valid', False))
+        sig_detail = str(wd_stats.get('signature_detail', 'unknown'))
+        if state._wd_sig_ok is None:
+            state._wd_sig_ok = sig_ok
+            state._wd_sig_detail = sig_detail
+        elif sig_ok != state._wd_sig_ok:
+            if sig_ok:
+                add_log('[SYS] Watchdog signature verification restored')
+            else:
+                add_log(f"[WARN] Watchdog signature verification failed ({sig_detail})")
+            state._wd_sig_ok = sig_ok
+            state._wd_sig_detail = sig_detail
+
+    obs_stats = snap.get('observer_stats', {}) if isinstance(snap.get('observer_stats', {}), dict) else {}
+    lib_stats = snap.get('librarian_stats', {}) if isinstance(snap.get('librarian_stats', {}), dict) else {}
+
+    obs_age = obs_stats.get('age')
+    lib_age = lib_stats.get('age')
+    try:
+        obs_stale = float(obs_age) > 15.0
+    except Exception:
+        obs_stale = None
+    try:
+        lib_stale = float(lib_age) > 30.0
+    except Exception:
+        lib_stale = None
+
+    if obs_stale is not None:
+        if state._obs_heartbeat_stale is None:
+            state._obs_heartbeat_stale = bool(obs_stale)
+        elif bool(obs_stale) != bool(state._obs_heartbeat_stale):
+            if obs_stale:
+                add_log(f"[WARN] Observer heartbeat stale ({obs_stats.get('age_str', str(obs_age))})")
+            else:
+                add_log('[SYS] Observer heartbeat recovered')
+            state._obs_heartbeat_stale = bool(obs_stale)
+
+    if lib_stale is not None:
+        if state._lib_heartbeat_stale is None:
+            state._lib_heartbeat_stale = bool(lib_stale)
+        elif bool(lib_stale) != bool(state._lib_heartbeat_stale):
+            if lib_stale:
+                add_log(f"[WARN] Librarian heartbeat stale ({lib_stats.get('age_str', str(lib_age))})")
+            else:
+                add_log('[SYS] Librarian heartbeat recovered')
+            state._lib_heartbeat_stale = bool(lib_stale)
 
     # Archive Logic (Librarian activity)
     current_archived = int(snap.get('records_archive', 0))
@@ -561,7 +668,8 @@ def _compute_snapshot() -> dict:
         'mem': mem,
         'cpu_history': state.cpu_history,
         'mem_history': state.mem_history,
-        'total_records': total_display,
+        'total_records': total,
+        'records_total_display': total_display,
         'new_records': new,
         'density_bins': state.density_bins,
         'density_raw_window': state.density_raw_window,
@@ -582,8 +690,8 @@ def _compute_snapshot() -> dict:
             'lib': snap.get('librarian_stats', {}),
         },
         'records_breakdown': {
-            'session': snap.get('records_session_display', snap.get('records_session', 0)),
-            'archive': snap.get('records_archive_display', snap.get('records_archive', 0)),
+            'session': snap.get('records_session', snap.get('records_session_display', 0)),
+            'archive': snap.get('records_archive', snap.get('records_archive_display', 0)),
         },
         'uptime_s': time.time() - psutil.boot_time(),
         'status': status,
@@ -3231,7 +3339,7 @@ def main_page():
                         node.className = 'w-full cids-log-flash ' + (isOdd ? 'cids-log-zebra-odd' : 'cids-log-zebra-even');
                         if (String(line).indexOf('[ALERT]') >= 0) node.className += ' text-red-300';
                         else if (String(line).indexOf('[WARN]') >= 0 || String(line).indexOf('[WRN]') >= 0) node.className += ' text-orange-200';
-                        else if (String(line).indexOf('Ingested +') >= 0) node.className += ' text-emerald-200';
+                        else if (String(line).indexOf('Ingested +') >= 0 || String(line).indexOf('[INGEST]') >= 0) node.className += ' text-emerald-200';
                         else node.className += ' text-gray-400';
                         node.textContent = String(line);
                         if (el.firstChild) el.insertBefore(node, el.firstChild);
@@ -3442,7 +3550,7 @@ def main_page():
                                     node.className = 'w-full cids-log-flash ' + ((seq % 2) ? 'cids-log-zebra-odd' : 'cids-log-zebra-even');
                                     if (line.indexOf('[ALERT]') >= 0) node.className += ' text-red-300';
                                     else if (line.indexOf('[WARN]') >= 0 || line.indexOf('[WRN]') >= 0) node.className += ' text-orange-200';
-                                    else if (line.indexOf('Ingested +') >= 0) node.className += ' text-emerald-200';
+                                    else if (line.indexOf('Ingested +') >= 0 || line.indexOf('[INGEST]') >= 0) node.className += ' text-emerald-200';
                                     else node.className += ' text-gray-400';
                                     node.textContent = String(line);
                                     if (el.firstChild) el.insertBefore(node, el.firstChild);
@@ -3601,15 +3709,6 @@ def main_page():
                 ui.button('FORCE REFRESH', on_click=lambda: handle_control('REFRESH')).props(btn_props()).classes('w-full border border-gray-700')
                 ui.button('ISOLATE NODE', on_click=lambda: handle_control('ISOLATE')).props('push color=grey-10 text-color=orange').classes('w-full border border-orange-900')
                 ui.label('ISOLATE NODE blocks external ingress to the observer (ops channel remains).').classes('text-xs text-gray-500 -mt-2')
-
-                ui.separator().classes('bg-gray-700')
-
-                with ui.row().classes('w-full justify-between items-center'):
-                    with ui.row().classes('items-center gap-2'):
-                        ui.label('AUTO-PURGE').classes('text-sm text-gray-400')
-                        ui.icon('help_outline', size='xs').classes('text-gray-600')\
-                            .tooltip('Auto-Purge: retention cleanup for logs/cached metrics (stub for now).')
-                    ui.switch().props('color=white')
 
                 ui.separator().classes('bg-gray-700')
 

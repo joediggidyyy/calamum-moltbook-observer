@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import json
+import os
 import sys
 from pathlib import Path
 
@@ -8,6 +9,8 @@ from pathlib import Path
 SRC_DIR = Path(__file__).resolve().parents[1]
 if str(SRC_DIR) not in sys.path:
     sys.path.insert(0, str(SRC_DIR))
+
+import observerctl as observerctl_module
 
 from observerctl import (  # noqa: E402
     _default_output_path,
@@ -462,3 +465,131 @@ def test_default_evidence_paths_use_canonical_data_cache(tmp_path: Path, monkeyp
     assert out.name.startswith('observerctl_unit-test_evidence_')
     assert out.suffix == '.json'
     assert idx == expected_dir / 'index.jsonl'
+
+
+def test_ops_runtime_stop_writes_kill_signal(tmp_path: Path, monkeypatch) -> None:
+    log_dir = tmp_path / 'logs'
+    control_dir = log_dir / 'control' / 'calamum'
+    control_dir.mkdir(parents=True, exist_ok=True)
+    monkeypatch.setenv('CALAMUM_LOG_DIR', str(log_dir))
+
+    rc = main(['ops', 'runtime', 'stop', '--json'])
+    assert rc == 0
+
+    signal_path = control_dir / 'kill.signal.json'
+    assert signal_path.exists()
+    payload = json.loads(signal_path.read_text(encoding='utf-8'))
+    assert payload.get('signal') == 'kill'
+    assert payload.get('requested_by') == 'observerctl'
+
+
+def test_ops_runtime_stop_cleans_stale_pidfile(tmp_path: Path, monkeypatch) -> None:
+    log_dir = tmp_path / 'logs'
+    control_dir = log_dir / 'control' / 'calamum'
+    control_dir.mkdir(parents=True, exist_ok=True)
+    monkeypatch.setenv('CALAMUM_LOG_DIR', str(log_dir))
+    monkeypatch.setattr(observerctl_module, '_project_root', lambda: tmp_path)
+
+    pid_file = tmp_path / 'calamum_agent.pid'
+    pid_file.write_text('424242', encoding='utf-8')
+    monkeypatch.setattr(observerctl_module, '_pid_alive', lambda _pid: False)
+
+    packet = observerctl_module._ops_runtime_stop(timeout_sec=0.0)
+    assert packet['decision'] == 'go'
+    assert packet['stopped_cleanly'] is True
+    assert packet['escalated_terminate'] is False
+    assert not pid_file.exists()
+
+
+def test_ops_runtime_stop_escalates_when_process_persists(tmp_path: Path, monkeypatch) -> None:
+    log_dir = tmp_path / 'logs'
+    control_dir = log_dir / 'control' / 'calamum'
+    control_dir.mkdir(parents=True, exist_ok=True)
+    monkeypatch.setenv('CALAMUM_LOG_DIR', str(log_dir))
+    monkeypatch.setattr(observerctl_module, '_project_root', lambda: tmp_path)
+
+    pid_file = tmp_path / 'calamum_agent.pid'
+    pid_file.write_text('424242', encoding='utf-8')
+
+    calls = {'pid_alive': 0, 'terminate': 0}
+
+    def _fake_pid_alive(_pid):
+        calls['pid_alive'] += 1
+        # Alive during initial check(s), then false after terminate path has run.
+        if calls['terminate'] == 0:
+            return True
+        return False
+
+    def _fake_terminate(_pid, graceful_timeout_sec=2.0):
+        calls['terminate'] += 1
+        return True
+
+    monkeypatch.setattr(observerctl_module, '_pid_alive', _fake_pid_alive)
+    monkeypatch.setattr(observerctl_module, '_terminate_pid_best_effort', _fake_terminate)
+
+    packet = observerctl_module._ops_runtime_stop(timeout_sec=0.0)
+    assert packet['decision'] == 'go'
+    assert packet['stopped_cleanly'] is True
+    assert packet['escalated_terminate'] is True
+    assert calls['terminate'] == 1
+
+
+def test_ops_runtime_status_reports_active_when_heartbeat_and_pid_alive(tmp_path: Path, monkeypatch) -> None:
+    log_dir = tmp_path / 'logs'
+    health = log_dir / 'health'
+    health.mkdir(parents=True, exist_ok=True)
+    _touch(health / 'calamum_observer.heartbeat')
+
+    monkeypatch.setenv('CALAMUM_LOG_DIR', str(log_dir))
+    monkeypatch.setattr(observerctl_module, '_project_root', lambda: tmp_path)
+    (tmp_path / 'calamum_agent.pid').write_text(str(os.getpid()), encoding='utf-8')
+
+    packet = observerctl_module._ops_runtime_status()
+    assert packet['state'] == 'active'
+    assert packet['heartbeat']['status'] == 'ok'
+    assert packet['pid']['alive'] is True
+
+
+def test_pid_alive_uses_psutil_when_os_kill_unreliable(monkeypatch) -> None:
+    class _FakeProc:
+        def is_running(self):
+            return True
+
+        def status(self):
+            return 'running'
+
+    monkeypatch.setattr(observerctl_module.psutil, 'Process', lambda _pid: _FakeProc())
+    monkeypatch.setattr(observerctl_module.os, 'kill', lambda *_args, **_kwargs: (_ for _ in ()).throw(OSError('unsupported')))
+
+    assert observerctl_module._pid_alive(4242) is True
+
+
+def test_ops_runtime_start_delegates_launcher_non_interactive(tmp_path: Path, monkeypatch) -> None:
+    log_dir = tmp_path / 'logs'
+    health = log_dir / 'health'
+    health.mkdir(parents=True, exist_ok=True)
+    monkeypatch.setenv('CALAMUM_LOG_DIR', str(log_dir))
+
+    launcher = tmp_path / 'launch_ghost_console.ps1'
+    launcher.write_text('# test launcher\n', encoding='utf-8')
+    monkeypatch.setattr(observerctl_module, '_project_root', lambda: tmp_path)
+
+    class _DummyProc:
+        pid = 12345
+
+    def _fake_popen(cmd, env, cwd, stdin, stdout, stderr, creationflags):
+        (tmp_path / 'calamum_agent.pid').write_text(str(os.getpid()), encoding='utf-8')
+        _touch(health / 'calamum_observer.heartbeat')
+        return _DummyProc()
+
+    monkeypatch.setattr(observerctl_module.subprocess, 'Popen', _fake_popen)
+
+    rc = main([
+        'ops', 'runtime', 'start',
+        '--source', 'sim',
+        '--mode', 'canary',
+        '--interval-sec', '1.0',
+        '--timeout-sec', '2',
+        '--json',
+    ])
+    assert rc == 0

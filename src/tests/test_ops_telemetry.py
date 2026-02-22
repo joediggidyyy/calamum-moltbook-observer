@@ -178,3 +178,41 @@ def test_newest_jsonl_picks_most_recent_non_archive_file(tmp_path: Path) -> None
 
     pick = _newest_jsonl(data_dir)
     assert pick == real_canary
+
+
+def test_pick_active_jsonl_recovers_when_cached_path_missing(tmp_path: Path, monkeypatch) -> None:
+    repo_root = tmp_path
+    (repo_root / 'logs').mkdir(parents=True, exist_ok=True)
+
+    health_dir = repo_root / 'logs' / 'health'
+    data_dir = repo_root / 'logs' / 'data' / 'calamum'
+    health_dir.mkdir(parents=True, exist_ok=True)
+    data_dir.mkdir(parents=True, exist_ok=True)
+
+    wd = health_dir / 'wd.heartbeat'
+    obs = health_dir / 'obs.heartbeat'
+    wd.touch()
+    obs.touch()
+
+    active = data_dir / 'observer_derived' / 'sim' / 'watch' / 'moltbook_metrics.jsonl'
+    active.parent.mkdir(parents=True, exist_ok=True)
+    active.write_text('{"x": 1}\n', encoding='utf-8')
+
+    monkeypatch.setenv('CALAMUM_WATCHDOG_HEARTBEAT_PATH', str(wd))
+    monkeypatch.setenv('CALAMUM_OBSERVER_HEARTBEAT_PATH', str(obs))
+    monkeypatch.setenv('CALAMUM_DATA_DIR', str(data_dir))
+
+    module_file = repo_root / 'src' / 'dummy.py'
+    module_file.parent.mkdir(parents=True, exist_ok=True)
+    module_file.write_text('# dummy', encoding='utf-8')
+
+    provider = TelemetryProvider(load_config(module_file))
+
+    # Seed a stale cache path that no longer exists with a high-water timestamp.
+    missing = data_dir / 'observer_derived' / 'sim' / 'canary' / 'moltbook_metrics.jsonl'
+    provider._active_jsonl_cache = missing
+    provider._active_path_high_water_mtime = time.time() + 600.0
+    provider._active_jsonl_last_scan_ts = 0.0
+
+    picked = provider._pick_active_jsonl()
+    assert picked == active

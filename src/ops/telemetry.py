@@ -350,6 +350,9 @@ class TelemetryConfig:
     observer_heartbeat_path: Path
     librarian_heartbeat_path: Path
     freshness_sec: float
+    watchdog_freshness_sec: float
+    observer_freshness_sec: float
+    librarian_freshness_sec: float
 
     # Data source
     data_dir: Path
@@ -368,8 +371,40 @@ class TelemetryConfig:
 def load_config(module_file: Path) -> TelemetryConfig:
     # Use consolidated config
     health_dir = get_calamum_health_dir()
-    
-    freshness_sec = float(os.getenv('CALAMUM_FRESHNESS_SEC', '15'))
+
+    # Legacy global freshness override (applies to all components when provided).
+    # Component-specific env vars take precedence when set.
+    raw_global_freshness = os.getenv('CALAMUM_FRESHNESS_SEC')
+    global_freshness: Optional[float]
+    if raw_global_freshness is not None:
+        try:
+            global_freshness = float(raw_global_freshness)
+        except Exception:
+            global_freshness = 15.0
+    else:
+        global_freshness = None
+
+    def _freshness(name: str, default_value: float) -> float:
+        raw = os.getenv(name)
+        if raw is not None:
+            try:
+                val = float(raw)
+                return float(max(0.5, val))
+            except Exception:
+                pass
+        if global_freshness is not None:
+            return float(max(0.5, global_freshness))
+        return float(default_value)
+
+    # Defaults aligned to runtime policy/checks:
+    # - watchdog: 45s
+    # - observer: 15s
+    # - librarian: 30s
+    wd_freshness_sec = _freshness('CALAMUM_WATCHDOG_FRESHNESS_SEC', 45.0)
+    obs_freshness_sec = _freshness('CALAMUM_OBSERVER_FRESHNESS_SEC', 15.0)
+    lib_freshness_sec = _freshness('CALAMUM_LIBRARIAN_FRESHNESS_SEC', 30.0)
+    # Back-compat field retained for downstream code that still expects one value.
+    freshness_sec = float(global_freshness) if global_freshness is not None else float(obs_freshness_sec)
 
     wd_hb = Path(os.getenv(
         'CALAMUM_WATCHDOG_HEARTBEAT_PATH',
@@ -406,6 +441,9 @@ def load_config(module_file: Path) -> TelemetryConfig:
         observer_heartbeat_path=obs_hb,
         librarian_heartbeat_path=lib_hb,
         freshness_sec=freshness_sec,
+        watchdog_freshness_sec=wd_freshness_sec,
+        observer_freshness_sec=obs_freshness_sec,
+        librarian_freshness_sec=lib_freshness_sec,
         data_dir=data_dir,
         density_slice_sec=density_slice_sec,
         density_bins=density_bins,
@@ -425,6 +463,18 @@ class TelemetryProvider:
         self._active_jsonl_cache: Optional[Path] = None
         self._active_jsonl_last_scan_ts: float = 0.0
         self._active_path_high_water_mtime: float = 0.0
+
+    def _fallback_active_candidates(self) -> List[Path]:
+        """Return deterministic fallback candidates when recursive scan yields nothing.
+
+        Order matters: prefer common operating paths first.
+        """
+        base = self.config.data_dir / 'observer_derived'
+        candidates: List[Path] = []
+        for src in ('sim', 'real'):
+            for mode in ('watch', 'canary', 'live', 'honeypot'):
+                candidates.append(base / src / mode / 'moltbook_metrics.jsonl')
+        return candidates
 
     def _clamp_density_slice_sec(self, value: float) -> float:
         try:
@@ -499,6 +549,17 @@ class TelemetryProvider:
         now = _now_ts()
         # Avoid glob+stat on every tick; it can get expensive with many JSONL files.
         interval = float(max(0.25, self.config.active_jsonl_rescan_sec))
+
+        # If cached path disappeared (rotation, cleanup, or stale pointer), clear it
+        # so we can recover on the next scan instead of freezing on stale totals.
+        if self._active_jsonl_cache is not None:
+            try:
+                if not self._active_jsonl_cache.exists():
+                    self._active_jsonl_cache = None
+                    self._active_path_high_water_mtime = 0.0
+            except Exception:
+                # Keep cache if existence check itself is unavailable.
+                pass
         
         # PROACTIVE FALLBACK: If cache is None, we should try harder.
         if self._active_jsonl_cache is not None and (now - self._active_jsonl_last_scan_ts) < interval:
@@ -515,7 +576,7 @@ class TelemetryProvider:
                      new_mtime = new_pick.stat().st_mtime
                      # If the new pick is older than the high-water mark of our current file,
                      # assume the current file is ghosting/locked and stick with it.
-                     if new_mtime < self._active_path_high_water_mtime:
+                     if new_mtime < self._active_path_high_water_mtime and self._active_jsonl_cache.exists():
                          new_pick = self._active_jsonl_cache
                      else:
                          # Valid switch to a newer file; reset high water logic for the new file.
@@ -529,14 +590,23 @@ class TelemetryProvider:
         if new_pick is None:
              if self._active_jsonl_cache is not None:
                  return self._active_jsonl_cache
-             
+
              # DETERMINISTIC FALLBACK:
-             # If we have never found a file (start up) and scanning failed,
-             # check for the known canonical filename directly.
-             canary = self.config.data_dir / 'observer_derived' / 'sim' / 'canary' / 'moltbook_metrics.jsonl'
-             # Note: We do NOT check exists() here to avoid lock failure.
-             # We just assume it might be valid and let the counter try to stat it.
-             return canary
+             # If recursive scan fails, prefer known canonical paths that actually exist.
+             for candidate in self._fallback_active_candidates():
+                 try:
+                     if candidate.exists():
+                         self._active_jsonl_cache = candidate
+                         try:
+                             self._active_path_high_water_mtime = candidate.stat().st_mtime
+                         except OSError:
+                             self._active_path_high_water_mtime = 0.0
+                         return candidate
+                 except Exception:
+                     continue
+
+             # Last-resort fallback path for startup before first file is created.
+             return self.config.data_dir / 'observer_derived' / 'sim' / 'canary' / 'moltbook_metrics.jsonl'
 
         self._active_jsonl_cache = new_pick
         
@@ -551,14 +621,14 @@ class TelemetryProvider:
                  
         return self._active_jsonl_cache
     
-    def _get_freshness_age(self, path: Path, now_ts: float) -> Tuple[bool, float, str]:
+    def _get_freshness_age(self, path: Path, now_ts: float, max_age_sec: float) -> Tuple[bool, float, str]:
         """Returns (is_fresh, age_sec, pretty_age)."""
         if not path.exists():
             return False, 9999.9, "Missing"
         try:
             mtime = path.stat().st_mtime
             age = max(0.0, now_ts - mtime)
-            is_fresh = age <= self.config.freshness_sec
+            is_fresh = age <= float(max_age_sec)
             return is_fresh, age, f"{age:.1f}s"
         except OSError:
             # File locked or vanished
@@ -615,9 +685,21 @@ class TelemetryProvider:
         density_bins = [int(min(100, round((x / denom) * 100))) for x in self._density_window]
 
         # Heartbeat freshness
-        wd_fresh, wd_age, wd_age_str = self._get_freshness_age(self.config.watchdog_heartbeat_path, now)
-        obs_fresh, obs_age, obs_age_str = self._get_freshness_age(self.config.observer_heartbeat_path, now)
-        lib_fresh, lib_age, lib_age_str = self._get_freshness_age(self.config.librarian_heartbeat_path, now)
+        wd_fresh, wd_age, wd_age_str = self._get_freshness_age(
+            self.config.watchdog_heartbeat_path,
+            now,
+            self.config.watchdog_freshness_sec,
+        )
+        obs_fresh, obs_age, obs_age_str = self._get_freshness_age(
+            self.config.observer_heartbeat_path,
+            now,
+            self.config.observer_freshness_sec,
+        )
+        lib_fresh, lib_age, lib_age_str = self._get_freshness_age(
+            self.config.librarian_heartbeat_path,
+            now,
+            self.config.librarian_freshness_sec,
+        )
 
         # Heartbeat trust (signature validity)
         wd_sig_ok, wd_sig_detail = _verify_signed_record_best_effort(self.config.watchdog_heartbeat_path)
@@ -627,7 +709,11 @@ class TelemetryProvider:
         # Fallback for Observer if file lock prevents reading its heartbeat but data is flowing
         if not obs_fresh and active_jsonl is not None:
              # If we choose active_jsonl as proxy, check its freshness
-             aj_fresh, aj_age, aj_age_str = self._get_freshness_age(active_jsonl, now)
+             aj_fresh, aj_age, aj_age_str = self._get_freshness_age(
+                 active_jsonl,
+                 now,
+                 self.config.observer_freshness_sec,
+             )
              if aj_fresh:
                  obs_fresh = True
                  obs_age = aj_age

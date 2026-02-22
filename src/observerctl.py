@@ -12,8 +12,10 @@ import argparse
 import hashlib
 import json
 import os
+import subprocess
 import sys
 import time
+import psutil
 from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any, Dict, List, Optional, Tuple
@@ -35,6 +37,7 @@ RUN_CONTEXT_FILE = 'observerctl_run_context.json'
 WATCHDOG_POSTURE_FILE = 'watchdog_posture_state.json'
 WATCHDOG_RESOURCE_FILE = 'watchdog_resource_state.json'
 GATE_PACKET_MAX_AGE_SEC = float(os.getenv('CALAMUM_GATE_PACKET_MAX_AGE_SEC', '300'))
+AGENT_PID_FILE = 'calamum_agent.pid'
 
 
 def _utc_now() -> str:
@@ -211,6 +214,334 @@ def _is_resolvable_report_ref(ref: str) -> bool:
 
 def _load_run_context() -> Dict[str, Any]:
     return _load_json_file(_control_file(RUN_CONTEXT_FILE), {})
+
+
+def _agent_pid_path() -> Path:
+    return _project_root() / AGENT_PID_FILE
+
+
+def _read_pid(path: Path) -> Optional[int]:
+    try:
+        if not path.exists():
+            return None
+        raw = str(path.read_text(encoding='utf-8')).strip()
+        if not raw or not raw.isdigit():
+            return None
+        return int(raw)
+    except Exception:
+        return None
+
+
+def _pid_alive(pid: Optional[int]) -> bool:
+    if pid is None or pid <= 0:
+        return False
+
+    pid_i = int(pid)
+
+    # Primary check: psutil is cross-platform and reliable on Windows where
+    # os.kill(pid, 0) can report false negatives.
+    try:
+        proc = psutil.Process(pid_i)
+        if not proc.is_running():
+            return False
+        try:
+            if proc.status() == psutil.STATUS_ZOMBIE:
+                return False
+        except Exception:
+            # Status may not be available on all platforms; treat as alive if running.
+            pass
+        return True
+    except psutil.NoSuchProcess:
+        return False
+    except Exception:
+        # Fall back to os.kill for environments where psutil cannot inspect.
+        pass
+
+    try:
+        os.kill(pid_i, 0)
+        return True
+    except Exception:
+        return False
+
+
+def _terminate_pid_best_effort(pid: Optional[int], graceful_timeout_sec: float = 2.0) -> bool:
+    if pid is None or int(pid) <= 0:
+        return True
+    pid_i = int(pid)
+    try:
+        proc = psutil.Process(pid_i)
+    except Exception:
+        return not _pid_alive(pid_i)
+
+    try:
+        proc.terminate()
+    except Exception:
+        pass
+
+    deadline = time.time() + max(0.0, float(graceful_timeout_sec))
+    while time.time() <= deadline:
+        if not _pid_alive(pid_i):
+            return True
+        time.sleep(0.1)
+
+    try:
+        proc.kill()
+    except Exception:
+        pass
+
+    deadline = time.time() + 1.0
+    while time.time() <= deadline:
+        if not _pid_alive(pid_i):
+            return True
+        time.sleep(0.1)
+    return not _pid_alive(pid_i)
+
+
+def _runtime_observer_status(max_age_sec: float = 60.0) -> Dict[str, Any]:
+    hb = _check_heartbeat(get_calamum_health_dir() / 'calamum_observer.heartbeat', max_age_sec=max_age_sec)
+    pid_path = _agent_pid_path()
+    pid = _read_pid(pid_path)
+    pid_alive = _pid_alive(pid)
+
+    signal_path = _control_file('kill.signal.json')
+    signal_pending = False
+    if signal_path.exists():
+        signal_doc = _load_json_file(signal_path, {})
+        signal_pending = isinstance(signal_doc, dict) and (not bool(signal_doc.get('handled_at')))
+
+    if hb.get('status') == 'ok' and pid_alive:
+        state = 'active'
+    elif hb.get('status') == 'ok' or pid_alive:
+        state = 'degraded'
+    else:
+        state = 'stopped'
+
+    return {
+        'timestamp_utc': _utc_now(),
+        'runtime_cli_surface': 'observerctl',
+        'runtime_label': 'observer',
+        'state': state,
+        'heartbeat': hb,
+        'pid': {
+            'path': str(pid_path).replace('\\', '/'),
+            'value': pid,
+            'alive': pid_alive,
+        },
+        'pending_stop_signal': bool(signal_pending),
+    }
+
+
+def _ops_runtime_status() -> Dict[str, Any]:
+    return _runtime_observer_status()
+
+
+def _ops_runtime_stop(timeout_sec: float = 8.0) -> Dict[str, Any]:
+    payload = {
+        'ts': _utc_now(),
+        'signal': 'kill',
+        'requested_by': 'observerctl',
+        'payload': {'requested_at': _utc_now()},
+    }
+    signal_path = _control_file('kill.signal.json')
+    _write_json_file(signal_path, payload)
+
+    pid_path = _agent_pid_path()
+    pid_value = _read_pid(pid_path)
+    deadline = time.time() + max(0.0, float(timeout_sec))
+    while time.time() <= deadline:
+        if not _pid_alive(pid_value):
+            break
+        time.sleep(0.25)
+
+    stopped_cleanly = not _pid_alive(pid_value)
+    escalated_terminate = False
+    if not stopped_cleanly:
+        escalated_terminate = True
+        stopped_cleanly = _terminate_pid_best_effort(pid_value, graceful_timeout_sec=2.0)
+
+    if not _pid_alive(pid_value):
+        try:
+            if pid_path.exists():
+                pid_path.unlink()
+        except Exception:
+            pass
+
+    if stopped_cleanly:
+        try:
+            hb_path = get_calamum_health_dir() / 'calamum_observer.heartbeat'
+            if hb_path.exists():
+                hb_path.unlink()
+        except Exception:
+            pass
+        try:
+            signal_doc = _load_json_file(signal_path, {})
+            if isinstance(signal_doc, dict) and not signal_doc.get('handled_at'):
+                signal_doc['handled_at'] = _utc_now()
+                signal_doc['handled_by'] = 'observerctl'
+                _write_json_file(signal_path, signal_doc)
+        except Exception:
+            pass
+
+    reasons: List[str] = []
+    if not stopped_cleanly:
+        reasons.append('critical_check_failed:runtime_stop_timeout')
+
+    return {
+        'timestamp_utc': _utc_now(),
+        'runtime_cli_surface': 'observerctl',
+        'decision': 'go' if stopped_cleanly else 'no-go',
+        'action': 'runtime-stop',
+        'reason_codes': reasons,
+        'signal_path': str(signal_path).replace('\\', '/'),
+        'stop_timeout_sec': float(timeout_sec),
+        'observer_pid': pid_value,
+        'stopped_cleanly': bool(stopped_cleanly),
+        'escalated_terminate': bool(escalated_terminate),
+    }
+
+
+def _ops_runtime_start(source: str, mode: str, interval_sec: float, timeout_sec: float) -> Dict[str, Any]:
+    launcher_path = _project_root() / 'launch_ghost_console.ps1'
+    if not launcher_path.exists():
+        return {
+            'timestamp_utc': _utc_now(),
+            'runtime_cli_surface': 'observerctl',
+            'decision': 'no-go',
+            'action': 'runtime-start',
+            'reason_codes': ['critical_check_failed:launcher_missing'],
+            'launcher_path': str(launcher_path).replace('\\', '/'),
+        }
+
+    source_norm = _normalize_source(source)
+    mode_norm = str(mode or 'watch').strip().lower()
+    if mode_norm not in MODES:
+        mode_norm = 'watch'
+
+    env = os.environ.copy()
+    env['CALAMUM_SKIP_BROWSER'] = '1'
+    env['CALAMUM_GUI_AUTOSTART_OBSERVER'] = '1'
+    env['CALAMUM_MOLTBOOK_SOURCE'] = source_norm
+    env['CALAMUM_OPS_MODE'] = mode_norm
+    env['CALAMUM_AGENT_INTERVAL_SEC'] = str(interval_sec)
+
+    cmd = [
+        'powershell.exe',
+        '-NoProfile',
+        '-NonInteractive',
+        '-ExecutionPolicy',
+        'Bypass',
+        '-File',
+        str(launcher_path),
+    ]
+
+    # Non-interactive launch semantics: start detached, then perform a short
+    # bounded readiness probe so terminals return promptly.
+    timeout_s = max(0.0, float(timeout_sec))
+    creationflags = 0
+    if os.name == 'nt':
+        creationflags = int(getattr(subprocess, 'CREATE_NEW_PROCESS_GROUP', 0)) | int(getattr(subprocess, 'CREATE_NO_WINDOW', 0))
+
+    start_stdout_path = _project_root() / 'logs' / 'observerctl_runtime_start.stdout.log'
+    start_stderr_path = _project_root() / 'logs' / 'observerctl_runtime_start.stderr.log'
+    start_stdout_path.parent.mkdir(parents=True, exist_ok=True)
+
+    out_f = None
+    err_f = None
+    try:
+        out_f = start_stdout_path.open('a', encoding='utf-8')
+        err_f = start_stderr_path.open('a', encoding='utf-8')
+    except Exception:
+        out_f = None
+        err_f = None
+
+    try:
+        proc = subprocess.Popen(
+            cmd,
+            env=env,
+            cwd=str(_project_root()),
+            stdin=subprocess.DEVNULL,
+            stdout=(out_f if out_f is not None else subprocess.DEVNULL),
+            stderr=(err_f if err_f is not None else subprocess.DEVNULL),
+            creationflags=creationflags,
+        )
+    except Exception:
+        try:
+            if out_f is not None:
+                out_f.close()
+            if err_f is not None:
+                err_f.close()
+        except Exception:
+            pass
+        return {
+            'timestamp_utc': _utc_now(),
+            'runtime_cli_surface': 'observerctl',
+            'decision': 'no-go',
+            'action': 'runtime-start',
+            'reason_codes': ['critical_check_failed:launcher_exec_failed'],
+            'launcher_path': str(launcher_path).replace('\\', '/'),
+        }
+
+    try:
+        if out_f is not None:
+            out_f.close()
+        if err_f is not None:
+            err_f.close()
+    except Exception:
+        pass
+
+    if timeout_s <= 0.0:
+        status = _runtime_observer_status()
+        return {
+            'timestamp_utc': _utc_now(),
+            'runtime_cli_surface': 'observerctl',
+            'decision': 'go',
+            'action': 'runtime-start',
+            'reason_codes': [],
+            'launcher_path': str(launcher_path).replace('\\', '/'),
+            'launcher_pid': int(getattr(proc, 'pid', 0) or 0),
+            'launcher_stdout_log': str(start_stdout_path).replace('\\', '/'),
+            'launcher_stderr_log': str(start_stderr_path).replace('\\', '/'),
+            'startup_verified': bool(str(status.get('state', '')) == 'active'),
+            'state': status.get('state', 'degraded'),
+            'pid': status.get('pid', {}),
+        }
+
+    deadline = time.time() + timeout_s
+    while time.time() <= deadline:
+        status = _runtime_observer_status()
+        if str(status.get('state', '')) == 'active':
+            return {
+                'timestamp_utc': _utc_now(),
+                'runtime_cli_surface': 'observerctl',
+                'decision': 'go',
+                'action': 'runtime-start',
+                'reason_codes': [],
+                'launcher_path': str(launcher_path).replace('\\', '/'),
+                'launcher_pid': int(getattr(proc, 'pid', 0) or 0),
+                'launcher_stdout_log': str(start_stdout_path).replace('\\', '/'),
+                'launcher_stderr_log': str(start_stderr_path).replace('\\', '/'),
+                'startup_verified': True,
+                'state': status.get('state', 'degraded'),
+                'pid': status.get('pid', {}),
+            }
+        time.sleep(0.25)
+
+    final_status = _runtime_observer_status()
+    return {
+        'timestamp_utc': _utc_now(),
+        'runtime_cli_surface': 'observerctl',
+        'decision': 'go',
+        'action': 'runtime-start',
+        'reason_codes': [],
+        'advisory_reason_codes': ['startup_pending:observer_not_active_within_probe_window'],
+        'launcher_path': str(launcher_path).replace('\\', '/'),
+        'launcher_pid': int(getattr(proc, 'pid', 0) or 0),
+        'launcher_stdout_log': str(start_stdout_path).replace('\\', '/'),
+        'launcher_stderr_log': str(start_stderr_path).replace('\\', '/'),
+        'startup_verified': False,
+        'state': final_status.get('state', 'degraded'),
+        'pid': final_status.get('pid', {}),
+    }
 
 
 def _resource_thresholds_for_posture(posture: str) -> Dict[str, float]:
@@ -1353,6 +1684,12 @@ def _dispatch(args: argparse.Namespace) -> Dict[str, Any]:
             return _ops_preflight(args.source)
         if args.ops_cmd == 'gate-check':
             return _ops_gate_check(args.source)
+        if args.ops_cmd == 'runtime-status':
+            return _ops_runtime_status()
+        if args.ops_cmd == 'runtime-stop':
+            return _ops_runtime_stop(args.timeout_sec)
+        if args.ops_cmd == 'runtime-start':
+            return _ops_runtime_start(args.source, args.mode, args.interval_sec, args.timeout_sec)
         if args.ops_cmd == 'mode-current':
             return _ops_mode_current()
         if args.ops_cmd == 'mode-list':
@@ -1433,6 +1770,17 @@ def _build_parser() -> argparse.ArgumentParser:
 
     op_gatecheck = ops_sub.add_parser('gate-check', help='Evaluate go/no-go over current state')
     op_gatecheck.add_argument('--source', choices=['sim', 'real'], default=os.getenv('CALAMUM_MOLTBOOK_SOURCE', 'sim'))
+
+    op_runtime = ops_sub.add_parser('runtime', help='Observer lifecycle controls')
+    op_runtime_sub = op_runtime.add_subparsers(dest='runtime_cmd', required=True)
+    op_runtime_sub.add_parser('status', help='Show observer runtime status')
+    op_runtime_stop = op_runtime_sub.add_parser('stop', help='Request observer stop (kill signal) and wait for clean exit')
+    op_runtime_stop.add_argument('--timeout-sec', type=float, default=8.0, help='Seconds to wait for clean observer shutdown before escalation')
+    op_runtime_start = op_runtime_sub.add_parser('start', help='Start observer via delegated launcher path')
+    op_runtime_start.add_argument('--source', choices=['sim', 'real'], default=os.getenv('CALAMUM_MOLTBOOK_SOURCE', 'sim'))
+    op_runtime_start.add_argument('--mode', choices=list(MODES), default=os.getenv('CALAMUM_OPS_MODE', 'watch'))
+    op_runtime_start.add_argument('--interval-sec', type=float, default=float(os.getenv('CALAMUM_AGENT_INTERVAL_SEC', '2.0')))
+    op_runtime_start.add_argument('--timeout-sec', type=float, default=0.0, help='Readiness probe timeout after detached launch (0 = no probe)')
 
     op_mode = ops_sub.add_parser('mode', help='Mode controls')
     op_mode_sub = op_mode.add_subparsers(dest='mode_cmd', required=True)
@@ -1516,6 +1864,13 @@ def _normalize_nested_aliases(args: argparse.Namespace) -> argparse.Namespace:
             args.ops_cmd = 'mode-set'
         elif args.mode_cmd == 'transition':
             args.ops_cmd = 'mode-transition'
+    if args.command == 'ops' and args.ops_cmd == 'runtime':
+        if args.runtime_cmd == 'status':
+            args.ops_cmd = 'runtime-status'
+        elif args.runtime_cmd == 'stop':
+            args.ops_cmd = 'runtime-stop'
+        elif args.runtime_cmd == 'start':
+            args.ops_cmd = 'runtime-start'
     if args.command == 'ops' and args.ops_cmd == 'evidence':
         if args.evidence_cmd == 'pack':
             args.ops_cmd = 'evidence-pack'
