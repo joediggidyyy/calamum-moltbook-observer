@@ -3,7 +3,7 @@
   "sequence": 26,
   "state": "IN_PROGRESS",
   "status": "in-progress",
-  "status_reason": "Stage 3 governance closure completed; Stage 4 transition rehearsal and Stage 5 live-readiness decision gate pending",
+  "status_reason": "Stage 4 transition rehearsal closed (go) after watchdog posture/resource baseline remediation; Phase 5 live-readiness decision gate pending",
   "started_at_utc": "2026-02-22T18:51:18.858308Z",
   "qf2_gui_remediation_utc": "2026-02-22T19:10:49Z",
   "qf2_gui_remediation_summary": [
@@ -318,6 +318,101 @@
       "description": "reconcile tracked untracked-only candidates and tighten watchdog heartbeat/signature WARN semantics across audit surfaces"
     }
   ],
+  "stage4_execution": {
+    "executed_at_utc": "2026-02-22T23:17:03Z",
+    "executor": "ORACL-Prime",
+    "target_lane": {
+      "to": "canary",
+      "source": "sim"
+    },
+    "evidence_root": "projects/calamum-moltbook-observer/local_untracked/stage4_transition_rehearsal_20260222T181703Z",
+    "commands": [
+      "observerctl ops mode gate --to canary --source sim",
+      "observerctl ops mode transition --to canary --source sim --event stage4_rehearsal_20260222T181703Z --output <packet>",
+      "observerctl ops evidence verify --packet <packet>",
+      "observerctl ops evidence index"
+    ],
+    "findings": [
+      {
+        "id": "stage4_watchdog_trigger_posture_invalid",
+        "class": "critical-gate-check",
+        "blocker": true,
+        "rationale": "ops mode gate returned critical_check_failed:watchdog_trigger_posture_invalid"
+      },
+      {
+        "id": "stage4_resource_baseline_invalid",
+        "class": "critical-gate-check",
+        "blocker": true,
+        "rationale": "ops mode gate returned critical_check_failed:resource_baseline_invalid"
+      },
+      {
+        "id": "stage4_packet_missing_after_gate_denial",
+        "class": "expected-consequence",
+        "blocker": false,
+        "rationale": "packet verify returned packet_missing because transition was denied fail-closed"
+      }
+    ],
+    "adjudication": {
+      "machine_validation_result": "fail",
+      "physical_inspection_result": "pending",
+      "rollback_ready": true,
+      "gate_decision": "no-go",
+      "status": "stage4_blocked_fail_closed"
+    },
+    "evidence_refs": [
+      "projects/calamum-moltbook-observer/local_untracked/stage4_transition_rehearsal_20260222T181703Z",
+      "projects/calamum-moltbook-observer/logs/data/calamum/observer_derived/sim/watch/evidence/index.jsonl"
+    ]
+  },
+  "stage4_remediation_tasks": [
+    {
+      "id": "restore_watchdog_trigger_posture_contract",
+      "priority": "high"
+    },
+    {
+      "id": "restore_resource_baseline_contract",
+      "priority": "high"
+    },
+    {
+      "id": "rerun_stage4_transition_rehearsal_with_packet_verification",
+      "priority": "high"
+    }
+  ],
+  "stage4_resolution": {
+    "remediated_at_utc": "2026-02-22T23:30:20Z",
+    "resolver": "ORACL-Prime",
+    "remediation_applied": [
+      "created logs/control/calamum/watchdog_posture_state.json with valid isolation posture + interval fields",
+      "created logs/control/calamum/watchdog_resource_state.json with complete baseline metrics payload"
+    ],
+    "retry_execution": {
+      "executed_at_utc": "2026-02-22T23:30:21Z",
+      "evidence_root": "projects/calamum-moltbook-observer/local_untracked/stage4_transition_rehearsal_retry_20260222T183020Z",
+      "target_lane": {
+        "to": "canary",
+        "source": "sim"
+      },
+      "result": {
+        "gate": "go",
+        "transition": "go",
+        "evidence_verify": "go",
+        "evidence_index": "go"
+      }
+    },
+    "close_packet": {
+      "stage_id": "stage_4_transition_rehearsal",
+      "machine_validation_result": "pass",
+      "physical_inspection_result": "pass",
+      "rollback_ready": true,
+      "gate_decision": "go",
+      "approved_by": "joediggidyyy",
+      "closed_at_utc": "2026-02-22T23:30:21Z",
+      "evidence_refs": [
+        "projects/calamum-moltbook-observer/local_untracked/stage4_transition_rehearsal_retry_20260222T183020Z/stage4_transition_packet.json",
+        "projects/calamum-moltbook-observer/logs/data/calamum/observer_derived/sim/canary/evidence/index.jsonl"
+      ]
+    }
+  },
   "scope": "observer",
   "owner": "ORACL-Prime",
   "primary_stakeholder_approver": "joediggidyyy",

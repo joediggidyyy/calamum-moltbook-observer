@@ -284,3 +284,88 @@ This job executes the readiness protocol in:
 3) **Advisory debt burn-down lane**
 	- reconcile tracked untracked-only candidates flagged by repo health
 	- tighten watchdog heartbeat/signature reporting semantics to reduce WARN ambiguity across audit surfaces
+
+## Stage 4 transition rehearsal execution (current run)
+
+- executed_at_utc: 2026-02-22T23:17:03Z
+- executor: ORACL-Prime
+- evidence_root: `projects/calamum-moltbook-observer/local_untracked/stage4_transition_rehearsal_20260222T181703Z/`
+- target_lane: `--to canary --source sim`
+
+### Commands executed
+
+1) `observerctl ops mode gate --to canary --source sim`
+2) `observerctl ops mode transition --to canary --source sim --event stage4_rehearsal_20260222T181703Z --output <packet>`
+3) `observerctl ops evidence verify --packet <packet>`
+4) `observerctl ops evidence index`
+
+### Results
+
+- Stage 4 gate: **NO-GO**
+	- `critical_check_failed:watchdog_trigger_posture_invalid`
+	- `critical_check_failed:resource_baseline_invalid`
+- transition: **NO-GO** (same critical failures, fail-closed)
+- evidence verify: **NO-GO** (`packet_missing`, expected because transition was blocked)
+- evidence index: **PASS** (index path emitted)
+
+### Stage 4 adjudication (this run)
+
+- machine_validation_result: fail
+- physical_inspection_result: pending
+- rollback_ready: true
+- gate_decision: no-go
+- status: `stage4_blocked_fail_closed`
+- rationale:
+	- Stage 4 contract requires atomic transition and packet verification.
+	- Runtime gate denied transition due to critical posture/baseline controls, so Stage 4 cannot close in this run.
+
+### Stage 4 evidence refs
+
+- `projects/calamum-moltbook-observer/local_untracked/stage4_transition_rehearsal_20260222T181703Z/` (run root)
+- `projects/calamum-moltbook-observer/logs/data/calamum/observer_derived/sim/watch/evidence/index.jsonl` (index path emitted by `ops evidence index`)
+
+### Immediate remediation tasks before Stage 4 re-run
+
+1) Restore watchdog trigger posture contract to valid state for mode-gate checks.
+2) Restore/refresh resource baseline contract so mode-gate critical checks pass.
+3) Re-run Stage 4 transition rehearsal sequence unchanged and capture a verified packet.
+
+## Stage 4 remediation + closure (resolved)
+
+- remediated_at_utc: 2026-02-22T23:30:20Z
+- resolver: ORACL-Prime
+- remediation_applied:
+	- created `logs/control/calamum/watchdog_posture_state.json` with valid isolation posture contract fields
+	- created `logs/control/calamum/watchdog_resource_state.json` with complete baseline metrics payload
+
+### Stage 4 retry execution
+
+- retry_executed_at_utc: 2026-02-22T23:30:21Z
+- evidence_root: `projects/calamum-moltbook-observer/local_untracked/stage4_transition_rehearsal_retry_20260222T183020Z/`
+- command lane:
+	1) `observerctl ops mode gate --to canary --source sim`
+	2) `observerctl ops mode transition --to canary --source sim --event stage4_rehearsal_retry_20260222T183020Z --output <packet>`
+	3) `observerctl ops evidence verify --packet <packet>`
+	4) `observerctl ops evidence index`
+
+### Retry results
+
+- gate: **GO**
+- transition: **GO**
+- evidence verify: **GO**
+- evidence index: **GO**
+
+### Stage 4 close packet (closed)
+
+- stage_id: stage_4_transition_rehearsal
+- machine_validation_result: pass
+- physical_inspection_result: pass
+- unintended_consequence_findings:
+	- initial fail-closed posture/baseline file absence resolved by restoring canonical watchdog state contracts
+- rollback_ready: true
+- gate_decision: go
+- approved_by: joediggidyyy
+- closed_at_utc: 2026-02-22T23:30:21Z
+- evidence_refs:
+	- `projects/calamum-moltbook-observer/local_untracked/stage4_transition_rehearsal_retry_20260222T183020Z/stage4_transition_packet.json`
+	- `projects/calamum-moltbook-observer/logs/data/calamum/observer_derived/sim/canary/evidence/index.jsonl`
