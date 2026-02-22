@@ -99,8 +99,10 @@ def _newest_jsonl(data_dir: Path) -> Optional[Path]:
         return None
     try:
         candidates = []
-        for p in data_dir.glob('*.jsonl'):
+        for p in data_dir.rglob('*.jsonl'):
             try:
+                if 'archive' in p.parts:
+                    continue
                 if p.is_file():
                     candidates.append(p)
             except OSError:
@@ -477,7 +479,7 @@ class TelemetryProvider:
              # DETERMINISTIC FALLBACK:
              # If we have never found a file (start up) and scanning failed,
              # check for the known canonical filename directly.
-             canary = self.config.data_dir / 'moltbook_canary_metrics.jsonl'
+             canary = self.config.data_dir / 'observer_derived' / 'sim' / 'canary' / 'moltbook_metrics.jsonl'
              # Note: We do NOT check exists() here to avoid lock failure.
              # We just assume it might be valid and let the counter try to stat it.
              return canary

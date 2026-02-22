@@ -42,7 +42,8 @@ def test_telemetry_counts_jsonl_and_heartbeats(tmp_path: Path, monkeypatch) -> N
         wd.touch()
     obs.touch()
 
-    jsonl = data_dir / 'moltbook_canary_metrics.jsonl'
+    jsonl = data_dir / 'observer_derived' / 'sim' / 'canary' / 'moltbook_metrics.jsonl'
+    jsonl.parent.mkdir(parents=True, exist_ok=True)
     jsonl.write_text('{"a": 1}\n{"a": 2}\n', encoding='utf-8')
 
     monkeypatch.setenv('CALAMUM_WATCHDOG_HEARTBEAT_PATH', str(wd))

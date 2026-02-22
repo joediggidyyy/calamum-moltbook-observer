@@ -559,7 +559,9 @@ def report_ops_parameters(
     telemetry: List[Dict[str, Any]] = []
     totals: Dict[str, int] = {}
     if data_dir.exists():
-        for p in sorted(data_dir.glob("*.jsonl")):
+        for p in sorted(data_dir.rglob("*.jsonl")):
+            if 'archive' in p.parts:
+                continue
             st = _safe_stat(p)
             if not st.exists:
                 continue
@@ -567,10 +569,11 @@ def report_ops_parameters(
                 n, partial = _count_jsonl_lines_fast(p)
             except Exception:
                 n, partial = 0, False
-            totals[p.name] = int(n)
+            rel_name = _rel_to(p, data_dir)
+            totals[rel_name] = int(n)
             telemetry.append(
                 {
-                    "name": p.name,
+                    "name": rel_name,
                     "path": _rel_to(p, repo_root),
                     "exists": True,
                     "records": int(n),

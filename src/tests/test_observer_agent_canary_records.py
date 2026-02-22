@@ -19,7 +19,7 @@ def test_append_record_canary_uses_notification_schema(tmp_path: Path, monkeypat
     data_dir.mkdir(parents=True, exist_ok=True)
     control_dir.mkdir(parents=True, exist_ok=True)
 
-    jsonl_path = data_dir / 'moltbook_canary_metrics.jsonl'
+    jsonl_path = data_dir / 'observer_derived' / 'sim' / 'canary' / 'moltbook_metrics.jsonl'
 
     # Act
     append_record(

@@ -24,7 +24,8 @@ def test_load_config_live_noncanary_uses_live_metrics_file(tmp_path: Path, monke
         source="live",
     )
 
-    assert cfg.output_jsonl.name == "moltbook_live_metrics.jsonl"
+    assert cfg.output_jsonl.name == "moltbook_metrics.jsonl"
+    assert cfg.output_jsonl.parts[-4:] == ("observer_derived", "real", "honeypot", "moltbook_metrics.jsonl")
 
 
 def test_load_config_canary_ignores_live_source_for_output_name(tmp_path: Path, monkeypatch) -> None:
@@ -39,7 +40,8 @@ def test_load_config_canary_ignores_live_source_for_output_name(tmp_path: Path, 
         source="live",
     )
 
-    assert cfg.output_jsonl.name == "moltbook_canary_metrics.jsonl"
+    assert cfg.output_jsonl.name == "moltbook_metrics.jsonl"
+    assert cfg.output_jsonl.parts[-4:] == ("observer_derived", "real", "canary", "moltbook_metrics.jsonl")
 
 
 def test_append_record_live_source_missing_key_is_noop(tmp_path: Path, monkeypatch) -> None:
@@ -51,7 +53,7 @@ def test_append_record_live_source_missing_key_is_noop(tmp_path: Path, monkeypat
     data_dir.mkdir(parents=True, exist_ok=True)
     control_dir.mkdir(parents=True, exist_ok=True)
 
-    out = data_dir / "moltbook_live_metrics.jsonl"
+    out = data_dir / "observer_derived" / "real" / "honeypot" / "moltbook_metrics.jsonl"
 
     append_record(
         jsonl_path=out,
@@ -77,7 +79,8 @@ def test_rotation_prefix_for_live_metrics_file(tmp_path: Path, monkeypatch) -> N
     # Force rotation on the very next append.
     (control_dir / "rotation_policy.json").write_text('{"max_bytes": 1}', encoding="utf-8")
 
-    out = data_dir / "moltbook_live_metrics.jsonl"
+    out = data_dir / "observer_derived" / "sim" / "honeypot" / "moltbook_metrics.jsonl"
+    out.parent.mkdir(parents=True, exist_ok=True)
     out.write_text("x" * 10, encoding="utf-8")
 
     append_record(
@@ -89,8 +92,8 @@ def test_rotation_prefix_for_live_metrics_file(tmp_path: Path, monkeypatch) -> N
         source="sim",
     )
 
-    archive_dir = data_dir / "archive"
+    archive_dir = out.parent / "archive"
     archived = [p.name for p in archive_dir.glob("*.jsonl")]
 
-    assert any(name.startswith("moltbook_live_") for name in archived), archived
+    assert any(name.startswith("moltbook_") for name in archived), archived
     assert not any(name.startswith("moltbook_canary_") for name in archived), archived

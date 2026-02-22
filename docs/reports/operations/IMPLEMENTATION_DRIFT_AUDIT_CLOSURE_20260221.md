@@ -11,14 +11,14 @@
 
 - Tool: `projects/calamum-moltbook-observer/tools/audit_implementation_drift.py`
 - Invocation: `--set-baseline`
-- Timestamp (UTC): `2026-02-21T23:58:40.626604Z`
-- Run ID: `18f45deb790d4bc492d47dd5678e93c7`
+- Timestamp (UTC): `2026-02-22T02:46:26.291508Z`
+- Run ID: `18c48d5c912749629840934f29ba93e7`
 - Summary: `[WARN] implementation drift findings present`
 
 ## Artifacts produced
 
-- Report: `projects/calamum-moltbook-observer/local_untracked/audits/implementation_drift/implementation_drift_audit_20260221T235840.626604Z.md`
-- Evidence JSON: `projects/calamum-moltbook-observer/local_untracked/audits/implementation_drift/implementation_drift_audit_20260221T235840.626604Z.evidence.json`
+- Report: `projects/calamum-moltbook-observer/local_untracked/audits/implementation_drift/implementation_drift_audit_20260222T024626.291508Z.md`
+- Evidence JSON: `projects/calamum-moltbook-observer/local_untracked/audits/implementation_drift/implementation_drift_audit_20260222T024626.291508Z.evidence.json`
 - Audit JSONL (append-only): `projects/calamum-moltbook-observer/local_untracked/audit_log/implementation_drift_audit.jsonl`
 - Audit index: `projects/calamum-moltbook-observer/local_untracked/audit_log/audit_index.json`
 
@@ -32,7 +32,7 @@ This closure checkpoint is the immediate predecessor to the observerctl implemen
 
 ## Findings summary (this run)
 
-- SSOT status drift mismatches: `20`
+- SSOT status drift mismatches: `24`
 - Project manifest layout violations: `1`
 - Stage 4 threshold contract drift: `0`
 - Instruction-pair drift (`AGENT_INSTRUCTIONS.md` ↔ `.json`): `0`
@@ -47,6 +47,10 @@ This audit execution is **closed** for the current session because:
 3. No secret-bearing outputs were produced.
 
 Residual findings are now a remediation backlog, not an open audit execution.
+
+## Rerun note (same checkpoint lineage)
+
+This document has been refreshed after a closure-sequence rerun from the active observerctl remediation lane. Dry-run + baseline executions were both completed in sequence, and the artifact pointers above now reference the latest baseline run.
 
 ## Remediation queue linked to primary session goals
 

@@ -8,13 +8,13 @@
     "args": [
       "--set-baseline"
     ],
-    "timestamp_utc": "2026-02-21T23:58:40.626604Z",
-    "run_id": "18f45deb790d4bc492d47dd5678e93c7",
+    "timestamp_utc": "2026-02-22T02:46:26.291508Z",
+    "run_id": "18c48d5c912749629840934f29ba93e7",
     "summary": "[WARN] implementation drift findings present"
   },
   "artifacts": {
-    "report": "projects/calamum-moltbook-observer/local_untracked/audits/implementation_drift/implementation_drift_audit_20260221T235840.626604Z.md",
-    "evidence_json": "projects/calamum-moltbook-observer/local_untracked/audits/implementation_drift/implementation_drift_audit_20260221T235840.626604Z.evidence.json",
+    "report": "projects/calamum-moltbook-observer/local_untracked/audits/implementation_drift/implementation_drift_audit_20260222T024626.291508Z.md",
+    "evidence_json": "projects/calamum-moltbook-observer/local_untracked/audits/implementation_drift/implementation_drift_audit_20260222T024626.291508Z.evidence.json",
     "audit_jsonl": "projects/calamum-moltbook-observer/local_untracked/audit_log/implementation_drift_audit.jsonl",
     "audit_index": "projects/calamum-moltbook-observer/local_untracked/audit_log/audit_index.json"
   },
@@ -26,7 +26,7 @@
     "relationship": "predecessor_to_official_observerctl_gap_audit"
   },
   "findings": {
-    "ssot_status_mismatches": 20,
+    "ssot_status_mismatches": 24,
     "project_manifest_layout_violations": 1,
     "stage4_threshold_drift": 0,
     "instruction_pair_drift": 0,

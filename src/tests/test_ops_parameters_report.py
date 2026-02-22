@@ -45,7 +45,8 @@ def test_ops_parameters_report_includes_figures_and_density(tmp_path: Path, monk
     (health_dir / "calamum_librarian.heartbeat").touch()
 
     # Active telemetry
-    canary = data_dir / "moltbook_canary_metrics.jsonl"
+    canary = data_dir / "observer_derived" / "sim" / "canary" / "moltbook_metrics.jsonl"
+    canary.parent.mkdir(parents=True, exist_ok=True)
     canary.write_text("{\"a\": 1}\n{\"a\": 2}\n", encoding="utf-8")
 
     # Archive manifest
@@ -71,7 +72,7 @@ def test_ops_parameters_report_includes_figures_and_density(tmp_path: Path, monk
             "archived_records_total": 10,
             "total_records": 11,
             "active_bytes_total": 0,
-            "active_records_by_file": {"moltbook_canary_metrics.jsonl": 1},
+            "active_records_by_file": {"observer_derived/sim/canary/moltbook_metrics.jsonl": 1},
         },
     }
     jsonl_path.write_text(json.dumps(prior_snapshot, sort_keys=True) + "\n", encoding="utf-8")

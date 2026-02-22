@@ -58,6 +58,19 @@ def _posture_for_mode(mode: str) -> str:
     return 'lockdown' if m in ('live', 'honeypot') else 'isolation'
 
 
+def _observer_output_jsonl_path(data_dir: Path, source: str, mode: str) -> Path:
+    """Return the canonical observer-derived output path.
+
+    Separation policy:
+    - source scope is explicit (`sim` or `real`)
+    - mode scope is explicit (`watch`/`canary`/`live`/`honeypot`)
+    - file name remains stable so sim and real runs are structurally identical
+    """
+    src = _normalize_source(source)
+    m = (mode or 'watch').strip().lower() or 'watch'
+    return data_dir / 'observer_derived' / src / m / 'moltbook_metrics.jsonl'
+
+
 def _record_linkage(control_dir: Path, mode: str) -> Dict[str, str]:
     ts = datetime.now(timezone.utc).strftime('%Y%m%dT%H%M%SZ')
     ctx_path = control_dir / 'observerctl_run_context.json'
@@ -194,16 +207,7 @@ def load_config(
     src = _normalize_source(source)
     m = (mode or "").strip().lower()
 
-    if m == 'canary':
-        output_jsonl = data_dir / 'moltbook_canary_metrics.jsonl'
-    else:
-        # Canonical live collection target (Stage 4 / Job 0017):
-        # logs/data/calamum/moltbook_live_metrics.jsonl
-        if src == "real":
-            output_jsonl = data_dir / 'moltbook_live_metrics.jsonl'
-        else:
-            # Keep a generic filename for future modes
-            output_jsonl = data_dir / f'moltbook_{m}_metrics.jsonl'
+    output_jsonl = _observer_output_jsonl_path(data_dir=data_dir, source=src, mode=m)
 
     control_dir = get_calamum_control_dir()
     control_dir.mkdir(parents=True, exist_ok=True)
@@ -397,7 +401,7 @@ def _get_next_item(mode: str, source: str = "sim") -> Optional[Dict[str, Any]]:
             return item
         except StopIteration:
             # Empty batch (no yields) => backoff in live mode.
-            if src == "live" and int(state.get("yielded") or 0) == 0:
+            if src == "real" and int(state.get("yielded") or 0) == 0:
                 backoff = _get_live_empty_backoff_sec()
                 if backoff > 0:
                     _BACKOFF_UNTIL_TS[gen_key] = time.time() + float(backoff)
@@ -468,7 +472,7 @@ def append_record(
             size = jsonl_path.stat().st_size
             limit = get_dynamic_rotation_limit(control_dir)
             if size >= limit:
-                rotate_active_log(jsonl_path, data_dir)
+                rotate_active_log(jsonl_path, jsonl_path.parent)
         except OSError:
             pass # Skipping rotation check on stat fail
 
@@ -506,13 +510,13 @@ def append_record(
         record['kind'] = 'obfuscated_content'
     # Ensure timestamp is preserved or added
     if 'ts' not in record:
-         record['ts'] = _utc_now_iso()
+        record['ts'] = _utc_now_iso()
 
-        linkage = _record_linkage(control_dir, mode)
-        record['run_id'] = linkage.get('run_id', '')
-        record['posture_trigger_id'] = linkage.get('posture_trigger_id', '')
-        record['posture_trigger'] = linkage.get('posture_trigger', '')
-        record['security_report_ref'] = linkage.get('security_report_ref', '')
+    linkage = _record_linkage(control_dir, mode)
+    record['run_id'] = linkage.get('run_id', '')
+    record['posture_trigger_id'] = linkage.get('posture_trigger_id', '')
+    record['posture_trigger'] = linkage.get('posture_trigger', '')
+    record['security_report_ref'] = linkage.get('security_report_ref', '')
 
     # 3. Atomic Write (Context Manager)
     jsonl_path.parent.mkdir(parents=True, exist_ok=True)

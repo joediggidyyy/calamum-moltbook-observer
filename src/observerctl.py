@@ -66,6 +66,14 @@ def _control_file(name: str) -> Path:
     return get_calamum_control_dir() / name
 
 
+def _observer_metrics_path(source: str, mode: str) -> Path:
+    src = _normalize_source(source)
+    m = str(mode or 'watch').strip().lower()
+    if m not in MODES:
+        m = 'watch'
+    return get_calamum_data_dir() / 'observer_derived' / src / m / 'moltbook_metrics.jsonl'
+
+
 def _load_json_file(path: Path, default: Dict[str, Any]) -> Dict[str, Any]:
     try:
         if path.exists():
@@ -313,15 +321,12 @@ def collect_runtime_status(source: str = 'sim') -> Dict[str, Any]:
             'status': 'ok' if live_key_ok else 'err',
         }
 
-    checks['data.live_metrics'] = {
-        'path': str(data_dir / 'moltbook_live_metrics.jsonl'),
-        'exists': (data_dir / 'moltbook_live_metrics.jsonl').exists(),
-        'status': 'ok' if (data_dir / 'moltbook_live_metrics.jsonl').exists() else 'warn',
-    }
-    checks['data.canary_metrics'] = {
-        'path': str(data_dir / 'moltbook_canary_metrics.jsonl'),
-        'exists': (data_dir / 'moltbook_canary_metrics.jsonl').exists(),
-        'status': 'ok' if (data_dir / 'moltbook_canary_metrics.jsonl').exists() else 'warn',
+    current_metrics = _observer_metrics_path(source_norm, mode)
+    checks['data.observer_metrics_current'] = {
+        'path': str(current_metrics),
+        'exists': current_metrics.exists(),
+        'status': 'ok' if current_metrics.exists() else 'warn',
+        'scope': {'source': source_norm, 'mode': mode},
     }
     checks['store.pointer_consistent'] = {
         'active_store_pointer': store_packet.get('active_store_pointer', ''),
@@ -594,9 +599,22 @@ def _write_packet(packet: Dict[str, Any], output: Path) -> Dict[str, Any]:
     return packet
 
 
-def _default_output_path() -> Path:
+def _default_output_path(source: str = 'sim', mode: str = 'watch', event: str = 'manual') -> Path:
     ts = datetime.now(timezone.utc).strftime('%Y%m%dT%H%M%SZ')
-    return _project_root() / 'local_untracked' / 'observerctl' / 'evidence' / 'observerctl_evidence_{0}.json'.format(ts)
+    src = _normalize_source(source)
+    m = str(mode or 'watch').strip().lower()
+    if m not in MODES:
+        m = 'watch'
+    ev = str(event or 'manual').strip().lower().replace(' ', '-')
+    return _project_root() / 'local_untracked' / 'observerctl' / 'evidence' / src / m / 'observerctl_{0}_evidence_{1}.json'.format(ev, ts)
+
+
+def _evidence_index_path(source: str, mode: str) -> Path:
+    src = _normalize_source(source)
+    m = str(mode or 'watch').strip().lower()
+    if m not in MODES:
+        m = 'watch'
+    return _project_root() / 'local_untracked' / 'observerctl' / 'evidence' / src / m / 'index.jsonl'
 
 
 def _append_jsonl(path: Path, payload: Dict[str, Any]) -> None:
@@ -728,13 +746,14 @@ def _ops_mode_transition(source: str, to_mode: str, event: str, output: str) -> 
         }
 
     evidence = build_evidence_pack(status_before, gate, event=event)
-    out_path = Path(str(output).strip()) if str(output).strip() else _default_output_path()
+    out_path = Path(str(output).strip()) if str(output).strip() else _default_output_path(source=source, mode=to_mode, event=event)
     evidence = _write_packet(evidence, out_path)
-    _append_jsonl(_project_root() / 'local_untracked' / 'observerctl' / 'evidence' / 'index.jsonl', {
+    _append_jsonl(_evidence_index_path(source, to_mode), {
         'timestamp_utc': _utc_now(),
         'packet_path': str(out_path).replace('\\', '/'),
         'decision': gate.get('decision', 'no-go'),
         'run_id': evidence.get('run_id', ''),
+        'scope': {'source': _normalize_source(source), 'mode': to_mode},
     })
     evidence_decision = str(((evidence.get('gate_packet') or {}).get('decision')) or evidence.get('decision', 'no-go')).lower()
     if evidence_decision != 'go':
@@ -780,13 +799,15 @@ def _ops_evidence_pack(source: str, event: str, output: str) -> Dict[str, Any]:
     status = collect_runtime_status(source=source)
     gate = evaluate_gate_decision(status, target_mode=str(status.get('mode', 'watch')))
     packet = build_evidence_pack(status, gate, event=event)
-    out_path = Path(str(output).strip()) if str(output).strip() else _default_output_path()
+    mode = str(status.get('mode', 'watch')).strip().lower()
+    out_path = Path(str(output).strip()) if str(output).strip() else _default_output_path(source=source, mode=mode, event=event)
     packet = _write_packet(packet, out_path)
-    _append_jsonl(_project_root() / 'local_untracked' / 'observerctl' / 'evidence' / 'index.jsonl', {
+    _append_jsonl(_evidence_index_path(source, mode), {
         'timestamp_utc': _utc_now(),
         'packet_path': str(out_path).replace('\\', '/'),
         'decision': gate.get('decision', 'no-go'),
         'run_id': packet.get('run_id', ''),
+        'scope': {'source': _normalize_source(source), 'mode': mode},
     })
     return packet
 
@@ -821,7 +842,10 @@ def _ops_evidence_verify(packet_path: str) -> Dict[str, Any]:
 
 
 def _ops_evidence_index() -> Dict[str, Any]:
-    idx = _project_root() / 'local_untracked' / 'observerctl' / 'evidence' / 'index.jsonl'
+    state = _load_state()
+    source = str(state.get('source', 'sim'))
+    mode = str(state.get('mode', 'watch'))
+    idx = _evidence_index_path(source, mode)
     count = 0
     latest = None
     if idx.exists():
@@ -833,6 +857,7 @@ def _ops_evidence_index() -> Dict[str, Any]:
         'timestamp_utc': _utc_now(),
         'runtime_cli_surface': 'observerctl',
         'index_path': str(idx).replace('\\', '/'),
+        'scope': {'source': _normalize_source(source), 'mode': mode},
         'records': count,
         'latest': latest,
     }
