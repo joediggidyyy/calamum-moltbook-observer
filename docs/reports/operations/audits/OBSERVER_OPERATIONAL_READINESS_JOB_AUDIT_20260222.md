@@ -20,6 +20,15 @@ It specifically enforces:
 
 No phase may advance on tool output alone.
 
+## Audit-chain anchors
+
+**Predecessor nodes (tracked):**
+
+- `projects/calamum-moltbook-observer/docs/reports/operations/audits/IMPLEMENTATION_DRIFT_AUDIT_CLOSURE_20260221.md`
+- `projects/calamum-moltbook-observer/docs/reports/operations/audits/OBSERVERCTL_IMPLEMENTATION_GAP_AUDIT_20260221.md`
+
+**Chain role:** readiness-governance node extending drift + gap audits into stage-close operational gates.
+
 ---
 
 ## 2) Unintended-consequence mitigation policy (mandatory)

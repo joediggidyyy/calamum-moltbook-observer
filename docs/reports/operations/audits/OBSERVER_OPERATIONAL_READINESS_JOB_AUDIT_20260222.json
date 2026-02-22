@@ -5,6 +5,13 @@
   "status": "planned_execution_ready",
   "scope": "projects/calamum-moltbook-observer",
   "objective": "Mitigate unintended consequences of remediation efforts with mandatory stage-close physical inspection and validation.",
+  "audit_chain": {
+    "previous_tracked": [
+      "projects/calamum-moltbook-observer/docs/reports/operations/audits/IMPLEMENTATION_DRIFT_AUDIT_CLOSURE_20260221.md",
+      "projects/calamum-moltbook-observer/docs/reports/operations/audits/OBSERVERCTL_IMPLEMENTATION_GAP_AUDIT_20260221.md"
+    ],
+    "role": "readiness_governance_node"
+  },
   "stages": [
     {
       "stage_id": "stage_0_shutdown_checkpoint",

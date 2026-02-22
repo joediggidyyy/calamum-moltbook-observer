@@ -37,6 +37,10 @@
       "projects/calamum-moltbook-observer/local_untracked/audit_log/implementation_drift_audit.jsonl",
       "projects/calamum-moltbook-observer/local_untracked/audit_log/audit_index.json"
     ],
+    "next_tracked": [
+      "projects/calamum-moltbook-observer/docs/reports/operations/audits/OBSERVER_OPERATIONAL_READINESS_JOB_AUDIT_20260222.md",
+      "projects/calamum-moltbook-observer/docs/reports/operations/audits/OBSERVER_OPERATIONAL_READINESS_JOB_AUDIT_20260222.json"
+    ],
     "sequence_note": "Immediate follow-on node after IMPLEMENTATION_DRIFT_AUDIT_CLOSURE_20260221."
   },
   "findings": [

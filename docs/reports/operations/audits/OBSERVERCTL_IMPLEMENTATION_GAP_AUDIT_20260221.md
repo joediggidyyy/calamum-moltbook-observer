@@ -51,6 +51,13 @@ Validation evidence in-session:
 
 This audit is the immediate follow-on to `IMPLEMENTATION_DRIFT_AUDIT_CLOSURE_20260221` and serves as the next node in the observer drift-governance chain.
 
+### Next chain node (tracked)
+
+- `projects/calamum-moltbook-observer/docs/reports/operations/audits/OBSERVER_OPERATIONAL_READINESS_JOB_AUDIT_20260222.md`
+- `projects/calamum-moltbook-observer/docs/reports/operations/audits/OBSERVER_OPERATIONAL_READINESS_JOB_AUDIT_20260222.json`
+
+This node formalizes shutdown-first readiness gates with mandatory stage-close physical inspection/validation.
+
 ---
 
 ## Official findings
