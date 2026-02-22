@@ -1,6 +1,6 @@
 {
-  "created": "2026-02-21T17:53:52.686438Z",
-  "last_persisted": "2026-02-21T18:00:45.130603Z",
+  "created": "2026-02-21T23:43:51.423324Z",
+  "last_persisted": "2026-02-21T23:44:09.575660Z",
   "files_cached": 0,
   "decisions_logged": 0,
   "tasks_tracked": 0,
@@ -26,16 +26,16 @@
     },
     "cache": {
       "hits": 0,
-      "requests": 2
+      "requests": 4
     },
     "kcs": {
-      "k": 0.57,
+      "k": 0.64,
       "c": 1.0,
       "s": 1.0
     },
-    "last_activity": "2026-02-21T17:53:52.739616Z",
-    "virtual_start": "2026-02-21T17:53:52.620708Z",
-    "cycle_start": "2026-02-21T17:53:52.620709Z"
+    "last_activity": "2026-02-21T23:44:04.705335Z",
+    "virtual_start": "2026-02-21T23:43:51.388623Z",
+    "cycle_start": "2026-02-21T23:43:51.388624Z"
   },
   "recovery_state": {
     "active": false,
@@ -43,6 +43,6 @@
     "clean_streak": 0,
     "clean_start": null
   },
-  "last_ops_awareness_at": "2026-02-21T17:53:52.712227Z",
-  "last_ops_awareness_hash": "593c5a994c9894c49b6afa0c104bdcf52da8a28199d9760a9b8dbba2dd658fc6"
+  "last_ops_awareness_at": "2026-02-21T23:43:51.444352Z",
+  "last_ops_awareness_hash": "86901113d20f2f959ef75d5ca88006da9388e98c71026126ddb48b818fe28f20"
 }

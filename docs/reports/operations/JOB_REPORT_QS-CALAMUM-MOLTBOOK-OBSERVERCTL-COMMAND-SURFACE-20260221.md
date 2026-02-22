@@ -20,7 +20,7 @@ Execution report for implementing observerctl command/gate contracts from Job 00
 
 - `2026-02-21T22:21:02Z`: QF1 contract-lock/schema-alignment completed.
 - Alignment sources locked: Job 0023 implementation spec + observerctl mode-transition matrix chapter.
-- Runtime command-surface expansion remains pending for subsequent authorized frames.
+- Runtime command-surface expansion, atomic transition flow, and operational evidence templates were completed and verified in this job cycle.
 
 ## Evidence pointers
 
@@ -48,6 +48,8 @@ Execution report for implementing observerctl command/gate contracts from Job 00
 - Native runtime smoke (`observerctl` via venv executable) captured final state packets:
 	- `ops mode current --json`: success (`sim:watch`, posture `isolation`)
 	- `health full --json`: fail-closed `no-go` due stale observer heartbeat in this shell context, consistent with policy behavior.
+- Drift audit confirmation (post-close):
+	- `pytest src/tests/test_audit_implementation_drift.py -q`: **4 passed** (`DRIFT_AUDIT_EXIT:0`).
 
 ## Closeout note
 

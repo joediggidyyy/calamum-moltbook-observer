@@ -22,6 +22,14 @@
 - Audit JSONL (append-only): `projects/calamum-moltbook-observer/local_untracked/audit_log/implementation_drift_audit.jsonl`
 - Audit index: `projects/calamum-moltbook-observer/local_untracked/audit_log/audit_index.json`
 
+## Consecutive drift-audit linkage
+
+- Follow-on official audit (tracked):
+   - `projects/calamum-moltbook-observer/docs/reports/operations/OBSERVERCTL_IMPLEMENTATION_GAP_AUDIT_20260221.md`
+   - `projects/calamum-moltbook-observer/docs/reports/operations/OBSERVERCTL_IMPLEMENTATION_GAP_AUDIT_20260221.json`
+
+This closure checkpoint is the immediate predecessor to the observerctl implementation-gap official audit above.
+
 ## Findings summary (this run)
 
 - SSOT status drift mismatches: `20`

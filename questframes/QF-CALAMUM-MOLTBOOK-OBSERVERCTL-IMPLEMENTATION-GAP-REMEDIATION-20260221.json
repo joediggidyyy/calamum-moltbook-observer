@@ -1,0 +1,25 @@
+{
+  "questframe_id": "QF-CALAMUM-MOLTBOOK-OBSERVERCTL-IMPLEMENTATION-GAP-REMEDIATION-20260221",
+  "queststack_id": "QS-CALAMUM-MOLTBOOK-OBSERVERCTL-IMPLEMENTATION-GAP-REMEDIATION-20260221",
+  "title": "ObserverCTL implementation gap remediation",
+  "status": "open",
+  "owner": "ORACL-Prime",
+  "last_updated_utc": "2026-02-21T00:00:00Z",
+  "frames": [
+    {
+      "frame_id": "qf1_scaffold_and_gate_clearance",
+      "title": "Scaffold readiness and start-gate clearance",
+      "status": "open"
+    },
+    {
+      "frame_id": "qf2_blocker_enforcement_remediation",
+      "title": "Remediate OGA-01..OGA-04 enforcement blockers",
+      "status": "open"
+    },
+    {
+      "frame_id": "qf3_contract_validation_and_closure",
+      "title": "Validate contracts, re-run drift, and prepare closure report",
+      "status": "open"
+    }
+  ]
+}

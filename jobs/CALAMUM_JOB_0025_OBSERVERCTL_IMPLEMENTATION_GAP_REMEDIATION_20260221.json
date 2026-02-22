@@ -1,0 +1,14 @@
+{
+  "job_id": "CALAMUM_JOB_0025_OBSERVERCTL_IMPLEMENTATION_GAP_REMEDIATION_20260221",
+  "sequence": 25,
+  "state": "PLANNED",
+  "scope": "observer",
+  "owner": "ORACL-Prime",
+  "date_utc": "2026-02-21",
+  "canonical_job_content": [
+    "projects/calamum-moltbook-observer/docs/reports/operations/OBSERVERCTL_IMPLEMENTATION_GAP_AUDIT_20260221.md",
+    "projects/calamum-moltbook-observer/docs/reports/operations/OBSERVERCTL_IMPLEMENTATION_GAP_AUDIT_20260221.json"
+  ],
+  "queststack": "projects/calamum-moltbook-observer/queststacks/QS-CALAMUM-MOLTBOOK-OBSERVERCTL-IMPLEMENTATION-GAP-REMEDIATION-20260221.md",
+  "notes": "Job 0025 lane uses the official observerctl implementation-gap audit as canonical execution spec."
+}

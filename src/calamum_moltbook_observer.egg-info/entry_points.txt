@@ -1,0 +1,2 @@
+[console_scripts]
+observerctl = observerctl:main

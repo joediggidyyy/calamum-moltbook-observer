@@ -1,0 +1,186 @@
+{
+  "document_id": "OBSERVERCTL_IMPLEMENTATION_GAP_AUDIT_20260221",
+  "status": "official_audit_open_findings",
+  "owner": "ORACL-Prime",
+  "approver": "joediggidyyy",
+  "date_utc": "2026-02-21",
+  "scope": "projects/calamum-moltbook-observer",
+  "policy_mode": [
+    "names_only",
+    "fail_closed"
+  ],
+  "objective": "Formalize observerctl implementation-gap findings and chain them to latest implementation_drift audit artifacts.",
+  "requirements_baseline": [
+    "projects/calamum-moltbook-observer/jobs/CALAMUM_JOB_0023_OBSERVERCTL_COMMAND_SURFACE_PLANNING_20260221.md",
+    "projects/calamum-moltbook-observer/jobs/CALAMUM_JOB_0023_OBSERVERCTL_COMMAND_SURFACE_PLANNING_20260221.json",
+    "projects/calamum-moltbook-observer/docs/CALAMUM_CODESENTINEL_JOB_EXECUTION_EXPECTATIONS.md",
+    "projects/calamum-moltbook-observer/docs/CALAMUM_CODESENTINEL_JOB_EXECUTION_EXPECTATIONS.json"
+  ],
+  "implementation_surfaces": [
+    "projects/calamum-moltbook-observer/src/observerctl.py",
+    "projects/calamum-moltbook-observer/src/tests/test_observerctl.py",
+    "projects/calamum-moltbook-observer/src/calamum_observer_agent.py"
+  ],
+  "validation": {
+    "pytest": "projects/calamum-moltbook-observer/src/tests/test_observerctl.py -q",
+    "result": "pass",
+    "passed_tests": 9
+  },
+  "drift_chain": {
+    "previous_tracked": [
+      "projects/calamum-moltbook-observer/docs/reports/operations/IMPLEMENTATION_DRIFT_AUDIT_CLOSURE_20260221.md",
+      "projects/calamum-moltbook-observer/docs/reports/operations/IMPLEMENTATION_DRIFT_AUDIT_CLOSURE_20260221.json"
+    ],
+    "previous_untracked_evidence": [
+      "projects/calamum-moltbook-observer/local_untracked/audits/implementation_drift/implementation_drift_audit_20260221T235840.626604Z.md",
+      "projects/calamum-moltbook-observer/local_untracked/audits/implementation_drift/implementation_drift_audit_20260221T235840.626604Z.evidence.json",
+      "projects/calamum-moltbook-observer/local_untracked/audit_log/implementation_drift_audit.jsonl",
+      "projects/calamum-moltbook-observer/local_untracked/audit_log/audit_index.json"
+    ],
+    "sequence_note": "Immediate follow-on node after IMPLEMENTATION_DRIFT_AUDIT_CLOSURE_20260221."
+  },
+  "findings": [
+    {
+      "id": "OGA-01",
+      "severity": "BLOCKER",
+      "gap": "Trigger-posture validation is self-derived and cannot detect mismatch.",
+      "evidence": "evaluate_gate_decision computes posture from target mode and compares same-derived values.",
+      "recommended_fix": "Validate required posture against runtime/watchdog posture source and fail closed on mismatch."
+    },
+    {
+      "id": "OGA-02",
+      "severity": "BLOCKER",
+      "gap": "Lockdown checks do not validate cadence escalation semantics.",
+      "evidence": "Current checks rely on heartbeat status + graph existence rather than escalation-rate constraints.",
+      "recommended_fix": "Add explicit heartbeat/baseline cadence checks and deny with normalized lockdown reason codes."
+    },
+    {
+      "id": "OGA-03",
+      "severity": "BLOCKER",
+      "gap": "security_report_ref linkage is static and not run-bound.",
+      "evidence": "Default constant report path and non-empty presence check only.",
+      "recommended_fix": "Generate run-bound report references and enforce linkage continuity with run_id."
+    },
+    {
+      "id": "OGA-04",
+      "severity": "BLOCKER",
+      "gap": "Collection records miss required run-linkage envelope fields.",
+      "evidence": "Related producer output lacks run_id/posture_trigger_id/posture_trigger/security_report_ref.",
+      "recommended_fix": "Emit required linkage fields in all collection/gate/evidence records."
+    },
+    {
+      "id": "OGA-05",
+      "severity": "MAJOR",
+      "gap": "Unknown mode handling coerces invalid state to watch instead of fail-closed denial.",
+      "evidence": "Invalid modes normalized to watch in state load path.",
+      "recommended_fix": "Preserve unknown mode and deny with critical_check_failed:mode_current_unknown."
+    },
+    {
+      "id": "OGA-06",
+      "severity": "MAJOR",
+      "gap": "ops mode set lacks gate-packet freshness enforcement.",
+      "evidence": "Decision and to_state validated without TTL freshness requirement.",
+      "recommended_fix": "Add strict gate packet age threshold and deny stale packets."
+    },
+    {
+      "id": "OGA-07",
+      "severity": "MAJOR",
+      "gap": "Schema/contract-invalid paths do not consistently map to exit code 3.",
+      "evidence": "verify schema-failure behavior follows no-go exit semantics.",
+      "recommended_fix": "Map schema-invalid conditions to contract-invalid exit code 3 and add deterministic tests."
+    },
+    {
+      "id": "OGA-08",
+      "severity": "MAJOR",
+      "gap": "Source-axis vocabulary drift exists across runtime scripts.",
+      "evidence": "observerctl uses sim|real while related surfaces include sim|live.",
+      "recommended_fix": "Canonicalize runtime source axis to sim|real and document aliases if retained."
+    },
+    {
+      "id": "OGA-09",
+      "severity": "MINOR",
+      "gap": "Some plan examples still show stale command forms.",
+      "evidence": "Legacy top-level command examples in baseline-plan lane.",
+      "recommended_fix": "Refresh docs/examples to canonical observerctl ops surface."
+    }
+  ],
+  "decision": {
+    "audit_execution": "complete",
+    "finding_state": "open_for_remediation",
+    "live_readiness_claim": "blocked_until_blockers_closed"
+  },
+  "next_actions": [
+    "Remediate OGA-01..OGA-04 with test-backed enforcement updates.",
+    "Enforce deterministic exit code contract for schema/dependency/runtime failures.",
+    "Run next implementation_drift cycle and chain-link new closure to this audit."
+  ],
+  "recovered_unofficial_detail": {
+    "source": "interactive_audit_output_20260221",
+    "status": "persisted_into_official_artifacts",
+    "additional_audited_files": {
+      "planning_policy_requirements": [
+        "projects/calamum-moltbook-observer/docs/plans/OBSERVERCTL_MODE_TRANSITION_MATRIX_CHAPTER_20260221.md",
+        "projects/calamum-moltbook-observer/docs/plans/CALAMUM_MOLTBOOK_OBSERVER_BASELINE_INTEGRATION_SCAFFOLD_20260220.md",
+        "projects/calamum-moltbook-observer/jobs/CALAMUM_JOB_0022_MOLTBOOK_BASELINE_INTEGRATION_20260220.md",
+        "projects/calamum-moltbook-observer/jobs/CALAMUM_JOB_0024_OBSERVER_TEST_COVERAGE_BASELINE_REMEDIATION_20260221.md",
+        "projects/calamum-moltbook-observer/jobs/CALAMUM_JOB_0024_OBSERVER_TEST_COVERAGE_BASELINE_REMEDIATION_20260221.json"
+      ],
+      "quest_artifacts": [
+        "projects/calamum-moltbook-observer/queststacks/QS-CALAMUM-MOLTBOOK-OBSERVERCTL-COMMAND-SURFACE-20260221.md",
+        "projects/calamum-moltbook-observer/questframes/QF-CALAMUM-MOLTBOOK-OBSERVERCTL-COMMAND-SURFACE-20260221.json"
+      ]
+    },
+    "command_surface_completeness_snapshot": {
+      "ops": [
+        "preflight",
+        "mode_current",
+        "mode_list",
+        "mode_gate",
+        "mode_set",
+        "mode_transition",
+        "gate_check",
+        "evidence_pack",
+        "evidence_verify",
+        "evidence_index"
+      ],
+      "baseline": [
+        "status",
+        "graph",
+        "check",
+        "list",
+        "set"
+      ],
+      "librarian": [
+        "stats",
+        "stores",
+        "rotate",
+        "compact",
+        "verify"
+      ],
+      "watchdog": [
+        "status",
+        "check",
+        "reasons",
+        "ack"
+      ],
+      "health": [
+        "quick",
+        "full",
+        "explain"
+      ],
+      "policy": [
+        "show",
+        "validate"
+      ],
+      "interpretation": "topology_implemented_semantic_enforcement_remaining"
+    },
+    "confidence": {
+      "rating": "medium_high",
+      "basis": [
+        "required_spec_and_expectations_pairs_reviewed",
+        "implementation_and_tests_reviewed",
+        "observerctl_suite_revalidated_9_passed"
+      ]
+    }
+  }
+}

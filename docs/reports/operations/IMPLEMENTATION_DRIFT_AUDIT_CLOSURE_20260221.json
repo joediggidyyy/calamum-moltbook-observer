@@ -18,6 +18,13 @@
     "audit_jsonl": "projects/calamum-moltbook-observer/local_untracked/audit_log/implementation_drift_audit.jsonl",
     "audit_index": "projects/calamum-moltbook-observer/local_untracked/audit_log/audit_index.json"
   },
+  "consecutive_audit_linkage": {
+    "next_tracked": [
+      "projects/calamum-moltbook-observer/docs/reports/operations/OBSERVERCTL_IMPLEMENTATION_GAP_AUDIT_20260221.md",
+      "projects/calamum-moltbook-observer/docs/reports/operations/OBSERVERCTL_IMPLEMENTATION_GAP_AUDIT_20260221.json"
+    ],
+    "relationship": "predecessor_to_official_observerctl_gap_audit"
+  },
   "findings": {
     "ssot_status_mismatches": 20,
     "project_manifest_layout_violations": 1,

@@ -1,0 +1,10 @@
+LICENSE
+README.md
+pyproject.toml
+src/calamum_config.py
+src/observerctl.py
+src/calamum_moltbook_observer.egg-info/PKG-INFO
+src/calamum_moltbook_observer.egg-info/SOURCES.txt
+src/calamum_moltbook_observer.egg-info/dependency_links.txt
+src/calamum_moltbook_observer.egg-info/entry_points.txt
+src/calamum_moltbook_observer.egg-info/top_level.txt
