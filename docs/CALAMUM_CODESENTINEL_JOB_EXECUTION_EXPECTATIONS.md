@@ -10,7 +10,7 @@
 > 
 > **Status**: ACTIVE POLICY (names-only)
 > 
-> **Last updated (UTC)**: 2026-02-21
+> **Last updated (UTC)**: 2026-02-22
 
 ---
 
@@ -148,6 +148,21 @@ Mandatory controls:
 - Authorization must be recorded in the active QuestStack and/or the job report **before** directory creation.
 - Any approved directory creation MUST update `projects/calamum-moltbook-observer/PROJECT_MANIFEST.json` layout metadata in the same change set.
 - Unapproved directory creation is a fail-closed policy violation and must be remediated before `codesentinel job close <task_id>`.
+
+### 3.5 Observer scope-lock for documentation remediation (2026-02-22)
+
+For the active documentation remediation lane, mutation scope is locked to:
+
+- `projects/calamum-moltbook-observer/**`
+
+Root-level CodeSentinel surfaces (for example `docs/**`, `jobs/**`, `operations/tasks.json`) remain reference-only unless explicitly authorized for cross-scope handoff notes.
+
+Approved observer operations report bucket subfolders for typed artifacts:
+
+- `projects/calamum-moltbook-observer/docs/reports/operations/audits/`
+- `projects/calamum-moltbook-observer/docs/reports/operations/standards/`
+- `projects/calamum-moltbook-observer/docs/reports/operations/migration_indexes/`
+- `projects/calamum-moltbook-observer/docs/reports/operations/compat_packets/`
 
 ---
 

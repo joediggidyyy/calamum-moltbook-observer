@@ -15,8 +15,8 @@
 
 This job executes the official audit findings in:
 
-- `projects/calamum-moltbook-observer/docs/reports/operations/OBSERVERCTL_IMPLEMENTATION_GAP_AUDIT_20260221.md`
-- `projects/calamum-moltbook-observer/docs/reports/operations/OBSERVERCTL_IMPLEMENTATION_GAP_AUDIT_20260221.json`
+- `projects/calamum-moltbook-observer/docs/reports/operations/audits/OBSERVERCTL_IMPLEMENTATION_GAP_AUDIT_20260221.md`
+- `projects/calamum-moltbook-observer/docs/reports/operations/audits/OBSERVERCTL_IMPLEMENTATION_GAP_AUDIT_20260221.json`
 
 ## Scope summary
 

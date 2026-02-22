@@ -1,0 +1,87 @@
+{
+  "document_id": "OBSERVER_OPERATIONAL_READINESS_JOB_AUDIT_20260222",
+  "owner": "ORACL-Prime",
+  "approver": "joediggidyyy",
+  "status": "planned_execution_ready",
+  "scope": "projects/calamum-moltbook-observer",
+  "objective": "Mitigate unintended consequences of remediation efforts with mandatory stage-close physical inspection and validation.",
+  "stages": [
+    {
+      "stage_id": "stage_0_shutdown_checkpoint",
+      "title": "Controlled observer collection shutdown checkpoint",
+      "required_close": {
+        "machine_validation": true,
+        "physical_inspection": true,
+        "unintended_consequence_review": true,
+        "gate_decision": "pass_required"
+      }
+    },
+    {
+      "stage_id": "stage_1_control_plane_integrity",
+      "title": "Runtime control-plane integrity audit",
+      "required_close": {
+        "machine_validation": true,
+        "physical_inspection": true,
+        "unintended_consequence_review": true,
+        "gate_decision": "pass_required"
+      }
+    },
+    {
+      "stage_id": "stage_2_data_store_integrity",
+      "title": "Data/store integrity and librarian audit",
+      "required_close": {
+        "machine_validation": true,
+        "physical_inspection": true,
+        "unintended_consequence_review": true,
+        "gate_decision": "pass_required"
+      }
+    },
+    {
+      "stage_id": "stage_3_governance_drift",
+      "title": "Governance and implementation drift audit",
+      "required_close": {
+        "machine_validation": true,
+        "physical_inspection": true,
+        "unintended_consequence_review": true,
+        "gate_decision": "pass_required"
+      }
+    },
+    {
+      "stage_id": "stage_4_transition_rehearsal",
+      "title": "Transition rehearsal (sim/canary)",
+      "required_close": {
+        "machine_validation": true,
+        "physical_inspection": true,
+        "unintended_consequence_review": true,
+        "gate_decision": "pass_required"
+      }
+    },
+    {
+      "stage_id": "stage_5_live_readiness_decision",
+      "title": "Live-readiness decision gate (no activation)",
+      "required_close": {
+        "machine_validation": true,
+        "physical_inspection": true,
+        "unintended_consequence_review": true,
+        "gate_decision": "pass_required"
+      }
+    }
+  ],
+  "stage_close_contract": [
+    "stage_id",
+    "machine_validation_result",
+    "physical_inspection_result",
+    "unintended_consequence_findings",
+    "rollback_ready",
+    "gate_decision",
+    "approved_by",
+    "closed_at_utc",
+    "evidence_refs"
+  ],
+  "hard_stop_conditions": [
+    "critical_check_failure",
+    "physical_inspection_failed",
+    "rollback_ambiguity_on_unintended_consequence",
+    "missing_or_unresolvable_stage_close_evidence"
+  ]
+}

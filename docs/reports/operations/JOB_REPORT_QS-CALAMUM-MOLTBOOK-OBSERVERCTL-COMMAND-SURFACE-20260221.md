@@ -31,11 +31,11 @@ Execution report for implementing observerctl command/gate contracts from Job 00
 ## Final closure evidence (QF complete)
 
 - Sim transition run report:
-	- `projects/calamum-moltbook-observer/docs/reports/operations/OBSERVERCTL_SIM_MODE_TRANSITION_RUN_20260221T2331Z.md`
-	- `projects/calamum-moltbook-observer/docs/reports/operations/OBSERVERCTL_SIM_MODE_TRANSITION_RUN_20260221T2331Z.json`
+	- `projects/calamum-moltbook-observer/docs/reports/operations/compat_packets/OBSERVERCTL_SIM_MODE_TRANSITION_RUN_20260221T2331Z.md`
+	- `projects/calamum-moltbook-observer/docs/reports/operations/compat_packets/OBSERVERCTL_SIM_MODE_TRANSITION_RUN_20260221T2331Z.json`
 - Sim posture validation report:
-	- `projects/calamum-moltbook-observer/docs/reports/operations/OBSERVERCTL_SECURITY_POSTURE_VALIDATION_20260221T2331Z.md`
-	- `projects/calamum-moltbook-observer/docs/reports/operations/OBSERVERCTL_SECURITY_POSTURE_VALIDATION_20260221T2331Z.json`
+	- `projects/calamum-moltbook-observer/docs/reports/operations/compat_packets/OBSERVERCTL_SECURITY_POSTURE_VALIDATION_20260221T2331Z.md`
+	- `projects/calamum-moltbook-observer/docs/reports/operations/compat_packets/OBSERVERCTL_SECURITY_POSTURE_VALIDATION_20260221T2331Z.json`
 - Matrix run artifact:
 	- `projects/calamum-moltbook-observer/local_untracked/observerctl/evidence/sim_command_matrix_results.json`
 - Transition packet artifact:
@@ -54,3 +54,7 @@ Execution report for implementing observerctl command/gate contracts from Job 00
 ## Closeout note
 
 Job 0023 implementation surface is complete and verified with deterministic test coverage, command-matrix evidence, and standards-aligned operational reporting.
+
+## 2026-02-22 bucket normalization note
+
+- Compatibility evidence packets are now stored under `docs/reports/operations/compat_packets/` per observer-scoped operations bucketing policy.

@@ -25,8 +25,8 @@
 ## Consecutive drift-audit linkage
 
 - Follow-on official audit (tracked):
-   - `projects/calamum-moltbook-observer/docs/reports/operations/OBSERVERCTL_IMPLEMENTATION_GAP_AUDIT_20260221.md`
-   - `projects/calamum-moltbook-observer/docs/reports/operations/OBSERVERCTL_IMPLEMENTATION_GAP_AUDIT_20260221.json`
+   - `projects/calamum-moltbook-observer/docs/reports/operations/audits/OBSERVERCTL_IMPLEMENTATION_GAP_AUDIT_20260221.md`
+   - `projects/calamum-moltbook-observer/docs/reports/operations/audits/OBSERVERCTL_IMPLEMENTATION_GAP_AUDIT_20260221.json`
 
 This closure checkpoint is the immediate predecessor to the observerctl implementation-gap official audit above.
 

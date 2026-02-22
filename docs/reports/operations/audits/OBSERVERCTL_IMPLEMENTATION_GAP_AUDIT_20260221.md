@@ -37,8 +37,8 @@ Validation evidence in-session:
 
 ### Prior checkpoint (tracked)
 
-- `projects/calamum-moltbook-observer/docs/reports/operations/IMPLEMENTATION_DRIFT_AUDIT_CLOSURE_20260221.md`
-- `projects/calamum-moltbook-observer/docs/reports/operations/IMPLEMENTATION_DRIFT_AUDIT_CLOSURE_20260221.json`
+- `projects/calamum-moltbook-observer/docs/reports/operations/audits/IMPLEMENTATION_DRIFT_AUDIT_CLOSURE_20260221.md`
+- `projects/calamum-moltbook-observer/docs/reports/operations/audits/IMPLEMENTATION_DRIFT_AUDIT_CLOSURE_20260221.json`
 
 ### Prior checkpoint evidence pointers (untracked/local audit lane)
 

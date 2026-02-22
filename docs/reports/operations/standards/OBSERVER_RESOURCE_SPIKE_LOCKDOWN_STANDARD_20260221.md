@@ -202,7 +202,7 @@ This keeps audits publication-grade and reproducible.
 ## Linkage to active remediation lane
 
 - Job lane report: `docs/reports/operations/JOB_REPORT_QS-CALAMUM-MOLTBOOK-OBSERVERCTL-IMPLEMENTATION-GAP-REMEDIATION-20260221.md`
-- Official audit source: `projects/calamum-moltbook-observer/docs/reports/operations/OBSERVERCTL_IMPLEMENTATION_GAP_AUDIT_20260221.md`
+- Official audit source: `projects/calamum-moltbook-observer/docs/reports/operations/audits/OBSERVERCTL_IMPLEMENTATION_GAP_AUDIT_20260221.md`
 
 ---
 
