@@ -1,0 +1,145 @@
+{
+  "document_id": "OBSERVER_RESOURCE_SPIKE_LOCKDOWN_STANDARD_20260221",
+  "status": "official_active_standard",
+  "owner": "ORACL-Prime",
+  "approver": "joediggidyyy",
+  "date_utc": "2026-02-21",
+  "scope": "projects/calamum-moltbook-observer",
+  "policy_mode": [
+    "names_only",
+    "fail_closed"
+  ],
+  "posture_model": {
+    "modes": [
+      "isolation",
+      "lockdown"
+    ],
+    "mapping": {
+      "watch": "isolation",
+      "canary": "isolation",
+      "live": "lockdown",
+      "honeypot": "lockdown"
+    },
+    "parity_rule": "live_equals_honeypot_standards",
+    "forbidden_adjustment": "do_not_relax_honeypot_thresholds_to_meet_live"
+  },
+  "data_science_model": {
+    "windows": {
+      "short_sec": 30,
+      "medium_sec": 300,
+      "baseline_sec": 900
+    },
+    "features": [
+      "cpu_pct_now",
+      "ram_pct_now",
+      "cpu_pct_ema_short",
+      "ram_pct_ema_short",
+      "cpu_pct_ema_long",
+      "ram_pct_ema_long",
+      "cpu_slope_30s",
+      "ram_slope_30s",
+      "cpu_p95_15m",
+      "ram_p95_15m",
+      "cpu_zscore_15m",
+      "ram_zscore_15m",
+      "sample_freshness_sec"
+    ],
+    "composite_score": {
+      "formula": "S = w1*I_abs + w2*I_rel + w3*I_trend + w4*I_z",
+      "weights": {
+        "w1_abs": 0.4,
+        "w2_rel": 0.25,
+        "w3_trend": 0.2,
+        "w4_z": 0.15
+      },
+      "bands": {
+        "normal_lt": 0.4,
+        "elevated_gte": 0.4,
+        "critical_gte": 0.7
+      }
+    }
+  },
+  "triggers": {
+    "isolation": {
+      "warn": {
+        "sustain_sec": 20,
+        "cpu_pct_gte": 70,
+        "ram_pct_gte": 78,
+        "cpu_rel_delta_p95": 15,
+        "ram_rel_delta_p95": 12
+      },
+      "critical": {
+        "sustain_sec": 30,
+        "cpu_pct_gte": 85,
+        "ram_pct_gte": 90,
+        "score_gte": 0.7
+      }
+    },
+    "lockdown_honeypot_standard": {
+      "applies_to": [
+        "live",
+        "honeypot"
+      ],
+      "warn": {
+        "sustain_sec": 10,
+        "cpu_pct_gte": 60,
+        "ram_pct_gte": 72,
+        "cpu_rel_delta_p95": 12,
+        "ram_rel_delta_p95": 10
+      },
+      "critical": {
+        "sustain_sec": 10,
+        "cpu_pct_gte": 75,
+        "ram_pct_gte": 85,
+        "score_gte": 0.7
+      }
+    }
+  },
+  "gate_checks": [
+    "watchdog.resource_sampling_fresh",
+    "watchdog.cpu_spike_within_limits",
+    "watchdog.ram_spike_within_limits",
+    "watchdog.resource_baseline_valid",
+    "watchdog.resource_spike_score_within_limits"
+  ],
+  "reason_codes": {
+    "critical": [
+      "critical_check_failed:resource_sampling_stale",
+      "critical_check_failed:cpu_spike_lockdown",
+      "critical_check_failed:ram_spike_lockdown",
+      "critical_check_failed:resource_baseline_invalid",
+      "critical_check_failed:resource_spike_score_critical"
+    ],
+    "major": [
+      "major_check_failed:cpu_spike_detected",
+      "major_check_failed:ram_spike_detected",
+      "major_check_failed:resource_spike_score_elevated"
+    ]
+  },
+  "recovery_hysteresis": {
+    "isolation_clean_windows": 3,
+    "lockdown_clean_windows": 5
+  },
+  "ml_notes": {
+    "supervised": [
+      "label windows normal/elevated/critical",
+      "optimize for low false-negative critical windows"
+    ],
+    "unsupervised": [
+      "IsolationForest or robust mahalanobis on rolling feature vectors",
+      "use anomaly score as additive signal"
+    ],
+    "drift": [
+      "monitor distribution drift by posture mode",
+      "recompute quantile baselines daily or after workload shift"
+    ],
+    "explainability": [
+      "emit top feature contributors",
+      "emit score component decomposition"
+    ]
+  },
+  "linkage": {
+    "job_report": "docs/reports/operations/JOB_REPORT_QS-CALAMUM-MOLTBOOK-OBSERVERCTL-IMPLEMENTATION-GAP-REMEDIATION-20260221.md",
+    "official_audit": "projects/calamum-moltbook-observer/docs/reports/operations/OBSERVERCTL_IMPLEMENTATION_GAP_AUDIT_20260221.md"
+  }
+}

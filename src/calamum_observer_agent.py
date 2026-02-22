@@ -44,6 +44,50 @@ def _utc_now_iso() -> str:
     return datetime.now(timezone.utc).isoformat().replace('+00:00', 'Z')
 
 
+def _normalize_source(source: str) -> str:
+    s = (source or 'sim').strip().lower()
+    if s == 'live':
+        return 'real'
+    if s in ('sim', 'real'):
+        return s
+    return 'sim'
+
+
+def _posture_for_mode(mode: str) -> str:
+    m = (mode or '').strip().lower()
+    return 'lockdown' if m in ('live', 'honeypot') else 'isolation'
+
+
+def _record_linkage(control_dir: Path, mode: str) -> Dict[str, str]:
+    ts = datetime.now(timezone.utc).strftime('%Y%m%dT%H%M%SZ')
+    ctx_path = control_dir / 'observerctl_run_context.json'
+    ctx: Dict[str, Any] = {}
+    try:
+        if ctx_path.exists():
+            raw = json.loads(ctx_path.read_text(encoding='utf-8'))
+            if isinstance(raw, dict):
+                ctx = raw
+    except Exception:
+        ctx = {}
+
+    run_id = (os.getenv('CALAMUM_RUN_ID') or str(ctx.get('run_id', '')) or '').strip()
+    if not run_id:
+        run_id = f"observer-agent-{ts}"
+
+    posture_trigger_id = (os.getenv('CALAMUM_POSTURE_TRIGGER_ID') or str(ctx.get('posture_trigger_id', '')) or '').strip()
+    if not posture_trigger_id:
+        posture_trigger_id = f"pt-{(mode or 'watch').strip().lower()}-{ts}"
+
+    security_report_ref = (os.getenv('CALAMUM_SECURITY_REPORT_REF') or str(ctx.get('security_report_ref', '')) or '').strip()
+
+    return {
+        'run_id': run_id,
+        'posture_trigger_id': posture_trigger_id,
+        'posture_trigger': _posture_for_mode(mode),
+        'security_report_ref': security_report_ref,
+    }
+
+
 def _get_stdout_keepalive_interval_sec() -> float:
     """Return the stdout keepalive interval in seconds.
 
@@ -147,7 +191,7 @@ def load_config(
     else:
         repo_root = Path(__file__).resolve().parents[1]
 
-    src = (source or "sim").strip().lower()
+    src = _normalize_source(source)
     m = (mode or "").strip().lower()
 
     if m == 'canary':
@@ -155,7 +199,7 @@ def load_config(
     else:
         # Canonical live collection target (Stage 4 / Job 0017):
         # logs/data/calamum/moltbook_live_metrics.jsonl
-        if src == "live":
+        if src == "real":
             output_jsonl = data_dir / 'moltbook_live_metrics.jsonl'
         else:
             # Keep a generic filename for future modes
@@ -316,7 +360,7 @@ def _get_next_item(mode: str, source: str = "sim") -> Optional[Dict[str, Any]]:
         return None
 
     def _new_gen() -> Any:
-        if src == "live":
+        if src == "real":
             client = _get_live_client_best_effort()
             if not client:
                 return None
@@ -464,6 +508,12 @@ def append_record(
     if 'ts' not in record:
          record['ts'] = _utc_now_iso()
 
+        linkage = _record_linkage(control_dir, mode)
+        record['run_id'] = linkage.get('run_id', '')
+        record['posture_trigger_id'] = linkage.get('posture_trigger_id', '')
+        record['posture_trigger'] = linkage.get('posture_trigger', '')
+        record['security_report_ref'] = linkage.get('security_report_ref', '')
+
     # 3. Atomic Write (Context Manager)
     jsonl_path.parent.mkdir(parents=True, exist_ok=True)
     try:
@@ -570,7 +620,7 @@ def main() -> int:
     parser = argparse.ArgumentParser(description='Calamum Observer Agent (local daemon)')
     parser.add_argument('--repo-root', help='Override repo root (must contain logs/)')
     parser.add_argument('--mode', default=os.getenv('CALAMUM_OPS_MODE', 'canary'))
-    parser.add_argument('--source', default=os.getenv('CALAMUM_MOLTBOOK_SOURCE', 'sim'), choices=['sim', 'live'])
+    parser.add_argument('--source', default=_normalize_source(os.getenv('CALAMUM_MOLTBOOK_SOURCE', 'sim')), choices=['sim', 'real', 'live'])
     parser.add_argument('--interval-sec', type=float, default=float(os.getenv('CALAMUM_AGENT_INTERVAL_SEC', '2.0')))
     parser.add_argument('--node-id', default=os.getenv('CALAMUM_NODE_ID', 'calamum-node-01'))
     parser.add_argument('--max-iterations', type=int, help='For tests: stop after N iterations')

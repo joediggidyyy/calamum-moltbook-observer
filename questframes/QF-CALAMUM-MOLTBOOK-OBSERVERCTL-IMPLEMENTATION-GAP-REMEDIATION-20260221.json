@@ -2,24 +2,29 @@
   "questframe_id": "QF-CALAMUM-MOLTBOOK-OBSERVERCTL-IMPLEMENTATION-GAP-REMEDIATION-20260221",
   "queststack_id": "QS-CALAMUM-MOLTBOOK-OBSERVERCTL-IMPLEMENTATION-GAP-REMEDIATION-20260221",
   "title": "ObserverCTL implementation gap remediation",
-  "status": "open",
+  "status": "in-progress",
   "owner": "ORACL-Prime",
-  "last_updated_utc": "2026-02-21T00:00:00Z",
+  "last_updated_utc": "2026-02-21T21:05:00Z",
   "frames": [
     {
       "frame_id": "qf1_scaffold_and_gate_clearance",
       "title": "Scaffold readiness and start-gate clearance",
-      "status": "open"
+      "status": "completed",
+      "completed_at_utc": "2026-02-21T20:06:22Z",
+      "notes": "Start gate executed successfully; task advanced to in-progress."
     },
     {
       "frame_id": "qf2_blocker_enforcement_remediation",
       "title": "Remediate OGA-01..OGA-04 enforcement blockers",
-      "status": "open"
+      "status": "completed",
+      "completed_at_utc": "2026-02-21T20:12:00Z",
+      "notes": "Implemented external watchdog posture/cadence gate checks, run-linkage sourcing from run context/env, and collection-record linkage envelope fields. observerctl tests: 11 passed."
     },
     {
       "frame_id": "qf3_contract_validation_and_closure",
       "title": "Validate contracts, re-run drift, and prepare closure report",
-      "status": "open"
+      "status": "in-progress",
+      "notes": "Official resource-spike lockdown standard published and executed in observerctl gate logic; live posture explicitly held to honeypot standards without threshold relaxation. Residual-gap graduates executed (source-axis normalization, gate TTL, resolvable report linkage). Validation updated: observerctl suite 14 passed. Deferred graduates queued for approval: producer attestation/signature, cross-signal anomaly correlator, oscillation abuse detection. Publication-grade evidence protocol activated for this frame: require provenance metadata, measurement context, uncertainty/confounder capture, and reproducibility anchors in each subsequent report/log/evidence update. Compact observer-scoped evidence schema snippet added and closure/gate handoff checklist prepared for operator-run graph rebuild and git sequence."
     }
   ]
 }

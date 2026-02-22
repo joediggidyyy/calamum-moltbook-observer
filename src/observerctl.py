@@ -31,6 +31,10 @@ STATE_FILE = 'observerctl_state.json'
 LAST_GATE_FILE = 'observerctl_last_gate.json'
 POLICY_FILE = 'observerctl_policy.json'
 ACK_LOG_FILE = 'watchdog_ack.jsonl'
+RUN_CONTEXT_FILE = 'observerctl_run_context.json'
+WATCHDOG_POSTURE_FILE = 'watchdog_posture_state.json'
+WATCHDOG_RESOURCE_FILE = 'watchdog_resource_state.json'
+GATE_PACKET_MAX_AGE_SEC = float(os.getenv('CALAMUM_GATE_PACKET_MAX_AGE_SEC', '300'))
 
 
 def _utc_now() -> str:
@@ -56,10 +60,6 @@ def _normalize_source(source: str) -> str:
 
 def _posture_for_mode(mode: str) -> str:
     return 'lockdown' if mode in ('live', 'honeypot') else 'isolation'
-
-
-def _default_security_report_ref() -> str:
-    return 'projects/calamum-moltbook-observer/docs/reports/operations/JOB_REPORT_QS-CALAMUM-MOLTBOOK-OBSERVERCTL-COMMAND-SURFACE-20260221.md'
 
 
 def _control_file(name: str) -> Path:
@@ -161,15 +161,105 @@ def _check_heartbeat(path: Path, max_age_sec: float) -> Dict[str, Any]:
     }
 
 
-def _make_run_linkage(mode: str, event: str) -> Dict[str, str]:
-    ts = datetime.now(timezone.utc).strftime('%Y%m%dT%H%M%SZ')
-    posture = _posture_for_mode(mode)
+def _to_float_or_none(value: Any) -> Optional[float]:
+    try:
+        return float(value)
+    except Exception:
+        return None
+
+
+def _parse_utc_iso8601(value: Any) -> Optional[datetime]:
+    raw = str(value or '').strip()
+    if not raw:
+        return None
+    try:
+        if raw.endswith('Z'):
+            raw = raw[:-1] + '+00:00'
+        dt = datetime.fromisoformat(raw)
+        if dt.tzinfo is None:
+            return dt.replace(tzinfo=timezone.utc)
+        return dt.astimezone(timezone.utc)
+    except Exception:
+        return None
+
+
+def _is_gate_packet_fresh(packet: Dict[str, Any], max_age_sec: float) -> bool:
+    ts = _parse_utc_iso8601(packet.get('timestamp_utc'))
+    if ts is None:
+        return False
+    age = (datetime.now(timezone.utc) - ts).total_seconds()
+    return age >= 0.0 and age <= float(max_age_sec)
+
+
+def _is_resolvable_report_ref(ref: str) -> bool:
+    target = str(ref or '').strip()
+    if not target:
+        return False
+    path = Path(target)
+    if not path.is_absolute():
+        path = _project_root() / target
+    return path.exists()
+
+
+def _load_run_context() -> Dict[str, Any]:
+    return _load_json_file(_control_file(RUN_CONTEXT_FILE), {})
+
+
+def _resource_thresholds_for_posture(posture: str) -> Dict[str, float]:
+    p = str(posture or '').strip().lower()
+    if p == 'lockdown':
+        # Honeypot-grade lockdown standard applies equally to live + honeypot.
+        return {
+            'cpu_warn_abs': 60.0,
+            'cpu_critical_abs': 75.0,
+            'ram_warn_abs': 72.0,
+            'ram_critical_abs': 85.0,
+            'cpu_rel_delta': 12.0,
+            'ram_rel_delta': 10.0,
+            'score_critical': 0.70,
+            'sampling_fresh_max_age': 10.0,
+        }
+    # Isolation profile (watch/canary)
     return {
-        'run_id': 'observerctl-{event}-{ts}'.format(event=str(event).strip().lower().replace(' ', '-'), ts=ts),
-        'posture_trigger_id': 'pt-{mode}-{ts}'.format(mode=mode, ts=ts),
-        'posture_trigger': posture,
-        'security_report_ref': _default_security_report_ref(),
+        'cpu_warn_abs': 70.0,
+        'cpu_critical_abs': 85.0,
+        'ram_warn_abs': 78.0,
+        'ram_critical_abs': 90.0,
+        'cpu_rel_delta': 15.0,
+        'ram_rel_delta': 12.0,
+        'score_critical': 0.70,
+        'sampling_fresh_max_age': 30.0,
     }
+
+
+def _resolve_run_linkage(mode: str, event: str) -> Dict[str, str]:
+    ts = datetime.now(timezone.utc).strftime('%Y%m%dT%H%M%SZ')
+    ctx = _load_run_context()
+    run_id_env = str(os.getenv('CALAMUM_RUN_ID', '') or '').strip()
+    run_id = run_id_env or str(ctx.get('run_id', '') or '').strip() or 'observerctl-{event}-{ts}'.format(
+        event=str(event).strip().lower().replace(' ', '-'),
+        ts=ts,
+    )
+
+    posture_trigger_id_env = str(os.getenv('CALAMUM_POSTURE_TRIGGER_ID', '') or '').strip()
+    posture_trigger_id = posture_trigger_id_env or str(ctx.get('posture_trigger_id', '') or '').strip() or 'pt-{mode}-{ts}'.format(
+        mode=mode,
+        ts=ts,
+    )
+
+    security_report_ref_env = str(os.getenv('CALAMUM_SECURITY_REPORT_REF', '') or '').strip()
+    security_report_ref = security_report_ref_env or str(ctx.get('security_report_ref', '') or '').strip()
+
+    return {
+        'run_id': run_id,
+        'posture_trigger_id': posture_trigger_id,
+        'posture_trigger': _posture_for_mode(mode),
+        'security_report_ref': security_report_ref,
+    }
+
+
+def _make_run_linkage(mode: str, event: str) -> Dict[str, str]:
+    return _resolve_run_linkage(mode=mode, event=event)
 
 
 def collect_runtime_status(source: str = 'sim') -> Dict[str, Any]:
@@ -245,6 +335,44 @@ def collect_runtime_status(source: str = 'sim') -> Dict[str, Any]:
         'status': 'ok' if store_packet.get('status') == 'ok' else 'err',
     }
 
+    posture_doc = _load_json_file(_control_file(WATCHDOG_POSTURE_FILE), {})
+    posture_value = str(posture_doc.get('posture_trigger', '') or '').strip().lower()
+    hb_interval = _to_float_or_none(posture_doc.get('heartbeat_interval_seconds'))
+    baseline_interval = _to_float_or_none(posture_doc.get('baseline_validation_interval_seconds'))
+
+    checks['watchdog.trigger_posture'] = {
+        'path': str(_control_file(WATCHDOG_POSTURE_FILE)),
+        'posture_trigger': posture_value,
+        'status': 'ok' if posture_value in ('isolation', 'lockdown') else 'err',
+    }
+    checks['watchdog.heartbeat_interval_seconds'] = {
+        'value': hb_interval,
+        'status': 'ok' if hb_interval is not None else 'err',
+    }
+    checks['watchdog.baseline_validation_interval_seconds'] = {
+        'value': baseline_interval,
+        'status': 'ok' if baseline_interval is not None else 'err',
+    }
+
+    resource_doc = _load_json_file(_control_file(WATCHDOG_RESOURCE_FILE), {})
+    cpu_now = _to_float_or_none(resource_doc.get('cpu_pct_now'))
+    ram_now = _to_float_or_none(resource_doc.get('ram_pct_now'))
+    cpu_p95 = _to_float_or_none(resource_doc.get('cpu_p95_15m'))
+    ram_p95 = _to_float_or_none(resource_doc.get('ram_p95_15m'))
+    spike_score = _to_float_or_none(resource_doc.get('resource_spike_score'))
+    sample_age_s = _to_float_or_none(resource_doc.get('sample_age_seconds'))
+
+    checks['watchdog.resource_metrics'] = {
+        'path': str(_control_file(WATCHDOG_RESOURCE_FILE)),
+        'cpu_pct_now': cpu_now,
+        'ram_pct_now': ram_now,
+        'cpu_p95_15m': cpu_p95,
+        'ram_p95_15m': ram_p95,
+        'resource_spike_score': spike_score,
+        'sample_age_seconds': sample_age_s,
+        'status': 'ok' if all(v is not None for v in [cpu_now, ram_now, cpu_p95, ram_p95, spike_score, sample_age_s]) else 'err',
+    }
+
     return {
         'timestamp_utc': _utc_now(),
         'runtime_label': 'observer',
@@ -274,6 +402,7 @@ def evaluate_gate_decision(status_packet: Dict[str, Any], target_mode: Optional[
         }
 
     reasons: List[str] = []
+    advisories: List[str] = []
     if from_source == source and mode == to_mode:
         reasons.append('policy_denied:no_op_transition')
 
@@ -302,22 +431,62 @@ def evaluate_gate_decision(status_packet: Dict[str, Any], target_mode: Optional[
 
     linkage = _make_run_linkage(to_mode, event='gate')
     posture_required = _posture_for_mode(to_mode)
-    if linkage['posture_trigger'] != posture_required:
+    runtime_posture = str((checks.get('watchdog.trigger_posture') or {}).get('posture_trigger', '')).strip().lower()
+    if runtime_posture != posture_required:
         reasons.append('critical_check_failed:watchdog_trigger_posture_invalid')
 
-    # C20 run linkage reference must exist as path string (names-only check).
-    if not linkage['security_report_ref']:
+    # C20 run linkage reference must exist and resolve to a real artifact path (names-only).
+    if not linkage['security_report_ref'] or not _is_resolvable_report_ref(str(linkage.get('security_report_ref', ''))):
         reasons.append('critical_check_failed:run_security_report_missing')
 
     # C21/C22 lockdown checks for live/honeypot target.
     if posture_required == 'lockdown':
-        hb_ok = str((checks.get('heartbeat.watchdog') or {}).get('status', 'err')).lower() == 'ok'
-        baseline_graph = _project_root() / 'semantics_vault' / 'oracl_index' / 'weighted_graph_index.json'
-        baseline_ok = baseline_graph.exists()
-        if not hb_ok:
+        hb_interval = _to_float_or_none((checks.get('watchdog.heartbeat_interval_seconds') or {}).get('value'))
+        baseline_interval = _to_float_or_none((checks.get('watchdog.baseline_validation_interval_seconds') or {}).get('value'))
+        hb_escalated = hb_interval is not None and 3.0 <= hb_interval <= 5.0
+        baseline_escalated = baseline_interval is not None and 30.0 <= baseline_interval <= 60.0
+        if not hb_escalated:
             reasons.append('critical_check_failed:lockdown_heartbeat_rate_not_escalated')
-        if not baseline_ok:
+        if not baseline_escalated:
             reasons.append('critical_check_failed:lockdown_baseline_rate_not_escalated')
+
+    resource_metrics = checks.get('watchdog.resource_metrics') or {}
+    cpu_now = _to_float_or_none(resource_metrics.get('cpu_pct_now'))
+    ram_now = _to_float_or_none(resource_metrics.get('ram_pct_now'))
+    cpu_p95 = _to_float_or_none(resource_metrics.get('cpu_p95_15m'))
+    ram_p95 = _to_float_or_none(resource_metrics.get('ram_p95_15m'))
+    spike_score = _to_float_or_none(resource_metrics.get('resource_spike_score'))
+    sample_age_s = _to_float_or_none(resource_metrics.get('sample_age_seconds'))
+    thresholds = _resource_thresholds_for_posture(posture_required)
+
+    baseline_valid = all(v is not None for v in [cpu_now, ram_now, cpu_p95, ram_p95, spike_score, sample_age_s])
+    if not baseline_valid:
+        reasons.append('critical_check_failed:resource_baseline_invalid')
+    else:
+        sample_fresh = float(sample_age_s) <= float(thresholds['sampling_fresh_max_age'])
+        if not sample_fresh:
+            reasons.append('critical_check_failed:resource_sampling_stale')
+
+        cpu_warn = float(cpu_now) >= float(thresholds['cpu_warn_abs']) or float(cpu_now) > (float(cpu_p95) + float(thresholds['cpu_rel_delta']))
+        ram_warn = float(ram_now) >= float(thresholds['ram_warn_abs']) or float(ram_now) > (float(ram_p95) + float(thresholds['ram_rel_delta']))
+        score_critical = float(spike_score) >= float(thresholds['score_critical'])
+        cpu_critical = float(cpu_now) >= float(thresholds['cpu_critical_abs'])
+        ram_critical = float(ram_now) >= float(thresholds['ram_critical_abs'])
+
+        if cpu_warn:
+            advisories.append('major_check_failed:cpu_spike_detected')
+        if ram_warn:
+            advisories.append('major_check_failed:ram_spike_detected')
+        if score_critical:
+            advisories.append('major_check_failed:resource_spike_score_elevated')
+
+        if posture_required == 'lockdown':
+            if cpu_critical or (float(cpu_now) > (float(cpu_p95) + float(thresholds['cpu_rel_delta']))):
+                reasons.append('critical_check_failed:cpu_spike_lockdown')
+            if ram_critical or (float(ram_now) > (float(ram_p95) + float(thresholds['ram_rel_delta']))):
+                reasons.append('critical_check_failed:ram_spike_lockdown')
+            if score_critical:
+                reasons.append('critical_check_failed:resource_spike_score_critical')
 
     normalized = [REASON_MAP.get(r, r) for r in reasons]
     deduped = []
@@ -337,6 +506,7 @@ def evaluate_gate_decision(status_packet: Dict[str, Any], target_mode: Optional[
         'profile': profile,
         'runtime_label': 'observer',
         'runtime_cli_surface': 'observerctl',
+        'advisory_reason_codes': advisories,
     }
     packet.update(linkage)
     return packet
@@ -508,7 +678,7 @@ def _ops_mode_set(source: str, to_mode: str) -> Dict[str, Any]:
     gate = _load_json_file(_control_file(LAST_GATE_FILE), {})
     to_state = str(gate.get('to_state', ''))
     expected_to_state = '{0}:{1}'.format(_normalize_source(source), to_mode)
-    if gate.get('decision') != 'go' or to_state != expected_to_state:
+    if gate.get('decision') != 'go' or to_state != expected_to_state or (not _is_gate_packet_fresh(gate, max_age_sec=GATE_PACKET_MAX_AGE_SEC)):
         return {
             'timestamp_utc': _utc_now(),
             'decision': 'no-go',
