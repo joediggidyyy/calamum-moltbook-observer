@@ -10,8 +10,6 @@ Long-running observer process that:
 - touches an observer heartbeat file periodically
 - consumes file-based control signals emitted by the Ghost Console Control Deck
 
-This is the "real-real" link layer between the Ops dashboard and observer behavior.
-
 Signals are non-destructive:
 - signals are read from logs/control/calamum/*.signal.json
 - acknowledgements are written to logs/control/calamum/*.ack.json
@@ -39,7 +37,6 @@ from __future__ import annotations
 import argparse
 import json
 import os
-import sys
 import time
 from dataclasses import dataclass
 from datetime import datetime
@@ -48,8 +45,6 @@ from typing import Any, Dict, Iterable, List, Optional, Tuple
 
 from obfuscator_lib import Obfuscator
 from moltbook_client import MoltbookAPIClient
-
-# Reuse the simulation generator from the sampler for consistent behavior/tests.
 from calamum_sampler import simulate_moltbook_notifications
 
 
@@ -83,7 +78,6 @@ def load_daemon_config(module_file: Path, mode: str, source: str, interval_sec: 
     data_dir.mkdir(parents=True, exist_ok=True)
 
     if output is None:
-        # Canonical canary output file name (matches existing sampler behavior)
         output_jsonl = data_dir / 'moltbook_canary_metrics.jsonl'
     else:
         output_jsonl = output
@@ -116,11 +110,7 @@ def load_daemon_config(module_file: Path, mode: str, source: str, interval_sec: 
 
 
 class ControlSignals:
-    """Consumes control signals from the dashboard.
-
-    Signals are simple JSON files. We never delete or rename them.
-    Instead we write an ack file for auditability.
-    """
+    """Consumes control signals from the dashboard."""
 
     def __init__(self, control_dir: Path) -> None:
         self.control_dir = control_dir
@@ -167,7 +157,6 @@ class ControlSignals:
         try:
             self._ack_path(name).write_text(json.dumps(record, indent=2, sort_keys=True), encoding='utf-8')
         except Exception:
-            # best-effort: we don't want ack failures to crash the daemon
             pass
 
 
@@ -199,10 +188,6 @@ def touch_heartbeat(path: Path) -> None:
 
 
 def run_once(cfg: DaemonConfig, signals: ControlSignals) -> Dict[str, Any]:
-    """Run one daemon iteration.
-
-    Returns a small dict summary useful for tests.
-    """
     touch_heartbeat(cfg.heartbeat_path)
 
     actions = signals.poll()
@@ -218,21 +203,15 @@ def run_once(cfg: DaemonConfig, signals: ControlSignals) -> Dict[str, Any]:
             isolated = True
             signals.ack(name, payload, status='ok', note='isolation marker set')
         elif name == 'refresh':
-            # Placeholder: in a real impl this would reload config/state.
             signals.ack(name, payload, status='ok', note='noop refresh (stub)')
         elif name == 'watchdog_reset':
-            # Governance: the GUI must not fabricate watchdog liveness.
-            # This daemon does not (and must not) touch watchdog heartbeat markers.
-            # Best-effort: ack for audit only.
             signals.ack(name, payload, status='ok', note='watchdog reset intent acknowledged (no-op)')
         else:
             signals.ack(name, payload, status='ignored', note='unknown signal')
 
-    # In canary mode we collect inbound notifications only.
     written = 0
     if not should_exit:
         if cfg.mode != 'canary':
-            # Future modes are stubbed; write nothing.
             written = 0
         else:
             notifications = _iter_notifications(cfg.source)

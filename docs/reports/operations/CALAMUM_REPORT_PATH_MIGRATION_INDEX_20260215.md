@@ -1,5 +1,11 @@
 # CALAMUM Report Path Migration Index (2026-02-15)
 
+**Status**: historical index (observer-scoped compatibility artifact)
+
+**Canonical usage**:
+- Treat this file as a migration index/evidence map for report-path provenance.
+- Active execution narrative remains in canonical `JOB_REPORT_*` and `INCIDENT_REPORT_*` artifacts.
+
 | Root Path | Canonical Path | Status |
 |---|---|---|
 | `docs/reports/operations/JOB_REPORT_QS-CALAMUM-MOLTBOOK-KEYSMITH-IMPLEMENTATION-20260212.md` | `projects/calamum-moltbook-observer/docs/reports/operations/JOB_REPORT_QS-CALAMUM-MOLTBOOK-KEYSMITH-IMPLEMENTATION-20260212.md` | `migrated+stubbed` |

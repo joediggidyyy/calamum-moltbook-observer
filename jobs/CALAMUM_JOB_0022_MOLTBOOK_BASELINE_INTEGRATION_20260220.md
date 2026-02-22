@@ -2,6 +2,7 @@
 
 > **ID**: CALAMUM_JOB_0022_MOLTBOOK_BASELINE_INTEGRATION_20260220
 > **State**: COMPLETED
+> **Status**: completed
 > **Owner**: ORACL-Prime
 > **Date**: 2026-02-20
 

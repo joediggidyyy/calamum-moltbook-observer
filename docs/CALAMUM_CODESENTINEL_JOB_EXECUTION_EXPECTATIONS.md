@@ -37,6 +37,10 @@ Scope-separation rule (normative):
 
 This is a policy/operations contract: **it is about execution expectations and compliance**, not architecture prose.
 
+Operator-friendly CLI companion runbook:
+
+- `projects/calamum-moltbook-observer/docs/OBSERVERCTL_CLI_TRANSITION_OPERATOR_GUIDE_20260221.md`
+
 ---
 
 ## 2) Canonical execution surfaces (SSOT)

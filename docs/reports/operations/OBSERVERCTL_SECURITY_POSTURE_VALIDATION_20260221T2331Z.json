@@ -1,4 +1,7 @@
 {
+  "artifact_class": "compatibility_evidence_packet",
+  "artifact_scope": "observer",
+  "canonical_job_report": "projects/calamum-moltbook-observer/docs/reports/operations/JOB_REPORT_QS-CALAMUM-MOLTBOOK-OBSERVERCTL-COMMAND-SURFACE-20260221.md",
   "template_id": "CALAMUM_OBSERVERCTL_SECURITY_POSTURE_VALIDATION_V1",
   "runtime_cli_surface": "observerctl",
   "validated_at_utc": "2026-02-21T23:31:00Z",

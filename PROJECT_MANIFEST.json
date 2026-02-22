@@ -12,7 +12,12 @@
       "template_library/",
       "src/",
       "jobs/",
+      "docs/",
+      "deployment/",
+      "deliverables/",
+      "demo_output/",
       "queststacks/",
+      "questframes/",
       "planning/",
       "assets/"
     ],

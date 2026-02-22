@@ -1,7 +1,7 @@
 {
   "id": "CALAMUM_JOB_0023_OBSERVERCTL_COMMAND_SURFACE_PLANNING_20260221",
   "type": "GOVERNANCE",
-  "status": "PLANNED",
+  "status": "in-progress",
   "owner": "ORACL-Prime",
   "date_utc": "2026-02-21",
   "summary": "Comprehensive implementation specification for observerctl command topology, ops-centric gate semantics, trigger posture enforcement, and publish-grade evidence packets.",

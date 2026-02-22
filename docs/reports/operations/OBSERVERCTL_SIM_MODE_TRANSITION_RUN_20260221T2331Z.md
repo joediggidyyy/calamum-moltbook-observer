@@ -1,5 +1,11 @@
 # ObserverCTL Sim Mode Transition Run
 
+**Status**: compatibility evidence packet (observer scoped)
+
+**Canonical linkage**:
+- Primary lane narrative: `JOB_REPORT_QS-CALAMUM-MOLTBOOK-OBSERVERCTL-COMMAND-SURFACE-20260221.md`
+- This file remains as point-in-time transition execution evidence referenced by that lane.
+
 ## Metadata
 
 - Template ID: `CALAMUM_OBSERVERCTL_MODE_TRANSITION_RUN_V1`

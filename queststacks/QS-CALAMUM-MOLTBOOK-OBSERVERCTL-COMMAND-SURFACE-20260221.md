@@ -8,7 +8,7 @@
 
 **Date**: 2026-02-21
 
-**Status**: OPEN
+**Status**: IN-PROGRESS
 
 ---
 
@@ -48,6 +48,6 @@ This lane operationalizes Job 0023 planning into executable implementation work 
 
 - Contract schema alignment locked to:
 	- `projects/calamum-moltbook-observer/jobs/CALAMUM_JOB_0023_OBSERVERCTL_COMMAND_SURFACE_PLANNING_20260221.md`
-	- `projects/calamum-moltbook-observer/docs/plans/OBSERVERCTL_MODE_TRANSITION_MATRIX_CHAPTER_20260221.md`
+	- `projects/calamum-moltbook-observer/planning/OBSERVERCTL_MODE_TRANSITION_MATRIX_CHAPTER_20260221.md`
 - QF1 advanced to `completed` in QuestFrame spec.
 - Scope discipline maintained: no unauthorized routing/config changes executed in this frame.

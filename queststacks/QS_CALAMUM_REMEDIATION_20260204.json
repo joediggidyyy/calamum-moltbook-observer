@@ -15,7 +15,7 @@
       "next_action": "Proceed to QF2.",
       "notes": "Critical Phase 1 remediation to stop 'blanking' charts caused by Windows file locking.",
       "tasks": [
-        "Decommission legacy daemon implementation (expected: simulation/calamum_observer_daemon.py; if an older src/calamum_observer_daemon.py exists, quarantine it)",
+        "Decommission legacy daemon implementation (expected: src/simulation/calamum_observer_daemon.py; if an older src/calamum_observer_daemon.py exists, quarantine it)",
         "Refactor src/calamum_observer_agent.py to use atomic 'with open()' writes per batch",
         "Refactor src/ops/telemetry.py to remove _JsonlAppendCounter and use simple tail/read",
         "Validate agent runs without locking errors"

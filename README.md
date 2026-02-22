@@ -86,6 +86,10 @@ Note: Coursework write-ups and submission artifacts are maintained **locally** (
 
 Observer runtime operations are exposed through `src/observerctl.py` and are intentionally standalone from CodeSentinel runtime process surfaces.
 
+Operator guide for collaborative CLI transitions:
+
+- `docs/OBSERVERCTL_CLI_TRANSITION_OPERATOR_GUIDE_20260221.md`
+
 Install native CLI entrypoint (one-time per environment):
 
 - `python -m pip install -e .`
@@ -99,7 +103,7 @@ After installation, use the observer-native command surface directly:
 - Publication-grade evidence packet (provenance/methodology/process):
   - `observerctl ops evidence pack --source sim --json`
 - Atomic transition workflow (gate + set + evidence):
-  - `observerctl ops mode transition --to canary --source sim --event transition-canary --output local_untracked/observerctl/evidence/transition_canary.json --json`
+  - `observerctl ops mode transition --to canary --source sim --event transition-canary --output logs/data/calamum/observer_derived/sim/canary/evidence/transition_canary.json --json`
 
 Critical note: `ops gate-check` is fail-closed and returns non-zero when required inputs are missing (for example, no signing-key context).
 

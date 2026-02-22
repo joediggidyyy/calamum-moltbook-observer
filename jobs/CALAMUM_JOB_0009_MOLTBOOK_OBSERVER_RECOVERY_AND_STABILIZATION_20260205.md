@@ -58,7 +58,7 @@ At the end of *each* execution frame, the operator (ORACL) MUST manual inspect:
 ## 2. Execution Plan
 
 ### 2.1 Codebase Purification
-- [ ] **Check**: Verify the legacy daemon is not treated as SSOT (expected: `simulation/calamum_observer_daemon.py` is clearly marked LEGACY / SIMULATION-ONLY).
+- [ ] **Check**: Verify the legacy daemon is not treated as SSOT (expected: `src/simulation/calamum_observer_daemon.py` is clearly marked LEGACY / SIMULATION-ONLY).
 - [ ] **Audit**: Scan codebase for operational imports/references of `calamum_observer_daemon` (expected: none in runtime entrypoints / launcher).
 
 ### 2.2 Telemetry Hardening

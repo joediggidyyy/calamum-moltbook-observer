@@ -18,7 +18,7 @@ This lane executes second in order, after local CodeSentinel baseline stabilizat
 
 Authoritative references:
 
-- `projects/calamum-moltbook-observer/docs/plans/CALAMUM_MOLTBOOK_OBSERVER_BASELINE_INTEGRATION_SCAFFOLD_20260220.md`
+- `projects/calamum-moltbook-observer/planning/CALAMUM_MOLTBOOK_OBSERVER_BASELINE_INTEGRATION_SCAFFOLD_20260220.md`
 - `projects/calamum-moltbook-observer/queststacks/QS-CALAMUM-MOLTBOOK-KEYMASTER-RETRIEVAL-READINESS-20260219.md`
 - `docs/operations/ssot/CIDS_MULTISCOPE_INTEGRITY_GRAPH_STRATEGY_SSOT_20260220.md`
 

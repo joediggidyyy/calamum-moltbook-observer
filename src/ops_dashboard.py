@@ -461,8 +461,9 @@ def _compute_snapshot() -> dict:
 
     # Records + density
     total = int(snap.get('total_records', state.records_collected) or 0)
+    total_display = int(snap.get('records_total_display', total) or 0)
     new = int(snap.get('new_records', 0) or 0)
-    state.records_collected = total
+    state.records_collected = total_display
 
     bins = snap.get('density_bins')
     if isinstance(bins, list):
@@ -560,7 +561,7 @@ def _compute_snapshot() -> dict:
         'mem': mem,
         'cpu_history': state.cpu_history,
         'mem_history': state.mem_history,
-        'total_records': total,
+        'total_records': total_display,
         'new_records': new,
         'density_bins': state.density_bins,
         'density_raw_window': state.density_raw_window,
@@ -581,8 +582,8 @@ def _compute_snapshot() -> dict:
             'lib': snap.get('librarian_stats', {}),
         },
         'records_breakdown': {
-            'session': snap.get('records_session', 0),
-            'archive': snap.get('records_archive', 0),
+            'session': snap.get('records_session_display', snap.get('records_session', 0)),
+            'archive': snap.get('records_archive_display', snap.get('records_archive', 0)),
         },
         'uptime_s': time.time() - psutil.boot_time(),
         'status': status,

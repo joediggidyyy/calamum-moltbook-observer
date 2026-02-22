@@ -10,6 +10,8 @@ if str(SRC_DIR) not in sys.path:
     sys.path.insert(0, str(SRC_DIR))
 
 from observerctl import (  # noqa: E402
+    _default_output_path,
+    _evidence_index_path,
     build_evidence_pack,
     collect_runtime_status,
     evaluate_gate_decision,
@@ -444,3 +446,19 @@ def test_ops_mode_set_denies_stale_gate_packet(tmp_path: Path, monkeypatch) -> N
     gate_path.write_text(json.dumps(gate_doc), encoding='utf-8')
 
     assert main(['ops', 'mode', 'set', '--to', 'canary', '--source', 'sim', '--json']) == 2
+
+
+def test_default_evidence_paths_use_canonical_data_cache(tmp_path: Path, monkeypatch) -> None:
+    log_dir = tmp_path / 'logs'
+    data_dir = log_dir / 'data' / 'calamum'
+    data_dir.mkdir(parents=True, exist_ok=True)
+    monkeypatch.setenv('CALAMUM_LOG_DIR', str(log_dir))
+
+    out = _default_output_path(source='sim', mode='canary', event='unit-test')
+    idx = _evidence_index_path(source='sim', mode='canary')
+
+    expected_dir = data_dir / 'observer_derived' / 'sim' / 'canary' / 'evidence'
+    assert out.parent == expected_dir
+    assert out.name.startswith('observerctl_unit-test_evidence_')
+    assert out.suffix == '.json'
+    assert idx == expected_dir / 'index.jsonl'

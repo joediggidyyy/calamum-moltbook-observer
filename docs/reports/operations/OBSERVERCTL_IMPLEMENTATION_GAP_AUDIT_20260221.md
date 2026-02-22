@@ -93,8 +93,8 @@ This section preserves the higher-detail content previously emitted in interacti
 
 #### Planning / policy / requirements
 
-- `projects/calamum-moltbook-observer/docs/plans/OBSERVERCTL_MODE_TRANSITION_MATRIX_CHAPTER_20260221.md`
-- `projects/calamum-moltbook-observer/docs/plans/CALAMUM_MOLTBOOK_OBSERVER_BASELINE_INTEGRATION_SCAFFOLD_20260220.md`
+- `projects/calamum-moltbook-observer/planning/OBSERVERCTL_MODE_TRANSITION_MATRIX_CHAPTER_20260221.md`
+- `projects/calamum-moltbook-observer/planning/CALAMUM_MOLTBOOK_OBSERVER_BASELINE_INTEGRATION_SCAFFOLD_20260220.md`
 - `projects/calamum-moltbook-observer/jobs/CALAMUM_JOB_0022_MOLTBOOK_BASELINE_INTEGRATION_20260220.md`
 - `projects/calamum-moltbook-observer/jobs/CALAMUM_JOB_0024_OBSERVER_TEST_COVERAGE_BASELINE_REMEDIATION_20260221.md`
 - `projects/calamum-moltbook-observer/jobs/CALAMUM_JOB_0024_OBSERVER_TEST_COVERAGE_BASELINE_REMEDIATION_20260221.json`

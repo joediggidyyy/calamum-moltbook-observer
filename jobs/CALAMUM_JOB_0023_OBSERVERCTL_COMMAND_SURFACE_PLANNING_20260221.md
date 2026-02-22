@@ -1,7 +1,8 @@
 # Job 0023: ObserverCTL Command Surface Implementation Specification
 
 > **ID**: CALAMUM_JOB_0023_OBSERVERCTL_COMMAND_SURFACE_PLANNING_20260221
-> **State**: PLANNED (specification complete)
+> **State**: IN-PROGRESS
+> **Status**: in-progress
 > **Owner**: ORACL-Prime
 > **Date**: 2026-02-21
 

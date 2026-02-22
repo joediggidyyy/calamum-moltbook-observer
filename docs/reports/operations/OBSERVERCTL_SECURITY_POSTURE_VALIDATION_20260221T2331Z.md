@@ -1,5 +1,11 @@
 # ObserverCTL Security Posture Validation (Sim)
 
+**Status**: compatibility evidence packet (observer scoped)
+
+**Canonical linkage**:
+- Primary lane narrative: `JOB_REPORT_QS-CALAMUM-MOLTBOOK-OBSERVERCTL-COMMAND-SURFACE-20260221.md`
+- This file remains as a point-in-time validation packet referenced by that lane.
+
 ## Metadata
 
 - Template ID: `CALAMUM_OBSERVERCTL_SECURITY_POSTURE_VALIDATION_V1`

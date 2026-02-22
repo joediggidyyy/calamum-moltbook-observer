@@ -1,7 +1,8 @@
 # Job 0020: Stage 4 Runtime Provenance Lane
 
 > **ID**: CALAMUM_JOB_0020_MOLTBOOK_OBSERVER_STAGE4_RUNTIME_PROVENANCE_LANE_20260219
-> **State**: OPEN
+> **State**: COMPLETED
+> **Status**: completed
 > **Owner**: ORACL-Prime
 > **Date**: 2026-02-19
 

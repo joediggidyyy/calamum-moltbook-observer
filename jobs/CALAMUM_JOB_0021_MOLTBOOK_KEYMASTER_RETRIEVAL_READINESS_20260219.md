@@ -1,7 +1,8 @@
 # Job 0021: Keymaster Retrieval Readiness
 
 > **ID**: CALAMUM_JOB_0021_MOLTBOOK_KEYMASTER_RETRIEVAL_READINESS_20260219
-> **State**: PLANNED
+> **State**: BLOCKED
+> **Status**: blocked
 > **Owner**: ORACL-Prime
 > **Date**: 2026-02-19
 

@@ -122,6 +122,58 @@ def _newest_jsonl(data_dir: Path) -> Optional[Path]:
         return None
 
 
+def _is_sim_likely_path(path: Optional[Path]) -> bool:
+    """Best-effort sim classifier based on path/name tokens."""
+    if path is None:
+        return False
+    lowered_parts = [str(part).strip().lower() for part in path.parts]
+    lowered_name = str(path.name).strip().lower()
+    if 'observer_derived' in lowered_parts:
+        try:
+            idx = lowered_parts.index('observer_derived')
+            if idx + 1 < len(lowered_parts):
+                return lowered_parts[idx + 1] == 'sim'
+        except Exception:
+            pass
+    return ('legacy_sim' in lowered_name) or ('simulation' in lowered_name)
+
+
+def _archive_manifest_totals(data_dir: Path) -> Tuple[int, int, int]:
+    """Return (archive_total, archive_non_sim, archive_sim_estimate)."""
+    manifest_path = data_dir / 'archive' / 'manifest.json'
+    if not manifest_path.exists():
+        return 0, 0, 0
+
+    try:
+        payload = json.loads(manifest_path.read_text(encoding='utf-8'))
+    except Exception:
+        return 0, 0, 0
+
+    if not isinstance(payload, dict):
+        return 0, 0, 0
+
+    total = 0
+    sim_est = 0
+    for key, meta in payload.items():
+        if not isinstance(meta, dict):
+            continue
+        records = int(meta.get('records', 0) or 0)
+        total += records
+
+        key_l = str(key or '').strip().lower()
+        artifact_l = str(meta.get('artifact_path', '') or '').strip().lower()
+        imported = meta.get('imported_from', {}) if isinstance(meta.get('imported_from', {}), dict) else {}
+        src_art_l = str(imported.get('src_artifact', '') or '').strip().lower()
+        src_tag_l = str(imported.get('source_tag', '') or '').strip().lower()
+        blob = ' '.join([key_l, artifact_l, src_art_l, src_tag_l])
+
+        if ('simulation' in blob) or ('legacy_sim' in blob) or ('/sim/' in blob) or ('\\sim\\' in blob):
+            sim_est += records
+
+    non_sim = max(0, total - sim_est)
+    return int(total), int(non_sim), int(sim_est)
+
+
 class _SafeStat:
     """Windows-friendly stat wrapper that retries on locking errors."""
     def __init__(self) -> None:
@@ -156,12 +208,13 @@ class _JsonlAppendCounter:
     - Enforce monotonic totals so transient read/stat failures don't blank charts.
     """
 
-    def __init__(self) -> None:
+    def __init__(self, data_dir: Optional[Path] = None) -> None:
         self.path: Optional[Path] = None
         self.total_lines: int = 0
         self._stat_tracker = _SafeStat()
         self._historical_count: int = 0
         self._last_manifest_check: float = 0.0
+        self._data_dir: Optional[Path] = data_dir
 
     def set_path(self, path: Optional[Path]) -> None:
         if self.path != path:
@@ -178,18 +231,19 @@ class _JsonlAppendCounter:
         self._last_manifest_check = now
         count = 0
         try:
-             # Look for manifest relative to data dir
-             # We assume self.path is in data_dir, or we find data_dir via config if we had access.
-             # Best effort: look in archive/ relative to the data dir parent.
-             # Assuming structure: logs/data/calamum/ -> ../archive -> logs/data/calamum/archive
-             # Wait, Librarian puts archive in data_dir/archive.
-             if self.path:
-                 base = self.path.parent
-                 manifest_path = base / 'archive' / 'manifest.json'
-                 if manifest_path.exists():
-                     data = json.loads(manifest_path.read_text(encoding='utf-8'))
+             manifest_path: Optional[Path] = None
+             if self._data_dir:
+                 manifest_path = self._data_dir / 'archive' / 'manifest.json'
+             elif self.path:
+                 # Backward-compatible fallback if data_dir is unavailable.
+                 manifest_path = self.path.parent / 'archive' / 'manifest.json'
+
+             if manifest_path and manifest_path.exists():
+                 data = json.loads(manifest_path.read_text(encoding='utf-8'))
+                 if isinstance(data, dict):
                      for _, meta in data.items():
-                         count += meta.get('records', 0)
+                         if isinstance(meta, dict):
+                             count += int(meta.get('records', 0) or 0)
         except Exception:
             pass
         
@@ -363,7 +417,7 @@ def load_config(module_file: Path) -> TelemetryConfig:
 class TelemetryProvider:
     def __init__(self, config: TelemetryConfig) -> None:
         self.config = config
-        self._counter = _JsonlAppendCounter()
+        self._counter = _JsonlAppendCounter(data_dir=self.config.data_dir)
         # Oldest -> newest density slice counts.
         self._density_window: List[int] = [0] * int(max(3, min(60, self.config.density_bins)))
         self._slice_started_ts: float = _now_ts()
@@ -536,6 +590,12 @@ class TelemetryProvider:
         
         historical = self._counter._historical_count
         session_recs = max(0, total_lines - historical)
+        active_is_sim = _is_sim_likely_path(active_jsonl)
+
+        archive_total, archive_non_sim, archive_sim_est = _archive_manifest_totals(self.config.data_dir)
+        session_non_sim = 0 if active_is_sim else int(session_recs)
+        # Display total: canonical archive total + non-sim active session stream.
+        total_display = int(archive_total + session_non_sim)
 
         # Ensure window size matches config (config may change at runtime).
         self._ensure_density_window_size(int(self.config.density_bins))
@@ -580,6 +640,12 @@ class TelemetryProvider:
             'total_records': int(total_lines),
             'records_session': int(session_recs),
             'records_archive': int(historical),
+            'records_session_display': int(session_non_sim),
+            'records_archive_display': int(archive_total),
+            'records_total_display': int(total_display),
+            'records_archive_non_sim': int(archive_non_sim),
+            'records_archive_sim_estimate': int(archive_sim_est),
+            'active_source_is_sim': bool(active_is_sim),
             'density_bins': density_bins,
             'density_raw_window': list(self._density_window),
             'density_slice_sec': float(self.config.density_slice_sec),

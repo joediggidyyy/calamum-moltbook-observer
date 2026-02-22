@@ -49,14 +49,14 @@
 ### Purification check (daemon SSOT)
 
 - `projects/calamum-moltbook-observer/src/calamum_observer_daemon.py`: not present (expected absence)
-- `projects/calamum-moltbook-observer/simulation/calamum_observer_daemon.py`: present (simulation/legacy surface)
+- `projects/calamum-moltbook-observer/src/simulation/calamum_observer_daemon.py`: present (simulation/legacy surface)
 - Imports: no `import calamum_observer_daemon` / `from calamum_observer_daemon ...` found in repo Python sources
 
 ## Frame 0009-B — Telemetry + launcher hardening (names-only)
 
 - ts_utc: 2026-02-06T00:54:10Z
 - scope:
-	- Codebase purification follow-up: remove misleading references to `src/calamum_observer_daemon.py` in audit/planning artifacts; align to legacy `simulation/calamum_observer_daemon.py`.
+	- Codebase purification follow-up: remove misleading references to `src/calamum_observer_daemon.py` in audit/planning artifacts; align to legacy `src/simulation/calamum_observer_daemon.py`.
 	- Telemetry hardening: refactor `_JsonlAppendCounter` to tail-sampling (no offset tracking) with retry + monotonic guard.
 	- Launcher stabilization: enforce single-instance semantics (orphan cleanup) + fix agent CLI flag drift (`--interval-sec`).
 

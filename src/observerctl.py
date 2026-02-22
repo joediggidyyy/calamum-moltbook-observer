@@ -606,7 +606,7 @@ def _default_output_path(source: str = 'sim', mode: str = 'watch', event: str = 
     if m not in MODES:
         m = 'watch'
     ev = str(event or 'manual').strip().lower().replace(' ', '-')
-    return _project_root() / 'local_untracked' / 'observerctl' / 'evidence' / src / m / 'observerctl_{0}_evidence_{1}.json'.format(ev, ts)
+    return get_calamum_data_dir() / 'observer_derived' / src / m / 'evidence' / 'observerctl_{0}_evidence_{1}.json'.format(ev, ts)
 
 
 def _evidence_index_path(source: str, mode: str) -> Path:
@@ -614,7 +614,7 @@ def _evidence_index_path(source: str, mode: str) -> Path:
     m = str(mode or 'watch').strip().lower()
     if m not in MODES:
         m = 'watch'
-    return _project_root() / 'local_untracked' / 'observerctl' / 'evidence' / src / m / 'index.jsonl'
+    return get_calamum_data_dir() / 'observer_derived' / src / m / 'evidence' / 'index.jsonl'
 
 
 def _append_jsonl(path: Path, payload: Dict[str, Any]) -> None:
@@ -629,10 +629,55 @@ def _emit(packet: Dict[str, Any], as_json: bool) -> None:
         print(json.dumps(packet, indent=2, sort_keys=True))
         return
     decision = ((packet.get('gate_packet') or {}).get('decision') if isinstance(packet, dict) else None) or packet.get('decision', '')
-    print('observerctl decision: {0}'.format(decision))
     reasons = ((packet.get('gate_packet') or {}).get('reason_codes') if isinstance(packet, dict) else None) or packet.get('reason_codes', [])
-    for reason in reasons:
-        print('- {0}'.format(reason))
+    if decision:
+        print('observerctl decision: {0}'.format(decision))
+        for reason in reasons:
+            print('- {0}'.format(reason))
+        return
+
+    rendered = False
+    ordered_keys = [
+        'source',
+        'mode',
+        'posture_trigger',
+        'active_baseline_id',
+        'status',
+        'index_path',
+        'packet',
+        'code',
+        'explanation',
+        'policy_profile',
+    ]
+    for key in ordered_keys:
+        if key not in packet:
+            continue
+        value = packet.get(key)
+        if value in (None, '', [], {}):
+            continue
+        if isinstance(value, (dict, list)):
+            value_text = json.dumps(value, sort_keys=True)
+        else:
+            value_text = str(value)
+        print('{0}: {1}'.format(key, value_text))
+        rendered = True
+
+    if not rendered and isinstance(packet, dict):
+        for key in sorted(packet.keys()):
+            if key in ('timestamp_utc', 'runtime_cli_surface'):
+                continue
+            value = packet.get(key)
+            if value in (None, '', [], {}):
+                continue
+            if isinstance(value, (dict, list)):
+                value_text = json.dumps(value, sort_keys=True)
+            else:
+                value_text = str(value)
+            print('{0}: {1}'.format(key, value_text))
+            rendered = True
+
+    if not rendered:
+        print('observerctl: ok')
 
 
 def _baseline_catalog_path() -> Path:

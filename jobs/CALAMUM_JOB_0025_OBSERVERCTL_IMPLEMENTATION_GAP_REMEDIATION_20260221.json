@@ -1,7 +1,10 @@
 {
   "job_id": "CALAMUM_JOB_0025_OBSERVERCTL_IMPLEMENTATION_GAP_REMEDIATION_20260221",
   "sequence": 25,
-  "state": "PLANNED",
+  "state": "IN_PROGRESS",
+  "status": "in-progress",
+  "status_reason": "drift remediation freeze active; no net-new development until drift findings are remediated",
+  "reopened_utc": "2026-02-22T05:37:54Z",
   "scope": "observer",
   "owner": "ORACL-Prime",
   "date_utc": "2026-02-21",
@@ -10,5 +13,15 @@
     "projects/calamum-moltbook-observer/docs/reports/operations/OBSERVERCTL_IMPLEMENTATION_GAP_AUDIT_20260221.json"
   ],
   "queststack": "projects/calamum-moltbook-observer/queststacks/QS-CALAMUM-MOLTBOOK-OBSERVERCTL-IMPLEMENTATION-GAP-REMEDIATION-20260221.md",
-  "notes": "Job 0025 lane uses the official observerctl implementation-gap audit as canonical execution spec."
+  "latest_audit": {
+    "timestamp_utc": "2026-02-22T05:44:10.747115Z",
+    "report": "projects/calamum-moltbook-observer/local_untracked/audits/implementation_drift/implementation_drift_audit_20260222T054410.747115Z.md",
+    "evidence": "projects/calamum-moltbook-observer/local_untracked/audits/implementation_drift/implementation_drift_audit_20260222T054410.747115Z.evidence.json",
+    "findings": {
+      "ssot_status_drift": 24,
+      "project_manifest_layout_drift": 1,
+      "unit_test_parity_warnings": 2
+    }
+  },
+  "notes": "Job 0025 lane uses the official observerctl implementation-gap audit as canonical execution spec. Placeholder docs for next-enumerated Job0025 were archived out of active filesystem on 2026-02-22."
 }
