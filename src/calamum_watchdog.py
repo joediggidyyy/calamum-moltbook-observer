@@ -174,6 +174,12 @@ class WatchdogSupervisor:
             # but we can look for a heartbeat file if we implement one there.
         }
 
+        # Alert-churn guardrails: emit immediately on state transition, then
+        # throttle repeated identical ALERT lines to avoid log-volume-induced lag.
+        self._last_issue_signature: str = ""
+        self._last_alert_emit_ts: float = 0.0
+        self._alert_repeat_sec: float = float(_safe_int_env("CALAMUM_WATCHDOG_ALERT_REPEAT_SEC", 60))
+
 
     def _pid_looks_like_watchdog(self, pid: int) -> Optional[bool]:
         """Best-effort check: does a PID appear to be a calamum_watchdog process?
@@ -722,11 +728,21 @@ class WatchdogSupervisor:
                 # Locked file usually means it's being written to (Active)
                 pass
 
+        signature = " | ".join(sorted([str(x) for x in issues])) if issues else ""
+        # Transition to healthy: emit once to close the alert narrative.
+        if not issues and self._last_issue_signature:
+            print(f"[{_utc_now_iso()}] [WATCHDOG-SUPERVISOR] RECOVERY: all monitored teammates healthy", file=sys.stderr)
+            self._last_issue_signature = ""
+            self._last_alert_emit_ts = now
+            return
+
         if issues:
-            self._log_alert(issues)
-        else:
-            # All Green
-            pass
+            is_transition = signature != self._last_issue_signature
+            is_repeat_due = (now - float(self._last_alert_emit_ts)) >= max(5.0, float(self._alert_repeat_sec))
+            if is_transition or is_repeat_due:
+                self._log_alert(issues)
+                self._last_issue_signature = signature
+                self._last_alert_emit_ts = now
 
     def _log_alert(self, issues: list):
         # Log to stderr (captured by launcher logs)

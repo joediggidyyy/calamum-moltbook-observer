@@ -46,6 +46,95 @@
     "status": "passing-assertions-observed",
     "note": "pytest terminal sessions were interrupted externally (KeyboardInterrupt) after reporting passing assertions; no failures were reported before interruption"
   },
+  "stage2_adjudication_utc": "2026-02-22T22:09:40Z",
+  "stage2_adjudication": {
+    "adjudicator": "ORACL-Prime",
+    "machine_validation_result": "pass",
+    "stage_gate_recommendation": "close-stage-2",
+    "findings": [
+      {
+        "id": "stage2_watchdog_heartbeat_surface_discrepancy",
+        "class": "advisory",
+        "blocker": false,
+        "rationale": "runtime-artifacts report flagged watchdog heartbeat as ERR while observerctl watchdog check returned decision=go"
+      },
+      {
+        "id": "stage2_watchdog_stderr_volume",
+        "class": "operational-side-effect",
+        "blocker": false,
+        "rationale": "watchdog stderr growth observed without corresponding Stage 2 store-integrity failure"
+      },
+      {
+        "id": "stage2_stray_env_codesentinel_log",
+        "class": "approved-local-runtime-artifacts",
+        "blocker": false,
+        "rationale": "stray scout surfaced .env and codesentinel.log as expected local/runtime artifacts"
+      }
+    ]
+  },
+  "stage2_close_packet_draft": {
+    "stage_id": "stage_2_data_store_integrity",
+    "machine_validation_result": "pass",
+    "physical_inspection_result": "pass",
+    "unintended_consequence_findings": [
+      "watchdog heartbeat status discrepancy between audit surface and watchdog check",
+      "elevated watchdog stderr volume",
+      "approved local runtime artifacts (.env, codesentinel.log) present in stray scout"
+    ],
+    "rollback_ready": true,
+    "gate_decision": "go",
+    "approved_by": "joediggidyyy",
+    "closed_at_utc": "2026-02-22T22:20:30Z",
+    "evidence_refs": [
+      "projects/calamum-moltbook-observer/local_untracked/stage2_close/runtime_artifacts/calamum_runtime_artifacts_audit_20260222T221940107256Z.md",
+      "projects/calamum-moltbook-observer/local_untracked/stage2_close/runtime_artifacts/calamum_runtime_artifacts_audit_20260222T221940107256Z.evidence.json",
+      "projects/calamum-moltbook-observer/local_untracked/stage2_close/runtime_artifacts.jsonl",
+      "projects/calamum-moltbook-observer/local_untracked/audit_log/audit_index.json"
+    ]
+  },
+  "lag_root_cause_remediation_utc": "2026-02-22T22:27:30Z",
+  "lag_root_cause_remediation": {
+    "primary_root_cause": "watchdog alert storm writing repetitive stale-alert lines each loop",
+    "secondary_observation": "Windows venv launcher parent/child python.exe pairs are expected wrappers, not runaway duplicate services",
+    "code_change": "projects/calamum-moltbook-observer/src/calamum_watchdog.py",
+    "runtime_activation": "watchdog process restarted after patch",
+    "post_fix_probe": {
+      "watchdog_stderr_growth_window_seconds": 22,
+      "delta_bytes": 0
+    }
+  },
+  "recursive_stage_recheck_utc": "2026-02-22T22:27:30Z",
+  "recursive_stage_recheck": {
+    "stage_0": {
+      "result": "pass",
+      "checks": [
+        "runtime stop stopped_cleanly=true",
+        "kill.signal.json handled",
+        "observer process absent"
+      ]
+    },
+    "stage_1": {
+      "result": "operational-intact",
+      "checks": [
+        "runtime status active",
+        "policy validate decision=go",
+        "watchdog check decision=go"
+      ],
+      "note": "preflight still reports missing watchdog posture/resource control docs (known gate prerequisite lane)"
+    },
+    "stage_2": {
+      "result": "pass",
+      "checks": [
+        "librarian verify decision=go for watch/canary/live/honeypot",
+        "runtime artifacts audit evidence emitted"
+      ],
+      "evidence_refs": [
+        "projects/calamum-moltbook-observer/local_untracked/stage2_recheck_after_lag_fix/runtime_artifacts/calamum_runtime_artifacts_audit_20260222T222711521626Z.md",
+        "projects/calamum-moltbook-observer/local_untracked/stage2_recheck_after_lag_fix/runtime_artifacts/calamum_runtime_artifacts_audit_20260222T222711521626Z.evidence.json",
+        "projects/calamum-moltbook-observer/local_untracked/stage2_recheck_after_lag_fix/runtime_artifacts.jsonl"
+      ]
+    }
+  },
   "scope": "observer",
   "owner": "ORACL-Prime",
   "primary_stakeholder_approver": "joediggidyyy",
