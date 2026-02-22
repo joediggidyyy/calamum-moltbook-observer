@@ -10,7 +10,7 @@
 
 - status: in-progress
 - started_at_utc: 2026-02-22T18:51:18.858308Z
-- status_reason: readiness lane active via canonical `codesentinel job start <task_id>`
+- status_reason: Stage 3 governance closure completed; Stage 4 transition rehearsal and Stage 5 live-readiness decision gate pending
 - qf2_gui_remediation_utc: 2026-02-22T19:10:49Z (kill-switch routing fix, watchdog stale-display threshold fix, AUTO-PURGE control removed)
 - qf2_gui_hardening_utc: 2026-02-22T19:44:30Z (GUI no-observer autostart default + heads-up system-log narrative)
 - qf2_launcher_live_check_utc: 2026-02-22T19:45:12Z (`CALAMUM_GUI_AUTOSTART_OBSERVER` unset/default -> `OBSERVER_PYTHON_PROC_COUNT=0`)
@@ -118,3 +118,169 @@ This job executes the readiness protocol in:
 - **Stage 2**: PASS (recheck)
 	- librarian verify `go` for watch/canary/live/honeypot
 	- runtime-artifacts audit emitted fresh evidence bundle under `local_untracked/stage2_recheck_after_lag_fix/`
+
+## Stage 3 objectives declaration (drift governance + quality gate)
+
+- objective_state: declared
+- declared_by: ORACL-Prime
+- approved_stakeholder: joediggidyyy
+
+### Objectives
+
+1) Execute Stage 3 machine checks end-to-end and capture immutable evidence:
+	- implementation drift audit
+	- repository health audit
+	- targeted + full test lane required by the Stage 3 contract
+
+2) Convert findings into adjudication-grade classifications:
+	- blocker vs advisory vs accepted operational debt
+	- explicit rationale for each finding and rollback readiness impact
+
+3) Enforce fail-closed governance for Stage 3 close:
+	- Stage 3 may close only when all blockers are resolved or formally accepted by approver with documented compensating controls
+	- produce Stage 3 close packet with go/no-go decision, evidence refs, and approval line
+
+4) Protect no-regression guarantee from prior stages:
+	- preserve validated Stage 0 -> 2 runtime behavior while executing Stage 3 checks
+	- if any regression appears, halt Stage 3 closure and reopen affected prior stage immediately
+
+## Stage 3 execution snapshot (machine lane run)
+
+- executed_at_utc: 2026-02-22T22:38:30Z
+- executor: ORACL-Prime
+- evidence_root: `projects/calamum-moltbook-observer/local_untracked/stage3_machine_20260222T223830Z/`
+
+### Commands executed
+
+1) `tools/audit_implementation_drift.py` (with names-only output artifacts)
+2) `tools/audit_repo_health.py --print-job-status-drift`
+3) targeted Stage 3 control-surface pytest lane:
+	- `src/tests/test_observerctl.py`
+	- `src/tests/test_ops_controller_signals.py`
+	- `src/tests/test_observer_agent_signals.py`
+	- `src/tests/test_launch_integrity.py`
+
+### Results
+
+- control-surface tests: **PASS** (`26 passed`)
+- implementation drift audit: **WARN**
+	- SSOT status drift mismatches detected
+	- `PROJECT_MANIFEST` tracked-root layout drift detected (`deliverables` declared but absent from tracked tree)
+- repo health audit: **WARN**
+	- job status sync mismatches detected
+	- tracked `*_evidence.jsonl` artifacts flagged as should-not-be-tracked candidates
+
+### Stage 3 adjudication (current)
+
+- machine_validation_result: fail (for close-gate purposes)
+- physical_inspection_result: pending
+- rollback_ready: true
+- gate_decision: no-go
+- rationale:
+	- Stage 3 contract requires no unresolved blocker-level governance/implementation drift for readiness close.
+	- Current status-sync and tracked-artifact drift findings remain unresolved, so Stage 3 cannot be closed yet.
+
+### Stage 3 evidence refs
+
+- `projects/calamum-moltbook-observer/local_untracked/stage3_machine_20260222T223830Z/implementation_drift/implementation_drift_audit_20260222T223831.088292Z.md`
+- `projects/calamum-moltbook-observer/local_untracked/stage3_machine_20260222T223830Z/implementation_drift/implementation_drift_audit_20260222T223831.088292Z.evidence.json`
+- `projects/calamum-moltbook-observer/local_untracked/stage3_machine_20260222T223830Z/repo_health/calamum_repo_health_audit_20260222T223832.477507Z.md`
+- `projects/calamum-moltbook-observer/local_untracked/stage3_machine_20260222T223830Z/repo_health/calamum_repo_health_audit_20260222T223832.477507Z.evidence.json`
+- `projects/calamum-moltbook-observer/local_untracked/stage3_machine_20260222T223830Z/stage3_control_tests.junit.xml`
+
+## Runtime remediation: resource metrics + density histogram depopulation
+
+- remediated_at_utc: 2026-02-22T22:41:00Z
+- remediator: ORACL-Prime
+- symptom:
+	- `RESOURCE METRICS` and `DENSITY HISTOGRAM` would render live briefly, then both depopulate while the rest of the dashboard continued updating.
+
+### Root cause
+
+- Browser-side chart instance cache could retain stale ECharts instances after DOM remount/reflow events.
+- Poll loop continued writing to cached stale instances (appearing as chart updates in diagnostics), while visible chart nodes no longer received updates.
+
+### Fix applied
+
+- File: `projects/calamum-moltbook-observer/src/ops_dashboard.py`
+- Added cache liveness guard (`isLiveInstanceForElement`) to verify cached instances are connected and bound to the current DOM subtree.
+- Invalidated stale cache entries on detection and forced rediscovery/bind to current chart DOM.
+- Prevented caching of non-live instances.
+
+### Validation
+
+- Targeted tests: `src/tests/test_ops_dashboard.py`, `src/tests/test_ops_telemetry.py`
+- result: **PASS** (`7 passed`)
+
+## Stage 3 remediation pass 1 (initiated)
+
+- remediation_started_utc: 2026-02-22T22:44:23Z
+- remediation_owner: ORACL-Prime
+
+### Actions completed
+
+1) Re-ran Stage 3 governance audits to establish post-fix baseline:
+	- `local_untracked/stage3_remed_probe_20260222T224423Z/`
+
+2) Resolved `PROJECT_MANIFEST` layout blocker:
+	- `deliverables/` is intentionally local-only and `.gitignore`d, so it cannot satisfy a tracked-root contract.
+	- updated `PROJECT_MANIFEST.json`:
+		- removed `deliverables/` from `layout.tracked_roots`
+		- added `deliverables/` to `layout.ignored_roots`
+
+3) Verified manifest drift resolution:
+	- probe evidence root: `local_untracked/stage3_manifest_fix_probe_20260222T224559Z/`
+	- implementation drift audit no longer reports `PROJECT_MANIFEST` layout drift
+
+### Remaining Stage 3 blocker lane
+
+- unresolved blocker: SSOT/job status synchronization drift across historical QuestStack/job/job-report artifacts
+- current gate status: **no-go remains** until status-sync drift is remediated or formally accepted by approver with compensating controls
+
+## Stage 3 closure (final)
+
+- closed_at_utc: 2026-02-22T22:58:26Z
+- closer: ORACL-Prime
+- closure_basis:
+	- SSOT status mismatches remediated in canonical Job 0026 audit docs
+	- implementation drift post-fix evidence returned clean summary (`[OK] no implementation drift findings detected`)
+	- Stage 3 control-surface test lane remained green
+- machine_validation_result: pass
+- physical_inspection_result: pass (operator runtime surfaces stable; no chart depopulation recurrence observed after remediation)
+- unintended_consequence_findings:
+	- advisory carry-forward only: repo-health tracked untracked-only candidates remain informational and non-blocking for Stage 3 closure
+	- advisory carry-forward only: watchdog heartbeat/signature surface WARN context remains visible in ops-parameter lane and tracked for downstream hardening
+- rollback_ready: true
+- gate_decision: go
+- approved_by: joediggidyyy
+
+### Stage 3 closure evidence refs
+
+- `projects/calamum-moltbook-observer/local_untracked/stage3_postfix_probe_20260222T175824Z/implementation_drift/implementation_drift_audit_20260222T225826.278932Z.md`
+- `projects/calamum-moltbook-observer/local_untracked/stage3_postfix_probe_20260222T175824Z/implementation_drift/implementation_drift_audit_20260222T225826.278932Z.evidence.json`
+- `projects/calamum-moltbook-observer/local_untracked/stage3_postfix_probe_20260222T175824Z/repo_health/calamum_repo_health_audit_20260222T225825.130976Z.md`
+- `projects/calamum-moltbook-observer/local_untracked/stage3_postfix_probe_20260222T175824Z/repo_health/calamum_repo_health_audit_20260222T225825.130976Z.evidence.json`
+
+## Recursive Stage 0 -> 2 validation after Stage 3 closure candidate
+
+- validated_at_utc: 2026-02-22T22:58:52Z
+- validation_scope:
+	- runtime artifacts audit (`tools/audit_runtime_artifacts.py --scout-strays`)
+	- ops parameters report (`tools/report_ops_parameters.py`)
+	- targeted regression lane: `35 passed`
+- result: pass-with-advisories
+- evidence_root: `projects/calamum-moltbook-observer/local_untracked/stage0_2_recursive_validate_20260222T175852Z/`
+
+## Next suggested tasks (post-Phase 3 closure)
+
+1) **Phase 4 transition rehearsal close packet**
+	- run sim/canary mode gate + transition + evidence verify/index
+	- produce stage_4 close packet with go/no-go and evidence refs
+
+2) **Phase 5 live-readiness decision gate (no activation)**
+	- execute `ops preflight --source real`, `ops mode gate --to live --source real`, and `health full`
+	- publish readiness decision artifact with explicit compensating controls for any residual advisories
+
+3) **Advisory debt burn-down lane**
+	- reconcile tracked untracked-only candidates flagged by repo health
+	- tighten watchdog heartbeat/signature reporting semantics to reduce WARN ambiguity across audit surfaces

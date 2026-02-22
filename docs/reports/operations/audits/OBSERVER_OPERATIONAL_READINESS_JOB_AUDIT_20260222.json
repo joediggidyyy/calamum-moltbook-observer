@@ -2,7 +2,7 @@
   "document_id": "OBSERVER_OPERATIONAL_READINESS_JOB_AUDIT_20260222",
   "owner": "ORACL-Prime",
   "approver": "joediggidyyy",
-  "status": "planned_execution_ready",
+  "status": "in-progress",
   "scope": "projects/calamum-moltbook-observer",
   "objective": "Mitigate unintended consequences of remediation efforts with mandatory stage-close physical inspection and validation.",
   "audit_chain": {

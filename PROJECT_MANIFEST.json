@@ -14,7 +14,6 @@
       "jobs/",
       "docs/",
       "deployment/",
-      "deliverables/",
       "demo_output/",
       "queststacks/",
       "questframes/",
@@ -26,6 +25,7 @@
       "src/logs/",
       "src/.agent_session/",
       "logs/",
+      "deliverables/",
       ".venv/",
       "venv/",
       ".env"

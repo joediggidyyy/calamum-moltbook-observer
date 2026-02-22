@@ -2731,10 +2731,50 @@ def main_page():
                         }
 
                         // Cache chart instances once found.
+                        function isLiveInstanceForElement(inst, domEl) {
+                            try {
+                                if (!inst || typeof inst.setOption !== 'function') return false;
+                                var d = null;
+                                try { d = (typeof inst.getDom === 'function') ? inst.getDom() : null; } catch (eGD) { d = null; }
+                                if (!d) return false;
+                                try {
+                                    if (d.isConnected === false) return false;
+                                } catch (eConn) {
+                                    // swallow
+                                }
+                                if (!domEl) return true;
+                                try {
+                                    if (d === domEl) return true;
+                                    if (domEl.contains && domEl.contains(d)) return true;
+                                    if (d.contains && d.contains(domEl)) return true;
+                                } catch (eRel) {
+                                    // swallow
+                                }
+                                return false;
+                            } catch (eAll) {
+                                return false;
+                            }
+                        }
+
                         try {
                             if (!window.__cids_chart_inst_cache) window.__cids_chart_inst_cache = {};
                             var cached = window.__cids_chart_inst_cache[id];
-                            if (cached && typeof cached.setOption === 'function') return cached;
+                            if (cached && isLiveInstanceForElement(cached, el)) return cached;
+                            if (cached && !isLiveInstanceForElement(cached, el)) {
+                                try {
+                                    delete window.__cids_chart_inst_cache[id];
+                                } catch (eDel) {
+                                    window.__cids_chart_inst_cache[id] = null;
+                                }
+                                try {
+                                    diagLookup('cache_stale', {
+                                        has_window_echarts: !!(window && (window.echarts || window.__cids_echarts_ref)),
+                                        cache_key: String(id || '')
+                                    });
+                                } catch (eDiagCache) {
+                                    // swallow
+                                }
+                            }
                         } catch (eCache) {
                             // swallow
                         }
@@ -2750,6 +2790,7 @@ def main_page():
                         function tryCache(inst) {
                             try {
                                 if (!looksLikeChart(inst)) return null;
+                                if (!isLiveInstanceForElement(inst, el)) return null;
                                 if (!window.__cids_chart_inst_cache) window.__cids_chart_inst_cache = {};
                                 window.__cids_chart_inst_cache[id] = inst;
                                 return inst;

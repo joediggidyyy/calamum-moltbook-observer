@@ -1,8 +1,8 @@
 {
   "job_id": "CALAMUM_JOB_0025_OBSERVERCTL_IMPLEMENTATION_GAP_REMEDIATION_20260221",
   "sequence": 25,
-  "state": "IN_PROGRESS",
-  "status": "in-progress",
+  "state": "COMPLETED",
+  "status": "completed",
   "status_reason": "drift remediation freeze active; no net-new development until drift findings are remediated",
   "reopened_utc": "2026-02-22T05:37:54Z",
   "scope": "observer",

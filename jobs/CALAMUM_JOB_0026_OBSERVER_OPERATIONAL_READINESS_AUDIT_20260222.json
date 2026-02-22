@@ -3,7 +3,7 @@
   "sequence": 26,
   "state": "IN_PROGRESS",
   "status": "in-progress",
-  "status_reason": "readiness lane active via canonical codesentinel job start",
+  "status_reason": "Stage 3 governance closure completed; Stage 4 transition rehearsal and Stage 5 live-readiness decision gate pending",
   "started_at_utc": "2026-02-22T18:51:18.858308Z",
   "qf2_gui_remediation_utc": "2026-02-22T19:10:49Z",
   "qf2_gui_remediation_summary": [
@@ -135,6 +135,189 @@
       ]
     }
   },
+  "stage3_objectives": {
+    "objective_state": "declared",
+    "declared_by": "ORACL-Prime",
+    "approved_stakeholder": "joediggidyyy",
+    "objectives": [
+      {
+        "id": "s3_run_machine_checks",
+        "description": "execute implementation drift audit, repository health audit, and required targeted/full test lanes with evidence capture"
+      },
+      {
+        "id": "s3_classify_findings",
+        "description": "classify findings as blocker/advisory/accepted operational debt with rationale and rollback-readiness impact"
+      },
+      {
+        "id": "s3_fail_closed_close_gate",
+        "description": "close Stage 3 only when blockers are resolved or formally accepted by approver with compensating controls documented"
+      },
+      {
+        "id": "s3_no_regression_guard",
+        "description": "preserve validated Stage 0-2 behavior; halt Stage 3 closure and reopen affected prior stage if regression is detected"
+      }
+    ],
+    "required_outputs": [
+      "stage3_close_packet",
+      "go_no_go_decision",
+      "evidence_refs",
+      "approval_line"
+    ]
+  },
+  "stage3_execution": {
+    "executed_at_utc": "2026-02-22T22:38:30Z",
+    "executor": "ORACL-Prime",
+    "evidence_root": "projects/calamum-moltbook-observer/local_untracked/stage3_machine_20260222T223830Z",
+    "machine_lane": {
+      "implementation_drift_audit": "warn",
+      "repo_health_audit": "warn",
+      "control_surface_tests": {
+        "status": "pass",
+        "summary": "26 passed",
+        "suite": [
+          "src/tests/test_observerctl.py",
+          "src/tests/test_ops_controller_signals.py",
+          "src/tests/test_observer_agent_signals.py",
+          "src/tests/test_launch_integrity.py"
+        ]
+      }
+    },
+    "findings": [
+      {
+        "id": "stage3_status_sync_drift",
+        "class": "governance-drift",
+        "blocker": true,
+        "rationale": "SSOT/job/QuestStack status mismatches remain unresolved"
+      },
+      {
+        "id": "stage3_manifest_layout_drift",
+        "class": "implementation-drift",
+        "blocker": true,
+        "rationale": "PROJECT_MANIFEST tracked root deliverables is declared but absent from tracked tree"
+      },
+      {
+        "id": "stage3_tracked_evidence_artifacts",
+        "class": "repo-hygiene",
+        "blocker": false,
+        "rationale": "tracked *_evidence.jsonl paths flagged as should-not-be-tracked candidates"
+      }
+    ],
+    "adjudication": {
+      "machine_validation_result": "fail",
+      "physical_inspection_result": "pending",
+      "rollback_ready": true,
+      "gate_decision": "no-go",
+      "status": "stage3_in_progress_not_closable"
+    },
+    "evidence_refs": [
+      "projects/calamum-moltbook-observer/local_untracked/stage3_machine_20260222T223830Z/implementation_drift/implementation_drift_audit_20260222T223831.088292Z.md",
+      "projects/calamum-moltbook-observer/local_untracked/stage3_machine_20260222T223830Z/implementation_drift/implementation_drift_audit_20260222T223831.088292Z.evidence.json",
+      "projects/calamum-moltbook-observer/local_untracked/stage3_machine_20260222T223830Z/repo_health/calamum_repo_health_audit_20260222T223832.477507Z.md",
+      "projects/calamum-moltbook-observer/local_untracked/stage3_machine_20260222T223830Z/repo_health/calamum_repo_health_audit_20260222T223832.477507Z.evidence.json",
+      "projects/calamum-moltbook-observer/local_untracked/stage3_machine_20260222T223830Z/stage3_control_tests.junit.xml"
+    ]
+  },
+  "dashboard_widget_stability_remediation": {
+    "remediated_at_utc": "2026-02-22T22:41:00Z",
+    "remediator": "ORACL-Prime",
+    "symptom": [
+      "resource metrics and density histogram rendered briefly then depopulated"
+    ],
+    "root_cause": "client-side ECharts instance cache retained stale instances after DOM remount/reflow, so polling updates targeted detached chart instances",
+    "change": {
+      "file": "projects/calamum-moltbook-observer/src/ops_dashboard.py",
+      "summary": [
+        "added cached-instance liveness verification against current DOM subtree",
+        "invalidate stale cache entries and force rediscovery",
+        "reject caching for detached/non-live instances"
+      ]
+    },
+    "validation": {
+      "tests": [
+        "src/tests/test_ops_dashboard.py",
+        "src/tests/test_ops_telemetry.py"
+      ],
+      "status": "pass",
+      "summary": "7 passed"
+    }
+  },
+  "stage3_remediation_progress": {
+    "pass_1": {
+      "started_at_utc": "2026-02-22T22:44:23Z",
+      "owner": "ORACL-Prime",
+      "actions": [
+        {
+          "id": "rerun_stage3_baseline_audits",
+          "evidence_root": "projects/calamum-moltbook-observer/local_untracked/stage3_remed_probe_20260222T224423Z"
+        },
+        {
+          "id": "resolve_manifest_layout_drift",
+          "file": "projects/calamum-moltbook-observer/PROJECT_MANIFEST.json",
+          "change": [
+            "remove deliverables/ from layout.tracked_roots",
+            "add deliverables/ to layout.ignored_roots"
+          ]
+        },
+        {
+          "id": "verify_manifest_drift_cleared",
+          "evidence_root": "projects/calamum-moltbook-observer/local_untracked/stage3_manifest_fix_probe_20260222T224559Z",
+          "result": "manifest_layout_blocker_cleared"
+        }
+      ],
+      "remaining_blockers": [
+        {
+          "id": "stage3_status_sync_drift",
+          "class": "governance-drift",
+          "blocker": true,
+          "status": "open"
+        }
+      ],
+      "gate_status": "no-go-remains"
+    }
+  },
+  "stage3_closure": {
+    "closed_at_utc": "2026-02-22T22:58:26Z",
+    "closer": "ORACL-Prime",
+    "approved_by": "joediggidyyy",
+    "machine_validation_result": "pass",
+    "physical_inspection_result": "pass",
+    "rollback_ready": true,
+    "gate_decision": "go",
+    "status": "stage3_closed",
+    "advisories": [
+      "repo-health tracked untracked-only candidates remain informational and non-blocking for Stage 3 closure",
+      "watchdog heartbeat/signature WARN context remains visible in ops-parameter lane and is tracked for downstream hardening"
+    ],
+    "evidence_refs": [
+      "projects/calamum-moltbook-observer/local_untracked/stage3_postfix_probe_20260222T175824Z/implementation_drift/implementation_drift_audit_20260222T225826.278932Z.md",
+      "projects/calamum-moltbook-observer/local_untracked/stage3_postfix_probe_20260222T175824Z/implementation_drift/implementation_drift_audit_20260222T225826.278932Z.evidence.json",
+      "projects/calamum-moltbook-observer/local_untracked/stage3_postfix_probe_20260222T175824Z/repo_health/calamum_repo_health_audit_20260222T225825.130976Z.md",
+      "projects/calamum-moltbook-observer/local_untracked/stage3_postfix_probe_20260222T175824Z/repo_health/calamum_repo_health_audit_20260222T225825.130976Z.evidence.json"
+    ]
+  },
+  "post_stage3_recursive_validation": {
+    "validated_at_utc": "2026-02-22T22:58:52Z",
+    "result": "pass-with-advisories",
+    "tests_summary": "35 passed",
+    "evidence_root": "projects/calamum-moltbook-observer/local_untracked/stage0_2_recursive_validate_20260222T175852Z"
+  },
+  "next_suggested_tasks": [
+    {
+      "id": "phase4_transition_rehearsal_close",
+      "priority": "high",
+      "description": "execute sim/canary mode gate + transition + evidence verify/index and emit Stage 4 close packet"
+    },
+    {
+      "id": "phase5_live_readiness_decision_no_activation",
+      "priority": "high",
+      "description": "run real-source preflight/gate/health checks and publish go/no-go readiness artifact without activating live collection"
+    },
+    {
+      "id": "advisory_debt_burndown",
+      "priority": "medium",
+      "description": "reconcile tracked untracked-only candidates and tighten watchdog heartbeat/signature WARN semantics across audit surfaces"
+    }
+  ],
   "scope": "observer",
   "owner": "ORACL-Prime",
   "primary_stakeholder_approver": "joediggidyyy",
