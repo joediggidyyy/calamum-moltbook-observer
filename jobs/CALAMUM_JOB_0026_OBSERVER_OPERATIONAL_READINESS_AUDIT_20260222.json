@@ -468,6 +468,30 @@
     ],
     "forward_lane": "phase5_live_readiness_decision_no_activation"
   },
+  "contract_refinement_20260223": {
+    "refined_at_utc": "2026-02-23T01:20:00Z",
+    "approved_by": "joediggidyyy",
+    "recorded_by": "ORACL-Prime",
+    "approved_refinements": [
+      "Readiness gate heartbeat semantics use observer service/runtime heartbeat independent of collection-state activity.",
+      "Always-on resource telemetry retention is required and must use librarian rotation/compaction/compression lifecycle controls.",
+      "Three-lane stream contract is adopted: resource_normal, resource_baseline, active_record."
+    ],
+    "stage5_semantics": {
+      "pre_activation_readiness": "service heartbeat freshness required; collection state may be idle/warmup/stopped",
+      "activation_step": "separate from readiness gate and requires collecting-state transition within policy timeout"
+    },
+    "stream_contract": {
+      "resource_normal": "defined-interval long-run resource telemetry",
+      "resource_baseline": "rapid-sampling baseline window for rate-of-change and envelope derivation",
+      "active_record": "live/honeypot collection stream per planning docs"
+    },
+    "implementation_directives": [
+      "Add stage-5 checks for resource baseline-window completeness and resource-stream retention health.",
+      "Preserve stream-class metadata through librarian rotate/compact/compress workflows.",
+      "Differentiate service-heartbeat failure codes from collection-state semantic failures."
+    ]
+  },
   "scope": "observer",
   "owner": "ORACL-Prime",
   "primary_stakeholder_approver": "joediggidyyy",

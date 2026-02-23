@@ -481,3 +481,69 @@ This job executes the readiness protocol in:
 - no unexpected non-canary session leakage in librarian stats (`live/watch/honeypot` display totals remain zero unless active lane)
 - watchdog posture/resource contracts present and valid
 - policy validation remains `go`
+
+## Stage 5 execution (decision gate only, no activation)
+
+- executed_at_utc: 2026-02-23T01:13:41Z
+- executor: ORACL-Prime
+- evidence_root: `projects/calamum-moltbook-observer/local_untracked/stage5_live_readiness_20260223T011340Z/`
+- decision: **NO-GO**
+- activation_state: **not executed** (decision gate only)
+
+### Commands executed
+
+1) `observerctl ops preflight --source real --json`
+2) `observerctl ops mode gate --to live --source real --json`
+3) `observerctl health full --json`
+
+### Stage 5 gate reason codes
+
+- `critical_check_failed:observer_heartbeat_stale`
+- `critical_check_failed:env.moltbook_api_key`
+- `critical_check_failed:watchdog_trigger_posture_invalid`
+- `critical_check_failed:lockdown_heartbeat_rate_not_escalated`
+- `critical_check_failed:lockdown_baseline_rate_not_escalated`
+
+### Compensating controls applied
+
+- No live activation executed (decision-gate only).
+- Remain in non-live lane until all critical reason codes are cleared.
+- Load real-lane credential context (`MOLTBOOK_API_KEY`) via approved vault/env flow before re-gate.
+- Restore watchdog posture contract to `lockdown` for live target prior to re-gate.
+- Escalate watchdog heartbeat cadence to lockdown band (3-5s) before retry.
+- Escalate baseline validation cadence to lockdown band (30-60s) before retry.
+
+### Stage 5 evidence refs
+
+- `projects/calamum-moltbook-observer/local_untracked/stage5_live_readiness_20260223T011340Z/stage5_preflight_real.json`
+- `projects/calamum-moltbook-observer/local_untracked/stage5_live_readiness_20260223T011340Z/stage5_mode_gate_live_real.json`
+- `projects/calamum-moltbook-observer/local_untracked/stage5_live_readiness_20260223T011340Z/stage5_health_full.json`
+- `projects/calamum-moltbook-observer/local_untracked/stage5_live_readiness_20260223T011340Z/stage5_decision_summary.json`
+- `projects/calamum-moltbook-observer/local_untracked/stage5_live_readiness_20260223T011340Z/stage5_decision_summary.md`
+
+## Contract refinement decision (approved)
+
+- refined_at_utc: 2026-02-23T01:20:00Z
+- approver: joediggidyyy
+- recorder: ORACL-Prime
+
+### Approved refinements
+
+1) **Heartbeat semantics decoupled from collection activity**
+- readiness gates must evaluate observer **service heartbeat** (runtime health) independently from collection-state (`idle|warmup|collecting|stopped|error`).
+- stale collection-state while pre-activation is expected and is not by itself a readiness blocker.
+
+2) **Always-on resource telemetry retention**
+- resource telemetry must be recorded continuously (not only during active collection windows).
+- resource telemetry must be rotated/compacted/compressed by librarian using the same lifecycle discipline applied to collection data.
+
+3) **Three-lane stream contract**
+- `resource_normal`: defined-interval long-run resource stream.
+- `resource_baseline`: rapid-sampling baseline collection stream for rate-of-change + baseline envelope derivation.
+- `active_record`: live/honeypot collection stream per existing planning docs.
+
+### Implementation-facing directives
+
+- Stage 5 readiness checks must include resource baseline-window completeness and resource-stream retention health.
+- Librarian telemetry handling must preserve stream-class metadata through rotation/compaction.
+- Gate reason-code vocabulary should distinguish service-heartbeat failures from collection-state failures.

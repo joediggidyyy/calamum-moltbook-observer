@@ -139,8 +139,11 @@ Primary transitions:
 
 Required checks per transition:
 - watchdog heartbeat freshness,
-- observer heartbeat freshness,
+- observer **service** heartbeat freshness (runtime health),
+- collection-state semantics validity (`idle|warmup|collecting|stopped|error`),
 - baseline readiness,
+- resource-stream retention readiness,
+- rapid baseline-window readiness for live-readiness decisions,
 - mode-specific data-store readiness,
 - required env presence (presence-only; never values),
 - trigger posture enforcement (`isolation|lockdown`),
@@ -197,6 +200,8 @@ Required behavior:
 - prevent cross-mode ambiguity in status/evidence output,
 - include mode-store references in gate evidence packets.
 
+Resource telemetry is in-scope for this same data-store model and must follow the same librarian lifecycle controls as collection data.
+
 ### 6.1 Librarian command definitions
 
 - `observerctl librarian stats --json`
@@ -209,6 +214,30 @@ Required behavior:
 	- behavior: compaction and manifest normalization for target mode.
 - `observerctl librarian verify --mode <mode> --json`
 	- behavior: store integrity check and readiness status for gate consumers.
+
+Resource telemetry lifecycle requirement (normative):
+- librarian rotation/compaction/compression policy applies equally to collection records and resource telemetry streams.
+- stream metadata (`stream_type`, `sampling_profile_id`, `mode_at_capture`, `source_axis`, `baseline_window_id`) must be retained through archive/compact transitions.
+
+## 6.5 Resource telemetry and baseline sampling contract
+
+Three complementary stream classes are required:
+
+1) `resource_normal`
+- fixed interval sampling during all runtime states,
+- supports long-run baseline continuity.
+
+2) `resource_baseline`
+- rapid interval sampling during baseline windows,
+- supports rate-of-change and operational baseline envelope derivation.
+
+3) `active_record`
+- live/honeypot collection stream (as already documented in lane planning docs).
+
+Gate semantics alignment:
+- service heartbeat freshness is mandatory for readiness.
+- pre-activation readiness does not require `collecting` state.
+- activation-time checks require transition to `collecting` within policy timeout.
 
 ## 6.2 Baseline command definitions
 
@@ -318,6 +347,7 @@ Evidence-producing commands must additionally include triad sections:
 
 ### Phase C — Baseline/Librarian/Watchdog integration
 - Ensure `baseline`, `librarian`, `watchdog` provide deterministic inputs for `ops` gate evaluation.
+- Enforce always-on resource telemetry retention and librarian lifecycle parity across stream classes.
 
 ### Phase D — Health/policy hardening
 - Finalize `health` triage surfaces.
@@ -353,6 +383,8 @@ This forms the run-level security linkage contract used for report traceability 
 - [ ] health and policy sections are fully specified and read-only where required.
 - [ ] all command outputs conform to JSON schema and fail-closed exit-code policy.
 - [ ] triad packet sections are present for all evidence-producing commands.
+- [ ] resource telemetry streams and collection streams share librarian rotation/compression guarantees.
+- [ ] gate logic treats service heartbeat and collection-state semantics as distinct checks.
 
 ## 14) Next actions (declared)
 
@@ -361,3 +393,5 @@ This forms the run-level security linkage contract used for report traceability 
 3. Add lockdown parameter checks: heartbeat cadence escalation and baseline validation cadence escalation.
 4. Add tests for trigger posture mapping and run-linkage contract enforcement.
 5. Update operator-facing docs/examples to use `sim|real` source terminology consistently.
+6. Add explicit stream-class retention tests (`resource_normal`, `resource_baseline`, `active_record`) across rotate/compact paths.
+7. Add stage-5 readiness checks for baseline-window completeness and resource-stream retention health.

@@ -119,6 +119,7 @@ Each stage close must include:
 **Stage-close validation (machine)**:
 - Active store pointer consistency holds.
 - Manifest/store integrity is `ok`.
+- Resource telemetry streams are present and retained under librarian lifecycle controls (rotate/compact/compress) with index continuity.
 - No unapproved stray runtime artifacts.
 
 **Mandatory physical inspection (human)**:
@@ -127,6 +128,7 @@ Each stage close must include:
 
 **Unintended-consequence checks**:
 - Compaction/rotation does not lose visibility or index linkage.
+- Resource baseline segments are not dropped or orphaned during compression.
 - Retention-state semantics remain consistent.
 
 **Gate**: `PASS` required to proceed.
@@ -198,8 +200,11 @@ Each stage close must include:
 
 **Stage-close validation (machine)**:
 - All critical checks return `go`.
+- Observer **service** heartbeat is fresh (runtime health) independent of collection state.
+- Collection-state semantics are coherent (`idle|warmup|collecting|stopped|error`) and suitable for pre-activation readiness.
 - Real-source dependency presence checks pass.
 - Lockdown cadence/resource checks pass.
+- Resource baseline metrics are complete from rapid-sampling window and long-run normal resource stream continuity checks.
 
 **Mandatory physical inspection (human)**:
 - Final host/network/hardware sanity pass with no anomalies.

@@ -9,8 +9,10 @@ Normative constraints:
 from __future__ import annotations
 
 import argparse
+import gzip
 import hashlib
 import json
+import math
 import os
 import subprocess
 import sys
@@ -38,6 +40,7 @@ WATCHDOG_POSTURE_FILE = 'watchdog_posture_state.json'
 WATCHDOG_RESOURCE_FILE = 'watchdog_resource_state.json'
 GATE_PACKET_MAX_AGE_SEC = float(os.getenv('CALAMUM_GATE_PACKET_MAX_AGE_SEC', '300'))
 AGENT_PID_FILE = 'calamum_agent.pid'
+RESOURCE_PROFILES = ('normal', 'rapid')
 
 
 def _utc_now() -> str:
@@ -616,6 +619,8 @@ def collect_runtime_status(source: str = 'sim') -> Dict[str, Any]:
     check_watchdog = _check_heartbeat(hb_watchdog, max_age_sec=45.0)
     check_observer = _check_heartbeat(hb_observer, max_age_sec=60.0)
     check_librarian = _check_heartbeat(hb_librarian, max_age_sec=120.0)
+    observer_runtime = _runtime_observer_status()
+    observer_runtime_state = str(observer_runtime.get('state', 'stopped'))
 
     signing_ok = _read_env_presence('CALAMUM_DATA_SIGNING_KEY') or _read_env_presence('CALAMUM_ALLOW_DEV_SIGNING_KEY')
     checks: Dict[str, Dict[str, Any]] = {
@@ -637,6 +642,10 @@ def collect_runtime_status(source: str = 'sim') -> Dict[str, Any]:
         'heartbeat.watchdog': check_watchdog,
         'heartbeat.observer': check_observer,
         'heartbeat.librarian': check_librarian,
+        'runtime.observer_service': {
+            'state': observer_runtime_state,
+            'status': 'ok' if observer_runtime_state in ('active', 'degraded') else 'err',
+        },
         'env.signing_key': {
             'names': ['CALAMUM_DATA_SIGNING_KEY', 'CALAMUM_ALLOW_DEV_SIGNING_KEY'],
             'present': bool(signing_ok),
@@ -751,7 +760,7 @@ def evaluate_gate_decision(status_packet: Dict[str, Any], target_mode: Optional[
     critical_keys = [
         'paths.health_dir',
         'heartbeat.watchdog',
-        'heartbeat.observer',
+        'runtime.observer_service',
         'env.signing_key',
         'store.pointer_consistent',
         'store.integrity_ok',
@@ -953,6 +962,163 @@ def _append_jsonl(path: Path, payload: Dict[str, Any]) -> None:
     line = json.dumps(payload, sort_keys=True)
     with path.open('a', encoding='utf-8') as f:
         f.write(line + '\n')
+
+
+def _resource_index_path(source: str, mode: str) -> Path:
+    src = _normalize_source(source)
+    m = str(mode or 'watch').strip().lower()
+    if m not in MODES:
+        m = 'watch'
+    return get_calamum_data_dir() / 'observer_derived' / src / m / 'resource' / 'index.jsonl'
+
+
+def _resource_evidence_output_path(source: str, mode: str, event: str) -> Path:
+    ts = datetime.now(timezone.utc).strftime('%Y%m%dT%H%M%SZ')
+    src = _normalize_source(source)
+    m = str(mode or 'watch').strip().lower()
+    if m not in MODES:
+        m = 'watch'
+    ev = str(event or 'baseline').strip().lower().replace(' ', '-').replace('_', '-')
+    return get_calamum_data_dir() / 'observer_derived' / src / m / 'evidence' / 'observerctl_{0}_{1}.json'.format(ev, ts)
+
+
+def _resource_archive_dir() -> Path:
+    p = get_calamum_data_dir() / 'archive'
+    p.mkdir(parents=True, exist_ok=True)
+    return p
+
+
+def _resource_segment_prefix(source: str, mode: str, profile: str, window_id: str) -> str:
+    src = _normalize_source(source)
+    m = str(mode or 'watch').strip().lower()
+    if m not in MODES:
+        m = 'watch'
+    prof = str(profile or 'normal').strip().lower()
+    if prof not in RESOURCE_PROFILES:
+        prof = 'normal'
+    wid = str(window_id or '').strip() or datetime.now(timezone.utc).strftime('%Y%m%dT%H%M%SZ')
+    return 'resource_{0}_{1}_{2}_{3}'.format(src, m, prof, wid)
+
+
+def _resource_segment_path(source: str, mode: str, profile: str, window_id: str, segment_id: int) -> Path:
+    prefix = _resource_segment_prefix(source, mode, profile, window_id)
+    name = '{0}_seg{1:04d}.jsonl'.format(prefix, int(max(1, segment_id)))
+    return _resource_archive_dir() / name
+
+
+def _safe_sleep(seconds: float) -> None:
+    s = max(0.0, float(seconds or 0.0))
+    if s <= 0.0:
+        return
+    time.sleep(s)
+
+
+def _touch_observer_service_heartbeat() -> None:
+    try:
+        hb = get_calamum_health_dir() / 'calamum_observer.heartbeat'
+        hb.parent.mkdir(parents=True, exist_ok=True)
+        hb.touch(exist_ok=True)
+    except Exception:
+        pass
+
+
+def _resource_sample() -> Dict[str, Any]:
+    cpu_now = 0.0
+    ram_now = 0.0
+    try:
+        # Use non-blocking CPU sampling to avoid introducing interval delay coupling.
+        cpu_now = float(psutil.cpu_percent(interval=None))
+    except Exception:
+        cpu_now = 0.0
+    try:
+        ram_now = float(psutil.virtual_memory().percent)
+    except Exception:
+        ram_now = 0.0
+    return {
+        'timestamp_utc': _utc_now(),
+        'epoch_s': float(time.time()),
+        'cpu_pct_now': float(cpu_now),
+        'ram_pct_now': float(ram_now),
+    }
+
+
+def _percentile(values: List[float], pct: float) -> float:
+    vals = [float(v) for v in values if v is not None]
+    if len(vals) == 0:
+        return 0.0
+    vals.sort()
+    p = max(0.0, min(100.0, float(pct)))
+    if len(vals) == 1:
+        return float(vals[0])
+    rank = (p / 100.0) * (len(vals) - 1)
+    lo = int(math.floor(rank))
+    hi = int(math.ceil(rank))
+    if lo == hi:
+        return float(vals[lo])
+    frac = rank - float(lo)
+    return float(vals[lo] * (1.0 - frac) + vals[hi] * frac)
+
+
+def _parse_jsonl_lines(path: Path) -> List[Dict[str, Any]]:
+    out: List[Dict[str, Any]] = []
+    if not path.exists():
+        return out
+    try:
+        if path.suffix.lower() == '.gz':
+            with gzip.open(path, 'rt', encoding='utf-8', errors='ignore') as f:
+                for line in f:
+                    ln = str(line or '').strip()
+                    if not ln:
+                        continue
+                    try:
+                        row = json.loads(ln)
+                    except Exception:
+                        continue
+                    if isinstance(row, dict):
+                        out.append(row)
+            return out
+
+        with path.open('r', encoding='utf-8', errors='ignore') as f:
+            for line in f:
+                ln = str(line or '').strip()
+                if not ln:
+                    continue
+                try:
+                    row = json.loads(ln)
+                except Exception:
+                    continue
+                if isinstance(row, dict):
+                    out.append(row)
+    except Exception:
+        return out
+    return out
+
+
+def _resource_candidate_files(source: str, mode: str, profile: Optional[str] = None) -> List[Path]:
+    archive_dir = _resource_archive_dir()
+    src = _normalize_source(source)
+    m = str(mode or 'watch').strip().lower()
+    if m not in MODES:
+        m = 'watch'
+    prof = str(profile or '').strip().lower()
+    pattern_prefix = 'resource_{0}_{1}_'.format(src, m)
+
+    files: List[Path] = []
+    for p in sorted(archive_dir.glob('resource_{0}_{1}_*.jsonl'.format(src, m))):
+        name = p.name.lower()
+        if not name.startswith(pattern_prefix):
+            continue
+        if prof and ('_{0}_'.format(prof) not in name):
+            continue
+        files.append(p)
+    for p in sorted(archive_dir.glob('resource_{0}_{1}_*.jsonl.gz'.format(src, m))):
+        name = p.name.lower()
+        if not name.startswith(pattern_prefix):
+            continue
+        if prof and ('_{0}_'.format(prof) not in name):
+            continue
+        files.append(p)
+    return files
 
 
 def _fmt_int(value: Any) -> str:
@@ -1433,6 +1599,610 @@ def _baseline_set(baseline_id: str) -> Dict[str, Any]:
         'decision': 'go',
         'active_baseline_id': baseline_id,
     }
+
+
+def _baseline_collect(source: str, mode: str, profile: str, duration_sec: float, interval_sec: float, segment_records: int, window_id: str, output: str) -> Dict[str, Any]:
+    src = _normalize_source(source)
+    m = str(mode or 'canary').strip().lower()
+    if m not in MODES:
+        m = 'canary'
+    prof = str(profile or 'normal').strip().lower()
+    if prof not in RESOURCE_PROFILES:
+        prof = 'normal'
+
+    default_interval = 30.0 if prof == 'normal' else 2.0
+    interval = float(interval_sec) if float(interval_sec or 0.0) > 0.0 else default_interval
+    duration = max(0.0, float(duration_sec or 0.0))
+    seg_limit = max(1, int(segment_records or 1000))
+    wid = str(window_id or '').strip() or datetime.now(timezone.utc).strftime('%Y%m%dT%H%M%SZ')
+
+    samples_target = 1
+    if duration > 0.0 and interval > 0.0:
+        samples_target = max(1, int(math.ceil(duration / interval)))
+
+    linkage = _make_run_linkage(m, event='baseline-collect-{0}'.format(prof))
+    segment_id = 1
+    records_in_segment = 0
+    segment_files: Dict[str, int] = {}
+    cpu_vals: List[float] = []
+    ram_vals: List[float] = []
+
+    for idx in range(samples_target):
+        _touch_observer_service_heartbeat()
+        sample = _resource_sample()
+        sample['stream_type'] = 'resource_{0}'.format(prof)
+        sample['sampling_profile_id'] = 'resource_{0}_v1'.format(prof)
+        sample['mode_at_capture'] = m
+        sample['source_axis'] = src
+        sample['baseline_window_id'] = wid
+        sample['sample_index'] = idx + 1
+        sample['runtime_cli_surface'] = 'observerctl'
+        sample['record_class'] = 'resource_telemetry'
+        sample.update(linkage)
+
+        seg_path = _resource_segment_path(src, m, prof, wid, segment_id)
+        seg_path.parent.mkdir(parents=True, exist_ok=True)
+        with seg_path.open('a', encoding='utf-8') as f:
+            f.write(json.dumps(sample, sort_keys=True) + '\n')
+        records_in_segment += 1
+        segment_files[str(seg_path).replace('\\', '/')] = int(segment_files.get(str(seg_path).replace('\\', '/'), 0) + 1)
+
+        cpu_vals.append(float(sample.get('cpu_pct_now', 0.0) or 0.0))
+        ram_vals.append(float(sample.get('ram_pct_now', 0.0) or 0.0))
+
+        if records_in_segment >= seg_limit:
+            segment_id += 1
+            records_in_segment = 0
+
+        if idx < samples_target - 1:
+            _safe_sleep(interval)
+
+    # Publish resource index entries for downstream analytics/replay.
+    idx_path = _resource_index_path(src, m)
+    for p, count in segment_files.items():
+        _append_jsonl(idx_path, {
+            'timestamp_utc': _utc_now(),
+            'stream_type': 'resource_{0}'.format(prof),
+            'window_id': wid,
+            'source': src,
+            'mode': m,
+            'segment_path': p,
+            'segment_records': int(count),
+            'run_id': linkage.get('run_id', ''),
+        })
+
+    # Update control resource state for gate consumers.
+    if cpu_vals and ram_vals:
+        state_payload = {
+            'updated_at_utc': _utc_now(),
+            'baseline_window_id': wid,
+            'stream_type': 'resource_{0}'.format(prof),
+            'cpu_pct_now': float(cpu_vals[-1]),
+            'ram_pct_now': float(ram_vals[-1]),
+            'cpu_p95_15m': float(_percentile(cpu_vals, 95.0)),
+            'ram_p95_15m': float(_percentile(ram_vals, 95.0)),
+            'resource_spike_score': float(max(0.0, (_percentile(cpu_vals, 99.0) - _percentile(cpu_vals, 50.0)) / 100.0, (_percentile(ram_vals, 99.0) - _percentile(ram_vals, 50.0)) / 100.0)),
+            'sample_age_seconds': 0.0,
+            'sample_count': int(len(cpu_vals)),
+            'source': src,
+            'mode': m,
+            'run_id': linkage.get('run_id', ''),
+        }
+        _write_json_file(_control_file(WATCHDOG_RESOURCE_FILE), state_payload)
+
+    baseline_id = 'baseline-{0}-{1}-{2}-{3}'.format(src, m, prof, wid)
+    catalog = _load_baselines()
+    items = list(catalog.get('items', [])) if isinstance(catalog.get('items', []), list) else []
+    items.append({
+        'id': baseline_id,
+        'status': 'ready' if len(cpu_vals) >= 2 else 'collecting',
+        'created_at_utc': _utc_now(),
+        'source': src,
+        'mode': m,
+        'profile': prof,
+        'window_id': wid,
+        'sample_count': int(len(cpu_vals)),
+    })
+    catalog['items'] = items
+    catalog['active'] = baseline_id
+    _save_baselines(catalog)
+
+    packet = {
+        'timestamp_utc': _utc_now(),
+        'runtime_cli_surface': 'observerctl',
+        'decision': 'go',
+        'action': 'baseline-collect',
+        'source': src,
+        'mode': m,
+        'profile': prof,
+        'window_id': wid,
+        'sample_count': int(len(cpu_vals)),
+        'interval_sec': float(interval),
+        'duration_sec': float(duration),
+        'segment_records_limit': int(seg_limit),
+        'segments': [{'path': p, 'records': int(c)} for p, c in sorted(segment_files.items())],
+        'resource_summary': {
+            'cpu_p50': float(_percentile(cpu_vals, 50.0)),
+            'cpu_p95': float(_percentile(cpu_vals, 95.0)),
+            'cpu_p99': float(_percentile(cpu_vals, 99.0)),
+            'ram_p50': float(_percentile(ram_vals, 50.0)),
+            'ram_p95': float(_percentile(ram_vals, 95.0)),
+            'ram_p99': float(_percentile(ram_vals, 99.0)),
+        },
+        'provenance': {
+            'generated_at_utc': _utc_now(),
+            'producer_process': 'observerctl baseline collect',
+            'artifact_path': '',
+            'artifact_sha256': '',
+            'upstream_inputs': {
+                'watchdog_resource_state': str(_control_file(WATCHDOG_RESOURCE_FILE)).replace('\\', '/'),
+                'resource_index': str(idx_path).replace('\\', '/'),
+            },
+        },
+        'methodology': {
+            'sampling_strategy': 'fixed-interval resource telemetry sampling via psutil cpu/ram probes',
+            'runtime_constraints': ['names-only outputs', 'observerctl standalone surface'],
+            'failure_modes': ['resource_sample_missing', 'archive_write_failure'],
+        },
+        'process': {
+            'phase': 'baseline_collection',
+            'event': 'baseline_collect_{0}'.format(prof),
+            'decision': 'go',
+            'reason_codes': [],
+            'approver_checkpoint': 'required_for_live_transition',
+            'evidence_refs': [str(idx_path).replace('\\', '/')] + sorted(segment_files.keys()),
+        },
+    }
+    packet.update(linkage)
+
+    out_path = Path(str(output).strip()) if str(output).strip() else _resource_evidence_output_path(src, m, 'baseline_collect_{0}'.format(prof))
+    packet = _write_packet(packet, out_path)
+    _append_jsonl(_evidence_index_path(src, m), {
+        'timestamp_utc': _utc_now(),
+        'packet_path': str(out_path).replace('\\', '/'),
+        'decision': packet.get('decision', 'no-go'),
+        'run_id': packet.get('run_id', ''),
+        'scope': {'source': src, 'mode': m},
+        'event': 'baseline_collect_{0}'.format(prof),
+    })
+    return packet
+
+
+def _baseline_analyze(source: str, mode: str, hours: float, profile: str, min_normal_samples: int, min_rapid_samples: int, output: str) -> Dict[str, Any]:
+    src = _normalize_source(source)
+    m = str(mode or 'canary').strip().lower()
+    if m not in MODES:
+        m = 'canary'
+    prof = str(profile or 'all').strip().lower()
+    profile_filter: Optional[str] = None if prof in ('all', '*', '') else prof
+    lookback_s = max(60.0, float(hours or 24.0) * 3600.0)
+    cutoff = time.time() - lookback_s
+
+    rows: List[Dict[str, Any]] = []
+    for p in _resource_candidate_files(src, m, profile=profile_filter):
+        for row in _parse_jsonl_lines(p):
+            ts = _parse_utc_iso8601(row.get('timestamp_utc'))
+            if ts is None:
+                continue
+            if ts.timestamp() < cutoff:
+                continue
+            rows.append(row)
+
+    rows.sort(key=lambda r: str(r.get('timestamp_utc', '')))
+    cpu_vals = [float(r.get('cpu_pct_now', 0.0) or 0.0) for r in rows]
+    ram_vals = [float(r.get('ram_pct_now', 0.0) or 0.0) for r in rows]
+    normal_count = sum(1 for r in rows if str(r.get('stream_type', '')) == 'resource_normal')
+    rapid_count = sum(1 for r in rows if str(r.get('stream_type', '')) == 'resource_rapid')
+
+    cpu_rate_vals: List[float] = []
+    ram_rate_vals: List[float] = []
+    prev_ts = None
+    prev_cpu = None
+    prev_ram = None
+    for r in rows:
+        ts = _parse_utc_iso8601(r.get('timestamp_utc'))
+        if ts is None:
+            continue
+        cur_ts = float(ts.timestamp())
+        cur_cpu = float(r.get('cpu_pct_now', 0.0) or 0.0)
+        cur_ram = float(r.get('ram_pct_now', 0.0) or 0.0)
+        if prev_ts is not None and cur_ts > prev_ts:
+            dt = cur_ts - prev_ts
+            cpu_rate_vals.append((cur_cpu - float(prev_cpu)) / dt)
+            ram_rate_vals.append((cur_ram - float(prev_ram)) / dt)
+        prev_ts = cur_ts
+        prev_cpu = cur_cpu
+        prev_ram = cur_ram
+
+    baseline_ready = bool(len(rows) >= max(2, int(min_normal_samples) + int(min_rapid_samples)) and normal_count >= int(min_normal_samples) and rapid_count >= int(min_rapid_samples))
+    linkage = _make_run_linkage(m, event='baseline-analyze')
+
+    if cpu_vals and ram_vals:
+        state_payload = {
+            'updated_at_utc': _utc_now(),
+            'stream_type': 'resource_baseline_analysis',
+            'cpu_pct_now': float(cpu_vals[-1]),
+            'ram_pct_now': float(ram_vals[-1]),
+            'cpu_p95_15m': float(_percentile(cpu_vals, 95.0)),
+            'ram_p95_15m': float(_percentile(ram_vals, 95.0)),
+            'resource_spike_score': float(max(0.0, (_percentile(cpu_vals, 99.0) - _percentile(cpu_vals, 50.0)) / 100.0, (_percentile(ram_vals, 99.0) - _percentile(ram_vals, 50.0)) / 100.0)),
+            'sample_age_seconds': 0.0,
+            'sample_count': int(len(cpu_vals)),
+            'source': src,
+            'mode': m,
+            'run_id': linkage.get('run_id', ''),
+        }
+        _write_json_file(_control_file(WATCHDOG_RESOURCE_FILE), state_payload)
+
+    packet = {
+        'timestamp_utc': _utc_now(),
+        'runtime_cli_surface': 'observerctl',
+        'decision': 'go' if baseline_ready else 'no-go',
+        'action': 'baseline-analyze',
+        'source': src,
+        'mode': m,
+        'lookback_hours': float(hours),
+        'profile_filter': profile_filter or 'all',
+        'sample_counts': {
+            'total': int(len(rows)),
+            'resource_normal': int(normal_count),
+            'resource_rapid': int(rapid_count),
+        },
+        'minimum_requirements': {
+            'resource_normal': int(min_normal_samples),
+            'resource_rapid': int(min_rapid_samples),
+        },
+        'baseline_ready': bool(baseline_ready),
+        'resource_statistics': {
+            'cpu_p50': float(_percentile(cpu_vals, 50.0)),
+            'cpu_p95': float(_percentile(cpu_vals, 95.0)),
+            'cpu_p99': float(_percentile(cpu_vals, 99.0)),
+            'ram_p50': float(_percentile(ram_vals, 50.0)),
+            'ram_p95': float(_percentile(ram_vals, 95.0)),
+            'ram_p99': float(_percentile(ram_vals, 99.0)),
+            'cpu_rate_p95_per_s': float(_percentile(cpu_rate_vals, 95.0)),
+            'ram_rate_p95_per_s': float(_percentile(ram_rate_vals, 95.0)),
+        },
+        'reason_codes': [] if baseline_ready else ['critical_check_failed:resource_baseline_window_incomplete'],
+        'provenance': {
+            'generated_at_utc': _utc_now(),
+            'producer_process': 'observerctl baseline analyze',
+            'artifact_path': '',
+            'artifact_sha256': '',
+            'upstream_inputs': {
+                'resource_archive_dir': str(_resource_archive_dir()).replace('\\', '/'),
+                'watchdog_resource_state': str(_control_file(WATCHDOG_RESOURCE_FILE)).replace('\\', '/'),
+            },
+        },
+        'methodology': {
+            'sampling_strategy': 'lookback-window aggregation over resource_normal/resource_rapid telemetry segments',
+            'runtime_constraints': ['names-only outputs', 'publish-grade packet with linkage fields'],
+            'failure_modes': ['insufficient_baseline_samples', 'archive_parse_failure'],
+            'calculus': ['percentiles (p50/p95/p99)', 'first-order rate-of-change per second'],
+        },
+        'process': {
+            'phase': 'baseline_analysis',
+            'event': 'baseline_analyze',
+            'decision': 'go' if baseline_ready else 'no-go',
+            'reason_codes': [] if baseline_ready else ['critical_check_failed:resource_baseline_window_incomplete'],
+            'approver_checkpoint': 'required_for_live_transition',
+            'evidence_refs': [str(_resource_archive_dir()).replace('\\', '/'), str(_resource_index_path(src, m)).replace('\\', '/')],
+        },
+    }
+    packet.update(linkage)
+
+    out_path = Path(str(output).strip()) if str(output).strip() else _resource_evidence_output_path(src, m, 'baseline_analysis')
+    packet = _write_packet(packet, out_path)
+    _append_jsonl(_evidence_index_path(src, m), {
+        'timestamp_utc': _utc_now(),
+        'packet_path': str(out_path).replace('\\', '/'),
+        'decision': packet.get('decision', 'no-go'),
+        'run_id': packet.get('run_id', ''),
+        'scope': {'source': src, 'mode': m},
+        'event': 'baseline_analysis',
+    })
+    return packet
+
+
+def _baseline_overnight_plan(
+    source: str,
+    mode: str,
+    overnight_hours: float,
+    normal_interval_sec: float,
+    rapid_interval_sec: float,
+    rapid_phase_sec: float,
+    min_normal_samples: int,
+    min_rapid_samples: int,
+    output: str,
+) -> Dict[str, Any]:
+    src = _normalize_source(source)
+    m = str(mode or 'canary').strip().lower()
+    if m not in MODES:
+        m = 'canary'
+
+    overnight_h = max(0.25, float(overnight_hours or 8.0))
+    normal_interval = max(1.0, float(normal_interval_sec or 30.0))
+    rapid_interval = max(0.2, float(rapid_interval_sec or 2.0))
+    rapid_phase = max(1.0, float(rapid_phase_sec or 1800.0))
+
+    total_window_sec = overnight_h * 3600.0
+    normal_window_sec = max(0.0, total_window_sec - (2.0 * rapid_phase))
+    if normal_window_sec < 1.0:
+        normal_window_sec = 1.0
+
+    rapid_samples_per_leg = max(1, int(math.ceil(rapid_phase / rapid_interval)))
+    normal_samples = max(1, int(math.ceil(normal_window_sec / normal_interval)))
+    rapid_total = int(rapid_samples_per_leg * 2)
+
+    now = datetime.now(timezone.utc)
+    start_iso = now.isoformat().replace('+00:00', 'Z')
+    t1 = now.timestamp() + rapid_phase
+    t2 = t1 + normal_window_sec
+    end_ts = t2 + rapid_phase
+
+    transition_1 = datetime.fromtimestamp(t1, tz=timezone.utc).isoformat().replace('+00:00', 'Z')
+    transition_2 = datetime.fromtimestamp(t2, tz=timezone.utc).isoformat().replace('+00:00', 'Z')
+    end_iso = datetime.fromtimestamp(end_ts, tz=timezone.utc).isoformat().replace('+00:00', 'Z')
+
+    linkage = _make_run_linkage(m, event='baseline-overnight-plan')
+    window_id = datetime.now(timezone.utc).strftime('%Y%m%dT%H%M%SZ')
+
+    commands = [
+        'observerctl baseline collect --source {0} --mode {1} --profile rapid --duration-sec {2:.0f} --interval-sec {3:.3f} --window-id overnight_rapid_start_{4} --json'.format(src, m, rapid_phase, rapid_interval, window_id),
+        'observerctl baseline collect --source {0} --mode {1} --profile normal --duration-sec {2:.0f} --interval-sec {3:.3f} --window-id overnight_normal_{4} --json'.format(src, m, normal_window_sec, normal_interval, window_id),
+        'observerctl baseline collect --source {0} --mode {1} --profile rapid --duration-sec {2:.0f} --interval-sec {3:.3f} --window-id overnight_rapid_end_{4} --json'.format(src, m, rapid_phase, rapid_interval, window_id),
+        'observerctl baseline analyze --source {0} --mode {1} --hours {2:.2f} --min-normal-samples {3} --min-rapid-samples {4} --json'.format(src, m, overnight_h + 1.0, int(min_normal_samples), int(min_rapid_samples)),
+    ]
+
+    readiness_projection = {
+        'normal_samples_expected': int(normal_samples),
+        'rapid_samples_expected_total': int(rapid_total),
+        'minimum_normal_required': int(min_normal_samples),
+        'minimum_rapid_required': int(min_rapid_samples),
+        'normal_requirement_met_by_plan': bool(normal_samples >= int(min_normal_samples)),
+        'rapid_requirement_met_by_plan': bool(rapid_total >= int(min_rapid_samples)),
+    }
+
+    packet = {
+        'timestamp_utc': _utc_now(),
+        'runtime_cli_surface': 'observerctl',
+        'decision': 'go',
+        'action': 'baseline-overnight-plan',
+        'source': src,
+        'mode': m,
+        'schedule_model': 'rapid_start_then_normal_overnight_then_rapid_end',
+        'window': {
+            'start_utc': start_iso,
+            'rapid_to_normal_utc': transition_1,
+            'normal_to_rapid_utc': transition_2,
+            'end_utc': end_iso,
+            'overnight_hours': float(overnight_h),
+            'rapid_phase_sec_each': float(rapid_phase),
+            'normal_phase_sec': float(normal_window_sec),
+        },
+        'sampling': {
+            'normal_interval_sec': float(normal_interval),
+            'rapid_interval_sec': float(rapid_interval),
+            'expected_normal_samples': int(normal_samples),
+            'expected_rapid_samples_each': int(rapid_samples_per_leg),
+            'expected_rapid_samples_total': int(rapid_total),
+        },
+        'readiness_projection': readiness_projection,
+        'execution_commands': commands,
+        'provenance': {
+            'generated_at_utc': _utc_now(),
+            'producer_process': 'observerctl baseline overnight-plan',
+            'artifact_path': '',
+            'artifact_sha256': '',
+            'upstream_inputs': {
+                'state_file': str(_control_file(STATE_FILE)).replace('\\', '/'),
+                'resource_index': str(_resource_index_path(src, m)).replace('\\', '/'),
+            },
+        },
+        'methodology': {
+            'sampling_strategy': 'front-loaded rapid capture, long normal stability capture, tail rapid capture',
+            'runtime_constraints': ['plan-only command (no collection side effects)', 'publish-grade packet for operator handoff'],
+            'calculus': ['expected sample counts from duration/interval arithmetic'],
+        },
+        'process': {
+            'phase': 'baseline_schedule_planning',
+            'event': 'baseline_overnight_plan',
+            'decision': 'go',
+            'reason_codes': [],
+            'approver_checkpoint': 'operator_ack_before_execution',
+            'evidence_refs': [str(_resource_index_path(src, m)).replace('\\', '/')],
+        },
+    }
+    packet.update(linkage)
+
+    out_path = Path(str(output).strip()) if str(output).strip() else _resource_evidence_output_path(src, m, 'baseline_overnight_plan')
+    packet = _write_packet(packet, out_path)
+    _append_jsonl(_evidence_index_path(src, m), {
+        'timestamp_utc': _utc_now(),
+        'packet_path': str(out_path).replace('\\', '/'),
+        'decision': packet.get('decision', 'no-go'),
+        'run_id': packet.get('run_id', ''),
+        'scope': {'source': src, 'mode': m},
+        'event': 'baseline_overnight_plan',
+    })
+    return packet
+
+
+def _baseline_overnight_run(
+    source: str,
+    mode: str,
+    overnight_hours: float,
+    normal_interval_sec: float,
+    rapid_interval_sec: float,
+    rapid_phase_sec: float,
+    min_normal_samples: int,
+    min_rapid_samples: int,
+    output: str,
+) -> Dict[str, Any]:
+    src = _normalize_source(source)
+    m = str(mode or 'canary').strip().lower()
+    if m not in MODES:
+        m = 'canary'
+
+    overnight_h = max(0.0001, float(overnight_hours or 8.0))
+    normal_interval = max(0.05, float(normal_interval_sec or 30.0))
+    rapid_interval = max(0.05, float(rapid_interval_sec or 2.0))
+    rapid_phase = max(0.05, float(rapid_phase_sec or 1800.0))
+
+    total_window_sec = overnight_h * 3600.0
+    normal_window_sec = max(0.05, total_window_sec - (2.0 * rapid_phase))
+
+    linkage = _make_run_linkage(m, event='baseline-overnight-run')
+    window_id = datetime.now(timezone.utc).strftime('%Y%m%dT%H%M%SZ')
+
+    checkpoints: List[Dict[str, Any]] = []
+
+    def _record_checkpoint(phase: str, packet: Dict[str, Any]) -> None:
+        checkpoints.append({
+            'phase': phase,
+            'timestamp_utc': _utc_now(),
+            'decision': str(packet.get('decision', 'no-go')).lower(),
+            'reason_codes': list(packet.get('reason_codes', [])) if isinstance(packet.get('reason_codes', []), list) else [],
+            'packet_path': str((packet.get('provenance', {}) or {}).get('artifact_path', '') or ''),
+            'sample_count': int(packet.get('sample_count', 0) or 0),
+            'action': str(packet.get('action', '') or ''),
+        })
+
+    rapid_start = _baseline_collect(
+        source=src,
+        mode=m,
+        profile='rapid',
+        duration_sec=float(rapid_phase),
+        interval_sec=float(rapid_interval),
+        segment_records=1000,
+        window_id='overnight_rapid_start_{0}'.format(window_id),
+        output='',
+    )
+    _record_checkpoint('rapid_start', rapid_start)
+
+    normal_run = _baseline_collect(
+        source=src,
+        mode=m,
+        profile='normal',
+        duration_sec=float(normal_window_sec),
+        interval_sec=float(normal_interval),
+        segment_records=1000,
+        window_id='overnight_normal_{0}'.format(window_id),
+        output='',
+    )
+    _record_checkpoint('normal_overnight', normal_run)
+
+    rapid_end = _baseline_collect(
+        source=src,
+        mode=m,
+        profile='rapid',
+        duration_sec=float(rapid_phase),
+        interval_sec=float(rapid_interval),
+        segment_records=1000,
+        window_id='overnight_rapid_end_{0}'.format(window_id),
+        output='',
+    )
+    _record_checkpoint('rapid_end', rapid_end)
+
+    analyze_packet = _baseline_analyze(
+        source=src,
+        mode=m,
+        hours=max(1.0, float(overnight_h) + 1.0),
+        profile='all',
+        min_normal_samples=int(min_normal_samples),
+        min_rapid_samples=int(min_rapid_samples),
+        output='',
+    )
+    _record_checkpoint('analysis', analyze_packet)
+
+    phase_failures = [cp for cp in checkpoints if str(cp.get('decision', 'no-go')) != 'go']
+    reason_codes: List[str] = []
+    for cp in phase_failures:
+        phase = str(cp.get('phase', 'unknown'))
+        cp_reasons = cp.get('reason_codes', []) if isinstance(cp.get('reason_codes', []), list) else []
+        if cp_reasons:
+            for code in cp_reasons:
+                reason_codes.append('{0}:{1}'.format(phase, code))
+        else:
+            reason_codes.append('{0}:critical_check_failed:phase_failed'.format(phase))
+
+    decision = 'go' if len(reason_codes) == 0 else 'no-go'
+    if len(reason_codes) == 0 and str(analyze_packet.get('decision', 'no-go')) != 'go':
+        decision = 'no-go'
+
+    executed_commands = [
+        'observerctl baseline collect --source {0} --mode {1} --profile rapid --duration-sec {2:.3f} --interval-sec {3:.3f} --window-id overnight_rapid_start_{4} --json'.format(src, m, rapid_phase, rapid_interval, window_id),
+        'observerctl baseline collect --source {0} --mode {1} --profile normal --duration-sec {2:.3f} --interval-sec {3:.3f} --window-id overnight_normal_{4} --json'.format(src, m, normal_window_sec, normal_interval, window_id),
+        'observerctl baseline collect --source {0} --mode {1} --profile rapid --duration-sec {2:.3f} --interval-sec {3:.3f} --window-id overnight_rapid_end_{4} --json'.format(src, m, rapid_phase, rapid_interval, window_id),
+        'observerctl baseline analyze --source {0} --mode {1} --hours {2:.3f} --min-normal-samples {3} --min-rapid-samples {4} --json'.format(src, m, max(1.0, float(overnight_h) + 1.0), int(min_normal_samples), int(min_rapid_samples)),
+    ]
+
+    packet = {
+        'timestamp_utc': _utc_now(),
+        'runtime_cli_surface': 'observerctl',
+        'decision': decision,
+        'action': 'baseline-overnight-run',
+        'source': src,
+        'mode': m,
+        'window_id': window_id,
+        'schedule_model': 'rapid_start_then_normal_overnight_then_rapid_end',
+        'sampling': {
+            'overnight_hours': float(overnight_h),
+            'rapid_phase_sec_each': float(rapid_phase),
+            'normal_phase_sec': float(normal_window_sec),
+            'normal_interval_sec': float(normal_interval),
+            'rapid_interval_sec': float(rapid_interval),
+        },
+        'minimum_requirements': {
+            'resource_normal': int(min_normal_samples),
+            'resource_rapid': int(min_rapid_samples),
+        },
+        'checkpoints': checkpoints,
+        'analysis_summary': {
+            'decision': analyze_packet.get('decision', 'no-go'),
+            'baseline_ready': bool(analyze_packet.get('baseline_ready', False)),
+            'sample_counts': analyze_packet.get('sample_counts', {}),
+            'resource_statistics': analyze_packet.get('resource_statistics', {}),
+        },
+        'execution_commands': executed_commands,
+        'reason_codes': reason_codes,
+        'provenance': {
+            'generated_at_utc': _utc_now(),
+            'producer_process': 'observerctl baseline overnight-run',
+            'artifact_path': '',
+            'artifact_sha256': '',
+            'upstream_inputs': {
+                'resource_index': str(_resource_index_path(src, m)).replace('\\', '/'),
+                'evidence_index': str(_evidence_index_path(src, m)).replace('\\', '/'),
+            },
+        },
+        'methodology': {
+            'sampling_strategy': 'execute rapid-start, normal-mid, rapid-end collection and then analyze baseline readiness',
+            'runtime_constraints': ['single-command orchestration', 'checkpointed phase evidence', 'fail-closed final decision'],
+            'calculus': ['analysis phase computes p50/p95/p99 and first-order rate-of-change'],
+        },
+        'process': {
+            'phase': 'baseline_orchestration',
+            'event': 'baseline_overnight_run',
+            'decision': decision,
+            'reason_codes': reason_codes,
+            'approver_checkpoint': 'required_for_live_transition',
+            'evidence_refs': [str(_resource_index_path(src, m)).replace('\\', '/'), str(_evidence_index_path(src, m)).replace('\\', '/')],
+        },
+    }
+    packet.update(linkage)
+
+    out_path = Path(str(output).strip()) if str(output).strip() else _resource_evidence_output_path(src, m, 'baseline_overnight_run')
+    packet = _write_packet(packet, out_path)
+    _append_jsonl(_evidence_index_path(src, m), {
+        'timestamp_utc': _utc_now(),
+        'packet_path': str(out_path).replace('\\', '/'),
+        'decision': packet.get('decision', 'no-go'),
+        'run_id': packet.get('run_id', ''),
+        'scope': {'source': src, 'mode': m},
+        'event': 'baseline_overnight_run',
+    })
+    return packet
 
 
 def _store_dir_for_mode(mode: str) -> Path:
@@ -2003,6 +2773,51 @@ def _dispatch(args: argparse.Namespace) -> Dict[str, Any]:
             return _baseline_list()
         if args.base_cmd == 'set':
             return _baseline_set(args.id)
+        if args.base_cmd == 'collect':
+            return _baseline_collect(
+                source=args.source,
+                mode=args.mode,
+                profile=args.profile,
+                duration_sec=args.duration_sec,
+                interval_sec=args.interval_sec,
+                segment_records=args.segment_records,
+                window_id=args.window_id,
+                output=args.output,
+            )
+        if args.base_cmd == 'analyze':
+            return _baseline_analyze(
+                source=args.source,
+                mode=args.mode,
+                hours=args.hours,
+                profile=args.profile,
+                min_normal_samples=args.min_normal_samples,
+                min_rapid_samples=args.min_rapid_samples,
+                output=args.output,
+            )
+        if args.base_cmd == 'overnight-plan':
+            return _baseline_overnight_plan(
+                source=args.source,
+                mode=args.mode,
+                overnight_hours=args.overnight_hours,
+                normal_interval_sec=args.normal_interval_sec,
+                rapid_interval_sec=args.rapid_interval_sec,
+                rapid_phase_sec=args.rapid_phase_sec,
+                min_normal_samples=args.min_normal_samples,
+                min_rapid_samples=args.min_rapid_samples,
+                output=args.output,
+            )
+        if args.base_cmd == 'overnight-run':
+            return _baseline_overnight_run(
+                source=args.source,
+                mode=args.mode,
+                overnight_hours=args.overnight_hours,
+                normal_interval_sec=args.normal_interval_sec,
+                rapid_interval_sec=args.rapid_interval_sec,
+                rapid_phase_sec=args.rapid_phase_sec,
+                min_normal_samples=args.min_normal_samples,
+                min_rapid_samples=args.min_rapid_samples,
+                output=args.output,
+            )
 
     if cmd == 'librarian':
         if args.lib_cmd == 'stats':
@@ -2101,6 +2916,46 @@ def _build_parser() -> argparse.ArgumentParser:
     baseline_sub.add_parser('list')
     baseline_set = baseline_sub.add_parser('set')
     baseline_set.add_argument('--id', required=True)
+    baseline_collect = baseline_sub.add_parser('collect')
+    baseline_collect.add_argument('--source', choices=['sim', 'real'], default=os.getenv('CALAMUM_MOLTBOOK_SOURCE', 'sim'))
+    baseline_collect.add_argument('--mode', choices=list(MODES), default=os.getenv('CALAMUM_OPS_MODE', 'canary'))
+    baseline_collect.add_argument('--profile', choices=list(RESOURCE_PROFILES), default='normal')
+    baseline_collect.add_argument('--duration-sec', type=float, default=0.0, help='Collection duration in seconds (0 captures one sample)')
+    baseline_collect.add_argument('--interval-sec', type=float, default=0.0, help='Sampling interval seconds (default by profile)')
+    baseline_collect.add_argument('--segment-records', type=int, default=1000, help='Max records per raw segment before rolling to a new segment file')
+    baseline_collect.add_argument('--window-id', default='', help='Optional baseline window id for sample grouping')
+    baseline_collect.add_argument('--output', default='', help='Optional path for publish-grade collection packet')
+
+    baseline_analyze = baseline_sub.add_parser('analyze')
+    baseline_analyze.add_argument('--source', choices=['sim', 'real'], default=os.getenv('CALAMUM_MOLTBOOK_SOURCE', 'sim'))
+    baseline_analyze.add_argument('--mode', choices=list(MODES), default=os.getenv('CALAMUM_OPS_MODE', 'canary'))
+    baseline_analyze.add_argument('--hours', type=float, default=24.0, help='Lookback window in hours for baseline analysis')
+    baseline_analyze.add_argument('--profile', choices=['all'] + list(RESOURCE_PROFILES), default='all')
+    baseline_analyze.add_argument('--min-normal-samples', type=int, default=120, help='Minimum normal stream samples required for readiness')
+    baseline_analyze.add_argument('--min-rapid-samples', type=int, default=300, help='Minimum rapid baseline samples required for readiness')
+    baseline_analyze.add_argument('--output', default='', help='Optional path for publish-grade analysis packet')
+
+    baseline_plan = baseline_sub.add_parser('overnight-plan')
+    baseline_plan.add_argument('--source', choices=['sim', 'real'], default=os.getenv('CALAMUM_MOLTBOOK_SOURCE', 'sim'))
+    baseline_plan.add_argument('--mode', choices=list(MODES), default=os.getenv('CALAMUM_OPS_MODE', 'canary'))
+    baseline_plan.add_argument('--overnight-hours', type=float, default=8.0, help='Total schedule window in hours')
+    baseline_plan.add_argument('--normal-interval-sec', type=float, default=30.0, help='Normal sampling interval in seconds')
+    baseline_plan.add_argument('--rapid-interval-sec', type=float, default=2.0, help='Rapid sampling interval in seconds')
+    baseline_plan.add_argument('--rapid-phase-sec', type=float, default=1800.0, help='Duration of each rapid phase (start/end) in seconds')
+    baseline_plan.add_argument('--min-normal-samples', type=int, default=120, help='Minimum normal samples required by readiness gate')
+    baseline_plan.add_argument('--min-rapid-samples', type=int, default=300, help='Minimum rapid samples required by readiness gate')
+    baseline_plan.add_argument('--output', default='', help='Optional path for publish-grade schedule packet')
+
+    baseline_run = baseline_sub.add_parser('overnight-run')
+    baseline_run.add_argument('--source', choices=['sim', 'real'], default=os.getenv('CALAMUM_MOLTBOOK_SOURCE', 'sim'))
+    baseline_run.add_argument('--mode', choices=list(MODES), default=os.getenv('CALAMUM_OPS_MODE', 'canary'))
+    baseline_run.add_argument('--overnight-hours', type=float, default=8.0, help='Total schedule window in hours')
+    baseline_run.add_argument('--normal-interval-sec', type=float, default=30.0, help='Normal sampling interval in seconds')
+    baseline_run.add_argument('--rapid-interval-sec', type=float, default=2.0, help='Rapid sampling interval in seconds')
+    baseline_run.add_argument('--rapid-phase-sec', type=float, default=1800.0, help='Duration of each rapid phase (start/end) in seconds')
+    baseline_run.add_argument('--min-normal-samples', type=int, default=120, help='Minimum normal samples required by readiness gate')
+    baseline_run.add_argument('--min-rapid-samples', type=int, default=300, help='Minimum rapid samples required by readiness gate')
+    baseline_run.add_argument('--output', default='', help='Optional path for publish-grade orchestration packet')
 
     librarian = sub.add_parser('librarian', help='Mode-store operations')
     librarian_sub = librarian.add_subparsers(dest='lib_cmd', required=True)

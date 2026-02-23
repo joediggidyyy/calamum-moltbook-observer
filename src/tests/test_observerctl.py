@@ -274,6 +274,259 @@ def test_baseline_librarian_watchdog_health_policy_commands(tmp_path: Path, monk
     assert main(['policy', 'validate', '--json']) in (0, 2)
 
 
+def test_baseline_collect_writes_publish_grade_packet_and_resource_state(tmp_path: Path, monkeypatch) -> None:
+    log_dir = tmp_path / 'logs'
+    for d in [log_dir / 'health', log_dir / 'data' / 'calamum', log_dir / 'control' / 'calamum']:
+        d.mkdir(parents=True, exist_ok=True)
+
+    monkeypatch.setenv('CALAMUM_LOG_DIR', str(log_dir))
+
+    out = tmp_path / 'baseline_collect_packet.json'
+    rc = main([
+        'baseline', 'collect',
+        '--source', 'sim',
+        '--mode', 'canary',
+        '--profile', 'normal',
+        '--duration-sec', '0.02',
+        '--interval-sec', '0.01',
+        '--window-id', 'unit-window-001',
+        '--output', str(out),
+        '--json',
+    ])
+    assert rc == 0
+    assert out.exists()
+
+    packet = json.loads(out.read_text(encoding='utf-8'))
+    assert packet.get('decision') == 'go'
+    assert packet.get('action') == 'baseline-collect'
+    assert packet.get('profile') == 'normal'
+    assert int(packet.get('sample_count', 0)) >= 2
+    assert packet.get('provenance', {}).get('artifact_sha256')
+
+    resource_state = log_dir / 'control' / 'calamum' / 'watchdog_resource_state.json'
+    assert resource_state.exists()
+    resource_doc = json.loads(resource_state.read_text(encoding='utf-8'))
+    assert float(resource_doc.get('sample_count', 0)) >= 2
+    assert resource_doc.get('stream_type') == 'resource_normal'
+
+
+def test_baseline_analyze_returns_go_when_minimums_met(tmp_path: Path, monkeypatch) -> None:
+    log_dir = tmp_path / 'logs'
+    for d in [log_dir / 'health', log_dir / 'data' / 'calamum', log_dir / 'control' / 'calamum']:
+        d.mkdir(parents=True, exist_ok=True)
+
+    monkeypatch.setenv('CALAMUM_LOG_DIR', str(log_dir))
+
+    # Build one normal stream sample set and one rapid stream sample set.
+    assert main([
+        'baseline', 'collect',
+        '--source', 'sim', '--mode', 'canary', '--profile', 'normal',
+        '--duration-sec', '0.02', '--interval-sec', '0.01', '--window-id', 'unit-window-normal', '--json',
+    ]) == 0
+    assert main([
+        'baseline', 'collect',
+        '--source', 'sim', '--mode', 'canary', '--profile', 'rapid',
+        '--duration-sec', '0.02', '--interval-sec', '0.01', '--window-id', 'unit-window-rapid', '--json',
+    ]) == 0
+
+    out = tmp_path / 'baseline_analysis_packet.json'
+    rc = main([
+        'baseline', 'analyze',
+        '--source', 'sim',
+        '--mode', 'canary',
+        '--hours', '24',
+        '--min-normal-samples', '1',
+        '--min-rapid-samples', '1',
+        '--output', str(out),
+        '--json',
+    ])
+    assert rc == 0
+    assert out.exists()
+
+    packet = json.loads(out.read_text(encoding='utf-8'))
+    assert packet.get('action') == 'baseline-analyze'
+    assert packet.get('baseline_ready') is True
+    assert packet.get('decision') == 'go'
+    stats = packet.get('resource_statistics', {})
+    assert 'cpu_p95' in stats
+    assert 'cpu_rate_p95_per_s' in stats
+    assert packet.get('provenance', {}).get('artifact_sha256')
+
+
+def test_baseline_analyze_no_go_when_window_incomplete(tmp_path: Path, monkeypatch) -> None:
+    log_dir = tmp_path / 'logs'
+    for d in [log_dir / 'health', log_dir / 'data' / 'calamum', log_dir / 'control' / 'calamum']:
+        d.mkdir(parents=True, exist_ok=True)
+
+    monkeypatch.setenv('CALAMUM_LOG_DIR', str(log_dir))
+
+    # Create only normal samples; require both normal+rapid to force a fail-closed no-go.
+    assert main([
+        'baseline', 'collect',
+        '--source', 'sim', '--mode', 'canary', '--profile', 'normal',
+        '--duration-sec', '0.02', '--interval-sec', '0.01', '--window-id', 'unit-window-only-normal', '--json',
+    ]) == 0
+
+    out = tmp_path / 'baseline_analysis_incomplete.json'
+    rc = main([
+        'baseline', 'analyze',
+        '--source', 'sim',
+        '--mode', 'canary',
+        '--hours', '24',
+        '--min-normal-samples', '1',
+        '--min-rapid-samples', '1',
+        '--output', str(out),
+        '--json',
+    ])
+    assert rc == 2
+    assert out.exists()
+    packet = json.loads(out.read_text(encoding='utf-8'))
+    assert packet.get('decision') == 'no-go'
+    assert 'critical_check_failed:resource_baseline_window_incomplete' in packet.get('reason_codes', [])
+
+
+def test_baseline_overnight_plan_emits_publish_grade_schedule_packet(tmp_path: Path, monkeypatch) -> None:
+    log_dir = tmp_path / 'logs'
+    for d in [log_dir / 'health', log_dir / 'data' / 'calamum', log_dir / 'control' / 'calamum']:
+        d.mkdir(parents=True, exist_ok=True)
+
+    monkeypatch.setenv('CALAMUM_LOG_DIR', str(log_dir))
+
+    out = tmp_path / 'overnight_plan_packet.json'
+    rc = main([
+        'baseline', 'overnight-plan',
+        '--source', 'real',
+        '--mode', 'canary',
+        '--overnight-hours', '8',
+        '--normal-interval-sec', '30',
+        '--rapid-interval-sec', '2',
+        '--rapid-phase-sec', '1800',
+        '--output', str(out),
+        '--json',
+    ])
+    assert rc == 0
+    assert out.exists()
+
+    packet = json.loads(out.read_text(encoding='utf-8'))
+    assert packet.get('decision') == 'go'
+    assert packet.get('action') == 'baseline-overnight-plan'
+    assert packet.get('schedule_model') == 'rapid_start_then_normal_overnight_then_rapid_end'
+    assert packet.get('provenance', {}).get('artifact_sha256')
+    cmds = packet.get('execution_commands', [])
+    assert isinstance(cmds, list)
+    assert len(cmds) == 4
+    assert 'baseline collect' in cmds[0]
+    assert 'profile rapid' in cmds[0]
+    assert 'profile normal' in cmds[1]
+    assert 'baseline analyze' in cmds[3]
+
+
+def test_baseline_overnight_plan_flags_projection_when_thresholds_too_high(tmp_path: Path, monkeypatch) -> None:
+    log_dir = tmp_path / 'logs'
+    for d in [log_dir / 'health', log_dir / 'data' / 'calamum', log_dir / 'control' / 'calamum']:
+        d.mkdir(parents=True, exist_ok=True)
+
+    monkeypatch.setenv('CALAMUM_LOG_DIR', str(log_dir))
+
+    rc = main([
+        'baseline', 'overnight-plan',
+        '--source', 'sim',
+        '--mode', 'canary',
+        '--overnight-hours', '1',
+        '--normal-interval-sec', '60',
+        '--rapid-interval-sec', '10',
+        '--rapid-phase-sec', '300',
+        '--min-normal-samples', '1000',
+        '--min-rapid-samples', '1000',
+        '--json',
+    ])
+    assert rc == 0
+
+    evidence_index = log_dir / 'data' / 'calamum' / 'observer_derived' / 'sim' / 'canary' / 'evidence' / 'index.jsonl'
+    assert evidence_index.exists()
+    lines = [ln for ln in evidence_index.read_text(encoding='utf-8').splitlines() if ln.strip()]
+    assert len(lines) >= 1
+    latest = json.loads(lines[-1])
+    plan_packet_path = Path(str(latest.get('packet_path', '')).replace('/', os.sep))
+    assert plan_packet_path.exists()
+    plan_packet = json.loads(plan_packet_path.read_text(encoding='utf-8'))
+
+    projection = plan_packet.get('readiness_projection', {})
+    assert projection.get('normal_requirement_met_by_plan') is False
+    assert projection.get('rapid_requirement_met_by_plan') is False
+
+
+def test_baseline_overnight_run_executes_all_phases_and_returns_go(tmp_path: Path, monkeypatch) -> None:
+    log_dir = tmp_path / 'logs'
+    for d in [log_dir / 'health', log_dir / 'data' / 'calamum', log_dir / 'control' / 'calamum']:
+        d.mkdir(parents=True, exist_ok=True)
+
+    monkeypatch.setenv('CALAMUM_LOG_DIR', str(log_dir))
+
+    out = tmp_path / 'overnight_run_packet.json'
+    rc = main([
+        'baseline', 'overnight-run',
+        '--source', 'sim',
+        '--mode', 'canary',
+        '--overnight-hours', '0.0006',
+        '--normal-interval-sec', '0.05',
+        '--rapid-interval-sec', '0.05',
+        '--rapid-phase-sec', '0.5',
+        '--min-normal-samples', '1',
+        '--min-rapid-samples', '1',
+        '--output', str(out),
+        '--json',
+    ])
+    assert rc == 0
+    assert out.exists()
+
+    packet = json.loads(out.read_text(encoding='utf-8'))
+    assert packet.get('decision') == 'go'
+    assert packet.get('action') == 'baseline-overnight-run'
+    checkpoints = packet.get('checkpoints', [])
+    assert isinstance(checkpoints, list)
+    assert len(checkpoints) == 4
+    phases = [cp.get('phase') for cp in checkpoints]
+    assert phases == ['rapid_start', 'normal_overnight', 'rapid_end', 'analysis']
+    assert all(str(cp.get('decision', 'no-go')) == 'go' for cp in checkpoints)
+    assert packet.get('provenance', {}).get('artifact_sha256')
+
+
+def test_baseline_overnight_run_fails_closed_when_analysis_not_ready(tmp_path: Path, monkeypatch) -> None:
+    log_dir = tmp_path / 'logs'
+    for d in [log_dir / 'health', log_dir / 'data' / 'calamum', log_dir / 'control' / 'calamum']:
+        d.mkdir(parents=True, exist_ok=True)
+
+    monkeypatch.setenv('CALAMUM_LOG_DIR', str(log_dir))
+
+    rc = main([
+        'baseline', 'overnight-run',
+        '--source', 'sim',
+        '--mode', 'canary',
+        '--overnight-hours', '0.0006',
+        '--normal-interval-sec', '0.05',
+        '--rapid-interval-sec', '0.05',
+        '--rapid-phase-sec', '0.5',
+        '--min-normal-samples', '1000',
+        '--min-rapid-samples', '1000',
+        '--json',
+    ])
+    assert rc == 2
+
+    evidence_index = log_dir / 'data' / 'calamum' / 'observer_derived' / 'sim' / 'canary' / 'evidence' / 'index.jsonl'
+    assert evidence_index.exists()
+    lines = [ln for ln in evidence_index.read_text(encoding='utf-8').splitlines() if ln.strip()]
+    run_entries = [json.loads(ln) for ln in lines if 'baseline_overnight_run' in ln]
+    assert len(run_entries) >= 1
+    latest = run_entries[-1]
+    packet_path = Path(str(latest.get('packet_path', '')).replace('/', os.sep))
+    assert packet_path.exists()
+    packet = json.loads(packet_path.read_text(encoding='utf-8'))
+    assert packet.get('decision') == 'no-go'
+    reasons = packet.get('reason_codes', [])
+    assert any('resource_baseline_window_incomplete' in str(r) for r in reasons)
+
+
 def test_librarian_rotate_compact_verify_operational(tmp_path: Path, monkeypatch) -> None:
     log_dir = tmp_path / 'logs'
     data = log_dir / 'data' / 'calamum'
