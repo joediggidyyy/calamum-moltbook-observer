@@ -10,7 +10,7 @@
 > 
 > **Status**: ACTIVE POLICY (names-only)
 > 
-> **Last updated (UTC)**: 2026-02-22
+> **Last updated (UTC)**: 2026-02-23
 
 ---
 
@@ -247,6 +247,12 @@ Trigger posture by mode:
 - `canary` -> `isolation`
 - `live` -> `lockdown`
 - `honeypot` -> `lockdown`
+
+Paperwork clarification (no new posture definitions):
+
+- Key-movement operations are treated as **elevated lockdown** and inherit the same control/severity contract as `live/honeypot` collection posture.
+- Scope anchor: KEYMASTER retrieval/live-readiness lane.
+- Posture model remains unchanged (`isolation|lockdown` only).
 
 Isolation (`watch/canary`) minimum reaction:
 

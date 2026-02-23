@@ -1,13 +1,13 @@
 {
   "meta": {
     "type": "operations_policy",
-    "version": "1.0.6",
+    "version": "1.0.7",
     "id": "CALAMUM_CODESENTINEL_JOB_EXECUTION_EXPECTATIONS_20260212",
     "scope": "projects/calamum-moltbook-observer",
     "owner": "ORACL-Prime",
     "primary_stakeholder_approver": "joediggidyyy",
     "status": "ACTIVE",
-    "last_updated_utc": "2026-02-21"
+    "last_updated_utc": "2026-02-23"
   },
   "purpose": "Define observer-scoped job execution expectations when CodeSentinel is the job orchestrator (names-only, fail-closed), with strict scope separation from non-observer Calamum systems.",
   "ssot": {
@@ -163,6 +163,15 @@
       "canary": "isolation",
       "live": "lockdown",
       "honeypot": "lockdown"
+    },
+    "key_movement_contract": {
+      "policy": "paperwork_clarification_only",
+      "rule": "Key-movement operations are elevated lockdown and inherit the same control/severity contract as live and honeypot collection postures.",
+      "no_new_posture_definitions": true,
+      "posture_trigger": "lockdown",
+      "role_scope": [
+        "KEYMASTER"
+      ]
     },
     "isolation_profile": {
       "required_reactions": [

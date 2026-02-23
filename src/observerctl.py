@@ -194,6 +194,52 @@ def _check_heartbeat(path: Path, max_age_sec: float) -> Dict[str, Any]:
     }
 
 
+def _infer_collection_state(observer_runtime: Dict[str, Any], metrics_path: Path) -> Dict[str, Any]:
+    runtime_state = str(observer_runtime.get('state', 'stopped')).strip().lower()
+    pid_alive = bool(((observer_runtime.get('pid', {}) or {}).get('alive')))
+    hb_status = str((observer_runtime.get('heartbeat', {}) or {}).get('status', 'err')).strip().lower()
+    metrics_exists = bool(metrics_path.exists())
+    metrics_age_s = _file_age_seconds(metrics_path) if metrics_exists else None
+
+    interval_s = _to_float_or_none(os.getenv('CALAMUM_AGENT_INTERVAL_SEC'))
+    if interval_s is None or interval_s <= 0:
+        interval_s = 2.0
+    collecting_fresh_max_age_s = max(20.0, float(interval_s) * 20.0)
+
+    state = 'error'
+    if runtime_state == 'stopped' and (not pid_alive):
+        state = 'stopped'
+    elif metrics_exists and metrics_age_s is not None and float(metrics_age_s) <= float(collecting_fresh_max_age_s):
+        state = 'collecting'
+    elif runtime_state in ('active', 'degraded') and pid_alive:
+        # Service is alive, but collection stream freshness may legitimately be idle/warmup.
+        state = 'idle' if hb_status in ('ok', 'warn', 'err') else 'warmup'
+    elif runtime_state in ('active', 'degraded'):
+        state = 'warmup'
+    elif runtime_state == 'stopped':
+        state = 'stopped'
+
+    status = 'ok'
+    if state == 'error':
+        status = 'err'
+    elif state == 'collecting' and runtime_state == 'stopped':
+        status = 'err'
+    elif state not in ('idle', 'warmup', 'collecting', 'stopped', 'error'):
+        status = 'err'
+
+    return {
+        'state': state,
+        'status': status,
+        'runtime_state': runtime_state,
+        'observer_pid_alive': bool(pid_alive),
+        'observer_heartbeat_status': hb_status,
+        'metrics_path': str(metrics_path),
+        'metrics_exists': bool(metrics_exists),
+        'metrics_age_seconds': None if metrics_age_s is None else round(float(metrics_age_s), 3),
+        'collecting_fresh_max_age_seconds': float(collecting_fresh_max_age_s),
+    }
+
+
 def _to_float_or_none(value: Any) -> Optional[float]:
     try:
         return float(value)
@@ -240,6 +286,10 @@ def _load_run_context() -> Dict[str, Any]:
 
 def _agent_pid_path() -> Path:
     return _project_root() / AGENT_PID_FILE
+
+
+def _librarian_pid_path() -> Path:
+    return _project_root() / 'calamum_librarian.pid'
 
 
 def _read_pid(path: Path) -> Optional[int]:
@@ -350,6 +400,181 @@ def _runtime_observer_status(max_age_sec: float = 60.0) -> Dict[str, Any]:
             'alive': pid_alive,
         },
         'pending_stop_signal': bool(signal_pending),
+    }
+
+
+def _runtime_librarian_status(max_age_sec: float = 120.0) -> Dict[str, Any]:
+    hb = _check_heartbeat(get_calamum_health_dir() / 'calamum_librarian.heartbeat', max_age_sec=max_age_sec)
+    pid_path = _librarian_pid_path()
+    pid = _read_pid(pid_path)
+    pid_alive = _pid_alive(pid)
+
+    if hb.get('status') == 'ok' and pid_alive:
+        state = 'active'
+    elif hb.get('status') == 'ok' or pid_alive:
+        state = 'degraded'
+    else:
+        state = 'stopped'
+
+    return {
+        'timestamp_utc': _utc_now(),
+        'runtime_cli_surface': 'observerctl',
+        'runtime_label': 'librarian',
+        'state': state,
+        'heartbeat': hb,
+        'pid': {
+            'path': str(pid_path).replace('\\', '/'),
+            'value': pid,
+            'alive': pid_alive,
+        },
+    }
+
+
+def _librarian_status() -> Dict[str, Any]:
+    status = _runtime_librarian_status()
+    return {
+        'timestamp_utc': _utc_now(),
+        'runtime_cli_surface': 'observerctl',
+        'action': 'librarian-status',
+        'decision': 'go' if str(status.get('state', 'stopped')) in ('active', 'degraded') else 'no-go',
+        'state': status.get('state', 'stopped'),
+        'heartbeat': status.get('heartbeat', {}),
+        'pid': status.get('pid', {}),
+        'reason_codes': [] if str(status.get('state', 'stopped')) in ('active', 'degraded') else ['critical_check_failed:librarian_not_running'],
+    }
+
+
+def _librarian_check(mode: str) -> Dict[str, Any]:
+    status = _runtime_librarian_status()
+    store_packet = _store_integrity_packet(mode if mode in MODES else 'watch')
+    reasons: List[str] = []
+    if str(status.get('state', 'stopped')) != 'active':
+        reasons.append('critical_check_failed:librarian_runtime_inactive')
+    if str(store_packet.get('status', 'err')) != 'ok':
+        reasons.append('critical_check_failed:store_integrity_invalid')
+    return {
+        'timestamp_utc': _utc_now(),
+        'runtime_cli_surface': 'observerctl',
+        'action': 'librarian-check',
+        'mode': mode if mode in MODES else 'watch',
+        'decision': 'go' if len(reasons) == 0 else 'no-go',
+        'reason_codes': reasons,
+        'runtime_state': status,
+        'store_integrity': store_packet,
+    }
+
+
+def _librarian_restart(timeout_sec: float = 8.0, startup_probe_sec: float = 6.0) -> Dict[str, Any]:
+    pid_path = _librarian_pid_path()
+    old_pid = _read_pid(pid_path)
+    stopped_cleanly = True
+    if old_pid and _pid_alive(old_pid):
+        stopped_cleanly = _terminate_pid_best_effort(old_pid, graceful_timeout_sec=max(0.0, float(timeout_sec)))
+
+    if not stopped_cleanly:
+        return {
+            'timestamp_utc': _utc_now(),
+            'runtime_cli_surface': 'observerctl',
+            'action': 'librarian-restart',
+            'decision': 'no-go',
+            'reason_codes': ['critical_check_failed:librarian_stop_timeout'],
+            'old_pid': old_pid,
+        }
+
+    try:
+        if pid_path.exists() and not _pid_alive(old_pid):
+            pid_path.unlink()
+    except Exception:
+        pass
+
+    script_path = _project_root() / 'src' / 'calamum_librarian.py'
+    if not script_path.exists():
+        return {
+            'timestamp_utc': _utc_now(),
+            'runtime_cli_surface': 'observerctl',
+            'action': 'librarian-restart',
+            'decision': 'no-go',
+            'reason_codes': ['critical_check_failed:librarian_script_missing'],
+            'script_path': str(script_path).replace('\\', '/'),
+        }
+
+    env = os.environ.copy()
+    env['CALAMUM_REPO_ROOT'] = str(_project_root())
+    env['CALAMUM_LOG_DIR'] = str(_project_root() / 'logs')
+
+    creationflags = 0
+    if os.name == 'nt':
+        creationflags = int(getattr(subprocess, 'CREATE_NEW_PROCESS_GROUP', 0)) | int(getattr(subprocess, 'CREATE_NO_WINDOW', 0))
+
+    stdout_path = _project_root() / 'logs' / 'calamum_librarian.stdout.log'
+    stderr_path = _project_root() / 'logs' / 'calamum_librarian.stderr.log'
+    stdout_path.parent.mkdir(parents=True, exist_ok=True)
+
+    out_f = None
+    err_f = None
+    try:
+        out_f = stdout_path.open('a', encoding='utf-8')
+        err_f = stderr_path.open('a', encoding='utf-8')
+        proc = subprocess.Popen(
+            [sys.executable, '-u', str(script_path)],
+            env=env,
+            cwd=str(_project_root()),
+            stdin=subprocess.DEVNULL,
+            stdout=out_f,
+            stderr=err_f,
+            creationflags=creationflags,
+        )
+    except Exception:
+        try:
+            if out_f is not None:
+                out_f.close()
+            if err_f is not None:
+                err_f.close()
+        except Exception:
+            pass
+        return {
+            'timestamp_utc': _utc_now(),
+            'runtime_cli_surface': 'observerctl',
+            'action': 'librarian-restart',
+            'decision': 'no-go',
+            'reason_codes': ['critical_check_failed:librarian_start_failed'],
+        }
+
+    try:
+        if out_f is not None:
+            out_f.close()
+        if err_f is not None:
+            err_f.close()
+    except Exception:
+        pass
+
+    new_pid = int(getattr(proc, 'pid', 0) or 0)
+    if new_pid > 0:
+        try:
+            pid_path.write_text(str(new_pid), encoding='utf-8')
+        except Exception:
+            pass
+
+    deadline = time.time() + max(0.0, float(startup_probe_sec))
+    final_status = _runtime_librarian_status()
+    while time.time() <= deadline:
+        final_status = _runtime_librarian_status()
+        if str(final_status.get('state', 'stopped')) == 'active':
+            break
+        time.sleep(0.25)
+
+    decision = 'go' if str(final_status.get('state', 'stopped')) in ('active', 'degraded') else 'no-go'
+    reasons = [] if decision == 'go' else ['critical_check_failed:librarian_startup_unverified']
+    return {
+        'timestamp_utc': _utc_now(),
+        'runtime_cli_surface': 'observerctl',
+        'action': 'librarian-restart',
+        'decision': decision,
+        'reason_codes': reasons,
+        'old_pid': old_pid,
+        'new_pid': int((final_status.get('pid', {}) or {}).get('value') or new_pid),
+        'state': final_status.get('state', 'stopped'),
+        'heartbeat': final_status.get('heartbeat', {}),
     }
 
 
@@ -640,6 +865,8 @@ def collect_runtime_status(source: str = 'sim') -> Dict[str, Any]:
     check_librarian = _check_heartbeat(hb_librarian, max_age_sec=120.0)
     observer_runtime = _runtime_observer_status()
     observer_runtime_state = str(observer_runtime.get('state', 'stopped'))
+    current_metrics = _observer_metrics_path(source_norm, mode)
+    collection_state = _infer_collection_state(observer_runtime, current_metrics)
 
     signing_ok = _read_env_presence('CALAMUM_DATA_SIGNING_KEY') or _read_env_presence('CALAMUM_ALLOW_DEV_SIGNING_KEY')
     checks: Dict[str, Dict[str, Any]] = {
@@ -665,6 +892,7 @@ def collect_runtime_status(source: str = 'sim') -> Dict[str, Any]:
             'state': observer_runtime_state,
             'status': 'ok' if observer_runtime_state in ('active', 'degraded') else 'err',
         },
+        'runtime.collection_state': collection_state,
         'env.signing_key': {
             'names': ['CALAMUM_DATA_SIGNING_KEY', 'CALAMUM_ALLOW_DEV_SIGNING_KEY'],
             'present': bool(signing_ok),
@@ -680,7 +908,6 @@ def collect_runtime_status(source: str = 'sim') -> Dict[str, Any]:
             'status': 'ok' if live_key_ok else 'err',
         }
 
-    current_metrics = _observer_metrics_path(source_norm, mode)
     checks['data.observer_metrics_current'] = {
         'path': str(current_metrics),
         'exists': current_metrics.exists(),
@@ -793,6 +1020,14 @@ def evaluate_gate_decision(status_packet: Dict[str, Any], target_mode: Optional[
         if state != 'ok':
             reasons.append('critical_check_failed:{0}'.format(key))
 
+    collection_row = checks.get('runtime.collection_state', {}) if isinstance(checks, dict) else {}
+    collection_status = str(collection_row.get('status', 'err')).lower()
+    collection_state = str(collection_row.get('state', 'error')).lower()
+    if collection_status == 'err':
+        reasons.append('critical_check_failed:collection_state_incoherent')
+    elif collection_state not in ('idle', 'warmup', 'collecting', 'stopped', 'error'):
+        advisories.append('major_check_failed:collection_state_semantics_invalid')
+
     linkage = _make_run_linkage(to_mode, event='gate')
     posture_required = _posture_for_mode(to_mode)
     runtime_posture = str((checks.get('watchdog.trigger_posture') or {}).get('posture_trigger', '')).strip().lower()
@@ -865,6 +1100,7 @@ def evaluate_gate_decision(status_packet: Dict[str, Any], target_mode: Optional[
         'decision': decision,
         'reason_codes': deduped,
         'critical_checks': critical_keys,
+        'major_checks': ['runtime.collection_state'],
         'from_state': '{0}:{1}'.format(from_source, mode),
         'to_state': '{0}:{1}'.format(source, to_mode),
         'profile': profile,
@@ -2813,27 +3049,49 @@ def _watchdog_status() -> Dict[str, Any]:
     hb_watchdog = _check_heartbeat(get_calamum_health_dir() / 'calamum_ops_watchdog.heartbeat', max_age_sec=45.0)
     hb_observer = _check_heartbeat(get_calamum_health_dir() / 'calamum_observer.heartbeat', max_age_sec=60.0)
     state = _load_state()
+    source = _normalize_source(str(state.get('source', 'sim')))
+    mode = str(state.get('mode', 'watch')).strip().lower()
+    if mode not in MODES:
+        mode = 'watch'
+    observer_runtime = _runtime_observer_status()
+    observer_runtime_state = str(observer_runtime.get('state', 'stopped')).strip().lower()
+    observer_service = {
+        'state': observer_runtime_state,
+        'status': 'ok' if observer_runtime_state in ('active', 'degraded') else 'err',
+    }
+    collection_state = _infer_collection_state(observer_runtime, _observer_metrics_path(source, mode))
     return {
         'timestamp_utc': _utc_now(),
         'runtime_cli_surface': 'observerctl',
         'mode': state.get('mode'),
         'posture_trigger': _posture_for_mode(str(state.get('mode', 'watch'))),
-        'checks': {'watchdog': hb_watchdog, 'observer': hb_observer},
+        'checks': {
+            'watchdog': hb_watchdog,
+            'observer': hb_observer,
+            'observer_service': observer_service,
+            'collection_state': collection_state,
+        },
     }
 
 
 def _watchdog_check() -> Dict[str, Any]:
     status = _watchdog_status()
     reasons = []
+    advisories = []
     if str((status.get('checks', {}).get('watchdog') or {}).get('status', 'err')) != 'ok':
         reasons.append('critical_check_failed:watchdog_heartbeat_stale')
-    if str((status.get('checks', {}).get('observer') or {}).get('status', 'err')) != 'ok':
+    observer_hb_status = str((status.get('checks', {}).get('observer') or {}).get('status', 'err')).lower()
+    observer_service_status = str((status.get('checks', {}).get('observer_service') or {}).get('status', 'err')).lower()
+    if observer_hb_status != 'ok' and observer_service_status != 'ok':
         reasons.append('critical_check_failed:observer_heartbeat_stale')
+    elif observer_hb_status != 'ok' and observer_service_status == 'ok':
+        advisories.append('major_check_failed:observer_heartbeat_stale_service_alive')
     return {
         'timestamp_utc': _utc_now(),
         'runtime_cli_surface': 'observerctl',
         'decision': 'go' if not reasons else 'no-go',
         'reason_codes': reasons,
+        'advisory_reason_codes': advisories,
     }
 
 
@@ -3023,6 +3281,12 @@ def _dispatch(args: argparse.Namespace) -> Dict[str, Any]:
             )
 
     if cmd == 'librarian':
+        if args.lib_cmd == 'status':
+            return _librarian_status()
+        if args.lib_cmd == 'check':
+            return _librarian_check(args.mode)
+        if args.lib_cmd == 'restart':
+            return _librarian_restart(args.timeout_sec, args.startup_probe_sec)
         if args.lib_cmd == 'stats':
             return _librarian_stats()
         if args.lib_cmd == 'stores':
@@ -3167,6 +3431,12 @@ def _build_parser() -> argparse.ArgumentParser:
 
     librarian = sub.add_parser('librarian', help='Mode-store operations')
     librarian_sub = librarian.add_subparsers(dest='lib_cmd', required=True)
+    librarian_sub.add_parser('status')
+    lib_check = librarian_sub.add_parser('check')
+    lib_check.add_argument('--mode', choices=list(MODES), default=os.getenv('CALAMUM_OPS_MODE', 'watch'))
+    lib_restart = librarian_sub.add_parser('restart')
+    lib_restart.add_argument('--timeout-sec', type=float, default=8.0, help='Seconds to wait for librarian stop before escalation')
+    lib_restart.add_argument('--startup-probe-sec', type=float, default=6.0, help='Seconds to probe for librarian heartbeat after restart')
     librarian_sub.add_parser('stats')
     librarian_sub.add_parser('stores')
     lib_rot = librarian_sub.add_parser('rotate')

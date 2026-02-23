@@ -60,13 +60,14 @@ import sys
 import atexit
 import signal
 import traceback
+import subprocess
 from pathlib import Path
 from typing import Dict, Optional, List, Tuple
 import json
 import psutil  # Required for uptime and system resource queries
 from ops.controller import controller # Import the controller
 from ops.telemetry import TelemetryProvider, load_config
-from calamum_config import get_calamum_log_dir
+from calamum_config import get_calamum_control_dir, get_calamum_log_dir
 
 # --- CONFIGURATION & THEME ---
 THEME_BG = 'bg-zinc-900'
@@ -184,6 +185,9 @@ CANONICAL_MODES: Dict[str, str] = {
     'CHAOS_MODE': 'Intentionally introducing faults to test Sentinel resilience.',
 }
 
+OPS_RUNTIME_MODES = {'watch', 'canary', 'live', 'honeypot'}
+OPS_RUNTIME_SOURCES = {'sim', 'real'}
+
 
 def normalize_mode(raw: Optional[str]) -> str:
     """Normalize a user-provided mode into a canonical dashboard mode.
@@ -204,6 +208,127 @@ def normalize_mode(raw: Optional[str]) -> str:
     return candidate if candidate in CANONICAL_MODES else 'CANARY'
 
 
+def normalize_ops_runtime_mode(raw: Optional[str]) -> str:
+    mode = str(raw or '').strip().lower().replace('_', '-').replace(' ', '-')
+    aliases = {
+        'active-gated': 'live',
+        'activegated': 'live',
+        'sampler': 'watch',
+    }
+    mode = aliases.get(mode, mode)
+    if mode in OPS_RUNTIME_MODES:
+        return mode
+    return 'canary'
+
+
+def normalize_ops_runtime_source(raw: Optional[str]) -> str:
+    source = str(raw or '').strip().lower()
+    if source in ('live', 'real'):
+        return 'real'
+    if source == 'sim':
+        return 'sim'
+    return 'sim'
+
+
+def display_runtime_mode(raw: Optional[str]) -> str:
+    mode = normalize_ops_runtime_mode(raw)
+    if mode in OPS_RUNTIME_MODES:
+        return mode.upper()
+    return normalize_mode(raw)
+
+
+def _observerctl_state_path() -> Path:
+    return get_calamum_control_dir() / 'observerctl_state.json'
+
+
+def _load_observerctl_ssot_state() -> Dict[str, str]:
+    default = {
+        'source': normalize_ops_runtime_source(os.getenv('CALAMUM_MOLTBOOK_SOURCE', 'sim')),
+        'mode': normalize_ops_runtime_mode(os.getenv('CALAMUM_OPS_MODE', 'canary')),
+    }
+    path = _observerctl_state_path()
+    try:
+        if path.exists():
+            payload = json.loads(path.read_text(encoding='utf-8'))
+            if isinstance(payload, dict):
+                default['source'] = normalize_ops_runtime_source(payload.get('source'))
+                default['mode'] = normalize_ops_runtime_mode(payload.get('mode'))
+    except Exception:
+        pass
+    return default
+
+
+def _observerctl_script_path() -> Path:
+    return Path(__file__).resolve().parent / 'observerctl.py'
+
+
+def _request_observerctl_mode_transition(source: str, mode: str) -> Dict[str, object]:
+    source_norm = normalize_ops_runtime_source(source)
+    mode_norm = normalize_ops_runtime_mode(mode)
+    script = _observerctl_script_path()
+    if not script.exists():
+        return {
+            'decision': 'no-go',
+            'reason_codes': ['critical_check_failed:observerctl_script_missing'],
+            'message': 'observerctl script missing',
+            'source': source_norm,
+            'mode': mode_norm,
+        }
+
+    cmd = [
+        sys.executable,
+        str(script),
+        'ops',
+        'mode',
+        'transition',
+        '--source',
+        source_norm,
+        '--to',
+        mode_norm,
+        '--event',
+        'gui-control',
+        '--json',
+    ]
+
+    try:
+        proc = subprocess.run(
+            cmd,
+            capture_output=True,
+            text=True,
+            timeout=30,
+            cwd=str(Path(__file__).resolve().parent.parent),
+        )
+    except Exception:
+        return {
+            'decision': 'no-go',
+            'reason_codes': ['critical_check_failed:observerctl_transition_exec_error'],
+            'message': 'observerctl transition execution failed',
+            'source': source_norm,
+            'mode': mode_norm,
+        }
+
+    output = (proc.stdout or '').strip()
+    packet: Dict[str, object] = {}
+    if output:
+        try:
+            parsed = json.loads(output)
+            if isinstance(parsed, dict):
+                packet = parsed
+        except Exception:
+            packet = {}
+
+    if not packet:
+        packet = {
+            'decision': 'no-go' if proc.returncode != 0 else 'go',
+            'reason_codes': ['critical_check_failed:observerctl_transition_unparseable_output'] if proc.returncode != 0 else [],
+            'message': (proc.stderr or proc.stdout or '').strip() or 'observerctl transition returned no packet',
+            'source': source_norm,
+            'mode': mode_norm,
+        }
+
+    return packet
+
+
 MODE_TOOLTIP = (
     'Future Mode Capabilities:\n'
     + '\n'.join([
@@ -220,9 +345,12 @@ class SystemState:
         self.availability_score = 100
         self.capacity_score = 100
         self.freshness_score = 100
-        self.records_collected = 12450
+        self.records_collected = 0
+        self.records_main_display = 0
         self.is_running = True
-        self.mode = normalize_mode(os.getenv('CALAMUM_OPS_MODE', 'CANARY'))
+        ssot = _load_observerctl_ssot_state()
+        self.mode = normalize_ops_runtime_mode(ssot.get('mode'))
+        self.source = normalize_ops_runtime_source(ssot.get('source'))
         self.timestamp = datetime.now()
         self.log_seq: int = 0
         self.log_items: List[Tuple[int, str]] = []  # (seq, line)
@@ -487,9 +615,24 @@ def _compute_snapshot() -> dict:
     total = int(snap.get('total_records', state.records_collected) or 0)
     total_display = int(snap.get('records_total_display', total) or 0)
     new = int(snap.get('new_records', 0) or 0)
+
+    ssot_state = _load_observerctl_ssot_state()
+    state.mode = normalize_ops_runtime_mode(ssot_state.get('mode'))
+    state.source = normalize_ops_runtime_source(ssot_state.get('source'))
+
+    main_display_records = int(total_display)
+    if state.source == 'sim':
+        main_display_records = int(snap.get('records_session', snap.get('records_session_display', 0)) or 0)
+
     # UI runtime counter should reflect live ingest (including sim mode) so
     # operators can see movement when the stream is healthy.
     state.records_collected = total
+    state.records_main_display = int(main_display_records)
+
+    session_raw = int(snap.get('records_session', snap.get('records_session_display', 0)) or 0)
+    archive_raw = int(snap.get('records_archive', snap.get('records_archive_display', 0)) or 0)
+    session_display = int(snap.get('records_session_display', session_raw) or 0)
+    archive_display = int(snap.get('records_archive_display', archive_raw) or 0)
 
     bins = snap.get('density_bins')
     if isinstance(bins, list):
@@ -663,13 +806,15 @@ def _compute_snapshot() -> dict:
             'seq': state.js_diag_seq,
             'last_ts_utc': state.js_diag_last_ts_utc,
         },
-        'mode': normalize_mode(state.mode),
+        'mode': display_runtime_mode(state.mode),
+        'source': state.source,
         'cpu': cpu,
         'mem': mem,
         'cpu_history': state.cpu_history,
         'mem_history': state.mem_history,
         'total_records': total,
         'records_total_display': total_display,
+        'display_main_records': int(main_display_records),
         'new_records': new,
         'density_bins': state.density_bins,
         'density_raw_window': state.density_raw_window,
@@ -690,8 +835,15 @@ def _compute_snapshot() -> dict:
             'lib': snap.get('librarian_stats', {}),
         },
         'records_breakdown': {
-            'session': snap.get('records_session', snap.get('records_session_display', 0)),
-            'archive': snap.get('records_archive', snap.get('records_archive_display', 0)),
+            'session': int(session_display),
+            'archive': int(archive_display),
+            'session_raw': int(session_raw),
+            'archive_raw': int(archive_raw),
+        },
+        'records_breakdown_display': {
+            'session': int(session_display),
+            'archive': int(archive_display),
+            'main': int(main_display_records),
         },
         'uptime_s': time.time() - psutil.boot_time(),
         'status': status,
@@ -777,10 +929,13 @@ def create_header(toggle_drawer_fn):
                 ui.icon('hub', size='md').classes('text-gray-400')
             with ui.column().classes('gap-0'):
                 ui.label('CALAMUM OPS').classes(f'text-xl {THEME_FONT} font-bold tracking-wider text-white')
-                ui.label(f"MODE: [ {normalize_mode(state.mode)} ]")\
+                ui.label(f"MODE: [ {display_runtime_mode(state.mode)} ] SRC: [ {str(state.source).upper()} ]")\
                     .props('id="cids-mode"')\
                     .classes('text-xs text-gray-500 uppercase')\
                     .tooltip(MODE_TOOLTIP)
+                ui.label(f"ROUTE: {str(state.source).upper()}:{display_runtime_mode(state.mode)}")\
+                    .props('id="cids-route-indicator"')\
+                    .classes('text-[10px] text-gray-600 uppercase')
         
         with ui.row().classes('gap-6 items-center'):
             # Watchdog indicator
@@ -806,7 +961,7 @@ def create_header(toggle_drawer_fn):
             # Records Counter
             with ui.row().classes('items-center gap-2'):
                 ui.label('RECORDS:').classes('text-xs text-gray-500 font-bold')
-                ui.label(f"{int(state.records_collected):,}")\
+                ui.label(f"{int(state.records_main_display):,}")\
                     .props('id="cids-records"')\
                     .classes('text-xl font-bold text-white')
                     # Tooltip logic handled by client-side JS updating the 'title' attribute
@@ -3488,12 +3643,12 @@ def main_page():
                             // swallow
                         }
 
-                        setText('cids-records', fmtInt(snap.total_records || 0));
+                        setText('cids-records', fmtInt(snap.display_main_records || snap.records_total_display || snap.total_records || 0));
                         
                         // Detail pill (Removed from DOM, but logic might remain in old cached JS? No.)
                         // Tooltip update
                         try {
-                            var rb = snap.records_breakdown || {};
+                            var rb = snap.records_breakdown_display || snap.records_breakdown || {};
                             var sRec = rb.session || 0;
                             var aRec = rb.archive || 0;
                             var elRecs = byId('cids-records');
@@ -3507,7 +3662,8 @@ def main_page():
                             // swallow
                         }
 
-                        setText('cids-mode', 'MODE: [ ' + String(snap.mode || 'CANARY') + ' ]');
+                        setText('cids-mode', 'MODE: [ ' + String(snap.mode || 'CANARY') + ' ] SRC: [ ' + String((snap.source || 'sim')).toUpperCase() + ' ]');
+                        setText('cids-route-indicator', 'ROUTE: ' + String((snap.source || 'sim')).toUpperCase() + ':' + String(snap.mode || 'CANARY'));
 
                         // badges
                         var wd = !!snap.watchdog_active;
@@ -3684,6 +3840,26 @@ def main_page():
         # Keep notifications subtle (log is the primary narrative).
         ui.notify(msg, color=color, position='bottom-right', timeout=1.5)
 
+    def handle_runtime_route_change(source_value: str, mode_value: str) -> None:
+        source_norm = normalize_ops_runtime_source(source_value)
+        mode_norm = normalize_ops_runtime_mode(mode_value)
+        packet = _request_observerctl_mode_transition(source=source_norm, mode=mode_norm)
+        decision = str(packet.get('decision', 'no-go')).strip().lower()
+        reasons = packet.get('reason_codes', []) if isinstance(packet.get('reason_codes', []), list) else []
+
+        if decision == 'go':
+            state.source = source_norm
+            state.mode = mode_norm
+            msg = 'Runtime route set -> {0}:{1}'.format(source_norm, mode_norm)
+            add_log('[SYS] {0}'.format(msg))
+            ui.notify(msg, color='green', position='bottom-right', timeout=2.0)
+            return
+
+        reason_text = ', '.join([str(x) for x in reasons]) if reasons else str(packet.get('message', 'unknown gate failure'))
+        msg = 'Route change blocked -> {0}:{1} ({2})'.format(source_norm, mode_norm, reason_text)
+        add_log('[WARN] {0}'.format(msg))
+        ui.notify(msg, color='orange', position='bottom-right', timeout=2.5)
+
     # Main Content Container (Scale Stage -> Scale Root)
     with ui.element('div').props('id="cids-scale-stage"'):
         # Backdrop (click to close) - stage-level so it doesn't inherit surface centering
@@ -3707,6 +3883,31 @@ def main_page():
                 with ui.row().classes('w-full items-center justify-between'):
                     ui.label('STATUS')
                     status_badge = ui.badge('NOMINAL', color='green-10').props('id="cids-status-badge"').classes('font-bold')
+
+                ui.separator().classes('bg-gray-700')
+
+                with ui.row().classes('w-full justify-between items-center'):
+                    with ui.row().classes('items-center gap-2'):
+                        ui.label('RUNTIME ROUTE').classes('text-sm text-gray-400')
+                        ui.icon('help_outline', size='xs').classes('text-gray-600')\
+                            .tooltip('Authoritative route control (gated). Writes through observerctl mode transition with source+mode.')
+
+                route_source = ui.select(
+                    options={'sim': 'SIM', 'real': 'REAL'},
+                    value=normalize_ops_runtime_source(state.source),
+                    label='SOURCE',
+                ).props('dense outlined color=grey-8').classes('w-full')
+
+                route_mode = ui.select(
+                    options={'watch': 'WATCH', 'canary': 'CANARY', 'live': 'LIVE', 'honeypot': 'HONEYPOT'},
+                    value=normalize_ops_runtime_mode(state.mode),
+                    label='MODE',
+                ).props('dense outlined color=grey-8').classes('w-full')
+
+                ui.button(
+                    'APPLY ROUTE (GATED)',
+                    on_click=lambda: handle_runtime_route_change(str(route_source.value), str(route_mode.value)),
+                ).props('push color=grey-9 text-color=white').classes('w-full border border-gray-700')
 
                 ui.separator().classes('bg-gray-700')
 

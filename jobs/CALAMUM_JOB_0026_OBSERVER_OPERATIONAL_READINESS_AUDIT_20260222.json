@@ -46,6 +46,38 @@
     "status": "passing-assertions-observed",
     "note": "pytest terminal sessions were interrupted externally (KeyboardInterrupt) after reporting passing assertions; no failures were reported before interruption"
   },
+  "qf2_observerctl_librarian_controls_utc": "2026-02-23T02:49:00Z",
+  "qf2_observerctl_librarian_controls_summary": [
+    "added observerctl librarian runtime namespace with status/check/restart commands",
+    "librarian check now validates runtime activity plus mode store integrity in one fail-closed packet",
+    "librarian restart now provides controlled daemon restart with startup probe and reason-coded result"
+  ],
+  "qf2_runtime_route_control_wiring_utc": "2026-02-23T04:08:05Z",
+  "qf2_runtime_route_control_wiring_summary": [
+    "Control Deck runtime route controls (SOURCE+MODE+APPLY ROUTE) call observerctl mode transition with event=gui-control",
+    "route apply remains fail-closed with reason-code surfaced no-go path",
+    "route state display is SSOT-backed from observerctl_state.json"
+  ],
+  "observerctl_real_canary_closure_20260223": {
+    "recorded_at_utc": "2026-02-23T04:08:05Z",
+    "status": "closed",
+    "runtime_state": {
+      "source": "real",
+      "mode": "canary",
+      "posture_trigger": "isolation"
+    },
+    "closure_packet": "projects/calamum-moltbook-observer/docs/reports/operations/compat_packets/OBSERVERCTL_REAL_CANARY_CLOSURE_PACKET_20260223T040805Z.md",
+    "evidence_meta": "projects/calamum-moltbook-observer/local_untracked/observerctl/evidence/observerctl_closure_meta_20260223T040805Z.json",
+    "linked_security_report_ref": "projects/calamum-moltbook-observer/local_untracked/observerctl/evidence/observerctl_first_real_canary_security_report_20260222T230012Z.md",
+    "policy_paperwork_update": {
+      "key_movement_posture": "elevated_lockdown_same_as_live_honeypot",
+      "new_posture_definitions_added": false,
+      "policy_refs": [
+        "projects/calamum-moltbook-observer/docs/CALAMUM_CODESENTINEL_JOB_EXECUTION_EXPECTATIONS.json",
+        "projects/calamum-moltbook-observer/docs/CALAMUM_CODESENTINEL_JOB_EXECUTION_EXPECTATIONS.md"
+      ]
+    }
+  },
   "stage2_adjudication_utc": "2026-02-22T22:09:40Z",
   "stage2_adjudication": {
     "adjudicator": "ORACL-Prime",
@@ -125,6 +157,7 @@
     "stage_2": {
       "result": "pass",
       "checks": [
+        "librarian status/check/restart control surface present and validated",
         "librarian verify decision=go for watch/canary/live/honeypot",
         "runtime artifacts audit evidence emitted"
       ],

@@ -17,6 +17,9 @@
 - qf2_targeted_regression_utc: 2026-02-22T19:45:49Z (targeted validation lane updated with new launcher/dashboard static contract tests; prior verified in-session run remained green at 5 passed before final contract additions)
 - qf2_observerctl_runtime_integration_utc: 2026-02-22T20:22:18Z (implemented `observerctl ops runtime {status|stop|start}` lifecycle surface with delegated launcher start + signal-based stop)
 - qf2_observerctl_runtime_validation_utc: 2026-02-22T20:22:18Z (runtime regression tests added in `src/tests/test_observerctl.py`; terminal runner emitted external KeyboardInterrupt after reporting passing assertions, no test failures observed)
+- qf2_observerctl_librarian_controls_utc: 2026-02-23T02:49:00Z (implemented `observerctl librarian {status|check|restart}` runtime controls; retained existing store controls `stats|stores|rotate|compact|verify`)
+- qf2_runtime_route_control_wiring_utc: 2026-02-23T04:08:05Z (Control Deck `RUNTIME ROUTE` is wired to `observerctl ops mode transition --event gui-control`; route apply remains fail-closed and reason-coded)
+- qf2_real_canary_closure_packet_utc: 2026-02-23T04:08:05Z (publish-grade closure packet and timestamp-coupled evidence bundle recorded)
 
 ## Canonical job content
 
@@ -116,6 +119,7 @@ This job executes the readiness protocol in:
 	- watchdog check `go`
 	- note: preflight still reports missing watchdog posture/resource control docs (known gate prerequisite lane, not Stage 0/2 regression)
 - **Stage 2**: PASS (recheck)
+	- librarian status/check/restart control surface present and validated in `observerctl`
 	- librarian verify `go` for watch/canary/live/honeypot
 	- runtime-artifacts audit emitted fresh evidence bundle under `local_untracked/stage2_recheck_after_lag_fix/`
 
@@ -547,3 +551,29 @@ This job executes the readiness protocol in:
 - Stage 5 readiness checks must include resource baseline-window completeness and resource-stream retention health.
 - Librarian telemetry handling must preserve stream-class metadata through rotation/compaction.
 - Gate reason-code vocabulary should distinguish service-heartbeat failures from collection-state failures.
+
+## Addendum (2026-02-23) — route wiring confirmation + closure linkage
+
+### Runtime route control wiring confirmation
+
+- Control Deck `SOURCE` + `MODE` + `APPLY ROUTE (GATED)` is connected to `observerctl` transition execution path.
+- Route mutation path executes as:
+	- `observerctl ops mode transition --source <sim|real> --to <watch|canary|live|honeypot> --event gui-control --json`
+- Decision handling remains fail-closed:
+	- `decision=go` updates route state and logs success.
+	- `decision=no-go` preserves prior state and logs normalized reason codes.
+
+### Closure packet linkage (real-source canary lane)
+
+- packet: `projects/calamum-moltbook-observer/docs/reports/operations/compat_packets/OBSERVERCTL_REAL_CANARY_CLOSURE_PACKET_20260223T040805Z.md`
+- evidence meta: `projects/calamum-moltbook-observer/local_untracked/observerctl/evidence/observerctl_closure_meta_20260223T040805Z.json`
+- linked first-run security report ref:
+	- `projects/calamum-moltbook-observer/local_untracked/observerctl/evidence/observerctl_first_real_canary_security_report_20260222T230012Z.md`
+
+### Key-movement posture paperwork note
+
+- policy clarified as paperwork-only: key-movement operations are elevated-lockdown and inherit `live/honeypot` lockdown controls.
+- no new posture definitions introduced (policy remains `isolation|lockdown`).
+- updated policy pair:
+	- `projects/calamum-moltbook-observer/docs/CALAMUM_CODESENTINEL_JOB_EXECUTION_EXPECTATIONS.json`
+	- `projects/calamum-moltbook-observer/docs/CALAMUM_CODESENTINEL_JOB_EXECUTION_EXPECTATIONS.md`

@@ -36,6 +36,15 @@
     {
       "stage_id": "stage_2_data_store_integrity",
       "title": "Data/store integrity and librarian audit",
+      "primary_surfaces": [
+        "observerctl librarian status --json",
+        "observerctl librarian check --mode <mode> --json",
+        "observerctl librarian restart --json",
+        "observerctl librarian stats --json",
+        "observerctl librarian verify --mode <mode> --json",
+        "tools/report_ops_parameters.py",
+        "tools/audit_runtime_artifacts.py --scout-strays"
+      ],
       "required_close": {
         "machine_validation": true,
         "physical_inspection": true,

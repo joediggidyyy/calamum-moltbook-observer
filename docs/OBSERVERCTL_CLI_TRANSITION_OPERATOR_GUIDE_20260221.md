@@ -71,10 +71,16 @@ If closure checks fail, treat the task as still open/in-progress until gates pas
 
 - `observerctl ops *` -> preflight, gate checks, mode transition, evidence packets.
 - `observerctl baseline *` -> baseline/graph readiness checks.
-- `observerctl librarian *` -> mode-store stats/rotate/compact/verify.
+- `observerctl librarian *` -> runtime + mode-store controls (`status`, `check`, `restart`, `stats`, `stores`, `rotate`, `compact`, `verify`).
 - `observerctl watchdog *` -> heartbeat/posture checks and reason catalog.
 - `observerctl health *` -> quick/full diagnostics and reason explanation.
 - `observerctl policy *` -> read-only policy introspection.
+
+Dashboard control-plane note:
+
+- Ghost Console banner route indicators (`MODE`, `SRC`, `ROUTE`) are SSOT-driven from `logs/control/calamum/observerctl_state.json`.
+- Control Deck now exposes a gated runtime route control (`SOURCE` + `MODE` + `APPLY ROUTE (GATED)`) which executes `observerctl ops mode transition` (event=`gui-control`).
+- Route changes from the dashboard remain fail-closed and surface gate reason codes in-system-log and UI notification channels.
 
 Exit-code contract:
 
@@ -158,6 +164,19 @@ Governance evidence (repo-root):
 - `logs/behavioral/gates/gate_events.jsonl`
 - `logs/queststack/<QS-ID>_log.md`
 - `logs/queststack/<QS-ID>_evidence.jsonl`
+
+Dashboard snapshot counters (`/_ghost_console/snapshot`) schema:
+
+- `total_records`: raw stream total (session + archival lineage, internal telemetry basis)
+- `records_total_display`: display-safe aggregate from telemetry layer
+- `display_main_records`: primary banner counter value
+	- `source=sim` -> session-only display
+	- `source=real` -> display aggregate
+- `records_breakdown`:
+	- `session`, `archive` (display values)
+	- `session_raw`, `archive_raw` (raw values)
+- `records_breakdown_display`:
+	- `session`, `archive`, `main` (explicit UI-facing cache contract)
 
 ---
 

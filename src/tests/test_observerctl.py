@@ -131,6 +131,75 @@ def test_gate_check_real_requires_api_key(tmp_path: Path, monkeypatch) -> None:
     assert 'critical_check_failed:env.moltbook_api_key' in gate['reason_codes']
 
 
+def test_gate_allows_idle_service_when_observer_heartbeat_stale(tmp_path: Path, monkeypatch) -> None:
+    log_dir = tmp_path / 'logs'
+    health = log_dir / 'health'
+    data = log_dir / 'data' / 'calamum'
+    control = log_dir / 'control' / 'calamum'
+
+    for d in [health, data, control]:
+        d.mkdir(parents=True, exist_ok=True)
+
+    _touch(health / 'calamum_ops_watchdog.heartbeat')
+    _touch(health / 'calamum_observer.heartbeat')
+    _touch(health / 'calamum_librarian.heartbeat')
+
+    observer_hb = health / 'calamum_observer.heartbeat'
+    stale_ts = 946684800.0  # 2000-01-01 UTC
+    os.utime(observer_hb, (stale_ts, stale_ts))
+
+    monkeypatch.setenv('CALAMUM_LOG_DIR', str(log_dir))
+    monkeypatch.setenv('CALAMUM_DATA_SIGNING_KEY', 'unit-test-signing-key')
+    _set_security_report_ref(monkeypatch, log_dir)
+    _write_watchdog_posture(control, posture='isolation', heartbeat_interval=10, baseline_interval=120)
+    _write_watchdog_resource(control, cpu_now=55, ram_now=60, cpu_p95=50, ram_p95=55, score=0.2, age_s=5)
+
+    pid_path = tmp_path / 'calamum_agent.pid'
+    pid_path.write_text(str(os.getpid()), encoding='utf-8')
+    monkeypatch.setattr(observerctl_module, '_agent_pid_path', lambda: pid_path)
+
+    status = collect_runtime_status(source='sim')
+    assert status['checks']['runtime.observer_service']['status'] == 'ok'
+    assert status['checks']['runtime.collection_state']['state'] in ('idle', 'warmup', 'stopped')
+
+    gate = evaluate_gate_decision(status, target_mode='canary')
+    assert gate['decision'] == 'go'
+    assert 'critical_check_failed:observer_heartbeat_stale' not in gate.get('reason_codes', [])
+
+
+def test_watchdog_check_stale_observer_heartbeat_is_advisory_when_service_alive(tmp_path: Path, monkeypatch) -> None:
+    log_dir = tmp_path / 'logs'
+    health = log_dir / 'health'
+    data = log_dir / 'data' / 'calamum'
+    control = log_dir / 'control' / 'calamum'
+
+    for d in [health, data, control]:
+        d.mkdir(parents=True, exist_ok=True)
+
+    _touch(health / 'calamum_ops_watchdog.heartbeat')
+    _touch(health / 'calamum_observer.heartbeat')
+    _touch(health / 'calamum_librarian.heartbeat')
+
+    observer_hb = health / 'calamum_observer.heartbeat'
+    stale_ts = 946684800.0  # 2000-01-01 UTC
+    os.utime(observer_hb, (stale_ts, stale_ts))
+
+    monkeypatch.setenv('CALAMUM_LOG_DIR', str(log_dir))
+    monkeypatch.setenv('CALAMUM_DATA_SIGNING_KEY', 'unit-test-signing-key')
+    _set_security_report_ref(monkeypatch, log_dir)
+    _write_watchdog_posture(control, posture='isolation', heartbeat_interval=10, baseline_interval=120)
+    _write_watchdog_resource(control, cpu_now=55, ram_now=60, cpu_p95=50, ram_p95=55, score=0.2, age_s=5)
+
+    pid_path = tmp_path / 'calamum_agent.pid'
+    pid_path.write_text(str(os.getpid()), encoding='utf-8')
+    monkeypatch.setattr(observerctl_module, '_agent_pid_path', lambda: pid_path)
+
+    packet = observerctl_module._watchdog_check()
+    assert packet.get('decision') == 'go'
+    assert 'critical_check_failed:observer_heartbeat_stale' not in packet.get('reason_codes', [])
+    assert 'major_check_failed:observer_heartbeat_stale_service_alive' in packet.get('advisory_reason_codes', [])
+
+
 def test_evidence_pack_writes_publish_grade_packet(tmp_path: Path, monkeypatch) -> None:
     log_dir = tmp_path / 'logs'
     health = log_dir / 'health'
@@ -1012,6 +1081,73 @@ def test_ops_runtime_status_reports_active_when_heartbeat_and_pid_alive(tmp_path
     assert packet['state'] == 'active'
     assert packet['heartbeat']['status'] == 'ok'
     assert packet['pid']['alive'] is True
+
+
+def test_librarian_status_reports_active_when_heartbeat_and_pid_alive(tmp_path: Path, monkeypatch) -> None:
+    log_dir = tmp_path / 'logs'
+    health = log_dir / 'health'
+    health.mkdir(parents=True, exist_ok=True)
+    _touch(health / 'calamum_librarian.heartbeat')
+
+    monkeypatch.setenv('CALAMUM_LOG_DIR', str(log_dir))
+    monkeypatch.setattr(observerctl_module, '_project_root', lambda: tmp_path)
+    (tmp_path / 'calamum_librarian.pid').write_text(str(os.getpid()), encoding='utf-8')
+
+    packet = observerctl_module._librarian_status()
+    assert packet['decision'] == 'go'
+    assert packet['state'] == 'active'
+    assert packet['heartbeat']['status'] == 'ok'
+    assert packet['pid']['alive'] is True
+
+
+def test_librarian_check_go_when_runtime_active_and_store_ok(tmp_path: Path, monkeypatch) -> None:
+    log_dir = tmp_path / 'logs'
+    data = log_dir / 'data' / 'calamum'
+    health = log_dir / 'health'
+    for d in [data, health]:
+        d.mkdir(parents=True, exist_ok=True)
+
+    monkeypatch.setenv('CALAMUM_LOG_DIR', str(log_dir))
+    monkeypatch.setattr(observerctl_module, '_runtime_librarian_status', lambda max_age_sec=120.0: {
+        'state': 'active',
+        'heartbeat': {'status': 'ok'},
+        'pid': {'value': 123, 'alive': True},
+    })
+
+    rc = main(['librarian', 'check', '--mode', 'watch', '--json'])
+    assert rc == 0
+
+
+def test_librarian_restart_starts_process_and_reports_go(tmp_path: Path, monkeypatch) -> None:
+    log_dir = tmp_path / 'logs'
+    (log_dir / 'health').mkdir(parents=True, exist_ok=True)
+    monkeypatch.setenv('CALAMUM_LOG_DIR', str(log_dir))
+    monkeypatch.setattr(observerctl_module, '_project_root', lambda: tmp_path)
+
+    src_dir = tmp_path / 'src'
+    src_dir.mkdir(parents=True, exist_ok=True)
+    (src_dir / 'calamum_librarian.py').write_text('print("ok")\n', encoding='utf-8')
+
+    class _DummyProc:
+        pid = 12345
+
+    monkeypatch.setattr(observerctl_module.subprocess, 'Popen', lambda *args, **kwargs: _DummyProc())
+
+    states = [
+        {'state': 'degraded', 'heartbeat': {'status': 'warn'}, 'pid': {'value': 12345, 'alive': True}},
+        {'state': 'active', 'heartbeat': {'status': 'ok'}, 'pid': {'value': 12345, 'alive': True}},
+    ]
+
+    def _fake_status(max_age_sec=120.0):
+        if len(states) > 1:
+            return states.pop(0)
+        return states[0]
+
+    monkeypatch.setattr(observerctl_module, '_runtime_librarian_status', _fake_status)
+
+    packet = observerctl_module._librarian_restart(timeout_sec=0.0, startup_probe_sec=0.2)
+    assert packet['decision'] == 'go'
+    assert int(packet['new_pid']) == 12345
 
 
 def test_pid_alive_uses_psutil_when_os_kill_unreliable(monkeypatch) -> None:

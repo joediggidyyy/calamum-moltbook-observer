@@ -29,6 +29,16 @@ No phase may advance on tool output alone.
 
 **Chain role:** readiness-governance node extending drift + gap audits into stage-close operational gates.
 
+### Implementation addendum (2026-02-22, runtime UI contract)
+
+- Banner route indicators (`MODE`, `SRC`, `ROUTE`) are now wired to SSOT (`observerctl_state.json`) via snapshot recomputation.
+- Control Deck includes gated route mutation (`SOURCE` + `MODE` + `APPLY ROUTE (GATED)`) backed by `observerctl ops mode transition --event gui-control`.
+- Snapshot/display schema now distinguishes raw vs display counters:
+	- `display_main_records` is the canonical banner counter.
+	- In `source=sim`, banner counter is session-only.
+	- `records_breakdown` carries display + raw values (`session`, `archive`, `session_raw`, `archive_raw`).
+	- `records_breakdown_display` is explicit UI-cache payload (`session`, `archive`, `main`).
+
 ---
 
 ## 2) Unintended-consequence mitigation policy (mandatory)
@@ -111,6 +121,9 @@ Each stage close must include:
 **Objective**: Validate store-pointer correctness and archival/compaction safety after remediation.
 
 **Primary surfaces**:
+- `observerctl librarian status --json`
+- `observerctl librarian check --mode <mode> --json`
+- `observerctl librarian restart --json` (controlled maintenance only)
 - `observerctl librarian stats --json`
 - `observerctl librarian verify --mode <mode> --json`
 - `tools/report_ops_parameters.py`
