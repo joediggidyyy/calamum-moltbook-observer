@@ -357,7 +357,7 @@
       "physical_inspection_result": "pending",
       "rollback_ready": true,
       "gate_decision": "no-go",
-      "status": "stage4_blocked_fail_closed"
+      "status": "stage4_blocked_fail_closed_superseded"
     },
     "evidence_refs": [
       "projects/calamum-moltbook-observer/local_untracked/stage4_transition_rehearsal_20260222T181703Z",
@@ -412,6 +412,61 @@
         "projects/calamum-moltbook-observer/logs/data/calamum/observer_derived/sim/canary/evidence/index.jsonl"
       ]
     }
+  },
+  "post_stage4_regressive_check": {
+    "validated_at_utc": "2026-02-22T23:55:02Z",
+    "validator": "ORACL-Prime",
+    "evidence_root": "projects/calamum-moltbook-observer/local_untracked/stage0_3_regressive_check_20260222T185502Z",
+    "stage_0": {
+      "result": "pass",
+      "evidence": [
+        "projects/calamum-moltbook-observer/local_untracked/stage0_3_regressive_check_20260222T185502Z/stage0_runtime_stop.json",
+        "projects/calamum-moltbook-observer/local_untracked/stage0_3_regressive_check_20260222T185502Z/stage0_runtime_status_after_stop.json"
+      ]
+    },
+    "stage_1": {
+      "result": "operational-intact-with-noop-gate-context",
+      "note": "gate-check evaluated current state after intentional Stage 0 stop and returned no-op denial plus stale observer heartbeat as expected context",
+      "evidence": [
+        "projects/calamum-moltbook-observer/local_untracked/stage0_3_regressive_check_20260222T185502Z/stage1_preflight.json",
+        "projects/calamum-moltbook-observer/local_untracked/stage0_3_regressive_check_20260222T185502Z/stage1_gate_check.json",
+        "projects/calamum-moltbook-observer/local_untracked/stage0_3_regressive_check_20260222T185502Z/stage1_policy_validate.json",
+        "projects/calamum-moltbook-observer/local_untracked/stage0_3_regressive_check_20260222T185502Z/stage1_watchdog_check.json"
+      ]
+    },
+    "stage_2": {
+      "result": "pass",
+      "evidence": [
+        "projects/calamum-moltbook-observer/local_untracked/stage0_3_regressive_check_20260222T185502Z/stage2_librarian_verify_watch.json",
+        "projects/calamum-moltbook-observer/local_untracked/stage0_3_regressive_check_20260222T185502Z/runtime_artifacts/calamum_runtime_artifacts_audit_20260222T235506501472Z.evidence.json"
+      ]
+    },
+    "stage_3": {
+      "result": "pass-with-corrective-sync",
+      "tests_summary": "26 passed",
+      "corrective_sync": "superseded stale stage4 blocked status token in job markdown to align SSOT",
+      "evidence": [
+        "projects/calamum-moltbook-observer/local_untracked/stage0_3_regressive_check_20260222T185502Z/stage3_control_tests.txt",
+        "projects/calamum-moltbook-observer/local_untracked/stage0_3_regressive_check_20260222T185502Z/implementation_drift/implementation_drift_audit_20260222T235508.283462Z.evidence.json"
+      ]
+    },
+    "overall_result": "pass-with-corrective-sync",
+    "postsync_stage3_governance": {
+      "job_status_drift": "none",
+      "repo_health_evidence": "projects/calamum-moltbook-observer/local_untracked/stage0_3_regressive_check_20260222T185502Z/repo_health_postsync/calamum_repo_health_audit_20260222T235705.796533Z.evidence.json",
+      "implementation_drift_evidence": "projects/calamum-moltbook-observer/local_untracked/stage0_3_regressive_check_20260222T185502Z/implementation_drift_postsync/implementation_drift_audit_20260222T235707.111102Z.evidence.json"
+    }
+  },
+  "stage4_official_closeout": {
+    "declared_at_utc": "2026-02-22T23:57:07Z",
+    "declared_by": "ORACL-Prime",
+    "status": "closed-go",
+    "basis": [
+      "stage4 retry lane returned go for gate/transition/evidence verify/index",
+      "stages 0-3 regressive check completed",
+      "post-sync governance audits report no job status drift"
+    ],
+    "forward_lane": "phase5_live_readiness_decision_no_activation"
   },
   "scope": "observer",
   "owner": "ORACL-Prime",

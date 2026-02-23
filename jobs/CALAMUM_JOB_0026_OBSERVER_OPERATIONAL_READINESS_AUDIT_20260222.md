@@ -314,7 +314,7 @@ This job executes the readiness protocol in:
 - physical_inspection_result: pending
 - rollback_ready: true
 - gate_decision: no-go
-- status: `stage4_blocked_fail_closed`
+- prior_status: `stage4_blocked_fail_closed` (superseded by Stage 4 retry closure)
 - rationale:
 	- Stage 4 contract requires atomic transition and packet verification.
 	- Runtime gate denied transition due to critical posture/baseline controls, so Stage 4 cannot close in this run.
@@ -369,3 +369,115 @@ This job executes the readiness protocol in:
 - evidence_refs:
 	- `projects/calamum-moltbook-observer/local_untracked/stage4_transition_rehearsal_retry_20260222T183020Z/stage4_transition_packet.json`
 	- `projects/calamum-moltbook-observer/logs/data/calamum/observer_derived/sim/canary/evidence/index.jsonl`
+
+## Regressive verification sweep (Stages 0 -> 3) after Stage 4 closure
+
+- validated_at_utc: 2026-02-22T23:55:02Z
+- validator: ORACL-Prime
+- evidence_root: `projects/calamum-moltbook-observer/local_untracked/stage0_3_regressive_check_20260222T185502Z/`
+
+### Stage 0 (controlled shutdown checkpoint)
+
+- runtime stop: **GO** (`stopped_cleanly=true`, no escalation)
+- evidence:
+	- `stage0_runtime_stop.json`
+	- `stage0_runtime_status_after_stop.json`
+
+### Stage 1 (control-plane integrity)
+
+- control-plane packet set captured (`preflight`, `gate-check`, `policy validate`, `watchdog check`)
+- note: gate-check executed against current mode (`sim:canary`) and correctly returned no-op denial semantics plus stale observer heartbeat while observer was intentionally stopped during Stage 0 checkpoint
+- evidence:
+	- `stage1_preflight.json`
+	- `stage1_gate_check.json`
+	- `stage1_policy_validate.json`
+	- `stage1_watchdog_check.json`
+
+### Stage 2 (data/store integrity + librarian)
+
+- librarian verify: **GO** for watch/canary/live/honeypot
+- runtime artifacts audit emitted evidence bundle
+
+### Stage 3 (governance + implementation drift + controls)
+
+- control-surface test lane: **PASS** (`26 passed`)
+- repo/implementation drift lane: single SSOT mismatch detected from stale historical status token in this job doc; corrected in-place and superseded by current Stage 4 closure status
+
+### Regression conclusion
+
+- result: pass-with-corrective-sync
+- Stage 4 closure remains valid and officially closed after regression sweep
+
+## Stage 4 official close-out declaration
+
+- declared_at_utc: 2026-02-22T23:57:07Z
+- declared_by: ORACL-Prime
+- declaration: **Stage 4 is officially closed**
+- closure_basis:
+	- Stage 4 retry lane completed GO on gate/transition/evidence verify/index
+	- Stage 0 -> 3 regression sweep completed with one SSOT sync correction applied
+	- post-sync governance audits confirm status drift cleared (`job status drift details: none`)
+- final_stage4_status: `closed-go`
+- forward_lane: Phase 5 live-readiness decision gate (no activation)
+
+### Post-sync evidence refs
+
+- `projects/calamum-moltbook-observer/local_untracked/stage0_3_regressive_check_20260222T185502Z/repo_health_postsync/calamum_repo_health_audit_20260222T235705.796533Z.evidence.json`
+- `projects/calamum-moltbook-observer/local_untracked/stage0_3_regressive_check_20260222T185502Z/implementation_drift_postsync/implementation_drift_audit_20260222T235707.111102Z.evidence.json`
+
+## Stage 0 -> 4 revalidation rerun (post lane-isolation metrics patch)
+
+- rerun_executed_at_utc: 2026-02-23T01:00:43Z
+- executor: ORACL-Prime
+- evidence_root: `projects/calamum-moltbook-observer/local_untracked/stage0_4_regressive_validate_v2_20260223T010043Z/`
+- aggregate_result: **PASS** (`FAIL_COUNT=0`)
+
+### Rerun command lane summary
+
+- Stage 0: runtime stop/status checkpoint -> **PASS**
+- Stage 1: preflight + mode gate (to watch) + policy validate + watchdog check -> **PASS**
+- Stage 2: librarian verify (all modes) + librarian stats + runtime artifacts audit -> **PASS**
+- Stage 3: implementation drift audit + repo health audit + observerctl targeted tests (`25 passed`) -> **PASS**
+- Stage 4: transition rehearsal executed as non-noop sequence (`watch -> canary`) with evidence verify/index -> **PASS**
+
+### Key rerun evidence refs
+
+- `projects/calamum-moltbook-observer/local_untracked/stage0_4_regressive_validate_v2_20260223T010043Z/summary.txt`
+- `projects/calamum-moltbook-observer/local_untracked/stage0_4_regressive_validate_v2_20260223T010043Z/stage4_transition_to_canary_packet.json`
+- `projects/calamum-moltbook-observer/local_untracked/stage0_4_regressive_validate_v2_20260223T010043Z/stage4_evidence_verify_to_canary.log`
+- `projects/calamum-moltbook-observer/local_untracked/stage0_4_regressive_validate_v2_20260223T010043Z/stage3_test_observerctl.log`
+- `projects/calamum-moltbook-observer/local_untracked/stage0_4_regressive_validate_v2_20260223T010043Z/stage2_librarian_stats.log`
+
+## Stage 5 action declaration (live-readiness decision gate, no activation)
+
+- declared_at_utc: 2026-02-23T01:01:15Z
+- declared_by: ORACL-Prime
+- stage5_mode: **decision-gate only** (explicitly no live activation)
+
+### Stage 5 actions
+
+1) **Real-lane preflight readiness capture**
+- run: `observerctl ops preflight --source real --json`
+- objective: validate real-lane heartbeat/env/control posture before any live gate decision.
+
+2) **Live-mode gate decision (real source)**
+- run: `observerctl ops mode gate --to live --source real --json`
+- objective: emit authoritative GO/NO-GO decision packet with reason codes and run-linkage fields.
+
+3) **System-wide health packet for operator adjudication**
+- run: `observerctl health full --json`
+- objective: capture consolidated ops/baseline/librarian/watchdog/policy health evidence for close packet.
+
+4) **Decision artifact publication + compensating controls**
+- publish: Stage 5 decision summary under `local_untracked/stage5_live_readiness_<timestamp>/`
+- include:
+	- gate decision (`go` or `no-go`)
+	- required controls (if no-go)
+	- rollback/no-activation confirmation line
+	- approver checkpoint: joediggidyyy
+
+### Stage 5 readiness preconditions (must remain true)
+
+- no unexpected non-canary session leakage in librarian stats (`live/watch/honeypot` display totals remain zero unless active lane)
+- watchdog posture/resource contracts present and valid
+- policy validation remains `go`

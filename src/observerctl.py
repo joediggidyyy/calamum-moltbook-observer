@@ -955,10 +955,140 @@ def _append_jsonl(path: Path, payload: Dict[str, Any]) -> None:
         f.write(line + '\n')
 
 
+def _fmt_int(value: Any) -> str:
+    try:
+        return '{0:,}'.format(int(value or 0))
+    except Exception:
+        return '0'
+
+
+def _fmt_bytes(value: Any) -> str:
+    try:
+        n = float(value or 0)
+    except Exception:
+        n = 0.0
+    units = ['B', 'KB', 'MB', 'GB', 'TB']
+    idx = 0
+    while n >= 1024.0 and idx < len(units) - 1:
+        n /= 1024.0
+        idx += 1
+    if idx == 0:
+        return '{0} {1}'.format(int(n), units[idx])
+    return '{0:.1f} {1}'.format(n, units[idx])
+
+
+def _render_librarian_stats_human(packet: Dict[str, Any]) -> List[str]:
+    lines: List[str] = []
+    lines.append('Librarian stats')
+    ts = str(packet.get('timestamp_utc', '') or '').strip()
+    if ts:
+        lines.append('generated_at_utc: {0}'.format(ts))
+
+    summary = packet.get('archive_manifest_summary', {}) if isinstance(packet.get('archive_manifest_summary', {}), dict) else {}
+    totals = summary.get('totals', {}) if isinstance(summary.get('totals', {}), dict) else {}
+    manifest_path = str(summary.get('manifest_path', '') or '').strip()
+    manifest_exists = bool(summary.get('manifest_exists', False))
+
+    lines.append('archive_manifest: {0}'.format('present' if manifest_exists else 'missing'))
+    if manifest_path:
+        lines.append('archive_manifest_path: {0}'.format(manifest_path))
+    lines.append(
+        'archive_totals: bundles={0} records={1} compressed={2} uncompressed={3}'.format(
+            _fmt_int(totals.get('bundle_count', 0)),
+            _fmt_int(totals.get('records', 0)),
+            _fmt_bytes(totals.get('compressed_bytes', 0)),
+            _fmt_bytes(totals.get('uncompressed_bytes', 0)),
+        )
+    )
+
+    stores = packet.get('stores', []) if isinstance(packet.get('stores', []), list) else []
+    lines.append('')
+    lines.append('per_mode:')
+    for row in stores:
+        if not isinstance(row, dict):
+            continue
+        mode = str(row.get('mode', 'unknown')).upper()
+        lines.append('- {0}'.format(mode))
+        lines.append(
+            '  session_records_display: {0} ({1})'.format(
+                _fmt_int(row.get('session_records_display', row.get('session_records', 0))),
+                _fmt_bytes(row.get('session_bytes_display', row.get('session_bytes', 0))),
+            )
+        )
+        lines.append(
+            '  archive_records: {0} | archive_bundles: {1}'.format(
+                _fmt_int(row.get('archive_records', 0)),
+                _fmt_int(row.get('archive_bundle_count', 0)),
+            )
+        )
+        lines.append(
+            '  compressed_archive_size: {0} | uncompressed_archive_size: {1}'.format(
+                _fmt_bytes(row.get('archive_compressed_bytes', 0)),
+                _fmt_bytes(row.get('archive_uncompressed_bytes', 0)),
+            )
+        )
+        lines.append(
+            '  compacted_bundles: {0} | total_records_display: {1}'.format(
+                _fmt_int(row.get('compacted_bundle_count', 0)),
+                _fmt_int(row.get('records_total_display', row.get('record_count', 0))),
+            )
+        )
+    return lines
+
+
+def _render_librarian_stores_human(packet: Dict[str, Any]) -> List[str]:
+    lines: List[str] = []
+    lines.append('Librarian stores')
+    ts = str(packet.get('timestamp_utc', '') or '').strip()
+    if ts:
+        lines.append('generated_at_utc: {0}'.format(ts))
+    stores = packet.get('stores', []) if isinstance(packet.get('stores', []), list) else []
+    for row in stores:
+        if not isinstance(row, dict):
+            continue
+        mode = str(row.get('mode', 'unknown'))
+        is_active = bool(row.get('active', False))
+        exists = bool(row.get('exists', False))
+        retention = str(row.get('retention_state', 'unknown'))
+        path = str(row.get('path', ''))
+        lines.append(
+            '- {0}{1}: exists={2} retention={3} path={4}'.format(
+                mode,
+                ' [active]' if is_active else '',
+                'yes' if exists else 'no',
+                retention,
+                path,
+            )
+        )
+    return lines
+
+
+def _render_human_known_packet(packet: Dict[str, Any]) -> Optional[List[str]]:
+    if not isinstance(packet, dict):
+        return None
+    stores = packet.get('stores', [])
+    if not isinstance(stores, list):
+        return None
+    # librarian stats
+    if isinstance(packet.get('archive_manifest_summary', None), dict):
+        return _render_librarian_stats_human(packet)
+    # librarian stores
+    if stores and isinstance(stores[0], dict) and ('active' in stores[0] or 'manifest_path' in stores[0]):
+        return _render_librarian_stores_human(packet)
+    return None
+
+
 def _emit(packet: Dict[str, Any], as_json: bool) -> None:
     if as_json:
         print(json.dumps(packet, indent=2, sort_keys=True))
         return
+
+    rendered = _render_human_known_packet(packet)
+    if isinstance(rendered, list) and len(rendered) > 0:
+        for line in rendered:
+            print(line)
+        return
+
     decision = ((packet.get('gate_packet') or {}).get('decision') if isinstance(packet, dict) else None) or packet.get('decision', '')
     reasons = ((packet.get('gate_packet') or {}).get('reason_codes') if isinstance(packet, dict) else None) or packet.get('reason_codes', [])
     if decision:
@@ -1380,6 +1510,102 @@ def _count_jsonl_records(path: Path) -> int:
     return count
 
 
+def _safe_file_size(path: Path) -> int:
+    try:
+        return int(path.stat().st_size)
+    except Exception:
+        return 0
+
+
+def _classify_archive_mode(name: str) -> str:
+    candidate = str(name or '').strip().lower()
+    if 'honeypot' in candidate:
+        return 'honeypot'
+    if 'canary' in candidate:
+        return 'canary'
+    if 'watch' in candidate:
+        return 'watch'
+    if 'live' in candidate:
+        return 'live'
+    return 'unclassified'
+
+
+def _archive_manifest_stats() -> Dict[str, Any]:
+    archive_dir = get_calamum_data_dir() / 'archive'
+    manifest_path = archive_dir / 'manifest.json'
+
+    by_mode: Dict[str, Dict[str, int]] = {
+        'watch': {'bundle_count': 0, 'records': 0, 'uncompressed_bytes': 0, 'compressed_bytes': 0},
+        'canary': {'bundle_count': 0, 'records': 0, 'uncompressed_bytes': 0, 'compressed_bytes': 0},
+        'live': {'bundle_count': 0, 'records': 0, 'uncompressed_bytes': 0, 'compressed_bytes': 0},
+        'honeypot': {'bundle_count': 0, 'records': 0, 'uncompressed_bytes': 0, 'compressed_bytes': 0},
+        'unclassified': {'bundle_count': 0, 'records': 0, 'uncompressed_bytes': 0, 'compressed_bytes': 0},
+    }
+
+    payload = _load_json_file(manifest_path, {})
+    if not isinstance(payload, dict):
+        payload = {}
+
+    for bundle_name, row in payload.items():
+        if not isinstance(row, dict):
+            continue
+        mode = _classify_archive_mode(str(bundle_name))
+        bucket = by_mode.get(mode, by_mode['unclassified'])
+
+        records = 0
+        uncompressed_bytes = 0
+        try:
+            records = int(row.get('records', 0) or 0)
+        except Exception:
+            records = 0
+        try:
+            uncompressed_bytes = int(row.get('uncompressed_bytes', 0) or 0)
+        except Exception:
+            uncompressed_bytes = 0
+
+        artifact_rel = str(row.get('artifact_path', '') or '').strip()
+        artifact_size = 0
+        if artifact_rel:
+            artifact_size = _safe_file_size(archive_dir / artifact_rel)
+
+        bucket['bundle_count'] += 1
+        bucket['records'] += records
+        bucket['uncompressed_bytes'] += uncompressed_bytes
+        bucket['compressed_bytes'] += artifact_size
+
+    totals = {'bundle_count': 0, 'records': 0, 'uncompressed_bytes': 0, 'compressed_bytes': 0}
+    for row in by_mode.values():
+        totals['bundle_count'] += int(row.get('bundle_count', 0))
+        totals['records'] += int(row.get('records', 0))
+        totals['uncompressed_bytes'] += int(row.get('uncompressed_bytes', 0))
+        totals['compressed_bytes'] += int(row.get('compressed_bytes', 0))
+
+    return {
+        'manifest_path': str(manifest_path).replace('\\', '/'),
+        'manifest_exists': bool(manifest_path.exists()),
+        'totals': totals,
+        'by_mode': by_mode,
+    }
+
+
+def _derived_session_stats(source: str, mode: str) -> Dict[str, int]:
+    data_dir = get_calamum_data_dir()
+    source_norm = _normalize_source(source)
+    mode_norm = str(mode or 'watch').strip().lower()
+    if mode_norm not in MODES:
+        mode_norm = 'watch'
+
+    p = data_dir / 'observer_derived' / source_norm / mode_norm / 'moltbook_metrics.jsonl'
+    if not p.exists():
+        return {'records': 0, 'bytes': 0, 'file_count': 0}
+
+    return {
+        'records': int(_count_jsonl_records(p)),
+        'bytes': int(_safe_file_size(p)),
+        'file_count': 1,
+    }
+
+
 def _store_integrity_packet(mode: str) -> Dict[str, Any]:
     manifest = _load_store_manifest(mode)
     paths = _store_paths(mode, manifest)
@@ -1407,26 +1633,85 @@ def _store_integrity_packet(mode: str) -> Dict[str, Any]:
 
 
 def _librarian_stats() -> Dict[str, Any]:
+    state = _load_state()
+    active_source = _normalize_source(str(state.get('source', 'sim')))
+    active_mode = str(state.get('mode', 'watch')).strip().lower()
+    if active_mode not in MODES:
+        active_mode = 'watch'
+
+    archive_summary = _archive_manifest_stats()
+    by_mode = archive_summary.get('by_mode', {}) if isinstance(archive_summary, dict) else {}
     items = []
     for mode in MODES:
         packet = _store_integrity_packet(mode)
         manifest = _load_store_manifest(mode)
         paths = _store_paths(mode, manifest)
-        record_count = _count_jsonl_records(paths['active_path'])
+        session_records = _count_jsonl_records(paths['active_path'])
+        session_bytes = _safe_file_size(paths['active_path'])
+
+        store_archive_records = 0
+        store_archive_bytes = 0
         for p in paths['archives']:
-            record_count += _count_jsonl_records(p)
+            store_archive_records += _count_jsonl_records(p)
+            store_archive_bytes += _safe_file_size(p)
+
+        compacted_records = 0
+        compacted_bytes = 0
         for p in paths['compacted']:
-            record_count += _count_jsonl_records(p)
+            compacted_records += _count_jsonl_records(p)
+            compacted_bytes += _safe_file_size(p)
+
+        record_count = int(session_records + store_archive_records + compacted_records)
+        archive_mode_bucket = by_mode.get(mode, {}) if isinstance(by_mode, dict) else {}
+        archive_bundle_count = int(archive_mode_bucket.get('bundle_count', 0) or 0)
+        archive_records = int(archive_mode_bucket.get('records', 0) or 0)
+        archive_uncompressed_bytes = int(archive_mode_bucket.get('uncompressed_bytes', 0) or 0)
+        archive_compressed_bytes = int(archive_mode_bucket.get('compressed_bytes', 0) or 0)
+        if mode == active_mode:
+            derived_session = _derived_session_stats(active_source, mode)
+        else:
+            derived_session = {'records': 0, 'bytes': 0, 'file_count': 0}
+        ingest_session_records = int(derived_session.get('records', 0))
+        ingest_session_bytes = int(derived_session.get('bytes', 0))
+        ingest_session_file_count = int(derived_session.get('file_count', 0))
+        session_records_display = int(ingest_session_records if ingest_session_records > 0 else session_records)
+        session_bytes_display = int(ingest_session_bytes if ingest_session_records > 0 else session_bytes)
+
         items.append({
             'mode': mode,
             'store_path': packet['store_path'],
             'active_store_pointer': packet['active_store_pointer'],
             'record_count': record_count,
+            'session_records': int(session_records),
+            'session_bytes': int(session_bytes),
+            'ingest_source_scope': active_source,
+            'ingest_mode_active': bool(mode == active_mode),
+            'ingest_session_records': ingest_session_records,
+            'ingest_session_bytes': ingest_session_bytes,
+            'ingest_session_file_count': ingest_session_file_count,
+            'session_records_display': session_records_display,
+            'session_bytes_display': session_bytes_display,
+            'store_archive_segment_count': int(len(paths['archives'])),
+            'store_archive_records': int(store_archive_records),
+            'store_archive_bytes': int(store_archive_bytes),
+            'compacted_bundle_count': int(len(paths['compacted'])),
+            'compacted_records': int(compacted_records),
+            'compacted_bytes': int(compacted_bytes),
+            'archive_bundle_count': archive_bundle_count,
+            'archive_records': archive_records,
+            'archive_uncompressed_bytes': archive_uncompressed_bytes,
+            'archive_compressed_bytes': archive_compressed_bytes,
+            'records_total_display': int(session_records_display + archive_records),
             'archive_count': packet['archive_count'],
             'manifest_integrity': packet['status'],
             'retention_state': packet['retention_state'],
         })
-    return {'timestamp_utc': _utc_now(), 'runtime_cli_surface': 'observerctl', 'stores': items}
+    return {
+        'timestamp_utc': _utc_now(),
+        'runtime_cli_surface': 'observerctl',
+        'archive_manifest_summary': archive_summary,
+        'stores': items,
+    }
 
 
 def _librarian_stores() -> Dict[str, Any]:

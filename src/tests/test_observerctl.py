@@ -312,6 +312,157 @@ def test_librarian_rotate_compact_verify_operational(tmp_path: Path, monkeypatch
     assert list(store.glob('*.marker')) == []
 
 
+def test_librarian_stats_reports_archive_manifest_by_mode(tmp_path: Path, monkeypatch) -> None:
+    log_dir = tmp_path / 'logs'
+    data = log_dir / 'data' / 'calamum'
+    store = data / 'stores' / 'canary'
+    archive_dir = data / 'archive'
+
+    store.mkdir(parents=True, exist_ok=True)
+    archive_dir.mkdir(parents=True, exist_ok=True)
+
+    # Session-active records in the store pointer.
+    active = store / 'active.jsonl'
+    active.write_text('{"x":1}\n{"x":2}\n', encoding='utf-8')
+
+    # Archive manifest bundles (compressed artifacts + metadata) by mode.
+    bundle_file = archive_dir / 'moltbook_canary_20260222T000000.jsonl.gz'
+    bundle_file.write_text('compressed-bytes-placeholder', encoding='utf-8')
+    manifest_payload = {
+        'moltbook_canary_20260222T000000.jsonl': {
+            'artifact_path': bundle_file.name,
+            'records': 123,
+            'uncompressed_bytes': 4567,
+        }
+    }
+    (archive_dir / 'manifest.json').write_text(json.dumps(manifest_payload), encoding='utf-8')
+
+    monkeypatch.setenv('CALAMUM_LOG_DIR', str(log_dir))
+
+    stats = observerctl_module._librarian_stats()
+    assert stats.get('runtime_cli_surface') == 'observerctl'
+
+    summary = stats.get('archive_manifest_summary', {})
+    assert summary.get('manifest_exists') is True
+    assert (summary.get('totals') or {}).get('records') == 123
+
+    stores = stats.get('stores', [])
+    canary_row = next((row for row in stores if row.get('mode') == 'canary'), None)
+    assert canary_row is not None
+    assert canary_row.get('session_records') == 2
+    assert canary_row.get('archive_bundle_count') == 1
+    assert canary_row.get('archive_records') == 123
+    assert canary_row.get('records_total_display') == 125
+
+
+def test_librarian_stats_human_output_without_json_flag(tmp_path: Path, monkeypatch, capsys) -> None:
+    log_dir = tmp_path / 'logs'
+    data = log_dir / 'data' / 'calamum'
+    store = data / 'stores' / 'canary'
+    archive_dir = data / 'archive'
+
+    store.mkdir(parents=True, exist_ok=True)
+    archive_dir.mkdir(parents=True, exist_ok=True)
+
+    (store / 'active.jsonl').write_text('{"x":1}\n', encoding='utf-8')
+    bundle_file = archive_dir / 'moltbook_canary_20260222T010000.jsonl.gz'
+    bundle_file.write_text('x', encoding='utf-8')
+    manifest_payload = {
+        'moltbook_canary_20260222T010000.jsonl': {
+            'artifact_path': bundle_file.name,
+            'records': 7,
+            'uncompressed_bytes': 77,
+        }
+    }
+    (archive_dir / 'manifest.json').write_text(json.dumps(manifest_payload), encoding='utf-8')
+
+    monkeypatch.setenv('CALAMUM_LOG_DIR', str(log_dir))
+
+    rc = main(['librarian', 'stats'])
+    assert rc == 0
+
+    out = capsys.readouterr().out
+    assert 'Librarian stats' in out
+    assert 'archive_totals:' in out
+    assert 'per_mode:' in out
+    assert '- CANARY' in out
+    assert 'session_records_display:' in out
+
+
+def test_librarian_stats_prefers_derived_session_display_counts(tmp_path: Path, monkeypatch) -> None:
+    log_dir = tmp_path / 'logs'
+    data = log_dir / 'data' / 'calamum'
+    store = data / 'stores' / 'canary'
+    archive_dir = data / 'archive'
+    derived_canary = data / 'observer_derived' / 'sim' / 'canary'
+
+    store.mkdir(parents=True, exist_ok=True)
+    archive_dir.mkdir(parents=True, exist_ok=True)
+    derived_canary.mkdir(parents=True, exist_ok=True)
+
+    # Empty store pointer but populated derived ingest lane.
+    (store / 'active.jsonl').write_text('', encoding='utf-8')
+    (derived_canary / 'moltbook_metrics.jsonl').write_text('{"x":1}\n{"x":2}\n{"x":3}\n', encoding='utf-8')
+
+    bundle_file = archive_dir / 'moltbook_canary_20260222T010000.jsonl.gz'
+    bundle_file.write_text('x', encoding='utf-8')
+    manifest_payload = {
+        'moltbook_canary_20260222T010000.jsonl': {
+            'artifact_path': bundle_file.name,
+            'records': 7,
+            'uncompressed_bytes': 77,
+        }
+    }
+    (archive_dir / 'manifest.json').write_text(json.dumps(manifest_payload), encoding='utf-8')
+
+    monkeypatch.setenv('CALAMUM_LOG_DIR', str(log_dir))
+    observerctl_module._save_state('sim', 'canary')
+
+    stats = observerctl_module._librarian_stats()
+    stores = stats.get('stores', [])
+    canary_row = next((row for row in stores if row.get('mode') == 'canary'), None)
+    assert canary_row is not None
+    assert canary_row.get('session_records') == 0
+    assert canary_row.get('ingest_session_records') == 3
+    assert canary_row.get('session_records_display') == 3
+    assert canary_row.get('records_total_display') == 10
+
+
+def test_librarian_stats_ignores_non_active_lane_derived_sessions(tmp_path: Path, monkeypatch) -> None:
+    log_dir = tmp_path / 'logs'
+    data = log_dir / 'data' / 'calamum'
+    archive_dir = data / 'archive'
+    derived_sim_live = data / 'observer_derived' / 'sim' / 'live'
+    derived_real_canary = data / 'observer_derived' / 'real' / 'canary'
+
+    archive_dir.mkdir(parents=True, exist_ok=True)
+    derived_sim_live.mkdir(parents=True, exist_ok=True)
+    derived_real_canary.mkdir(parents=True, exist_ok=True)
+
+    (derived_sim_live / 'moltbook_metrics.jsonl').write_text('{"x":1}\n{"x":2}\n{"x":3}\n', encoding='utf-8')
+    (derived_real_canary / 'moltbook_metrics.jsonl').write_text('{"x":10}\n{"x":11}\n', encoding='utf-8')
+
+    monkeypatch.setenv('CALAMUM_LOG_DIR', str(log_dir))
+    observerctl_module._save_state('real', 'canary')
+
+    stats = observerctl_module._librarian_stats()
+    stores = stats.get('stores', [])
+    live_row = next((row for row in stores if row.get('mode') == 'live'), None)
+    canary_row = next((row for row in stores if row.get('mode') == 'canary'), None)
+
+    assert live_row is not None
+    assert canary_row is not None
+
+    assert live_row.get('ingest_mode_active') is False
+    assert live_row.get('ingest_session_records') == 0
+    assert live_row.get('session_records_display') == 0
+
+    assert canary_row.get('ingest_mode_active') is True
+    assert canary_row.get('ingest_source_scope') == 'real'
+    assert canary_row.get('ingest_session_records') == 2
+    assert canary_row.get('session_records_display') == 2
+
+
 def test_gate_denies_when_security_report_link_missing(tmp_path: Path, monkeypatch) -> None:
     log_dir = tmp_path / 'logs'
     health = log_dir / 'health'
