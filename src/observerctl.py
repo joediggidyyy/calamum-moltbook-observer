@@ -41,6 +41,25 @@ WATCHDOG_RESOURCE_FILE = 'watchdog_resource_state.json'
 GATE_PACKET_MAX_AGE_SEC = float(os.getenv('CALAMUM_GATE_PACKET_MAX_AGE_SEC', '300'))
 AGENT_PID_FILE = 'calamum_agent.pid'
 RESOURCE_PROFILES = ('normal', 'rapid')
+FS_BASELINE_FILE = 'observerctl_fs_baseline.json'
+FS_BASELINE_EXCLUDE = {
+    '.git',
+    '__pycache__',
+    '.pytest_cache',
+    '.mypy_cache',
+    '.venv',
+    '.venv-core',
+    'venv',
+    'node_modules',
+    'logs',
+    'archive',
+    'quarantine_legacy_archive',
+    'semantics_vault',
+    'semantics_staging',
+    'staging_fs',
+    'report_tmp',
+    'local_untracked',
+}
 
 
 def _utc_now() -> str:
@@ -964,6 +983,209 @@ def _append_jsonl(path: Path, payload: Dict[str, Any]) -> None:
         f.write(line + '\n')
 
 
+def _fs_baseline_path() -> Path:
+    return _control_file(FS_BASELINE_FILE)
+
+
+def _file_sha256(path: Path) -> str:
+    hasher = hashlib.sha256()
+    try:
+        with path.open('rb') as f:
+            while True:
+                chunk = f.read(8192)
+                if not chunk:
+                    break
+                hasher.update(chunk)
+        return hasher.hexdigest()
+    except Exception:
+        return ''
+
+
+def _fs_should_exclude(path: Path, root: Path) -> bool:
+    try:
+        rel = path.relative_to(root)
+    except Exception:
+        return True
+    parts = set(rel.parts)
+    for token in FS_BASELINE_EXCLUDE:
+        if token in parts:
+            return True
+    name = path.name.lower()
+    if name.endswith('.pyc') or name.endswith('.pyo'):
+        return True
+    return False
+
+
+def _iter_fs_files(root: Path, max_files: int) -> List[Path]:
+    out: List[Path] = []
+    limit = max(1, int(max_files or 20000))
+    try:
+        for p in sorted(root.rglob('*')):
+            if len(out) >= limit:
+                break
+            try:
+                if not p.is_file():
+                    continue
+            except Exception:
+                continue
+            if _fs_should_exclude(p, root):
+                continue
+            out.append(p)
+    except Exception:
+        return out
+    return out
+
+
+def _baseline_hash_generate(max_files: int, output: str) -> Dict[str, Any]:
+    root = _project_root()
+    files = _iter_fs_files(root, max_files=max_files)
+    records: Dict[str, Dict[str, Any]] = {}
+    skipped = 0
+    for p in files:
+        try:
+            rel = p.relative_to(root).as_posix()
+        except Exception:
+            skipped += 1
+            continue
+        digest = _file_sha256(p)
+        if not digest:
+            skipped += 1
+            continue
+        records[rel] = {
+            'hash': digest,
+            'size': int(_safe_file_size(p)),
+            'modified_epoch': float(p.stat().st_mtime),
+        }
+
+    payload = {
+        'timestamp_utc': _utc_now(),
+        'runtime_cli_surface': 'observerctl',
+        'baseline_type': 'filesystem_hash',
+        'workspace_root': str(root).replace('\\', '/'),
+        'files': records,
+        'statistics': {
+            'tracked_files': int(len(records)),
+            'skipped_files': int(skipped),
+            'max_files': int(max(1, int(max_files or 20000))),
+            'safety_limit_hit': bool(len(files) >= max(1, int(max_files or 20000))),
+        },
+    }
+
+    out_path = Path(str(output).strip()) if str(output).strip() else _fs_baseline_path()
+    _write_json_file(out_path, payload)
+    return {
+        'timestamp_utc': _utc_now(),
+        'runtime_cli_surface': 'observerctl',
+        'decision': 'go',
+        'action': 'baseline-generate',
+        'baseline_path': str(out_path).replace('\\', '/'),
+        'statistics': payload.get('statistics', {}),
+        'reason_codes': [],
+    }
+
+
+def _baseline_hash_status(baseline: str) -> Dict[str, Any]:
+    path = Path(str(baseline).strip()) if str(baseline).strip() else _fs_baseline_path()
+    exists = path.exists()
+    payload = _load_json_file(path, {}) if exists else {}
+    stats = payload.get('statistics', {}) if isinstance(payload.get('statistics', {}), dict) else {}
+    return {
+        'timestamp_utc': _utc_now(),
+        'runtime_cli_surface': 'observerctl',
+        'action': 'baseline-status',
+        'baseline_type': 'filesystem_hash',
+        'baseline_path': str(path).replace('\\', '/'),
+        'exists': bool(exists),
+        'generated_at_utc': str(payload.get('timestamp_utc', '')) if exists else '',
+        'statistics': stats,
+        'decision': 'go' if exists else 'no-go',
+        'reason_codes': [] if exists else ['critical_check_failed:fs_baseline_missing'],
+    }
+
+
+def _baseline_hash_check(baseline: str) -> Dict[str, Any]:
+    root = _project_root()
+    path = Path(str(baseline).strip()) if str(baseline).strip() else _fs_baseline_path()
+    if not path.exists():
+        return {
+            'timestamp_utc': _utc_now(),
+            'runtime_cli_surface': 'observerctl',
+            'decision': 'no-go',
+            'action': 'baseline-check',
+            'baseline_type': 'filesystem_hash',
+            'baseline_path': str(path).replace('\\', '/'),
+            'reason_codes': ['critical_check_failed:fs_baseline_missing'],
+            'statistics': {
+                'files_checked': 0,
+                'files_modified': 0,
+                'files_missing': 0,
+                'files_new': 0,
+            },
+        }
+
+    baseline_doc = _load_json_file(path, {})
+    baseline_files = baseline_doc.get('files', {}) if isinstance(baseline_doc.get('files', {}), dict) else {}
+
+    modified: List[Dict[str, str]] = []
+    missing: List[str] = []
+    baseline_paths = set(baseline_files.keys())
+
+    for rel, info in baseline_files.items():
+        p = root / rel
+        if not p.exists():
+            missing.append(rel)
+            continue
+        current = _file_sha256(p)
+        expected = str((info or {}).get('hash', ''))
+        if current != expected:
+            modified.append({'file': rel, 'expected_hash': expected, 'actual_hash': current})
+
+    current_files = set()
+    for p in _iter_fs_files(root, max_files=max(1, len(baseline_paths) + 5000)):
+        try:
+            rel = p.relative_to(root).as_posix()
+        except Exception:
+            continue
+        current_files.add(rel)
+
+    new_files = sorted(list(current_files - baseline_paths))
+    try:
+        rel_baseline = path.relative_to(root).as_posix()
+        new_files = [x for x in new_files if x != rel_baseline]
+    except Exception:
+        pass
+
+    reasons: List[str] = []
+    if modified:
+        reasons.append('critical_check_failed:fs_hash_mismatch')
+    if missing:
+        reasons.append('critical_check_failed:fs_baseline_file_missing')
+    if new_files:
+        reasons.append('major_check_failed:fs_new_files_detected')
+
+    decision = 'go' if len(reasons) == 0 else 'no-go'
+    return {
+        'timestamp_utc': _utc_now(),
+        'runtime_cli_surface': 'observerctl',
+        'decision': decision,
+        'action': 'baseline-check',
+        'baseline_type': 'filesystem_hash',
+        'baseline_path': str(path).replace('\\', '/'),
+        'reason_codes': reasons,
+        'statistics': {
+            'files_checked': int(len(baseline_files)),
+            'files_modified': int(len(modified)),
+            'files_missing': int(len(missing)),
+            'files_new': int(len(new_files)),
+        },
+        'violations': {
+            'modified': modified[:25],
+            'missing': missing[:25],
+            'new_files': new_files[:25],
+        },
+    }
+
+
 def _resource_index_path(source: str, mode: str) -> Path:
     src = _normalize_source(source)
     m = str(mode or 'watch').strip().lower()
@@ -1535,16 +1757,8 @@ def _ops_evidence_index() -> Dict[str, Any]:
     }
 
 
-def _baseline_status() -> Dict[str, Any]:
-    catalog = _load_baselines()
-    active_id = catalog.get('active', 'baseline-default')
-    active = next((it for it in catalog.get('items', []) if it.get('id') == active_id), None)
-    return {
-        'timestamp_utc': _utc_now(),
-        'runtime_cli_surface': 'observerctl',
-        'active_baseline_id': active_id,
-        'status': str((active or {}).get('status', 'ready')),
-    }
+def _baseline_status(baseline: str = '') -> Dict[str, Any]:
+    return _baseline_hash_status(baseline)
 
 
 def _baseline_graph() -> Dict[str, Any]:
@@ -1558,21 +1772,8 @@ def _baseline_graph() -> Dict[str, Any]:
     }
 
 
-def _baseline_check() -> Dict[str, Any]:
-    status = _baseline_status()
-    graph = _baseline_graph()
-    reasons = []
-    if status.get('status') != 'ready':
-        reasons.append('critical_check_failed:baseline_not_ready')
-    if graph.get('exists') is not True:
-        reasons.append('major_check_failed:graph_integrity_failed')
-    return {
-        'timestamp_utc': _utc_now(),
-        'runtime_cli_surface': 'observerctl',
-        'decision': 'go' if not reasons else 'no-go',
-        'reason_codes': reasons,
-        'active_baseline_id': status.get('active_baseline_id'),
-    }
+def _baseline_check(baseline: str = '') -> Dict[str, Any]:
+    return _baseline_hash_check(baseline)
 
 
 def _baseline_list() -> Dict[str, Any]:
@@ -2764,11 +2965,13 @@ def _dispatch(args: argparse.Namespace) -> Dict[str, Any]:
 
     if cmd == 'baseline':
         if args.base_cmd == 'status':
-            return _baseline_status()
+            return _baseline_status(args.baseline)
         if args.base_cmd == 'graph':
             return _baseline_graph()
         if args.base_cmd == 'check':
-            return _baseline_check()
+            return _baseline_check(args.baseline)
+        if args.base_cmd == 'generate':
+            return _baseline_hash_generate(max_files=args.max_files, output=args.output)
         if args.base_cmd == 'list':
             return _baseline_list()
         if args.base_cmd == 'set':
@@ -2910,9 +3113,14 @@ def _build_parser() -> argparse.ArgumentParser:
 
     baseline = sub.add_parser('baseline', help='Baseline and graph readiness namespace')
     baseline_sub = baseline.add_subparsers(dest='base_cmd', required=True)
-    baseline_sub.add_parser('status')
+    baseline_status = baseline_sub.add_parser('status')
+    baseline_status.add_argument('--baseline', default='', help='Optional path to filesystem baseline file')
     baseline_sub.add_parser('graph')
-    baseline_sub.add_parser('check')
+    baseline_check = baseline_sub.add_parser('check')
+    baseline_check.add_argument('--baseline', default='', help='Optional path to filesystem baseline file')
+    baseline_generate = baseline_sub.add_parser('generate')
+    baseline_generate.add_argument('--max-files', type=int, default=20000, help='Maximum files to include in hash baseline')
+    baseline_generate.add_argument('--output', default='', help='Optional output path for filesystem baseline file')
     baseline_sub.add_parser('list')
     baseline_set = baseline_sub.add_parser('set')
     baseline_set.add_argument('--id', required=True)

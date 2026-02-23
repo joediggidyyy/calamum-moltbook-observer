@@ -251,7 +251,7 @@ def test_baseline_librarian_watchdog_health_policy_commands(tmp_path: Path, monk
     _write_watchdog_posture(control, posture='isolation', heartbeat_interval=10, baseline_interval=120)
     _write_watchdog_resource(control, cpu_now=55, ram_now=60, cpu_p95=50, ram_p95=55, score=0.2, age_s=5)
 
-    assert main(['baseline', 'status', '--json']) == 0
+    assert main(['baseline', 'status', '--json']) in (0, 2)
     assert main(['baseline', 'check', '--json']) in (0, 2)
     assert main(['baseline', 'set', '--id', 'baseline-ci', '--json']) == 0
 
@@ -525,6 +525,66 @@ def test_baseline_overnight_run_fails_closed_when_analysis_not_ready(tmp_path: P
     assert packet.get('decision') == 'no-go'
     reasons = packet.get('reason_codes', [])
     assert any('resource_baseline_window_incomplete' in str(r) for r in reasons)
+
+
+def test_baseline_generate_and_check_filesystem_hashes(tmp_path: Path, monkeypatch) -> None:
+    log_dir = tmp_path / 'logs'
+    for d in [log_dir / 'health', log_dir / 'data' / 'calamum', log_dir / 'control' / 'calamum']:
+        d.mkdir(parents=True, exist_ok=True)
+    monkeypatch.setenv('CALAMUM_LOG_DIR', str(log_dir))
+    monkeypatch.setattr(observerctl_module, '_project_root', lambda: tmp_path)
+
+    tracked = tmp_path / 'tracked.txt'
+    tracked.write_text('hello baseline\n', encoding='utf-8')
+
+    baseline_path = tmp_path / 'fs_baseline.json'
+    rc_generate = main(['baseline', 'generate', '--output', str(baseline_path), '--max-files', '1000', '--json'])
+    assert rc_generate == 0
+    assert baseline_path.exists()
+
+    rc_check = main(['baseline', 'check', '--baseline', str(baseline_path), '--json'])
+    assert rc_check == 0
+
+
+def test_baseline_check_detects_hash_mismatch(tmp_path: Path, monkeypatch) -> None:
+    log_dir = tmp_path / 'logs'
+    for d in [log_dir / 'health', log_dir / 'data' / 'calamum', log_dir / 'control' / 'calamum']:
+        d.mkdir(parents=True, exist_ok=True)
+    monkeypatch.setenv('CALAMUM_LOG_DIR', str(log_dir))
+    monkeypatch.setattr(observerctl_module, '_project_root', lambda: tmp_path)
+
+    tracked = tmp_path / 'tracked.txt'
+    tracked.write_text('v1\n', encoding='utf-8')
+
+    baseline_path = tmp_path / 'fs_baseline.json'
+    assert main(['baseline', 'generate', '--output', str(baseline_path), '--max-files', '1000', '--json']) == 0
+
+    tracked.write_text('v2\n', encoding='utf-8')
+    rc_check = main(['baseline', 'check', '--baseline', str(baseline_path), '--json'])
+    assert rc_check == 2
+
+
+def test_baseline_check_ignores_local_untracked_runtime_state(tmp_path: Path, monkeypatch) -> None:
+    log_dir = tmp_path / 'logs'
+    for d in [log_dir / 'health', log_dir / 'data' / 'calamum', log_dir / 'control' / 'calamum']:
+        d.mkdir(parents=True, exist_ok=True)
+    monkeypatch.setenv('CALAMUM_LOG_DIR', str(log_dir))
+    monkeypatch.setattr(observerctl_module, '_project_root', lambda: tmp_path)
+
+    tracked = tmp_path / 'tracked.txt'
+    tracked.write_text('stable\n', encoding='utf-8')
+
+    runtime_state = tmp_path / 'local_untracked' / 'scheduler' / 'watchdog_schedule_state.json'
+    runtime_state.parent.mkdir(parents=True, exist_ok=True)
+    runtime_state.write_text('{"tick":1}\n', encoding='utf-8')
+
+    baseline_path = tmp_path / 'fs_baseline.json'
+    assert main(['baseline', 'generate', '--output', str(baseline_path), '--max-files', '1000', '--json']) == 0
+
+    # Runtime state mutates between baseline/check cycles; baseline should ignore it.
+    runtime_state.write_text('{"tick":2}\n', encoding='utf-8')
+    rc_check = main(['baseline', 'check', '--baseline', str(baseline_path), '--json'])
+    assert rc_check == 0
 
 
 def test_librarian_rotate_compact_verify_operational(tmp_path: Path, monkeypatch) -> None:
