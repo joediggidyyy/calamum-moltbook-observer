@@ -262,7 +262,7 @@ def _observerctl_script_path() -> Path:
     return Path(__file__).resolve().parent / 'observerctl.py'
 
 
-def _request_observerctl_mode_transition(source: str, mode: str) -> Dict[str, object]:
+def _request_observerctl_mode_switch(source: str, mode: str) -> Dict[str, object]:
     source_norm = normalize_ops_runtime_source(source)
     mode_norm = normalize_ops_runtime_mode(mode)
     script = _observerctl_script_path()
@@ -280,7 +280,7 @@ def _request_observerctl_mode_transition(source: str, mode: str) -> Dict[str, ob
         str(script),
         'ops',
         'mode',
-        'transition',
+        'switch',
         '--source',
         source_norm,
         '--to',
@@ -301,8 +301,8 @@ def _request_observerctl_mode_transition(source: str, mode: str) -> Dict[str, ob
     except Exception:
         return {
             'decision': 'no-go',
-            'reason_codes': ['critical_check_failed:observerctl_transition_exec_error'],
-            'message': 'observerctl transition execution failed',
+            'reason_codes': ['critical_check_failed:observerctl_mode_switch_exec_error'],
+            'message': 'observerctl mode switch execution failed',
             'source': source_norm,
             'mode': mode_norm,
         }
@@ -320,8 +320,8 @@ def _request_observerctl_mode_transition(source: str, mode: str) -> Dict[str, ob
     if not packet:
         packet = {
             'decision': 'no-go' if proc.returncode != 0 else 'go',
-            'reason_codes': ['critical_check_failed:observerctl_transition_unparseable_output'] if proc.returncode != 0 else [],
-            'message': (proc.stderr or proc.stdout or '').strip() or 'observerctl transition returned no packet',
+            'reason_codes': ['critical_check_failed:observerctl_mode_switch_unparseable_output'] if proc.returncode != 0 else [],
+            'message': (proc.stderr or proc.stdout or '').strip() or 'observerctl mode switch returned no packet',
             'source': source_norm,
             'mode': mode_norm,
         }
@@ -372,6 +372,8 @@ class SystemState:
         self._ingest_window_records: int = 0
         self._ingest_window_sources: Dict[str, int] = {}
         self._ingest_stalled: bool = False
+        self._last_route_stream_mismatch: Optional[bool] = None
+        self._last_active_stream_route: Optional[str] = None
         self._wd_sig_ok: Optional[bool] = None
         self._wd_sig_detail: Optional[str] = None
         self._obs_heartbeat_stale: Optional[bool] = None
@@ -402,19 +404,24 @@ def add_log(msg: str) -> None:
         state.log_items = state.log_items[-400:]
 
 
-def _ingest_summary_period_sec() -> float:
-    """Periodic cadence for low-signal ingest summaries in SYSTEM LOG.
+def _ingest_periodic_summary_enabled() -> bool:
+    """Whether to emit periodic [INGEST] rollup lines.
 
-    Default is intentionally moderate to reduce feed clutter while preserving
-    periodic operator confirmation that ingest is still moving.
+    Default is OFF to keep SYSTEM LOG high-signal. Set
+    CALAMUM_INGEST_PERIODIC_SUMMARY=1 to re-enable legacy rollups.
     """
-    raw = os.getenv('CALAMUM_INGEST_SUMMARY_PERIOD_SEC', '45')
+    raw = str(os.getenv('CALAMUM_INGEST_PERIODIC_SUMMARY', '0') or '').strip().lower()
+    return raw in {'1', 'true', 'yes', 'on'}
+
+
+def _ingest_summary_period_sec() -> float:
+    """Cadence for optional periodic ingest summaries when enabled."""
+    raw = os.getenv('CALAMUM_INGEST_SUMMARY_PERIOD_SEC', '60')
     try:
         value = float(raw)
     except Exception:
-        value = 45.0
-    # Keep this in a sane, operator-friendly range.
-    return max(30.0, min(60.0, value))
+        value = 60.0
+    return max(30.0, min(300.0, value))
 
 state = SystemState()
 
@@ -615,6 +622,9 @@ def _compute_snapshot() -> dict:
     total = int(snap.get('total_records', state.records_collected) or 0)
     total_display = int(snap.get('records_total_display', total) or 0)
     new = int(snap.get('new_records', 0) or 0)
+    route_stream_mismatch = bool(snap.get('route_stream_mismatch', False))
+    active_stream_source = normalize_ops_runtime_source(snap.get('active_stream_source')) if snap.get('active_stream_source') else None
+    active_stream_mode = normalize_ops_runtime_mode(snap.get('active_stream_mode')) if snap.get('active_stream_mode') else None
 
     ssot_state = _load_observerctl_ssot_state()
     state.mode = normalize_ops_runtime_mode(ssot_state.get('mode'))
@@ -623,6 +633,10 @@ def _compute_snapshot() -> dict:
     main_display_records = int(total_display)
     if state.source == 'sim':
         main_display_records = int(snap.get('records_session', snap.get('records_session_display', 0)) or 0)
+    elif bool(route_stream_mismatch):
+        # During route/stream drift, prefer live total so the operator-facing
+        # counter still reflects ingest motion rather than archive-only totals.
+        main_display_records = int(total)
 
     # UI runtime counter should reflect live ingest (including sim mode) so
     # operators can see movement when the stream is healthy.
@@ -691,6 +705,7 @@ def _compute_snapshot() -> dict:
     # Log narrative (heads-up oriented): aggregate ingest bursts and surface transitions.
     now_ts = time.time()
     ingest_summary_period_sec = _ingest_summary_period_sec()
+    ingest_periodic_enabled = _ingest_periodic_summary_enabled()
     ingest_stall_threshold_sec = 45.0
 
     if new > 0:
@@ -712,12 +727,14 @@ def _compute_snapshot() -> dict:
 
     window_age = max(0.0, float(now_ts - state._ingest_window_started_at))
     if state._ingest_window_records > 0 and window_age >= ingest_summary_period_sec:
-        top_sources = sorted(state._ingest_window_sources.items(), key=lambda kv: kv[1], reverse=True)
-        src_summary = ', '.join([f"{name}:{count}" for (name, count) in top_sources[:3]]) if top_sources else 'unknown'
-        add_log(
-            f"[INGEST] +{state._ingest_window_records} records/{int(round(window_age))}s "
-            f"(sources: {src_summary})"
-        )
+        if ingest_periodic_enabled:
+            top_sources = sorted(state._ingest_window_sources.items(), key=lambda kv: kv[1], reverse=True)
+            src_summary = ', '.join([f"{name}:{count}" for (name, count) in top_sources[:3]]) if top_sources else 'unknown'
+            add_log(
+                f"[INGEST] +{state._ingest_window_records} records/{int(round(window_age))}s "
+                f"(sources: {src_summary})"
+            )
+        # Always reset rollup window even when periodic summaries are disabled.
         state._ingest_window_records = 0
         state._ingest_window_sources = {}
         state._ingest_window_started_at = now_ts
@@ -731,6 +748,27 @@ def _compute_snapshot() -> dict:
     if state._last_obs_active is None: state._last_obs_active = state.is_running
     if state._last_wd_active is None: state._last_wd_active = state.watchdog_active
     if state._last_lib_active is None: state._last_lib_active = state.librarian_active
+
+    current_active_route = None
+    if active_stream_source and active_stream_mode:
+        current_active_route = f"{active_stream_source}:{active_stream_mode}"
+    if state._last_route_stream_mismatch is None:
+        state._last_route_stream_mismatch = bool(route_stream_mismatch)
+        state._last_active_stream_route = current_active_route
+    else:
+        if bool(route_stream_mismatch) != bool(state._last_route_stream_mismatch):
+            if route_stream_mismatch:
+                add_log(
+                    f"[WARN] Route/stream mismatch: route={state.source}:{state.mode} "
+                    f"active={current_active_route or 'unknown'}"
+                )
+            else:
+                add_log('[SYS] Route/stream mismatch cleared')
+            state._last_route_stream_mismatch = bool(route_stream_mismatch)
+
+        if bool(route_stream_mismatch) and current_active_route and current_active_route != state._last_active_stream_route:
+            add_log(f"[WARN] Active stream moved during mismatch -> {current_active_route}")
+            state._last_active_stream_route = current_active_route
 
     if state.is_running != state._last_obs_active:
         add_log(f"[SYS] Observer state -> {'ACTIVE' if state.is_running else 'DOWN'}")
@@ -808,6 +846,9 @@ def _compute_snapshot() -> dict:
         },
         'mode': display_runtime_mode(state.mode),
         'source': state.source,
+        'route_stream_mismatch': bool(route_stream_mismatch),
+        'active_stream_source': active_stream_source,
+        'active_stream_mode': active_stream_mode,
         'cpu': cpu,
         'mem': mem,
         'cpu_history': state.cpu_history,
@@ -3212,13 +3253,33 @@ def main_page():
 
                 function setRadarEChart(a, i, c, f) {
                     try {
-                        var inst = getEChart('cids-integrity-radar-chart');
+                        var inst = ensureChartInstance('cids-integrity-radar-chart');
                         if (!inst) return;
                         try { inst.resize && inst.resize(); } catch (eR) { }
                         try {
                             inst.setOption({
+                                backgroundColor: 'transparent',
+                                tooltip: { show: true, trigger: 'item' },
+                                radar: {
+                                    shape: 'polygon',
+                                    radius: '72%',
+                                    splitNumber: 4,
+                                    indicator: [
+                                        { name: 'AVAILABILITY', max: 100 },
+                                        { name: 'INTEGRITY', max: 100 },
+                                        { name: 'CAPACITY', max: 100 },
+                                        { name: 'FRESHNESS', max: 100 }
+                                    ],
+                                    axisName: { color: '#d4d4d8', fontFamily: 'monospace', fontSize: 12 },
+                                    splitLine: { lineStyle: { color: ['#3f3f46'] } },
+                                    splitArea: { areaStyle: { color: ['rgba(0,0,0,0)'] } },
+                                    axisLine: { lineStyle: { color: '#52525b' } }
+                                },
                                 series: [{
                                     type: 'radar',
+                                    symbol: 'none',
+                                    lineStyle: { color: '#ffffff', width: 2 },
+                                    areaStyle: { color: 'rgba(255,255,255,0.08)' },
                                     data: [{ value: [Number(a||0), Number(i||0), Number(c||0), Number(f||0)] }]
                                 }]
                             }, { notMerge: false, lazyUpdate: true });
@@ -3233,7 +3294,7 @@ def main_page():
 
                 function setBiorhythmEChart(cpuHist, memHist) {
                     try {
-                        var inst = getEChart('cids-resource-chart');
+                        var inst = ensureChartInstance('cids-resource-chart');
                         if (!inst) return;
                         try { inst.resize && inst.resize(); } catch (eR) { }
                         var n = (cpuHist && cpuHist.length) ? cpuHist.length : 0;
@@ -3241,10 +3302,31 @@ def main_page():
                         for (var k = 0; k < n; k++) x.push(k);
                         try {
                             inst.setOption({
-                                xAxis: { type: 'category', data: x },
+                                backgroundColor: 'transparent',
+                                animation: false,
+                                tooltip: { show: true, trigger: 'axis', axisPointer: { type: 'line' } },
+                                grid: { left: 8, right: 8, top: 16, bottom: 8, containLabel: false },
+                                xAxis: {
+                                    type: 'category',
+                                    data: x,
+                                    boundaryGap: false,
+                                    axisLabel: { show: false },
+                                    axisTick: { show: false },
+                                    axisLine: { show: false },
+                                    splitLine: { show: false }
+                                },
+                                yAxis: {
+                                    type: 'value',
+                                    min: 0,
+                                    max: 100,
+                                    axisLabel: { show: false },
+                                    axisTick: { show: false },
+                                    axisLine: { show: false },
+                                    splitLine: { show: true, lineStyle: { color: '#27272a' } }
+                                },
                                 series: [
-                                    { name: 'CPU', type: 'line', data: cpuHist || [] },
-                                    { name: 'MEM', type: 'line', data: memHist || [] }
+                                    { name: 'CPU', type: 'line', data: cpuHist || [], showSymbol: false, lineStyle: { color: '#ffffff', width: 2 } },
+                                    { name: 'MEM', type: 'line', data: memHist || [], showSymbol: false, lineStyle: { color: '#a1a1aa', width: 2, type: 'dotted' } }
                                 ]
                             }, { notMerge: false, lazyUpdate: true });
                             postDiagThrottled('chart_set_ok', 'chart_ok_resource', { id: 'cids-resource-chart', n: n }, 30000);
@@ -3301,7 +3383,7 @@ def main_page():
 
                 function setDensityEChart(bins, raw, sliceSec) {
                     try {
-                        var inst = getEChart('cids-density-chart');
+                        var inst = ensureChartInstance('cids-density-chart');
                         if (!inst) return;
                         try { inst.resize && inst.resize(); } catch (eR) { }
                         var ss = Number(sliceSec || 2);
@@ -3338,9 +3420,16 @@ def main_page():
 
                         try {
                             inst.setOption({
+                                backgroundColor: 'transparent',
                                 xAxis: { type: 'category', data: cats, axisLabel: { show: false }, axisTick: { show: false }, axisLine: { show: false } },
                                 yAxis: { type: 'value', min: 0, max: 100, axisLabel: { show: false }, axisTick: { show: false }, axisLine: { show: false }, splitLine: { show: false } },
-                                series: [{ type: 'bar', data: data }]
+                                series: [{
+                                    type: 'bar',
+                                    data: data,
+                                    barWidth: '70%',
+                                    barMinHeight: 2,
+                                    itemStyle: { color: '#d4d4d8', opacity: 0.75, borderColor: '#ffffff', borderWidth: 0 }
+                                }]
                             }, { notMerge: false, lazyUpdate: true });
                             postDiagThrottled('chart_set_ok', 'chart_ok_density', { id: 'cids-density-chart', n: n }, 30000);
                         } catch (eSet) {
@@ -3508,12 +3597,62 @@ def main_page():
                     try {
                         var ids = ['cids-integrity-radar-chart', 'cids-resource-chart', 'cids-density-chart'];
                         for (var i = 0; i < ids.length; i++) {
-                            var inst = getEChart(ids[i]);
+                            var inst = ensureChartInstance(ids[i]);
                             if (!inst) continue;
                             try { inst.resize && inst.resize(); } catch (eR) { }
                         }
                     } catch (e) {
                         // swallow
+                    }
+                }
+
+                function ensureChartInstance(id) {
+                    try {
+                        var inst = getEChart(id);
+                        if (inst) return inst;
+                        var el = byId(id);
+                        if (!el) return null;
+
+                        // Fallback re-init path for stale browser state where the ECharts
+                        // instance reference is lost but the DOM node still exists.
+                        var ec = null;
+                        try {
+                            ec = (window && window.echarts) ? window.echarts : null;
+                            if (!ec && window && window.__cids_echarts_ref) {
+                                ec = window.__cids_echarts_ref;
+                            }
+                        } catch (eEc) {
+                            ec = null;
+                        }
+                        if (!ec || typeof ec.init !== 'function') return null;
+
+                        try {
+                            var existing = (typeof ec.getInstanceByDom === 'function') ? ec.getInstanceByDom(el) : null;
+                            if (existing) return existing;
+                        } catch (eG) {
+                            // swallow
+                        }
+
+                        // Dispose any orphan instance bound to this dom (best effort).
+                        try {
+                            if (typeof ec.dispose === 'function') ec.dispose(el);
+                        } catch (eD) {
+                            // swallow
+                        }
+
+                        var created = null;
+                        try {
+                            created = ec.init(el, null, { renderer: 'canvas' });
+                        } catch (eI) {
+                            created = null;
+                        }
+                        if (created) {
+                            postDiagThrottled('chart_reinit_ok', 'chart_reinit_' + String(id), { id: String(id) }, 10000);
+                            return created;
+                        }
+                        return null;
+                    } catch (e) {
+                        return null;
                     }
                 }
 
@@ -3791,6 +3930,39 @@ def main_page():
                 // After initial mount/layout settles, kick chart resizes and record placement.
                 setTimeout(function() { resizeChartsKicker(); reportChartMount('t+650'); }, 650);
                 setTimeout(function() { resizeChartsKicker(); reportChartMount('t+1400'); }, 1400);
+                // Visibility/focus recovery for blank-chart edge cases after tab sleep,
+                // browser cache restore, or embedded-browser wake-up.
+                try {
+                    var __cidsRecoverCharts = function(tag) {
+                        try {
+                            resizeChartsKicker();
+                            reportChartMount(String(tag || 'recover'));
+                            // Force one immediate snapshot pull to repopulate series data.
+                            pollSnapshot();
+                        } catch (eRec) {
+                            // swallow
+                        }
+                    };
+                    window.addEventListener('resize', function() {
+                        try { __cidsRecoverCharts('resize'); } catch (eRz) { }
+                    });
+                    window.addEventListener('focus', function() {
+                        try { __cidsRecoverCharts('focus'); } catch (eFc) { }
+                        setTimeout(function() { try { __cidsRecoverCharts('focus+350ms'); } catch (eFc2) { } }, 350);
+                    });
+                    document.addEventListener('visibilitychange', function() {
+                        try {
+                            if (!document.hidden) {
+                                __cidsRecoverCharts('visible');
+                                setTimeout(function() { try { __cidsRecoverCharts('visible+500ms'); } catch (eV2) { } }, 500);
+                            }
+                        } catch (eVs) {
+                            // swallow
+                        }
+                    });
+                } catch (eBindRec) {
+                    // swallow
+                }
                 setInterval(tickClock, 1000);
                 setInterval(pollSnapshot, POLL_MS);
                 setInterval(pollLog, LOG_POLL_MS);
@@ -3843,7 +4015,7 @@ def main_page():
     def handle_runtime_route_change(source_value: str, mode_value: str) -> None:
         source_norm = normalize_ops_runtime_source(source_value)
         mode_norm = normalize_ops_runtime_mode(mode_value)
-        packet = _request_observerctl_mode_transition(source=source_norm, mode=mode_norm)
+        packet = _request_observerctl_mode_switch(source=source_norm, mode=mode_norm)
         decision = str(packet.get('decision', 'no-go')).strip().lower()
         reasons = packet.get('reason_codes', []) if isinstance(packet.get('reason_codes', []), list) else []
 
@@ -3890,7 +4062,7 @@ def main_page():
                     with ui.row().classes('items-center gap-2'):
                         ui.label('RUNTIME ROUTE').classes('text-sm text-gray-400')
                         ui.icon('help_outline', size='xs').classes('text-gray-600')\
-                            .tooltip('Authoritative route control (gated). Writes through observerctl mode transition with source+mode.')
+                            .tooltip('Authoritative route control (gated). Uses observerctl mode switch (single action): validates, gates, syncs runtime, and records evidence.')
 
                 route_source = ui.select(
                     options={'sim': 'SIM', 'real': 'REAL'},

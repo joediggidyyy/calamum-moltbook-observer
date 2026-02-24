@@ -293,6 +293,159 @@ def test_ops_mode_transition_atomic_flow(tmp_path: Path, monkeypatch) -> None:
     assert out.exists()
 
 
+def test_ops_mode_switch_single_action_syncs_runtime_and_state(tmp_path: Path, monkeypatch) -> None:
+    log_dir = tmp_path / 'logs'
+    health = log_dir / 'health'
+    data = log_dir / 'data' / 'calamum'
+    control = log_dir / 'control' / 'calamum'
+
+    for d in [health, data, control]:
+        d.mkdir(parents=True, exist_ok=True)
+
+    _touch(health / 'calamum_ops_watchdog.heartbeat')
+    _touch(health / 'calamum_observer.heartbeat')
+    _touch(health / 'calamum_librarian.heartbeat')
+
+    monkeypatch.setenv('CALAMUM_LOG_DIR', str(log_dir))
+    monkeypatch.setenv('CALAMUM_DATA_SIGNING_KEY', 'unit-test-signing-key')
+    _set_security_report_ref(monkeypatch, log_dir)
+    _write_watchdog_posture(control, posture='isolation', heartbeat_interval=10, baseline_interval=120)
+    _write_watchdog_resource(control, cpu_now=55, ram_now=60, cpu_p95=50, ram_p95=55, score=0.2, age_s=5)
+
+    observerctl_module._save_state('sim', 'watch')
+
+    # Stabilize gate inputs without requiring real process lifecycle.
+    monkeypatch.setattr(
+        observerctl_module,
+        '_runtime_observer_status',
+        lambda max_age_sec=60.0: {
+            'state': 'active',
+            'heartbeat': {'status': 'ok'},
+            'pid': {'value': 1234, 'alive': True},
+            'pending_stop_signal': False,
+        },
+    )
+
+    calls = {'stop': 0, 'start': 0}
+
+    def _fake_runtime_status() -> dict:
+        return {
+            'state': 'active',
+            'heartbeat': {'status': 'ok'},
+            'pid': {'value': 1234, 'alive': True},
+            'pending_stop_signal': False,
+        }
+
+    def _fake_runtime_stop(timeout_sec: float = 8.0) -> dict:
+        calls['stop'] += 1
+        return {
+            'timestamp_utc': '2026-01-01T00:00:00Z',
+            'runtime_cli_surface': 'observerctl',
+            'decision': 'go',
+            'action': 'runtime-stop',
+            'reason_codes': [],
+            'stopped_cleanly': True,
+            'escalated_terminate': False,
+        }
+
+    def _fake_runtime_start(source: str, mode: str, interval_sec: float, timeout_sec: float) -> dict:
+        calls['start'] += 1
+        return {
+            'timestamp_utc': '2026-01-01T00:00:01Z',
+            'runtime_cli_surface': 'observerctl',
+            'decision': 'go',
+            'action': 'runtime-start',
+            'reason_codes': [],
+            'startup_verified': True,
+            'state': 'active',
+            'pid': {'value': 5678, 'alive': True},
+            'source': source,
+            'mode': mode,
+        }
+
+    monkeypatch.setattr(observerctl_module, '_ops_runtime_status', _fake_runtime_status)
+    monkeypatch.setattr(observerctl_module, '_ops_runtime_stop', _fake_runtime_stop)
+    monkeypatch.setattr(observerctl_module, '_ops_runtime_start', _fake_runtime_start)
+
+    rc = main(['ops', 'mode', 'switch', '--to', 'canary', '--json'])
+    assert rc == 0
+
+    state = observerctl_module._load_state()
+    assert state.get('source') == 'sim'
+    assert state.get('mode') == 'canary'
+    assert calls['stop'] == 1
+    assert calls['start'] == 1
+
+
+def test_ops_mode_switch_defaults_source_from_ssot_state(tmp_path: Path, monkeypatch) -> None:
+    log_dir = tmp_path / 'logs'
+    health = log_dir / 'health'
+    data = log_dir / 'data' / 'calamum'
+    control = log_dir / 'control' / 'calamum'
+
+    for d in [health, data, control]:
+        d.mkdir(parents=True, exist_ok=True)
+
+    _touch(health / 'calamum_ops_watchdog.heartbeat')
+    _touch(health / 'calamum_observer.heartbeat')
+    _touch(health / 'calamum_librarian.heartbeat')
+
+    monkeypatch.setenv('CALAMUM_LOG_DIR', str(log_dir))
+    monkeypatch.setenv('CALAMUM_DATA_SIGNING_KEY', 'unit-test-signing-key')
+    monkeypatch.setenv('MOLTBOOK_API_KEY', 'test-key')
+    _set_security_report_ref(monkeypatch, log_dir)
+    _write_watchdog_posture(control, posture='isolation', heartbeat_interval=10, baseline_interval=120)
+    _write_watchdog_resource(control, cpu_now=55, ram_now=60, cpu_p95=50, ram_p95=55, score=0.2, age_s=5)
+
+    observerctl_module._save_state('real', 'watch')
+
+    monkeypatch.setattr(
+        observerctl_module,
+        '_runtime_observer_status',
+        lambda max_age_sec=60.0: {
+            'state': 'active',
+            'heartbeat': {'status': 'ok'},
+            'pid': {'value': 1111, 'alive': True},
+            'pending_stop_signal': False,
+        },
+    )
+    monkeypatch.setattr(observerctl_module, '_ops_runtime_status', lambda: {
+        'state': 'stopped',
+        'heartbeat': {'status': 'err'},
+        'pid': {'value': None, 'alive': False},
+        'pending_stop_signal': False,
+    })
+    monkeypatch.setattr(observerctl_module, '_ops_runtime_stop', lambda timeout_sec=8.0: {
+        'timestamp_utc': '2026-01-01T00:00:00Z',
+        'runtime_cli_surface': 'observerctl',
+        'decision': 'go',
+        'action': 'runtime-stop',
+        'reason_codes': [],
+    })
+
+    seen = {'source': ''}
+
+    def _fake_runtime_start(source: str, mode: str, interval_sec: float, timeout_sec: float) -> dict:
+        seen['source'] = source
+        return {
+            'timestamp_utc': '2026-01-01T00:00:01Z',
+            'runtime_cli_surface': 'observerctl',
+            'decision': 'go',
+            'action': 'runtime-start',
+            'reason_codes': [],
+            'startup_verified': True,
+            'state': 'active',
+            'pid': {'value': 5678, 'alive': True},
+        }
+
+    monkeypatch.setattr(observerctl_module, '_ops_runtime_start', _fake_runtime_start)
+
+    rc = main(['ops', 'mode', 'switch', '--to', 'canary', '--json'])
+    assert rc == 0
+    assert seen['source'] == 'real'
+
+
+
 def test_ops_evidence_verify_schema_failure(tmp_path: Path, monkeypatch) -> None:
     bad_packet = tmp_path / 'bad_packet.json'
     bad_packet.write_text('{"timestamp_utc":"2026-02-21T00:00:00Z"}\n', encoding='utf-8')
@@ -594,6 +747,34 @@ def test_baseline_overnight_run_fails_closed_when_analysis_not_ready(tmp_path: P
     assert packet.get('decision') == 'no-go'
     reasons = packet.get('reason_codes', [])
     assert any('resource_baseline_window_incomplete' in str(r) for r in reasons)
+
+
+def test_baseline_overnight_run_emits_progress_lines_without_json(tmp_path: Path, monkeypatch, capsys) -> None:
+    log_dir = tmp_path / 'logs'
+    for d in [log_dir / 'health', log_dir / 'data' / 'calamum', log_dir / 'control' / 'calamum']:
+        d.mkdir(parents=True, exist_ok=True)
+
+    monkeypatch.setenv('CALAMUM_LOG_DIR', str(log_dir))
+
+    rc = main([
+        'baseline', 'overnight-run',
+        '--source', 'sim',
+        '--mode', 'canary',
+        '--overnight-hours', '0.0006',
+        '--normal-interval-sec', '0.05',
+        '--rapid-interval-sec', '0.05',
+        '--rapid-phase-sec', '0.5',
+        '--min-normal-samples', '1',
+        '--min-rapid-samples', '1',
+    ])
+    assert rc == 0
+
+    captured = capsys.readouterr()
+    err = captured.err
+    assert 'baseline overnight run started' in err
+    assert 'phase_start rapid_start' in err
+    assert 'phase_complete analysis decision=go baseline_ready=True' in err
+    assert 'baseline overnight run completed decision=go' in err
 
 
 def test_baseline_generate_and_check_filesystem_hashes(tmp_path: Path, monkeypatch) -> None:

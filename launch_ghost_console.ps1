@@ -227,17 +227,10 @@ function Stop-OrphanInstances ($name, $scriptPath, $expectedPid) {
             $ci = Get-CimInstance Win32_Process -Filter "ProcessId=$expectedPid" -ErrorAction SilentlyContinue
             if ($ci -and $ci.ParentProcessId) {
                 $parentId = [int]$ci.ParentProcessId
-                # Only protect parent if it is a launcher wrapper (does NOT look like same script).
-                $parentLooksLikeSameScript = $false
-                try {
-                    $pi = Get-CimInstance Win32_Process -Filter "ProcessId=$parentId" -ErrorAction SilentlyContinue
-                    if ($pi -and $pi.CommandLine -and ($pi.CommandLine -like "*${needle}*")) {
-                        $parentLooksLikeSameScript = $true
-                    }
-                } catch { }
-                if (-not $parentLooksLikeSameScript) {
-                    $protected[$parentId] = $true
-                }
+                # Always protect direct parent of expected PID.
+                # On Windows, terminating the parent launcher can cascade and
+                # tear down the still-valid expected child process.
+                $protected[$parentId] = $true
             }
         } catch { }
     }
@@ -280,8 +273,15 @@ function Normalize-AgentSource($raw) {
     $v = ("$raw").Trim()
     if (-not $v) { return "sim" }
     $lower = $v.ToLowerInvariant()
-    if ($lower -eq "live") { return "live" }
+    if ($lower -eq "live" -or $lower -eq "real") { return "real" }
     return "sim"
+}
+
+function Requires-MoltbookKey($source, $mode) {
+    $src = ("$source").Trim().ToLowerInvariant()
+    $m = ("$mode").Trim().ToLowerInvariant().Replace('_', '-')
+    if ($src -ne 'real') { return $false }
+    return ($m -in @('live', 'honeypot'))
 }
 
 function Resolve-AgentIntervalSec() {
@@ -384,9 +384,9 @@ $autoStartObserver = Resolve-ObserverAutostart
 Write-Host ("[*] Agent config (names-only): mode=${desiredMode}, source=${desiredSource}, interval_sec=${desiredInterval}") -ForegroundColor Gray
 Write-Host ("[*] GUI observer autostart: " + $(if ($autoStartObserver) { 'ENABLED' } else { 'DISABLED (default)' })) -ForegroundColor Gray
 
-# Fail closed: if LIVE is explicitly requested, require the key.
-if ($desiredSource -eq 'live' -and -not $moltKeyPresent) {
-    Write-Host "[!] LIVE requested (CALAMUM_MOLTBOOK_SOURCE=live) but MOLTBOOK_API_KEY is missing. Refusing to start observer agent." -ForegroundColor Red
+# Fail closed only for real-source lockdown lanes that require live retrieval.
+if ((Requires-MoltbookKey $desiredSource $desiredMode) -and -not $moltKeyPresent) {
+    Write-Host "[!] REAL source requested in ${desiredMode} mode but MOLTBOOK_API_KEY is missing. Refusing to start observer agent." -ForegroundColor Red
     Write-Host "    -> Fix: inject env vars via VAULT tooling or populate project .env (gitignored), then re-run this launcher." -ForegroundColor Yellow
     exit 2
 }
@@ -442,6 +442,7 @@ if (-not $watchdogPid) {
 
 # Check/Start Agent
 $agentPid = Get-RunningPid $AgentPidFile
+Stop-OrphanInstances "Observer Agent" $AgentScript $agentPid
 if (-not $autoStartObserver) {
     if ($agentPid) {
         Write-Host "    [+] Observer Agent is ACTIVE (PID: $agentPid) [autostart disabled; leaving as-is]" -ForegroundColor Green
@@ -592,10 +593,11 @@ if ($portOwnerPid) {
     Write-Host "    [+] Dashboard Backend PORT OWNER is ACTIVE (PID: $portOwnerPid)" -ForegroundColor Green
 }
 
-# Final single-instance enforcement for the dashboard after port-owner reconciliation (opt-in only).
-if ($env:CALAMUM_ENFORCE_DASHBOARD_SINGLE_INSTANCE -eq '1') {
-    Stop-OrphanInstances "Dashboard Backend" $DashboardScript $dashboardPid
-}
+# Final single-instance enforcement for the dashboard after port-owner reconciliation.
+# Use the current port-owner as expected PID when available; otherwise fallback to pidfile PID.
+$expectedDashboardPid = $dashboardPid
+if ($portOwnerPid) { $expectedDashboardPid = [int]$portOwnerPid }
+Stop-OrphanInstances "Dashboard Backend" $DashboardScript $expectedDashboardPid
 
 # 4. LAUNCH FRONTEND (Edge App Mode)
 Write-Host "[*] Launching Ghost Console Interface..." -ForegroundColor Green

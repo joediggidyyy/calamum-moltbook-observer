@@ -144,6 +144,25 @@ def _save_state(source: str, mode: str) -> Dict[str, Any]:
     return payload
 
 
+def _state_default_source() -> str:
+    """CLI default source from SSOT state."""
+    try:
+        return _normalize_source(str(_load_state().get('source', 'sim')))
+    except Exception:
+        return 'sim'
+
+
+def _state_default_mode() -> str:
+    """CLI default mode from SSOT state."""
+    try:
+        mode = str(_load_state().get('mode', 'watch')).strip().lower()
+        if mode in MODES:
+            return mode
+    except Exception:
+        pass
+    return 'watch'
+
+
 def _policy_default() -> Dict[str, Any]:
     return {
         'policy_profile': 'default',
@@ -1471,6 +1490,22 @@ def _safe_sleep(seconds: float) -> None:
     time.sleep(s)
 
 
+def _emit_progress(message: str, enabled: bool = True) -> None:
+    """Emit a bounded operator progress line to stderr.
+
+    This is intentionally stderr-only so JSON packet output on stdout remains
+    machine-parseable.
+    """
+    if not bool(enabled):
+        return
+    try:
+        line = '[observerctl] {0} {1}'.format(_utc_now(), str(message or '').strip())
+        print(line, file=sys.stderr, flush=True)
+    except Exception:
+        # Progress output must never break command execution semantics.
+        return
+
+
 def _touch_observer_service_heartbeat() -> None:
     try:
         hb = get_calamum_health_dir() / 'calamum_observer.heartbeat'
@@ -1913,6 +1948,146 @@ def _ops_mode_transition(source: str, to_mode: str, event: str, output: str) -> 
         'to_state': mode_set.get('to_state', gate.get('to_state', '')),
         'reason_codes': [],
     }
+    for key in ('run_id', 'posture_trigger_id', 'posture_trigger', 'security_report_ref'):
+        result[key] = mode_set.get(key, gate.get(key, ''))
+    return result
+
+
+def _ops_mode_switch(
+    source: str,
+    to_mode: str,
+    event: str,
+    output: str,
+    interval_sec: float,
+    stop_timeout_sec: float,
+    startup_probe_sec: float,
+) -> Dict[str, Any]:
+    """Single-action mode switch: validate + gate + set + runtime sync + verify."""
+    source_norm = _normalize_source(source)
+    mode_norm = str(to_mode or '').strip().lower()
+    if mode_norm not in MODES:
+        return {
+            'timestamp_utc': _utc_now(),
+            'runtime_cli_surface': 'observerctl',
+            'decision': 'no-go',
+            'phase': 'mode-switch',
+            'reason_codes': ['policy_denied:target_mode_unsupported'],
+        }
+
+    status_before = collect_runtime_status(source=source_norm)
+    gate = evaluate_gate_decision(status_before, target_mode=mode_norm)
+    _write_json_file(_control_file(LAST_GATE_FILE), gate)
+    if gate.get('decision') != 'go':
+        return {
+            'timestamp_utc': _utc_now(),
+            'runtime_cli_surface': 'observerctl',
+            'decision': 'no-go',
+            'phase': 'mode-switch',
+            'reason_codes': gate.get('reason_codes', []),
+            'gate_packet': gate,
+        }
+
+    mode_set = _ops_mode_set(source_norm, mode_norm)
+    if mode_set.get('decision') != 'go':
+        return {
+            'timestamp_utc': _utc_now(),
+            'runtime_cli_surface': 'observerctl',
+            'decision': 'no-go',
+            'phase': 'mode-switch',
+            'reason_codes': mode_set.get('reason_codes', ['critical_check_failed:mode_set_failed']),
+            'gate_packet': gate,
+            'mode_set_packet': mode_set,
+        }
+
+    runtime_before = _ops_runtime_status()
+    runtime_stop_packet: Optional[Dict[str, Any]] = None
+    runtime_before_state = str(runtime_before.get('state', 'stopped')).strip().lower()
+    if runtime_before_state in ('active', 'degraded'):
+        runtime_stop_packet = _ops_runtime_stop(timeout_sec=float(stop_timeout_sec))
+        if runtime_stop_packet.get('decision') != 'go':
+            return {
+                'timestamp_utc': _utc_now(),
+                'runtime_cli_surface': 'observerctl',
+                'decision': 'no-go',
+                'phase': 'mode-switch',
+                'reason_codes': runtime_stop_packet.get('reason_codes', ['critical_check_failed:runtime_stop_failed']),
+                'gate_packet': gate,
+                'mode_set_packet': mode_set,
+                'runtime_before': runtime_before,
+                'runtime_stop_packet': runtime_stop_packet,
+            }
+
+    runtime_start_packet = _ops_runtime_start(
+        source=source_norm,
+        mode=mode_norm,
+        interval_sec=float(interval_sec),
+        timeout_sec=float(startup_probe_sec),
+    )
+    if runtime_start_packet.get('decision') != 'go':
+        return {
+            'timestamp_utc': _utc_now(),
+            'runtime_cli_surface': 'observerctl',
+            'decision': 'no-go',
+            'phase': 'mode-switch',
+            'reason_codes': runtime_start_packet.get('reason_codes', ['critical_check_failed:runtime_start_failed']),
+            'gate_packet': gate,
+            'mode_set_packet': mode_set,
+            'runtime_before': runtime_before,
+            'runtime_stop_packet': runtime_stop_packet,
+            'runtime_start_packet': runtime_start_packet,
+        }
+
+    post_status = collect_runtime_status(source=source_norm)
+    post_reasons: List[str] = []
+
+    post_state_source = _normalize_source(str(post_status.get('state_source', source_norm)))
+    post_mode = str(post_status.get('mode', '') or '').strip().lower()
+    if post_state_source != source_norm or post_mode != mode_norm:
+        post_reasons.append('critical_check_failed:ssot_state_not_applied')
+
+    post_checks = post_status.get('checks', {}) if isinstance(post_status.get('checks', {}), dict) else {}
+    observer_service_status = str((post_checks.get('runtime.observer_service') or {}).get('status', 'err')).lower()
+    if observer_service_status != 'ok':
+        post_reasons.append('critical_check_failed:runtime_sync_inactive')
+
+    evidence = build_evidence_pack(status_before, gate, event=event)
+    out_path = Path(str(output).strip()) if str(output).strip() else _default_output_path(source=source_norm, mode=mode_norm, event=event)
+    evidence = _write_packet(evidence, out_path)
+    _append_jsonl(_evidence_index_path(source_norm, mode_norm), {
+        'timestamp_utc': _utc_now(),
+        'packet_path': str(out_path).replace('\\', '/'),
+        'decision': 'go' if len(post_reasons) == 0 else 'no-go',
+        'run_id': evidence.get('run_id', ''),
+        'scope': {'source': source_norm, 'mode': mode_norm},
+        'event': str(event or 'mode-switch').strip().lower().replace(' ', '-'),
+    })
+
+    result: Dict[str, Any] = {
+        'timestamp_utc': _utc_now(),
+        'runtime_cli_surface': 'observerctl',
+        'decision': 'go' if len(post_reasons) == 0 else 'no-go',
+        'phase': 'mode-switch',
+        'reason_codes': post_reasons,
+        'from_state': gate.get('from_state', ''),
+        'to_state': '{0}:{1}'.format(source_norm, mode_norm),
+        'gate_packet': gate,
+        'mode_set_packet': mode_set,
+        'runtime_before': runtime_before,
+        'runtime_stop_packet': runtime_stop_packet,
+        'runtime_start_packet': runtime_start_packet,
+        'postflight_status': post_status,
+        'evidence_packet': {
+            'provenance': evidence.get('provenance', {}),
+            'process': evidence.get('process', {}),
+        },
+    }
+
+    advisory: List[str] = []
+    if not bool(runtime_start_packet.get('startup_verified', False)):
+        advisory.append('startup_pending:observer_not_active_within_probe_window')
+    if advisory:
+        result['advisory_reason_codes'] = advisory
+
     for key in ('run_id', 'posture_trigger_id', 'posture_trigger', 'security_report_ref'):
         result[key] = mode_set.get(key, gate.get(key, ''))
     return result
@@ -2475,6 +2650,7 @@ def _baseline_overnight_run(
     min_normal_samples: int,
     min_rapid_samples: int,
     output: str,
+    emit_progress: bool = False,
 ) -> Dict[str, Any]:
     src = _normalize_source(source)
     m = str(mode or 'canary').strip().lower()
@@ -2488,6 +2664,17 @@ def _baseline_overnight_run(
 
     total_window_sec = overnight_h * 3600.0
     normal_window_sec = max(0.05, total_window_sec - (2.0 * rapid_phase))
+
+    _emit_progress(
+        'baseline overnight run started source={0} mode={1} overnight_hours={2:.3f} rapid_phase_sec={3:.3f} normal_phase_sec={4:.3f}'.format(
+            src,
+            m,
+            float(overnight_h),
+            float(rapid_phase),
+            float(normal_window_sec),
+        ),
+        enabled=emit_progress,
+    )
 
     linkage = _make_run_linkage(m, event='baseline-overnight-run')
     window_id = datetime.now(timezone.utc).strftime('%Y%m%dT%H%M%SZ')
@@ -2505,6 +2692,7 @@ def _baseline_overnight_run(
             'action': str(packet.get('action', '') or ''),
         })
 
+    _emit_progress('phase_start rapid_start', enabled=emit_progress)
     rapid_start = _baseline_collect(
         source=src,
         mode=m,
@@ -2516,7 +2704,15 @@ def _baseline_overnight_run(
         output='',
     )
     _record_checkpoint('rapid_start', rapid_start)
+    _emit_progress(
+        'phase_complete rapid_start decision={0} samples={1}'.format(
+            str(rapid_start.get('decision', 'no-go')).lower(),
+            int(rapid_start.get('sample_count', 0) or 0),
+        ),
+        enabled=emit_progress,
+    )
 
+    _emit_progress('phase_start normal_overnight', enabled=emit_progress)
     normal_run = _baseline_collect(
         source=src,
         mode=m,
@@ -2528,7 +2724,15 @@ def _baseline_overnight_run(
         output='',
     )
     _record_checkpoint('normal_overnight', normal_run)
+    _emit_progress(
+        'phase_complete normal_overnight decision={0} samples={1}'.format(
+            str(normal_run.get('decision', 'no-go')).lower(),
+            int(normal_run.get('sample_count', 0) or 0),
+        ),
+        enabled=emit_progress,
+    )
 
+    _emit_progress('phase_start rapid_end', enabled=emit_progress)
     rapid_end = _baseline_collect(
         source=src,
         mode=m,
@@ -2540,7 +2744,15 @@ def _baseline_overnight_run(
         output='',
     )
     _record_checkpoint('rapid_end', rapid_end)
+    _emit_progress(
+        'phase_complete rapid_end decision={0} samples={1}'.format(
+            str(rapid_end.get('decision', 'no-go')).lower(),
+            int(rapid_end.get('sample_count', 0) or 0),
+        ),
+        enabled=emit_progress,
+    )
 
+    _emit_progress('phase_start analysis', enabled=emit_progress)
     analyze_packet = _baseline_analyze(
         source=src,
         mode=m,
@@ -2551,6 +2763,13 @@ def _baseline_overnight_run(
         output='',
     )
     _record_checkpoint('analysis', analyze_packet)
+    _emit_progress(
+        'phase_complete analysis decision={0} baseline_ready={1}'.format(
+            str(analyze_packet.get('decision', 'no-go')).lower(),
+            bool(analyze_packet.get('baseline_ready', False)),
+        ),
+        enabled=emit_progress,
+    )
 
     phase_failures = [cp for cp in checkpoints if str(cp.get('decision', 'no-go')) != 'go']
     reason_codes: List[str] = []
@@ -2639,6 +2858,13 @@ def _baseline_overnight_run(
         'scope': {'source': src, 'mode': m},
         'event': 'baseline_overnight_run',
     })
+    _emit_progress(
+        'baseline overnight run completed decision={0} packet_path={1}'.format(
+            str(packet.get('decision', 'no-go')).lower(),
+            str((packet.get('provenance', {}) or {}).get('artifact_path', '') or ''),
+        ),
+        enabled=emit_progress,
+    )
     return packet
 
 
@@ -3214,6 +3440,16 @@ def _dispatch(args: argparse.Namespace) -> Dict[str, Any]:
             return _ops_mode_set(args.source, args.to)
         if args.ops_cmd == 'mode-transition':
             return _ops_mode_transition(args.source, args.to, args.event, args.output)
+        if args.ops_cmd == 'mode-switch':
+            return _ops_mode_switch(
+                source=args.source,
+                to_mode=args.to,
+                event=args.event,
+                output=args.output,
+                interval_sec=args.interval_sec,
+                stop_timeout_sec=args.stop_timeout_sec,
+                startup_probe_sec=args.startup_probe_sec,
+            )
         if args.ops_cmd == 'evidence-pack':
             return _ops_evidence_pack(args.source, args.event, args.output)
         if args.ops_cmd == 'evidence-verify':
@@ -3278,6 +3514,7 @@ def _dispatch(args: argparse.Namespace) -> Dict[str, Any]:
                 min_normal_samples=args.min_normal_samples,
                 min_rapid_samples=args.min_rapid_samples,
                 output=args.output,
+                emit_progress=not bool(getattr(args, 'json', False)),
             )
 
     if cmd == 'librarian':
@@ -3333,10 +3570,10 @@ def _build_parser() -> argparse.ArgumentParser:
     ops_sub = ops.add_subparsers(dest='ops_cmd', required=True)
 
     op_pre = ops_sub.add_parser('preflight', help='Emit observer runtime status packet')
-    op_pre.add_argument('--source', choices=['sim', 'real'], default=os.getenv('CALAMUM_MOLTBOOK_SOURCE', 'sim'))
+    op_pre.add_argument('--source', choices=['sim', 'real'], default=_state_default_source())
 
     op_gatecheck = ops_sub.add_parser('gate-check', help='Evaluate go/no-go over current state')
-    op_gatecheck.add_argument('--source', choices=['sim', 'real'], default=os.getenv('CALAMUM_MOLTBOOK_SOURCE', 'sim'))
+    op_gatecheck.add_argument('--source', choices=['sim', 'real'], default=_state_default_source())
 
     op_runtime = ops_sub.add_parser('runtime', help='Observer lifecycle controls')
     op_runtime_sub = op_runtime.add_subparsers(dest='runtime_cmd', required=True)
@@ -3344,8 +3581,8 @@ def _build_parser() -> argparse.ArgumentParser:
     op_runtime_stop = op_runtime_sub.add_parser('stop', help='Request observer stop (kill signal) and wait for clean exit')
     op_runtime_stop.add_argument('--timeout-sec', type=float, default=8.0, help='Seconds to wait for clean observer shutdown before escalation')
     op_runtime_start = op_runtime_sub.add_parser('start', help='Start observer via delegated launcher path')
-    op_runtime_start.add_argument('--source', choices=['sim', 'real'], default=os.getenv('CALAMUM_MOLTBOOK_SOURCE', 'sim'))
-    op_runtime_start.add_argument('--mode', choices=list(MODES), default=os.getenv('CALAMUM_OPS_MODE', 'watch'))
+    op_runtime_start.add_argument('--source', choices=['sim', 'real'], default=_state_default_source())
+    op_runtime_start.add_argument('--mode', choices=list(MODES), default=_state_default_mode())
     op_runtime_start.add_argument('--interval-sec', type=float, default=float(os.getenv('CALAMUM_AGENT_INTERVAL_SEC', '2.0')))
     op_runtime_start.add_argument('--timeout-sec', type=float, default=0.0, help='Readiness probe timeout after detached launch (0 = no probe)')
 
@@ -3355,20 +3592,29 @@ def _build_parser() -> argparse.ArgumentParser:
     op_mode_sub.add_parser('list', help='List modes and posture mapping')
     op_gate = op_mode_sub.add_parser('gate', help='Evaluate transition gate to target mode')
     op_gate.add_argument('--to', choices=list(MODES), required=True)
-    op_gate.add_argument('--source', choices=['sim', 'real'], default=os.getenv('CALAMUM_MOLTBOOK_SOURCE', 'sim'))
+    op_gate.add_argument('--source', choices=['sim', 'real'], default=_state_default_source())
     op_set = op_mode_sub.add_parser('set', help='Set target mode after successful gate packet')
     op_set.add_argument('--to', choices=list(MODES), required=True)
-    op_set.add_argument('--source', choices=['sim', 'real'], default=os.getenv('CALAMUM_MOLTBOOK_SOURCE', 'sim'))
+    op_set.add_argument('--source', choices=['sim', 'real'], default=_state_default_source())
     op_transition = op_mode_sub.add_parser('transition', help='Atomic mode transition: gate + set + evidence')
     op_transition.add_argument('--to', choices=list(MODES), required=True)
-    op_transition.add_argument('--source', choices=['sim', 'real'], default=os.getenv('CALAMUM_MOLTBOOK_SOURCE', 'sim'))
+    op_transition.add_argument('--source', choices=['sim', 'real'], default=_state_default_source())
     op_transition.add_argument('--event', default='mode-transition')
     op_transition.add_argument('--output', default='')
+
+    op_switch = op_mode_sub.add_parser('switch', help='Single-action mode switch: validate + gate + set + runtime sync + postflight')
+    op_switch.add_argument('--to', choices=list(MODES), required=True)
+    op_switch.add_argument('--source', choices=['sim', 'real'], default=_state_default_source())
+    op_switch.add_argument('--interval-sec', type=float, default=float(os.getenv('CALAMUM_AGENT_INTERVAL_SEC', '2.0')), help='Observer interval for runtime sync start')
+    op_switch.add_argument('--stop-timeout-sec', type=float, default=8.0, help='Seconds to wait for clean observer shutdown before escalation')
+    op_switch.add_argument('--startup-probe-sec', type=float, default=6.0, help='Seconds to probe observer readiness after runtime sync start')
+    op_switch.add_argument('--event', default='mode-switch')
+    op_switch.add_argument('--output', default='')
 
     op_ev = ops_sub.add_parser('evidence', help='Evidence packet operations')
     op_ev_sub = op_ev.add_subparsers(dest='evidence_cmd', required=True)
     op_ev_pack = op_ev_sub.add_parser('pack', help='Emit publication-grade evidence packet')
-    op_ev_pack.add_argument('--source', choices=['sim', 'real'], default=os.getenv('CALAMUM_MOLTBOOK_SOURCE', 'sim'))
+    op_ev_pack.add_argument('--source', choices=['sim', 'real'], default=_state_default_source())
     op_ev_pack.add_argument('--event', default='manual')
     op_ev_pack.add_argument('--output', default='')
     op_ev_verify = op_ev_sub.add_parser('verify', help='Verify packet schema and linkage fields')
@@ -3389,8 +3635,8 @@ def _build_parser() -> argparse.ArgumentParser:
     baseline_set = baseline_sub.add_parser('set')
     baseline_set.add_argument('--id', required=True)
     baseline_collect = baseline_sub.add_parser('collect')
-    baseline_collect.add_argument('--source', choices=['sim', 'real'], default=os.getenv('CALAMUM_MOLTBOOK_SOURCE', 'sim'))
-    baseline_collect.add_argument('--mode', choices=list(MODES), default=os.getenv('CALAMUM_OPS_MODE', 'canary'))
+    baseline_collect.add_argument('--source', choices=['sim', 'real'], default=_state_default_source())
+    baseline_collect.add_argument('--mode', choices=list(MODES), default=_state_default_mode())
     baseline_collect.add_argument('--profile', choices=list(RESOURCE_PROFILES), default='normal')
     baseline_collect.add_argument('--duration-sec', type=float, default=0.0, help='Collection duration in seconds (0 captures one sample)')
     baseline_collect.add_argument('--interval-sec', type=float, default=0.0, help='Sampling interval seconds (default by profile)')
@@ -3399,8 +3645,8 @@ def _build_parser() -> argparse.ArgumentParser:
     baseline_collect.add_argument('--output', default='', help='Optional path for publish-grade collection packet')
 
     baseline_analyze = baseline_sub.add_parser('analyze')
-    baseline_analyze.add_argument('--source', choices=['sim', 'real'], default=os.getenv('CALAMUM_MOLTBOOK_SOURCE', 'sim'))
-    baseline_analyze.add_argument('--mode', choices=list(MODES), default=os.getenv('CALAMUM_OPS_MODE', 'canary'))
+    baseline_analyze.add_argument('--source', choices=['sim', 'real'], default=_state_default_source())
+    baseline_analyze.add_argument('--mode', choices=list(MODES), default=_state_default_mode())
     baseline_analyze.add_argument('--hours', type=float, default=24.0, help='Lookback window in hours for baseline analysis')
     baseline_analyze.add_argument('--profile', choices=['all'] + list(RESOURCE_PROFILES), default='all')
     baseline_analyze.add_argument('--min-normal-samples', type=int, default=120, help='Minimum normal stream samples required for readiness')
@@ -3408,8 +3654,8 @@ def _build_parser() -> argparse.ArgumentParser:
     baseline_analyze.add_argument('--output', default='', help='Optional path for publish-grade analysis packet')
 
     baseline_plan = baseline_sub.add_parser('overnight-plan')
-    baseline_plan.add_argument('--source', choices=['sim', 'real'], default=os.getenv('CALAMUM_MOLTBOOK_SOURCE', 'sim'))
-    baseline_plan.add_argument('--mode', choices=list(MODES), default=os.getenv('CALAMUM_OPS_MODE', 'canary'))
+    baseline_plan.add_argument('--source', choices=['sim', 'real'], default=_state_default_source())
+    baseline_plan.add_argument('--mode', choices=list(MODES), default=_state_default_mode())
     baseline_plan.add_argument('--overnight-hours', type=float, default=8.0, help='Total schedule window in hours')
     baseline_plan.add_argument('--normal-interval-sec', type=float, default=30.0, help='Normal sampling interval in seconds')
     baseline_plan.add_argument('--rapid-interval-sec', type=float, default=2.0, help='Rapid sampling interval in seconds')
@@ -3419,8 +3665,8 @@ def _build_parser() -> argparse.ArgumentParser:
     baseline_plan.add_argument('--output', default='', help='Optional path for publish-grade schedule packet')
 
     baseline_run = baseline_sub.add_parser('overnight-run')
-    baseline_run.add_argument('--source', choices=['sim', 'real'], default=os.getenv('CALAMUM_MOLTBOOK_SOURCE', 'sim'))
-    baseline_run.add_argument('--mode', choices=list(MODES), default=os.getenv('CALAMUM_OPS_MODE', 'canary'))
+    baseline_run.add_argument('--source', choices=['sim', 'real'], default=_state_default_source())
+    baseline_run.add_argument('--mode', choices=list(MODES), default=_state_default_mode())
     baseline_run.add_argument('--overnight-hours', type=float, default=8.0, help='Total schedule window in hours')
     baseline_run.add_argument('--normal-interval-sec', type=float, default=30.0, help='Normal sampling interval in seconds')
     baseline_run.add_argument('--rapid-interval-sec', type=float, default=2.0, help='Rapid sampling interval in seconds')
@@ -3433,7 +3679,7 @@ def _build_parser() -> argparse.ArgumentParser:
     librarian_sub = librarian.add_subparsers(dest='lib_cmd', required=True)
     librarian_sub.add_parser('status')
     lib_check = librarian_sub.add_parser('check')
-    lib_check.add_argument('--mode', choices=list(MODES), default=os.getenv('CALAMUM_OPS_MODE', 'watch'))
+    lib_check.add_argument('--mode', choices=list(MODES), default=_state_default_mode())
     lib_restart = librarian_sub.add_parser('restart')
     lib_restart.add_argument('--timeout-sec', type=float, default=8.0, help='Seconds to wait for librarian stop before escalation')
     lib_restart.add_argument('--startup-probe-sec', type=float, default=6.0, help='Seconds to probe for librarian heartbeat after restart')
@@ -3482,6 +3728,8 @@ def _normalize_nested_aliases(args: argparse.Namespace) -> argparse.Namespace:
             args.ops_cmd = 'mode-set'
         elif args.mode_cmd == 'transition':
             args.ops_cmd = 'mode-transition'
+        elif args.mode_cmd == 'switch':
+            args.ops_cmd = 'mode-switch'
     if args.command == 'ops' and args.ops_cmd == 'runtime':
         if args.runtime_cmd == 'status':
             args.ops_cmd = 'runtime-status'

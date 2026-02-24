@@ -71,6 +71,30 @@ def _observer_output_jsonl_path(data_dir: Path, source: str, mode: str) -> Path:
     return data_dir / 'observer_derived' / src / m / 'moltbook_metrics.jsonl'
 
 
+def _load_ssot_route(control_dir: Path, fallback_source: str, fallback_mode: str) -> Tuple[str, str]:
+    """Return runtime route from observerctl state (SSOT), with safe fallbacks."""
+    src = _normalize_source(fallback_source)
+    mode = (fallback_mode or 'watch').strip().lower() or 'watch'
+    if mode not in ('watch', 'canary', 'live', 'honeypot', 'active-gated'):
+        mode = 'watch'
+
+    path = control_dir / 'observerctl_state.json'
+    try:
+        if path.exists():
+            payload = json.loads(path.read_text(encoding='utf-8'))
+            if isinstance(payload, dict):
+                src = _normalize_source(str(payload.get('source', src) or src))
+                cand_mode = str(payload.get('mode', mode) or mode).strip().lower().replace('_', '-')
+                if cand_mode == 'activegated':
+                    cand_mode = 'active-gated'
+                if cand_mode in ('watch', 'canary', 'live', 'honeypot', 'active-gated'):
+                    mode = cand_mode
+    except Exception:
+        pass
+
+    return src, mode
+
+
 def _record_linkage(control_dir: Path, mode: str) -> Dict[str, str]:
     ts = datetime.now(timezone.utc).strftime('%Y%m%dT%H%M%SZ')
     ctx_path = control_dir / 'observerctl_run_context.json'
@@ -354,7 +378,7 @@ def _get_next_item(mode: str, source: str = "sim") -> Optional[Dict[str, Any]]:
     - other modes: public feed samples (post/reply/repost)
     """
     m = (mode or '').strip().lower()
-    src = (source or 'sim').strip().lower()
+    src = _normalize_source(source)
     gen_key = f"{src}:{m or 'default'}"
 
     # Backoff when live returns empty (prevents hammering a dead endpoint).
@@ -367,7 +391,17 @@ def _get_next_item(mode: str, source: str = "sim") -> Optional[Dict[str, Any]]:
         if src == "real":
             client = _get_live_client_best_effort()
             if not client:
-                return None
+                # Mode-based gate: API key is mandatory only for lockdown lanes.
+                # For watch/canary we preserve operator motion by falling back to
+                # simulator generators while keeping route semantics explicit.
+                if m in ('live', 'honeypot'):
+                    return None
+                if not calamum_sampler:
+                    return None
+                sampler = cast(Any, calamum_sampler)
+                if m == 'canary' and hasattr(sampler, 'simulate_moltbook_notifications'):
+                    return sampler.simulate_moltbook_notifications()
+                return sampler.simulate_moltbook_feed()
             if m == 'canary':
                 return client.fetch_notifications()
             return client.fetch_feed(limit=_get_live_batch_limit())
@@ -541,6 +575,18 @@ def run_agent(cfg: AgentConfig, max_iterations: Optional[int] = None) -> int:
             keepalive_helper = KeepaliveHelper("CalamumAgent", interval_seconds=interval)
 
     while True:
+        # Route is controlled by observerctl SSOT state. The agent follows it
+        # on every loop so data writes cannot drift into a stale lane.
+        ssot_source, ssot_mode = _load_ssot_route(cfg.control_dir, cfg.source, cfg.mode)
+        if ssot_source != cfg.source or ssot_mode != cfg.mode:
+            cfg.source = ssot_source
+            cfg.mode = ssot_mode
+            cfg.output_jsonl = _observer_output_jsonl_path(cfg.data_dir, cfg.source, cfg.mode)
+            print(
+                f"[{_utc_now_iso()}] [ROUTE] observerctl SSOT route -> source={cfg.source} mode={cfg.mode}",
+                file=sys.stderr,
+            )
+
         # Operator-friendly liveness signal (stdout; rate-limited)
         if keepalive_helper:
             out_size = None

@@ -1,8 +1,8 @@
 {
-  "created": "2026-02-22T02:57:58.955334Z",
-  "last_persisted": "2026-02-22T03:10:25.071997Z",
+  "created": "2026-02-23T16:34:28.584626Z",
+  "last_persisted": "2026-02-23T16:35:15.086186Z",
   "files_cached": 0,
-  "decisions_logged": 0,
+  "decisions_logged": 6,
   "tasks_tracked": 0,
   "stack_depth": 0,
   "ttl_minutes": 60,
@@ -26,16 +26,16 @@
     },
     "cache": {
       "hits": 0,
-      "requests": 10
+      "requests": 14
     },
     "kcs": {
       "k": 0.64,
       "c": 1.0,
       "s": 1.0
     },
-    "last_activity": "2026-02-22T03:10:24.994935Z",
-    "virtual_start": "2026-02-22T02:57:58.901315Z",
-    "cycle_start": "2026-02-22T02:57:58.901316Z"
+    "last_activity": "2026-02-23T16:35:13.929178Z",
+    "virtual_start": "2026-02-23T16:34:28.563343Z",
+    "cycle_start": "2026-02-23T16:34:28.563344Z"
   },
   "recovery_state": {
     "active": false,
@@ -43,6 +43,6 @@
     "clean_streak": 0,
     "clean_start": null
   },
-  "last_ops_awareness_at": "2026-02-22T02:57:58.981257Z",
-  "last_ops_awareness_hash": "688d83ca0924511013e6bcdd4f09099ba62f095d5687d7ca676124b0223f7c35"
+  "last_ops_awareness_at": "2026-02-23T16:34:28.606667Z",
+  "last_ops_awareness_hash": "e3b7cc66ad948cc7cabe6f6ce16b94fce34466491e94e113e67fb9d4fb023f6d"
 }

@@ -8,7 +8,7 @@ SRC_DIR = Path(__file__).resolve().parents[1]
 if str(SRC_DIR) not in sys.path:
     sys.path.insert(0, str(SRC_DIR))
 
-from calamum_observer_agent import append_record, load_config
+from calamum_observer_agent import append_record, load_config, _load_ssot_route
 
 
 def test_load_config_live_noncanary_uses_live_metrics_file(tmp_path: Path, monkeypatch) -> None:
@@ -67,6 +67,32 @@ def test_append_record_live_source_missing_key_is_noop(tmp_path: Path, monkeypat
     assert not out.exists() or out.read_text(encoding="utf-8").strip() == ""
 
 
+def test_append_record_real_canary_without_key_falls_back_and_writes(tmp_path: Path, monkeypatch) -> None:
+    # Mode-based gate: key is required for live/honeypot, but canary remains
+    # operational via simulator fallback when key is absent.
+    monkeypatch.delenv("MOLTBOOK_API_KEY", raising=False)
+    monkeypatch.setenv("CALAMUM_DATA_SIGNING_KEY", "unit-test-key")
+
+    data_dir = tmp_path / "logs" / "data" / "calamum"
+    control_dir = tmp_path / "logs" / "control" / "calamum"
+    data_dir.mkdir(parents=True, exist_ok=True)
+    control_dir.mkdir(parents=True, exist_ok=True)
+
+    out = data_dir / "observer_derived" / "real" / "canary" / "moltbook_metrics.jsonl"
+
+    append_record(
+        jsonl_path=out,
+        node_id="node-test",
+        mode="canary",
+        control_dir=control_dir,
+        data_dir=data_dir,
+        source="real",
+    )
+
+    assert out.exists()
+    assert out.read_text(encoding="utf-8").strip() != ""
+
+
 def test_rotation_prefix_for_live_metrics_file(tmp_path: Path, monkeypatch) -> None:
     # Prove the rotation logic uses the file stem, not a hardcoded canary prefix.
     monkeypatch.setenv("CALAMUM_DATA_SIGNING_KEY", "unit-test-key")
@@ -97,3 +123,16 @@ def test_rotation_prefix_for_live_metrics_file(tmp_path: Path, monkeypatch) -> N
 
     assert any(name.startswith("moltbook_") for name in archived), archived
     assert not any(name.startswith("moltbook_canary_") for name in archived), archived
+
+
+def test_load_ssot_route_prefers_observerctl_state(tmp_path: Path) -> None:
+    control_dir = tmp_path / "logs" / "control" / "calamum"
+    control_dir.mkdir(parents=True, exist_ok=True)
+    (control_dir / "observerctl_state.json").write_text(
+        '{"source":"real","mode":"canary"}',
+        encoding="utf-8",
+    )
+
+    source, mode = _load_ssot_route(control_dir, fallback_source="sim", fallback_mode="watch")
+    assert source == "real"
+    assert mode == "canary"

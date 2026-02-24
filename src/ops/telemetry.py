@@ -16,6 +16,7 @@ from __future__ import annotations
 import os
 import json
 import time
+from datetime import datetime, timezone
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Any, List, Optional, Tuple
@@ -31,9 +32,9 @@ except ImportError:  # pragma: no cover
     obfuscator_lib = None
 
 try:
-    from calamum_config import get_calamum_data_dir, get_calamum_health_dir
+    from calamum_config import get_calamum_data_dir, get_calamum_health_dir, get_calamum_control_dir
 except ImportError:
-    from ..calamum_config import get_calamum_data_dir, get_calamum_health_dir
+    from ..calamum_config import get_calamum_data_dir, get_calamum_health_dir, get_calamum_control_dir
 
 
 def _find_repo_root(start: Path) -> Path:
@@ -98,16 +99,22 @@ def _newest_jsonl(data_dir: Path) -> Optional[Path]:
     if not data_dir.exists():
         return None
     try:
-        candidates = []
+        preferred = []
+        fallback = []
         for p in data_dir.rglob('*.jsonl'):
             try:
                 if 'archive' in p.parts:
                     continue
                 if p.is_file():
-                    candidates.append(p)
+                    # Canonical ingest stream for dashboard record counters.
+                    if p.name == 'moltbook_metrics.jsonl':
+                        preferred.append(p)
+                    else:
+                        fallback.append(p)
             except OSError:
                 continue
 
+        candidates = preferred if preferred else fallback
         if not candidates:
             return None
 
@@ -221,6 +228,10 @@ class _JsonlAppendCounter:
             self.path = path
             # Reset tracker for new file
             self._stat_tracker = _SafeStat()
+            # Reset running total baseline when switching streams.
+            # Without this, monotonic clamping can pin totals from an old lane
+            # and suppress new-record deltas on the newly active lane.
+            self.total_lines = 0
 
     def _sync_manifest(self) -> int:
         # Check manifest periodically (e.g. every 5s) or if count seems low
@@ -366,6 +377,7 @@ class TelemetryConfig:
     # Performance knobs
     active_jsonl_rescan_sec: float
     jsonl_max_read_bytes_per_poll: int
+    resource_pin_max_age_sec: float
 
 
 def load_config(module_file: Path) -> TelemetryConfig:
@@ -435,6 +447,10 @@ def load_config(module_file: Path) -> TelemetryConfig:
         jsonl_max_read_bytes_per_poll = int(os.getenv('CALAMUM_JSONL_MAX_READ_BYTES', '2000000'))
     except Exception:
         jsonl_max_read_bytes_per_poll = 2_000_000
+    try:
+        resource_pin_max_age_sec = float(os.getenv('CALAMUM_RESOURCE_PIN_MAX_AGE_SEC', '600'))
+    except Exception:
+        resource_pin_max_age_sec = 600.0
 
     return TelemetryConfig(
         watchdog_heartbeat_path=wd_hb,
@@ -449,6 +465,7 @@ def load_config(module_file: Path) -> TelemetryConfig:
         density_bins=density_bins,
         active_jsonl_rescan_sec=active_jsonl_rescan_sec,
         jsonl_max_read_bytes_per_poll=jsonl_max_read_bytes_per_poll,
+        resource_pin_max_age_sec=float(max(0.0, resource_pin_max_age_sec)),
     )
 
 
@@ -463,6 +480,198 @@ class TelemetryProvider:
         self._active_jsonl_cache: Optional[Path] = None
         self._active_jsonl_last_scan_ts: float = 0.0
         self._active_path_high_water_mtime: float = 0.0
+        # Fallback stream for observerctl baseline resource collection.
+        self._resource_last_marker: Tuple[float, str] = (0.0, '')
+        self._resource_total_records: int = 0
+
+    def _load_route_state(self) -> Tuple[str, str, bool]:
+        """Read and normalize observerctl source/mode SSOT state."""
+        source = 'sim'
+        mode = 'canary'
+        has_state = False
+        try:
+            st_path = get_calamum_control_dir() / 'observerctl_state.json'
+            if st_path.exists():
+                payload = json.loads(st_path.read_text(encoding='utf-8'))
+                if isinstance(payload, dict):
+                    has_state = True
+                    source = str(payload.get('source', source) or source).strip().lower()
+                    mode = str(payload.get('mode', mode) or mode).strip().lower().replace('_', '-')
+        except Exception:
+            pass
+
+        if source not in ('sim', 'real'):
+            source = 'sim'
+
+        mode_aliases = {
+            'active-gated': 'live',
+            'activegated': 'live',
+            'sampler': 'watch',
+        }
+        mode = mode_aliases.get(mode, mode)
+        if mode not in ('watch', 'canary', 'live', 'honeypot'):
+            mode = 'canary'
+
+        return source, mode, has_state
+
+    def _preferred_jsonl_for_route(self) -> Optional[Path]:
+        """Return canonical metrics path for the currently selected source/mode route."""
+        source, mode, has_state = self._load_route_state()
+        if not has_state:
+            return None
+        metrics_path = self.config.data_dir / 'observer_derived' / source / mode / 'moltbook_metrics.jsonl'
+
+        # If route metrics exists, always pin to SSOT lane.
+        if metrics_path.exists():
+            return metrics_path
+
+        # During baseline/resource-only windows, keep lane pinning if the route's
+        # resource index has recent activity.
+        resource_idx = self.config.data_dir / 'observer_derived' / source / mode / 'resource' / 'index.jsonl'
+        if resource_idx.exists():
+            max_age = float(max(0.0, self.config.resource_pin_max_age_sec))
+            if max_age <= 0.0:
+                return metrics_path
+            try:
+                age = max(0.0, _now_ts() - resource_idx.stat().st_mtime)
+                if age <= max_age:
+                    return metrics_path
+            except OSError:
+                pass
+
+        # If the selected route has neither metrics nor fresh resource activity,
+        # allow fallback stream discovery so counters reflect active ingest.
+        return None
+
+    def _parse_stream_route_from_path(self, path: Optional[Path]) -> Tuple[Optional[str], Optional[str]]:
+        """Return (source, mode) when path matches observer_derived/<source>/<mode>/..."""
+        if path is None:
+            return None, None
+        try:
+            parts = [str(p).strip().lower() for p in path.parts]
+            idx = parts.index('observer_derived')
+            if idx + 2 < len(parts):
+                src = parts[idx + 1]
+                mode = parts[idx + 2]
+                if src in ('sim', 'real') and mode in ('watch', 'canary', 'live', 'honeypot'):
+                    return src, mode
+        except Exception:
+            pass
+        return None, None
+
+    def _read_tail_bytes(self, path: Path, n_bytes: int) -> Optional[bytes]:
+        """Read last N bytes from a file (best-effort, Windows-lock tolerant)."""
+        if n_bytes <= 0:
+            return b''
+        for _ in range(3):
+            try:
+                with path.open('rb') as f:
+                    try:
+                        f.seek(-n_bytes, os.SEEK_END)
+                    except OSError:
+                        try:
+                            f.seek(0)
+                        except Exception:
+                            pass
+                    return f.read(n_bytes)
+            except OSError:
+                time.sleep(0.02)
+            except Exception:
+                return None
+        return None
+
+    def _parse_iso_ts(self, value: Any) -> Optional[float]:
+        raw = str(value or '').strip()
+        if not raw:
+            return None
+        try:
+            if raw.endswith('Z'):
+                raw = raw[:-1] + '+00:00'
+            dt = datetime.fromisoformat(raw)
+            if dt.tzinfo is None:
+                dt = dt.replace(tzinfo=timezone.utc)
+            else:
+                dt = dt.astimezone(timezone.utc)
+            return float(dt.timestamp())
+        except Exception:
+            return None
+
+    def _active_resource_index_path(self) -> Optional[Path]:
+        """Best-effort active resource index path from observerctl SSOT state."""
+        source, mode, _ = self._load_route_state()
+
+        p = self.config.data_dir / 'observer_derived' / source / mode / 'resource' / 'index.jsonl'
+        if p.exists():
+            return p
+
+        # Fallback to newest index if state path is absent/stale.
+        try:
+            cands = list((self.config.data_dir / 'observer_derived').glob('*/*/resource/index.jsonl'))
+        except Exception:
+            cands = []
+        # Windows glob with spaces is brittle; use recursive fallback.
+        if not cands:
+            try:
+                cands = [x for x in (self.config.data_dir / 'observer_derived').rglob('index.jsonl') if 'resource' in x.parts]
+            except Exception:
+                cands = []
+        if not cands:
+            return None
+        try:
+            return max(cands, key=lambda x: x.stat().st_mtime)
+        except Exception:
+            return None
+
+    def _poll_resource_index(self) -> Tuple[int, int]:
+        """Return (delta_records, total_records) from resource index stream.
+
+        Uses a monotonic marker (timestamp, segment_path) to avoid double counting.
+        """
+        idx_path = self._active_resource_index_path()
+        if idx_path is None or not idx_path.exists():
+            return 0, int(self._resource_total_records)
+
+        raw = self._read_tail_bytes(idx_path, 1_000_000)
+        if raw is None:
+            return 0, int(self._resource_total_records)
+
+        try:
+            text = raw.decode('utf-8', errors='replace')
+        except Exception:
+            return 0, int(self._resource_total_records)
+
+        marker = self._resource_last_marker
+        delta = 0
+        newest = marker
+
+        for ln in text.splitlines():
+            line = str(ln or '').strip()
+            if not line:
+                continue
+            try:
+                row = json.loads(line)
+            except Exception:
+                continue
+            if not isinstance(row, dict):
+                continue
+            ts = self._parse_iso_ts(row.get('timestamp_utc'))
+            if ts is None:
+                continue
+            seg_path = str(row.get('segment_path', '') or '')
+            key = (float(ts), seg_path)
+            if key > marker:
+                try:
+                    delta += int(row.get('segment_records', 0) or 0)
+                except Exception:
+                    delta += 0
+            if key > newest:
+                newest = key
+
+        if newest > marker:
+            self._resource_last_marker = newest
+        if delta > 0:
+            self._resource_total_records = int(max(0, self._resource_total_records + delta))
+        return int(max(0, delta)), int(max(0, self._resource_total_records))
 
     def _fallback_active_candidates(self) -> List[Path]:
         """Return deterministic fallback candidates when recursive scan yields nothing.
@@ -549,6 +758,18 @@ class TelemetryProvider:
         now = _now_ts()
         # Avoid glob+stat on every tick; it can get expensive with many JSONL files.
         interval = float(max(0.25, self.config.active_jsonl_rescan_sec))
+
+        # SSOT-first selection: if observerctl declares a concrete source/mode route
+        # and its canonical metrics stream exists, prefer it over newest-file heuristics.
+        preferred = self._preferred_jsonl_for_route()
+        if preferred is not None:
+            self._active_jsonl_cache = preferred
+            try:
+                self._active_path_high_water_mtime = preferred.stat().st_mtime
+            except OSError:
+                self._active_path_high_water_mtime = 0.0
+            self._active_jsonl_last_scan_ts = now
+            return preferred
 
         # If cached path disappeared (rotation, cleanup, or stale pointer), clear it
         # so we can recover on the next scan instead of freezing on stale totals.
@@ -654,12 +875,29 @@ class TelemetryProvider:
             mem = 0.0
 
         # Data file (JSONL) for records/density + fallback observer liveness
+        route_source, route_mode, route_has_state = self._load_route_state()
+
         active_jsonl = self._pick_active_jsonl()
         self._counter.set_path(active_jsonl)
         new_lines, total_lines = self._counter.poll(max_read_bytes=self.config.jsonl_max_read_bytes_per_poll)
+        active_stream_source, active_stream_mode = self._parse_stream_route_from_path(active_jsonl)
+        route_stream_mismatch = bool(
+            route_has_state
+            and active_stream_source is not None
+            and active_stream_mode is not None
+            and (active_stream_source != route_source or active_stream_mode != route_mode)
+        )
+
+        # Resource-index fallback for observerctl baseline collection windows.
+        resource_new, resource_total = self._poll_resource_index()
+        effective_new = int(new_lines)
+        effective_total = int(total_lines)
+        if effective_new <= 0 and resource_new > 0:
+            effective_new = int(resource_new)
+            effective_total = int(max(effective_total, resource_total))
         
         historical = self._counter._historical_count
-        session_recs = max(0, total_lines - historical)
+        session_recs = max(0, effective_total - historical)
         active_is_sim = _is_sim_likely_path(active_jsonl)
 
         archive_total, archive_non_sim, archive_sim_est = _archive_manifest_totals(self.config.data_dir)
@@ -672,7 +910,7 @@ class TelemetryProvider:
 
         # Density window: aggregate new lines into coarse time slices so the
         # histogram is less twitchy and better represents “volume over time”.
-        self._slice_count += int(new_lines)
+        self._slice_count += int(effective_new)
         slice_sec = self._clamp_density_slice_sec(self.config.density_slice_sec)
         elapsed = now - self._slice_started_ts
         if elapsed >= slice_sec:
@@ -722,8 +960,8 @@ class TelemetryProvider:
         return {
             'cpu': cpu,
             'mem': mem,
-            'new_records': int(new_lines),
-            'total_records': int(total_lines),
+            'new_records': int(effective_new),
+            'total_records': int(effective_total),
             'records_session': int(session_recs),
             'records_archive': int(historical),
             'records_session_display': int(session_non_sim),
@@ -732,6 +970,8 @@ class TelemetryProvider:
             'records_archive_non_sim': int(archive_non_sim),
             'records_archive_sim_estimate': int(archive_sim_est),
             'active_source_is_sim': bool(active_is_sim),
+            'resource_new_records': int(resource_new),
+            'resource_total_records': int(resource_total),
             'density_bins': density_bins,
             'density_raw_window': list(self._density_window),
             'density_slice_sec': float(self.config.density_slice_sec),
@@ -749,4 +989,9 @@ class TelemetryProvider:
             'librarian_active': bool(lib_fresh),
             'librarian_stats': {'age': lib_age, 'age_str': lib_age_str, 'path': str(self.config.librarian_heartbeat_path.name)},
             'active_jsonl_path': str(active_jsonl) if active_jsonl is not None else None,
+            'route_source': route_source,
+            'route_mode': route_mode,
+            'active_stream_source': active_stream_source,
+            'active_stream_mode': active_stream_mode,
+            'route_stream_mismatch': bool(route_stream_mismatch),
         }

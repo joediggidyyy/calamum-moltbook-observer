@@ -103,3 +103,44 @@ def test_snapshot_main_display_uses_session_only_for_sim(monkeypatch) -> None:
     assert snap['display_main_records'] == 23
     assert snap['source'] == 'sim'
     assert snap['records_breakdown_display']['main'] == 23
+
+
+def test_snapshot_main_display_uses_session_when_real_route_mismatch_to_sim(monkeypatch) -> None:
+    monkeypatch.setattr(dashboard_module, 'get_calamum_control_dir', lambda: Path('does-not-exist'))
+    monkeypatch.setenv('CALAMUM_MOLTBOOK_SOURCE', 'real')
+    monkeypatch.setenv('CALAMUM_OPS_MODE', 'canary')
+    monkeypatch.setattr(
+        dashboard_module.telemetry,
+        'update',
+        lambda: {
+            'cpu': 10,
+            'mem': 20,
+            'total_records': 500,
+            'records_total_display': 200,
+            'new_records': 4,
+            'records_session': 50,
+            'records_archive': 450,
+            'records_session_display': 0,
+            'records_archive_display': 200,
+            'density_bins': [0] * 12,
+            'density_raw_window': [0] * 12,
+            'density_slice_sec': 2.0,
+            'watchdog_active': True,
+            'observer_active': True,
+            'librarian_active': True,
+            'watchdog_stats': {},
+            'observer_stats': {},
+            'librarian_stats': {},
+            'active_jsonl_path': 'observer_derived/sim/watch/moltbook_metrics.jsonl',
+            'route_stream_mismatch': True,
+            'active_stream_source': 'sim',
+            'active_stream_mode': 'watch',
+        },
+    )
+
+    snap = dashboard_module._compute_snapshot()
+    assert snap['source'] == 'real'
+    assert snap['route_stream_mismatch'] is True
+    assert snap['active_stream_source'] == 'sim'
+    assert snap['active_stream_mode'] == 'watch'
+    assert snap['display_main_records'] == 500

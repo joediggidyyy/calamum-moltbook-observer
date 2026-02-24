@@ -11,7 +11,7 @@ _SRC_DIR = Path(__file__).resolve().parents[1]
 if str(_SRC_DIR) not in sys.path:
     sys.path.insert(0, str(_SRC_DIR))
 
-from ops.telemetry import TelemetryProvider, load_config, _newest_jsonl
+from ops.telemetry import TelemetryProvider, load_config, _newest_jsonl, _JsonlAppendCounter
 
 
 try:
@@ -27,8 +27,15 @@ def test_telemetry_counts_jsonl_and_heartbeats(tmp_path: Path, monkeypatch) -> N
 
     health_dir = repo_root / 'logs' / 'health'
     data_dir = repo_root / 'logs' / 'data' / 'calamum'
+    control_dir = repo_root / 'logs' / 'control' / 'calamum'
     health_dir.mkdir(parents=True, exist_ok=True)
     data_dir.mkdir(parents=True, exist_ok=True)
+    control_dir.mkdir(parents=True, exist_ok=True)
+
+    (control_dir / 'observerctl_state.json').write_text(
+        json.dumps({'source': 'sim', 'mode': 'canary'}),
+        encoding='utf-8',
+    )
 
     wd = health_dir / 'wd.heartbeat'
     obs = health_dir / 'obs.heartbeat'
@@ -49,6 +56,7 @@ def test_telemetry_counts_jsonl_and_heartbeats(tmp_path: Path, monkeypatch) -> N
     monkeypatch.setenv('CALAMUM_WATCHDOG_HEARTBEAT_PATH', str(wd))
     monkeypatch.setenv('CALAMUM_OBSERVER_HEARTBEAT_PATH', str(obs))
     monkeypatch.setenv('CALAMUM_DATA_DIR', str(data_dir))
+    monkeypatch.setenv('CALAMUM_CONTROL_DIR', str(control_dir))
     monkeypatch.setenv('CALAMUM_FRESHNESS_SEC', '60')
 
     # Provide a module_file inside the temp repo so repo-root discovery finds logs/
@@ -186,8 +194,10 @@ def test_pick_active_jsonl_recovers_when_cached_path_missing(tmp_path: Path, mon
 
     health_dir = repo_root / 'logs' / 'health'
     data_dir = repo_root / 'logs' / 'data' / 'calamum'
+    control_dir = repo_root / 'logs' / 'control' / 'calamum'
     health_dir.mkdir(parents=True, exist_ok=True)
     data_dir.mkdir(parents=True, exist_ok=True)
+    control_dir.mkdir(parents=True, exist_ok=True)
 
     wd = health_dir / 'wd.heartbeat'
     obs = health_dir / 'obs.heartbeat'
@@ -201,6 +211,7 @@ def test_pick_active_jsonl_recovers_when_cached_path_missing(tmp_path: Path, mon
     monkeypatch.setenv('CALAMUM_WATCHDOG_HEARTBEAT_PATH', str(wd))
     monkeypatch.setenv('CALAMUM_OBSERVER_HEARTBEAT_PATH', str(obs))
     monkeypatch.setenv('CALAMUM_DATA_DIR', str(data_dir))
+    monkeypatch.setenv('CALAMUM_CONTROL_DIR', str(control_dir))
 
     module_file = repo_root / 'src' / 'dummy.py'
     module_file.parent.mkdir(parents=True, exist_ok=True)
@@ -216,3 +227,228 @@ def test_pick_active_jsonl_recovers_when_cached_path_missing(tmp_path: Path, mon
 
     picked = provider._pick_active_jsonl()
     assert picked == active
+
+
+def test_telemetry_uses_resource_index_when_active_jsonl_idle(tmp_path: Path, monkeypatch) -> None:
+    repo_root = tmp_path
+    (repo_root / 'logs').mkdir(parents=True, exist_ok=True)
+
+    health_dir = repo_root / 'logs' / 'health'
+    data_dir = repo_root / 'logs' / 'data' / 'calamum'
+    control_dir = repo_root / 'logs' / 'control' / 'calamum'
+    health_dir.mkdir(parents=True, exist_ok=True)
+    data_dir.mkdir(parents=True, exist_ok=True)
+    control_dir.mkdir(parents=True, exist_ok=True)
+
+    wd = health_dir / 'wd.heartbeat'
+    obs = health_dir / 'obs.heartbeat'
+    wd.touch()
+    obs.touch()
+
+    # Active ingest lane exists but is idle/empty.
+    active = data_dir / 'observer_derived' / 'sim' / 'canary' / 'moltbook_metrics.jsonl'
+    active.parent.mkdir(parents=True, exist_ok=True)
+    active.write_text('', encoding='utf-8')
+
+    # Resource collection index has segment deltas (observerctl baseline collect output).
+    resource_index = data_dir / 'observer_derived' / 'sim' / 'canary' / 'resource' / 'index.jsonl'
+    resource_index.parent.mkdir(parents=True, exist_ok=True)
+    resource_index.write_text(
+        '\n'.join([
+            json.dumps({'timestamp_utc': '2026-02-22T00:00:01Z', 'segment_path': 'seg1.jsonl', 'segment_records': 3}),
+            json.dumps({'timestamp_utc': '2026-02-22T00:00:02Z', 'segment_path': 'seg2.jsonl', 'segment_records': 4}),
+        ]) + '\n',
+        encoding='utf-8',
+    )
+
+    # observerctl SSOT state used by telemetry resource-index resolver.
+    (control_dir / 'observerctl_state.json').write_text(
+        json.dumps({'source': 'sim', 'mode': 'canary'}),
+        encoding='utf-8',
+    )
+
+    monkeypatch.setenv('CALAMUM_WATCHDOG_HEARTBEAT_PATH', str(wd))
+    monkeypatch.setenv('CALAMUM_OBSERVER_HEARTBEAT_PATH', str(obs))
+    monkeypatch.setenv('CALAMUM_DATA_DIR', str(data_dir))
+    monkeypatch.setenv('CALAMUM_CONTROL_DIR', str(control_dir))
+    monkeypatch.setenv('CALAMUM_FRESHNESS_SEC', '60')
+    monkeypatch.setenv('CALAMUM_DENSITY_SLICE_SEC', '0.1')
+
+    module_file = repo_root / 'src' / 'dummy.py'
+    module_file.parent.mkdir(parents=True, exist_ok=True)
+    module_file.write_text('# dummy', encoding='utf-8')
+
+    provider = TelemetryProvider(load_config(module_file))
+    snap1 = provider.update()
+    assert snap1['new_records'] == 7
+    assert snap1['total_records'] >= 7
+    assert snap1['resource_new_records'] == 7
+    assert snap1['resource_total_records'] >= 7
+
+    # Let density slice roll so histogram source receives a non-zero bucket.
+    time.sleep(0.32)
+    snap2 = provider.update()
+    assert any(int(x) > 0 for x in snap2['density_raw_window'])
+
+
+def test_pick_active_jsonl_keeps_ssot_route_even_when_other_lane_is_active(tmp_path: Path, monkeypatch) -> None:
+    repo_root = tmp_path
+    (repo_root / 'logs').mkdir(parents=True, exist_ok=True)
+
+    health_dir = repo_root / 'logs' / 'health'
+    data_dir = repo_root / 'logs' / 'data' / 'calamum'
+    control_dir = repo_root / 'logs' / 'control' / 'calamum'
+    health_dir.mkdir(parents=True, exist_ok=True)
+    data_dir.mkdir(parents=True, exist_ok=True)
+    control_dir.mkdir(parents=True, exist_ok=True)
+
+    wd = health_dir / 'wd.heartbeat'
+    obs = health_dir / 'obs.heartbeat'
+    wd.touch()
+    obs.touch()
+
+    # SSOT route points to real/canary, while sim/watch has activity.
+    # Telemetry must keep route fidelity (no lane drift).
+    (control_dir / 'observerctl_state.json').write_text(
+        json.dumps({'source': 'real', 'mode': 'canary'}),
+        encoding='utf-8',
+    )
+
+    sim_watch = data_dir / 'observer_derived' / 'sim' / 'watch' / 'moltbook_metrics.jsonl'
+    sim_watch.parent.mkdir(parents=True, exist_ok=True)
+    sim_watch.write_text('{"x": 1}\n', encoding='utf-8')
+
+    # Route-lane resource activity keeps SSOT pinning even before metrics exists.
+    resource_index = data_dir / 'observer_derived' / 'real' / 'canary' / 'resource' / 'index.jsonl'
+    resource_index.parent.mkdir(parents=True, exist_ok=True)
+    resource_index.write_text(
+        json.dumps({
+            'timestamp_utc': '2026-02-23T04:25:44Z',
+            'segment_path': 'resource/seg-001.jsonl',
+            'segment_records': 5,
+        }) + '\n',
+        encoding='utf-8',
+    )
+
+    monkeypatch.setenv('CALAMUM_WATCHDOG_HEARTBEAT_PATH', str(wd))
+    monkeypatch.setenv('CALAMUM_OBSERVER_HEARTBEAT_PATH', str(obs))
+    monkeypatch.setenv('CALAMUM_DATA_DIR', str(data_dir))
+    monkeypatch.setenv('CALAMUM_CONTROL_DIR', str(control_dir))
+
+    module_file = repo_root / 'src' / 'dummy.py'
+    module_file.parent.mkdir(parents=True, exist_ok=True)
+    module_file.write_text('# dummy', encoding='utf-8')
+
+    provider = TelemetryProvider(load_config(module_file))
+    picked = provider._pick_active_jsonl()
+    expected = data_dir / 'observer_derived' / 'real' / 'canary' / 'moltbook_metrics.jsonl'
+    assert picked == expected
+
+
+def test_pick_active_jsonl_falls_back_when_route_lane_is_missing_and_resource_stale(tmp_path: Path, monkeypatch) -> None:
+    repo_root = tmp_path
+    (repo_root / 'logs').mkdir(parents=True, exist_ok=True)
+
+    health_dir = repo_root / 'logs' / 'health'
+    data_dir = repo_root / 'logs' / 'data' / 'calamum'
+    control_dir = repo_root / 'logs' / 'control' / 'calamum'
+    health_dir.mkdir(parents=True, exist_ok=True)
+    data_dir.mkdir(parents=True, exist_ok=True)
+    control_dir.mkdir(parents=True, exist_ok=True)
+
+    wd = health_dir / 'wd.heartbeat'
+    obs = health_dir / 'obs.heartbeat'
+    wd.touch()
+    obs.touch()
+
+    # SSOT route points to real/canary, but real/canary metrics do not exist.
+    (control_dir / 'observerctl_state.json').write_text(
+        json.dumps({'source': 'real', 'mode': 'canary'}),
+        encoding='utf-8',
+    )
+
+    # Active stream exists in a different lane.
+    sim_watch = data_dir / 'observer_derived' / 'sim' / 'watch' / 'moltbook_metrics.jsonl'
+    sim_watch.parent.mkdir(parents=True, exist_ok=True)
+    sim_watch.write_text('{"x": 1}\n', encoding='utf-8')
+
+    monkeypatch.setenv('CALAMUM_WATCHDOG_HEARTBEAT_PATH', str(wd))
+    monkeypatch.setenv('CALAMUM_OBSERVER_HEARTBEAT_PATH', str(obs))
+    monkeypatch.setenv('CALAMUM_DATA_DIR', str(data_dir))
+    monkeypatch.setenv('CALAMUM_CONTROL_DIR', str(control_dir))
+    monkeypatch.setenv('CALAMUM_RESOURCE_PIN_MAX_AGE_SEC', '120')
+
+    module_file = repo_root / 'src' / 'dummy.py'
+    module_file.parent.mkdir(parents=True, exist_ok=True)
+    module_file.write_text('# dummy', encoding='utf-8')
+
+    provider = TelemetryProvider(load_config(module_file))
+    picked = provider._pick_active_jsonl()
+    assert picked == sim_watch
+
+
+def test_pick_active_jsonl_pins_fresh_route_resource_index(tmp_path: Path, monkeypatch) -> None:
+    repo_root = tmp_path
+    (repo_root / 'logs').mkdir(parents=True, exist_ok=True)
+
+    health_dir = repo_root / 'logs' / 'health'
+    data_dir = repo_root / 'logs' / 'data' / 'calamum'
+    control_dir = repo_root / 'logs' / 'control' / 'calamum'
+    health_dir.mkdir(parents=True, exist_ok=True)
+    data_dir.mkdir(parents=True, exist_ok=True)
+    control_dir.mkdir(parents=True, exist_ok=True)
+
+    wd = health_dir / 'wd.heartbeat'
+    obs = health_dir / 'obs.heartbeat'
+    wd.touch()
+    obs.touch()
+
+    (control_dir / 'observerctl_state.json').write_text(
+        json.dumps({'source': 'real', 'mode': 'canary'}),
+        encoding='utf-8',
+    )
+
+    # Fresh resource index should keep route pin even before metrics file exists.
+    resource_index = data_dir / 'observer_derived' / 'real' / 'canary' / 'resource' / 'index.jsonl'
+    resource_index.parent.mkdir(parents=True, exist_ok=True)
+    resource_index.write_text('', encoding='utf-8')
+
+    monkeypatch.setenv('CALAMUM_WATCHDOG_HEARTBEAT_PATH', str(wd))
+    monkeypatch.setenv('CALAMUM_OBSERVER_HEARTBEAT_PATH', str(obs))
+    monkeypatch.setenv('CALAMUM_DATA_DIR', str(data_dir))
+    monkeypatch.setenv('CALAMUM_CONTROL_DIR', str(control_dir))
+    monkeypatch.setenv('CALAMUM_RESOURCE_PIN_MAX_AGE_SEC', '600')
+
+    module_file = repo_root / 'src' / 'dummy.py'
+    module_file.parent.mkdir(parents=True, exist_ok=True)
+    module_file.write_text('# dummy', encoding='utf-8')
+
+    provider = TelemetryProvider(load_config(module_file))
+    picked = provider._pick_active_jsonl()
+    expected = data_dir / 'observer_derived' / 'real' / 'canary' / 'moltbook_metrics.jsonl'
+    assert picked == expected
+
+
+def test_jsonl_counter_resets_baseline_when_stream_path_changes(tmp_path: Path) -> None:
+    data_dir = tmp_path / 'logs' / 'data' / 'calamum'
+    a = data_dir / 'observer_derived' / 'sim' / 'watch' / 'moltbook_metrics.jsonl'
+    b = data_dir / 'observer_derived' / 'real' / 'canary' / 'moltbook_metrics.jsonl'
+    a.parent.mkdir(parents=True, exist_ok=True)
+    b.parent.mkdir(parents=True, exist_ok=True)
+
+    a.write_text('{"x":1}\n{"x":2}\n{"x":3}\n', encoding='utf-8')
+    b.write_text('{"y":1}\n', encoding='utf-8')
+
+    counter = _JsonlAppendCounter(data_dir=data_dir)
+    counter.set_path(a)
+    d1, t1 = counter.poll()
+    assert t1 >= 3
+
+    # Switch streams and append a new record on the new lane.
+    counter.set_path(b)
+    with b.open('a', encoding='utf-8') as f:
+        f.write('{"y":2}\n')
+
+    d2, t2 = counter.poll()
+    assert d2 >= 1
+    assert t2 >= 2
