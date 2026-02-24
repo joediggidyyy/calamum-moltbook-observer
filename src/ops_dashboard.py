@@ -367,13 +367,6 @@ class SystemState:
         self._last_wd_active: Optional[bool] = None
         self._last_lib_active: Optional[bool] = None  # NEW
         self._last_archive_count: int = 0  # NEW
-        self._last_ingest_event_at: Optional[float] = None
-        self._ingest_window_started_at: float = time.time()
-        self._ingest_window_records: int = 0
-        self._ingest_window_sources: Dict[str, int] = {}
-        self._ingest_stalled: bool = False
-        self._last_route_stream_mismatch: Optional[bool] = None
-        self._last_active_stream_route: Optional[str] = None
         self._wd_sig_ok: Optional[bool] = None
         self._wd_sig_detail: Optional[str] = None
         self._obs_heartbeat_stale: Optional[bool] = None
@@ -403,25 +396,6 @@ def add_log(msg: str) -> None:
     if len(state.log_items) > 400:
         state.log_items = state.log_items[-400:]
 
-
-def _ingest_periodic_summary_enabled() -> bool:
-    """Whether to emit periodic [INGEST] rollup lines.
-
-    Default is OFF to keep SYSTEM LOG high-signal. Set
-    CALAMUM_INGEST_PERIODIC_SUMMARY=1 to re-enable legacy rollups.
-    """
-    raw = str(os.getenv('CALAMUM_INGEST_PERIODIC_SUMMARY', '0') or '').strip().lower()
-    return raw in {'1', 'true', 'yes', 'on'}
-
-
-def _ingest_summary_period_sec() -> float:
-    """Cadence for optional periodic ingest summaries when enabled."""
-    raw = os.getenv('CALAMUM_INGEST_SUMMARY_PERIOD_SEC', '60')
-    try:
-        value = float(raw)
-    except Exception:
-        value = 60.0
-    return max(30.0, min(300.0, value))
 
 state = SystemState()
 
@@ -702,73 +676,11 @@ def _compute_snapshot() -> dict:
     else:
         status = {'text': 'NOMINAL', 'color': 'green'}
 
-    # Log narrative (heads-up oriented): aggregate ingest bursts and surface transitions.
-    now_ts = time.time()
-    ingest_summary_period_sec = _ingest_summary_period_sec()
-    ingest_periodic_enabled = _ingest_periodic_summary_enabled()
-    ingest_stall_threshold_sec = 45.0
-
-    if new > 0:
-        src_name = 'unknown'
-        try:
-            src = snap.get('active_jsonl_path')
-            if src:
-                src_name = Path(str(src)).name
-        except Exception:
-            src_name = 'unknown'
-
-        state._ingest_window_records += int(new)
-        state._ingest_window_sources[src_name] = int(state._ingest_window_sources.get(src_name, 0)) + int(new)
-        state._last_ingest_event_at = now_ts
-
-        if state._ingest_stalled:
-            add_log('[SYS] Ingest activity resumed')
-            state._ingest_stalled = False
-
-    window_age = max(0.0, float(now_ts - state._ingest_window_started_at))
-    if state._ingest_window_records > 0 and window_age >= ingest_summary_period_sec:
-        if ingest_periodic_enabled:
-            top_sources = sorted(state._ingest_window_sources.items(), key=lambda kv: kv[1], reverse=True)
-            src_summary = ', '.join([f"{name}:{count}" for (name, count) in top_sources[:3]]) if top_sources else 'unknown'
-            add_log(
-                f"[INGEST] +{state._ingest_window_records} records/{int(round(window_age))}s "
-                f"(sources: {src_summary})"
-            )
-        # Always reset rollup window even when periodic summaries are disabled.
-        state._ingest_window_records = 0
-        state._ingest_window_sources = {}
-        state._ingest_window_started_at = now_ts
-
-    if state.is_running and state._last_ingest_event_at is not None:
-        ingest_idle_age = now_ts - float(state._last_ingest_event_at)
-        if ingest_idle_age >= ingest_stall_threshold_sec and not state._ingest_stalled:
-            add_log(f"[WARN] Ingest stream idle for {int(round(ingest_idle_age))}s")
-            state._ingest_stalled = True
+    # System log intentionally excludes ingest periodic/stall chatter.
 
     if state._last_obs_active is None: state._last_obs_active = state.is_running
     if state._last_wd_active is None: state._last_wd_active = state.watchdog_active
     if state._last_lib_active is None: state._last_lib_active = state.librarian_active
-
-    current_active_route = None
-    if active_stream_source and active_stream_mode:
-        current_active_route = f"{active_stream_source}:{active_stream_mode}"
-    if state._last_route_stream_mismatch is None:
-        state._last_route_stream_mismatch = bool(route_stream_mismatch)
-        state._last_active_stream_route = current_active_route
-    else:
-        if bool(route_stream_mismatch) != bool(state._last_route_stream_mismatch):
-            if route_stream_mismatch:
-                add_log(
-                    f"[WARN] Route/stream mismatch: route={state.source}:{state.mode} "
-                    f"active={current_active_route or 'unknown'}"
-                )
-            else:
-                add_log('[SYS] Route/stream mismatch cleared')
-            state._last_route_stream_mismatch = bool(route_stream_mismatch)
-
-        if bool(route_stream_mismatch) and current_active_route and current_active_route != state._last_active_stream_route:
-            add_log(f"[WARN] Active stream moved during mismatch -> {current_active_route}")
-            state._last_active_stream_route = current_active_route
 
     if state.is_running != state._last_obs_active:
         add_log(f"[SYS] Observer state -> {'ACTIVE' if state.is_running else 'DOWN'}")

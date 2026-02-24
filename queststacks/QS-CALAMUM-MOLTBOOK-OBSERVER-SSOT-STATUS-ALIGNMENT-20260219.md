@@ -40,3 +40,10 @@ Primary audit surface:
 - `projects/calamum-moltbook-observer/local_untracked/audits/implementation_drift/`
 - `projects/calamum-moltbook-observer/local_untracked/audit_log/implementation_drift_audit.jsonl`
 - `docs/dashboards/room/JOBS_DASHBOARD.md`
+
+## Job paperwork (autogen)
+
+- QuestFrame spec: `projects/calamum-moltbook-observer/questframes/QF-CALAMUM-MOLTBOOK-OBSERVER-SSOT-STATUS-ALIGNMENT-20260219.json`
+- Job doc: `jobs/OPS_JOB_0036_CALAMUM_MOLTBOOK_OBSERVER_SSOT_STATUS_ALIGNMENT_20260219.md`
+- Job report: `docs/reports/operations/JOB_REPORT_QS-CALAMUM-MOLTBOOK-OBSERVER-SSOT-STATUS-ALIGNMENT-20260219.md`
+

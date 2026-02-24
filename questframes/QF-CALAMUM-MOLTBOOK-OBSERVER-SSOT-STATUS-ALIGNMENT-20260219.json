@@ -1,0 +1,46 @@
+{
+  "queststack_id": "qs-calamum-moltbook-observer-ssot-status-alignment-20260219",
+  "questframe_id": "calamum-moltbook-observer-ssot-status-alignment-20260219",
+  "owner": "ORACL-Prime",
+  "created_at": "2026-02-19T00:00:00Z",
+  "updated_at": "2026-02-24T00:00:00Z",
+  "current_focus_frame": "qf1_align_status_and_evidence_paths",
+  "frames": [
+    {
+      "frame_id": "qf1_align_status_and_evidence_paths",
+      "stage_id": "alignment",
+      "title": "Align status and evidence paths",
+      "status": "not-started",
+      "next_action": "Bring high-signal Calamum status artifacts into SSOT alignment and verify pointer integrity.",
+      "tasks": [
+        "Align mismatched status markers to operations/tasks.json",
+        "Confirm QuestStack, job doc, and report pointers are canonical",
+        "Verify scaffold artifacts resolve under PRE_JOB checks"
+      ]
+    },
+    {
+      "frame_id": "qf2_run_drift_dryrun_and_baseline",
+      "stage_id": "validation",
+      "title": "Run drift dry-run and baseline",
+      "status": "not-started",
+      "next_action": "Execute drift audit dry-run then baseline to re-anchor evidence after status alignment.",
+      "tasks": [
+        "Run implementation drift dry-run",
+        "Run implementation drift baseline",
+        "Capture audit evidence links"
+      ]
+    },
+    {
+      "frame_id": "qf3_refresh_dashboard_and_finalize",
+      "stage_id": "closure",
+      "title": "Refresh dashboard and finalize evidence",
+      "status": "not-started",
+      "next_action": "Refresh jobs dashboard and capture final evidence delta for close readiness.",
+      "tasks": [
+        "Refresh jobs dashboard",
+        "Capture evidence delta summary",
+        "Run SessionMemory health check as closing action"
+      ]
+    }
+  ]
+}

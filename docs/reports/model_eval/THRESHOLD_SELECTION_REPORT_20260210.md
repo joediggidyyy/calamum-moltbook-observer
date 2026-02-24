@@ -9,6 +9,12 @@
 - **Selected Threshold**: `-0.045089`
 - **Observed FPR**: 1.0005% (1339/133837 records)
 
+## Override Note
+
+- Strict target threshold was `<= 1.0000%` FPR.
+- Observed variance is `+0.0005%`.
+- Operator override approved by `joediggidyyy` on `2026-02-24T18:09:39Z`; closure authorized without post-mortem gate reruns.
+
 ## Distribution Stats
 - Min: -0.078014
 - Max: 0.133836

@@ -6,7 +6,7 @@
 
 **Date**: 2026-02-10
 
-**Status**: PLANNED
+**Status**: COMPLETED
 
 ---
 
@@ -33,3 +33,9 @@ Evidence anchors:
 - [x] Implement `src/analysis/threshold_selection.py`
 - [x] Establish `deliverables/DATA780/TRAINING_LEDGER.md`
 - [x] Run threshold calibration to demonstrate <1% FPR
+
+## Closure Note
+
+- Closed by operator directive on `2026-02-24T18:09:39Z`.
+- Threshold variance override recorded: observed `1.0005%` accepted against strict `<=1.0%` target.
+- Post-mortem gate reruns explicitly waived for this closure.

@@ -1,0 +1,37 @@
+{
+  "job_id": "CALAMUM_JOB_0028_PROCESS_MONITOR_AUTOCLEAN_REMEDIATION_20260223",
+  "sequence": 28,
+  "task_id": "calamum-job-0028-process-monitor-autoclean-remediation-20260223",
+  "state": "OPEN",
+  "status": "open",
+  "status_reason": "Process monitor remediation lane opened; execution pending canonical job start traversal",
+  "owner": "ORACL-Prime",
+  "date_utc": "2026-02-23",
+  "scope_root": "CodeSentinel-1",
+  "objective": "Upgrade process monitoring from detection-heavy behavior to safe, deterministic remediation for known orphaned CodeSentinel/Calamum process patterns.",
+  "gate_traversal_contract": {
+    "start": "codesentinel job start calamum-job-0028-process-monitor-autoclean-remediation-20260223",
+    "close": "codesentinel job close calamum-job-0028-process-monitor-autoclean-remediation-20260223"
+  },
+  "systems_documents_touched": [
+    "codesentinel/utils/process_monitor.py",
+    "codesentinel/cli/process_utils.py",
+    "codesentinel/cli/__init__.py",
+    "codesentinel/cli/legacy_cli.py",
+    "tests/*process*",
+    "docs/operations/runbooks/*"
+  ],
+  "acceptance_criteria": [
+    "memory process status reflects remediation outcomes where applicable",
+    "Cleanup logic protects expected host parents and active service lineage",
+    "No uncontrolled force-kill behavior is introduced",
+    "Cleanup events are visible in monitor history and domain activity logs"
+  ],
+  "validation_plan": [
+    "Run targeted process monitor and CLI process command tests",
+    "Verify codesentinel memory process status/history/anomalies surfaces",
+    "Record gate evidence in logs/behavioral/gates/gate_events.jsonl",
+    "Capture closing health check via codesentinel memory health --json"
+  ],
+  "completion_definition": "Job is complete when process monitor supports safe remediation for targeted orphan classes, tests pass, and close traversal records PASS evidence."
+}

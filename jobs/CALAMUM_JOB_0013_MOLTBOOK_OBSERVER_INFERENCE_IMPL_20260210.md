@@ -2,7 +2,7 @@
 
 **Job ID**: CALAMUM_JOB_0013_MOLTBOOK_OBSERVER_INFERENCE_IMPL_20260210
 **Date**: 2026-02-10
-**Status**: OPEN
+**Status**: COMPLETED
 **Owner**: ORACL-Prime
 **Frame**: 0013
 
@@ -53,6 +53,7 @@ Located under: `projects/calamum-moltbook-observer/src/analysis/`
   - Threshold: `-0.045089`
   - Observed FPR: `1.0005%` (1339 anomalies / 133837 total)
   - Report: `docs/reports/model_eval/THRESHOLD_SELECTION_REPORT_20260210.md`
+   - Operator override: accepted variance of `+0.0005%` relative to the strict `<=1.0%` target and authorized close without post-mortem gate reruns (`2026-02-24T18:09:39Z`).
 
 ---
 
@@ -60,5 +61,5 @@ Located under: `projects/calamum-moltbook-observer/src/analysis/`
 
 - [x] `score_unsupervised.py` outputs anomaly scores for input JSONL/CSV.
 - [x] `threshold_selection.py` outputs a specific threshold value and an FPR report.
-- [x] The reported FPR on the benign validation set is strictly <= 1%.
+- [x] The reported FPR on the benign validation set is accepted for closure via explicit operator override (`1.0005%`, variance `+0.0005%`).
 - [x] `TRAINING_LEDGER.md` contains at least one entry linking to a `run.json`.

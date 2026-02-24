@@ -1,0 +1,35 @@
+{
+  "job_id": "CALAMUM_JOB_0029_BASELINE_PROMOTION_READINESS_AND_RECOMMENDATIONS_20260223",
+  "sequence": 29,
+  "task_id": "calamum-job-0029-baseline-promotion-readiness-and-recommendations-20260223",
+  "state": "OPEN",
+  "status": "open",
+  "status_reason": "Baseline recommendation lane opened; execution pending canonical job start traversal",
+  "owner": "ORACL-Prime",
+  "date_utc": "2026-02-23",
+  "scope_root": "projects/calamum-moltbook-observer",
+  "objective": "Formalize baseline readiness posture for real/canary collection and convert analysis outputs into operator-ready recommendation profiles (rehearsal vs promotion).",
+  "gate_traversal_contract": {
+    "start": "codesentinel job start calamum-job-0029-baseline-promotion-readiness-and-recommendations-20260223",
+    "close": "codesentinel job close calamum-job-0029-baseline-promotion-readiness-and-recommendations-20260223"
+  },
+  "systems_documents_touched": [
+    "projects/calamum-moltbook-observer/src/observerctl.py",
+    "projects/calamum-moltbook-observer/src/tests/test_observerctl.py",
+    "projects/calamum-moltbook-observer/docs/reports/operations/*baseline*",
+    "operations/checklists/*"
+  ],
+  "acceptance_criteria": [
+    "Baseline guidance is deterministic and reproducible from CLI outputs",
+    "Rehearsal profile provides immediate actionable guidance without weakening promotion policy",
+    "Promotion profile preserves strict threshold enforcement with clear evidence requirements",
+    "Recommendation docs remain names-only and policy-compliant"
+  ],
+  "validation_plan": [
+    "Run targeted observerctl baseline tests",
+    "Verify baseline status/analyze/overnight-plan command surfaces",
+    "Verify observer_derived resource index JSONL and gate event evidence",
+    "Capture closing health check via codesentinel memory health --json"
+  ],
+  "completion_definition": "Job is complete when baseline recommendation profiles are documented and validated with tests/evidence, and close traversal succeeds with health and gate artifacts."
+}

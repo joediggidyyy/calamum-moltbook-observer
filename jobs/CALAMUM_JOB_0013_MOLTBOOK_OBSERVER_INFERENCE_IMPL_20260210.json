@@ -2,7 +2,9 @@
   "job_id": "CALAMUM_JOB_0013_MOLTBOOK_OBSERVER_INFERENCE_IMPL_20260210",
   "project": "calamum-moltbook-observer",
   "created_at_utc": "2026-02-10T15:00:00Z",
-  "status": "OPEN",
+  "status": "COMPLETED",
+  "status_reason": "Closed by operator directive with explicit +0.0005% FPR variance override; post-mortem gate reruns waived",
+  "completed_at_utc": "2026-02-24T18:09:39.7065928Z",
   "owner": "ORACL-Prime",
   "metadata": {
     "title": "Inference & Threshold Implementation (Phase 6)",
@@ -22,5 +24,14 @@
     "src/analysis/score_unsupervised.py",
     "src/analysis/threshold_selection.py",
     "deliverables/DATA780/TRAINING_LEDGER.md"
-  ]
+  ],
+  "override": {
+    "type": "threshold_variance_acceptance",
+    "approved_by": "joediggidyyy",
+    "approved_at_utc": "2026-02-24T18:09:39.7065928Z",
+    "target_fpr_percent": 1.0,
+    "observed_fpr_percent": 1.0005,
+    "variance_percent": 0.0005,
+    "note": "Operator-approved closure despite minimal positive variance over strict threshold"
+  }
 }

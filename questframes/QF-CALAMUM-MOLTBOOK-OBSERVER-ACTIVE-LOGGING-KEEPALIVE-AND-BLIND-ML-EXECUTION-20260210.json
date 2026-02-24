@@ -5,7 +5,7 @@
     "id": "QF-CALAMUM-MOLTBOOK-OBSERVER-ACTIVE-LOGGING-KEEPALIVE-AND-BLIND-ML-EXECUTION-20260210",
     "parent_queststack": "QS-CALAMUM-MOLTBOOK-OBSERVER-ACTIVE-LOGGING-KEEPALIVE-AND-BLIND-ML-EXECUTION-20260210",
     "created_at": "2026-02-10T00:00:00Z",
-    "status": "planned"
+    "status": "completed"
   },
   "spec": {
     "title": "Moltbook Observer - Active Logging Keepalive + Blind ML Execution (Job 0011)",

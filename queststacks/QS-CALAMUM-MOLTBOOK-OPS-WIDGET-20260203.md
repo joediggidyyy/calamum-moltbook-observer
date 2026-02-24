@@ -52,3 +52,10 @@
 *   [ ] Dashboard renders as a fixed-size canvas (no scrollbars) in Edge app-mode.
 *   [ ] "Integrity Diamond", "Bio-Rhythm", and "Density Histogram" render with names-only labels.
 *   [ ] Control Deck emits file-based intents (no raw content) and is fail-closed.
+
+## Job paperwork (autogen)
+
+- QuestFrame spec: `projects/calamum-moltbook-observer/questframes/QF-CALAMUM-MOLTBOOK-OPS-WIDGET-20260203.json`
+- Job doc: `jobs/OPS_JOB_0035_CALAMUM_MOLTBOOK_OPS_WIDGET_20260203.md`
+- Job report: `docs/reports/operations/JOB_REPORT_QS-CALAMUM-MOLTBOOK-OPS-WIDGET-20260203.md`
+
