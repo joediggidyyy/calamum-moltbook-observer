@@ -113,3 +113,11 @@ Checklist closure packet (all rows required before live step is eligible):
 - Gate evidence (canonical): `logs/behavioral/gates/gate_events.jsonl`
 - QuestStack log: `logs/queststack/QS-CALAMUM-MOLTBOOK-KEYMASTER-RETRIEVAL-READINESS-20260219_log.md`
 - QuestStack evidence: `logs/queststack/QS-CALAMUM-MOLTBOOK-KEYMASTER-RETRIEVAL-READINESS-20260219_evidence.jsonl`
+
+## Metadata
+
+- Updated By: `joediggidyyy`
+- Last Transition (UTC): `2026-02-28T13:11:17.600438Z`
+- Status Authority: `operations/tasks.json`
+- Task ID: `calamum-moltbook-baseline-integration-20260220`
+- Status: `open`

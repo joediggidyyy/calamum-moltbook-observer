@@ -42,3 +42,11 @@ A terminal-safety edge case was identified in multi-window VS Code operation: te
 - Canonical policy now requires lane registration before prune.
 - Helper workflow standardizes setup for agent and operator lanes.
 - Override path remains explicit-only and non-default.
+
+## Metadata
+
+- Updated By: `joediggidyyy`
+- Last Transition (UTC): `2026-02-28T13:11:17.600438Z`
+- Status Authority: `operations/tasks.json`
+- Task ID: `calamum-moltbook-baseline-integration-20260220`
+- Status: `open`

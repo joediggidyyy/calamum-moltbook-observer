@@ -25,6 +25,27 @@ def test_normalize_ops_runtime_mode_aliases() -> None:
     assert normalize_ops_runtime_mode('watch') == 'watch'
 
 
+def test_density_bin_width_choices_are_deterministic() -> None:
+    assert list(dashboard_module.DENSITY_BIN_WIDTH_CHOICES) == [
+        'off',
+        2,
+        4,
+        6,
+        8,
+        10,
+        12,
+        14,
+        16,
+        18,
+        20,
+    ]
+
+
+def test_density_bin_width_default_is_valid_choice() -> None:
+    assert dashboard_module.DENSITY_BIN_WIDTH_DEFAULT in dashboard_module.DENSITY_BIN_WIDTH_CHOICES
+    assert dashboard_module.DENSITY_BIN_WIDTH_DEFAULT == 10
+
+
 def test_snapshot_uses_live_total_and_display_breakdown(monkeypatch) -> None:
     monkeypatch.setattr(dashboard_module, 'get_calamum_control_dir', lambda: Path('does-not-exist'))
     monkeypatch.setenv('CALAMUM_MOLTBOOK_SOURCE', 'real')

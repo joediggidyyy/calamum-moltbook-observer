@@ -22,7 +22,7 @@
 - Audit JSONL (append-only): `projects/calamum-moltbook-observer/local_untracked/audit_log/implementation_drift_audit.jsonl`
 - Audit index: `projects/calamum-moltbook-observer/local_untracked/audit_log/audit_index.json`
 
-## Consecutive drift-audit linkage
+## Consecutive audit linkage
 
 - Follow-on official audit (tracked):
    - `projects/calamum-moltbook-observer/docs/reports/operations/audits/OBSERVERCTL_IMPLEMENTATION_GAP_AUDIT_20260221.md`

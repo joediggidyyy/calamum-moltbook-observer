@@ -10,7 +10,11 @@
 
 ## Metadata
 
-- Status: planned
+- Updated By: `joediggidyyy`
+- Last Transition (UTC): `2026-02-28T13:11:17.600438Z`
+- Status Authority: `operations/tasks.json`
+- Task ID: `calamum-moltbook-baseline-integration-20260220`
+- Status: `open`
 - Owner: ORACL-Prime
 - Stakeholder: joediggidyyy
 - Date (UTC): 2026-02-20
@@ -49,6 +53,11 @@ Doctrine summary preserved here:
 - dashboard/UI surfaces are non-authoritative and must not fabricate liveness.
 
 ## Proposed task scaffold (to register in `operations/tasks.json`)
+
+Clarification:
+- The `id` below is a proposed SSOT registration target for this planning scaffold.
+- `codesentinel job create` does not accept `--task-id`; it generates `task_id` and document filename/path dynamically from project metadata + summary + date.
+- Lifecycle traversal must use the emitted/generated `task_id` that is present in `operations/tasks.json`.
 
 ```text
 id: calamum-moltbook-baseline-integration-20260220

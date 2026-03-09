@@ -55,6 +55,13 @@ Operator-friendly CLI companion runbook:
 
 A CodeSentinel-managed job is started/closed against **task_id**, and the lifecycle gates use `task.path` to locate the QuestStack.
 
+Traversal authority rule (normative):
+
+- A task id is lifecycle-valid only when it exists in `operations/tasks.json`.
+- Historical markdown headers such as "Task ID (for traversal)" are advisory context only unless that same id is SSOT-registered.
+- Historical/out-of-framework artifacts are non-direct lifecycle targets until canonical legacy-intake registration creates a new SSOT task + bridge stub (planned `job create --legacy`).
+- For new lanes created via `codesentinel job create`, use the emitted/generated `task_id` from command output (there is no `--task-id` input on create).
+
 ### 2.2 QuestStack is the parse surface for PRE_JOB
 
 The CodeSentinel PRE_JOB gate parses the QuestStack markdown for artifact references.

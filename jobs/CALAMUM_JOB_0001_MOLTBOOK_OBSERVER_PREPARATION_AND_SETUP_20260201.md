@@ -88,7 +88,7 @@ prep/setup
 -> active magnet (gated)
 
 Execution surface:
-- codesentinel job begin/finish (PREFLIGHT + PRE_JOB + POST_JOB)
+- codesentinel job start/close (PREFLIGHT + PRE_JOB + POST_JOB)
 - evidence: logs/behavioral/gates/gate_events.jsonl
 
 Exports:

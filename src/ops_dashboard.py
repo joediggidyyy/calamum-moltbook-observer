@@ -403,9 +403,23 @@ state = SystemState()
 telemetry = TelemetryProvider(load_config(Path(__file__)))
 
 # Density base window (dashboard-local): fixed global time window at 1-second resolution.
-# The browser rebins this base window into [1,2,5,10,20] second bins.
+# The browser rebins this base window into Control Deck-selected bins.
 _DENSITY_BASE_SLICE_SEC: float = 1.0
 _DENSITY_WINDOW_SEC: int = 60
+DENSITY_BIN_WIDTH_CHOICES: Tuple[object, ...] = (
+    'off',
+    2,
+    4,
+    6,
+    8,
+    10,
+    12,
+    14,
+    16,
+    18,
+    20,
+)
+DENSITY_BIN_WIDTH_DEFAULT: int = 10
 try:
     telemetry.set_density_bins(int(_DENSITY_WINDOW_SEC))
     telemetry.set_density_slice_sec(float(_DENSITY_BASE_SLICE_SEC))
@@ -3354,8 +3368,8 @@ def main_page():
 
                 // --- Density bin-width (sec) control (local, persistent; OFF is chart-only) ---
                 var __CIDS_DENSITY_BIN_WIDTH_KEY = '__cids_density_bin_width_sec';
-                var __CIDS_DENSITY_BIN_WIDTH_CHOICES = [1, 2, 5, 10, 20, 'off'];
-                var __CIDS_DENSITY_BIN_WIDTH_DEFAULT = 10;
+                var __CIDS_DENSITY_BIN_WIDTH_CHOICES = __CIDS_DENSITY_BIN_WIDTH_CHOICES__;
+                var __CIDS_DENSITY_BIN_WIDTH_DEFAULT = __CIDS_DENSITY_BIN_WIDTH_DEFAULT__;
 
                 function normalizeBinWidthSetting(v) {
                     try {
@@ -3881,7 +3895,10 @@ def main_page():
             })();
         </script>
         '''
-    ).replace('__CIDS_POLL_MS__', str(poll_ms)).replace('__CIDS_LOG_POLL_MS__', str(log_poll_ms)))
+    ).replace('__CIDS_POLL_MS__', str(poll_ms))
+     .replace('__CIDS_LOG_POLL_MS__', str(log_poll_ms))
+     .replace('__CIDS_DENSITY_BIN_WIDTH_CHOICES__', json.dumps(list(DENSITY_BIN_WIDTH_CHOICES)))
+     .replace('__CIDS_DENSITY_BIN_WIDTH_DEFAULT__', str(int(DENSITY_BIN_WIDTH_DEFAULT))))
     
     # Control Deck overlay (does not resize/push content)
     def toggle_control_deck() -> None:
@@ -3965,8 +3982,8 @@ def main_page():
 
                 # Status Indicator
                 with ui.row().classes('w-full items-center justify-between'):
-                    ui.label('STATUS')
-                    status_badge = ui.badge('NOMINAL', color='green-10').props('id="cids-status-badge"').classes('font-bold')
+                    ui.label('DECK STATUS').classes('text-sm text-gray-400')
+                    status_badge = ui.badge('NOMINAL', color='green-10').props('id="cids-status-badge"').classes('font-bold').tooltip('Overall control-deck status from live snapshot polling.')
 
                 ui.separator().classes('bg-gray-700')
 
@@ -4025,16 +4042,16 @@ def main_page():
                             .tooltip('Watchdog: expects periodic supervisor heartbeats. Reset stages an intent signal; it does not fabricate liveness.')
                     wd_state = ui.badge('ACTIVE', color='green-10').props('id="cids-wd-state"').classes('font-bold text-[10px]')
 
-                ui.button('WATCHDOG RESET', on_click=lambda: handle_control('WD_RESET')).props(btn_props()).classes('w-full border border-gray-700')
-                ui.label(f"Last reset: {state.watchdog_last_reset.strftime('%H:%M:%S')}")\
-                    .props('id="cids-wd-lastreset"')\
-                    .classes('text-xs text-gray-500 -mt-2')
+                ui.separator().classes('bg-gray-700')
+                ui.label('PRIMARY ACTIONS').classes('text-[11px] text-gray-500 uppercase tracking-wide')
+                ui.button('FORCE REFRESH', on_click=lambda: handle_control('REFRESH')).props(btn_props()).classes('w-full border border-gray-700')\
+                    .tooltip('Force immediate observer refresh cycle.')
+                ui.button('WATCHDOG RESET', on_click=lambda: handle_control('WD_RESET')).props(btn_props()).classes('w-full border border-gray-700')\
+                    .tooltip('Reset watchdog intent marker. Liveness still depends on heartbeat continuity.')
 
-                # NOTE: WD status + last reset are updated client-side via polling.
-
-                ui.button('FORCE REFRESH', on_click=lambda: handle_control('REFRESH')).props(btn_props()).classes('w-full border border-gray-700')
-                ui.button('ISOLATE NODE', on_click=lambda: handle_control('ISOLATE')).props('push color=grey-10 text-color=orange').classes('w-full border border-orange-900')
-                ui.label('ISOLATE NODE blocks external ingress to the observer (ops channel remains).').classes('text-xs text-gray-500 -mt-2')
+                ui.label('SAFETY ACTIONS').classes('text-[11px] text-gray-500 uppercase tracking-wide mt-1')
+                ui.button('ISOLATE NODE', on_click=lambda: handle_control('ISOLATE')).props('push color=grey-10 text-color=orange').classes('w-full border border-orange-900')\
+                    .tooltip('Block external ingress to the observer while preserving ops control channel.')
 
                 ui.separator().classes('bg-gray-700')
 

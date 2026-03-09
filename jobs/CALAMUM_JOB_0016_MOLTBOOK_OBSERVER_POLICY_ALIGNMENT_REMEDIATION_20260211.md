@@ -50,7 +50,7 @@ This job exists to bring the sequence into policy alignment by:
 - `deployment/systemd/calamum-observer.service`
 - `deployment/systemd/calamum-watchdog.service`
 
-Drift-audit expansion artifacts (new, tracked):
+Audit expansion artifacts (new, tracked):
 
 - `tools/audit_implementation_drift.py`
 - `template_library/reports/CALAMUM_IMPLEMENTATION_DRIFT_AUDIT_TEMPLATE.md.template`

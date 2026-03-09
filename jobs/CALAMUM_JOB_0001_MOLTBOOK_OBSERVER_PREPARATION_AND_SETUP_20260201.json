@@ -95,7 +95,7 @@
       "Increased risk of privileged context leakage if artifacts are not constrained.",
       "Increased risk of workflow drift if pipeline requirements are not surfaced early." 
     ],
-    "architecture": "Calamum experiment staged as jobs: preparation -> observe/sampling (offline) -> container hardening -> passive canary -> active magnet (gated). Execution via codesentinel job begin/finish gates; exports remain obfuscated and names-only.",
+    "architecture": "Calamum experiment staged as jobs: preparation -> observe/sampling (offline) -> container hardening -> passive canary -> active magnet (gated). Execution via codesentinel job start/close gates; exports remain obfuscated and names-only.",
     "implementation_steps": [
       "Create Calamum domain planning artifacts (plan + jobs) using VAULT templates.",
       "Review job automation pipeline requirements (PREFLIGHT + PRE_JOB scaffold expectations) and enumerate missing paperwork needed before any live run.",

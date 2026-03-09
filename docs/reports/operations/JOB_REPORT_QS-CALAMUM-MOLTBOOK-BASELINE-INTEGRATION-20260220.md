@@ -32,3 +32,11 @@ Execution report for integrating CodeSentinel baseline readiness with Calamum ob
 ## Completion summary
 
 Baseline integration lane acceptance is fully satisfied with publish-grade evidence artifacts and names-only linkage fields (`run_id`, `posture_trigger_id`, `posture_trigger`, `security_report_ref`) recorded in quest evidence.
+
+## Metadata
+
+- Updated By: `joediggidyyy`
+- Last Transition (UTC): `2026-02-28T13:11:17.600438Z`
+- Status Authority: `operations/tasks.json`
+- Task ID: `calamum-moltbook-baseline-integration-20260220`
+- Status: `open`
