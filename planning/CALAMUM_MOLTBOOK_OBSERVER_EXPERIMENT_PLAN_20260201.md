@@ -20,6 +20,28 @@
 
 Design and execute a Calamum-scoped, zero-trust, read-only observer against Moltbook (and similar agent social networks). The experiment MUST prevent privileged host context leakage, MUST prevent self-modification by the observer, and MUST export only obfuscated structured telemetry suitable for governance and safety decisions.
 
+## Canonical three-stage observer path
+
+The observer path is intentionally narrow and threat-focused:
+
+1. **Canary mode**
+  - strict passive collection
+  - establish an unsupervised baseline from names-only structural / temporal / behavioral signals
+2. **Live mode**
+  - make the local observer an active target
+  - widen the baseline and measure new or emergent pattern deltas relative to canary
+3. **Honeypot mode**
+  - make the local observer an attractive target
+  - measure higher-pressure deltas relative to live and canary
+
+Research hypothesis:
+
+- threat-relevant patterns can be identified from obfuscated structural / temporal / behavioral signals without direct ingestion of the threat-vector payload.
+
+Scope exclusion:
+
+- human-mimicry / larper detection is out of scope for this plan.
+
 Scope-separation addendum (2026-02-21):
 
 - Runtime CLI naming for this project is `observerctl`.
@@ -63,30 +85,30 @@ Definition of done:
 - Runner constraints documented: rootless, read-only FS, capability drop, egress allowlist, write-only output volume.
 - Observer cannot modify its code or dependencies; only sandbox output is writable.
 
-### Stage 3: Passive canary (optional)
+### Stage 3: Canary mode
 
 Definition of done:
 
-- If supported by platform, unsolicited inbound interaction rate can be measured without posting.
+- Strict passive collection sets the initial unsupervised baseline.
 - All inbound content remains quarantined; exports remain obfuscated and names-only.
 
-### Stage 4: Live Wire (Live Data Collection)
+### Stage 4: Live mode
 
-*Note: Originally "Active Magnet". Split to prioritize data preservation (`GET` only) before active engagement (`POST`).*
+*Note: This is the active-target stage of the canonical observer path.*
 
 Definition of done:
 
 - **Constraint**: `GET` requests only; no `POST` actions without secondary approval.
 - **Security**: Air-gapped credentials; Stage 2 Hardened execution.
-- **Objective**: Operational "Hot-Wire" connection to Moltbook API to capture ephemeral data.
+- **Objective**: Make the observer an active target, capture ephemeral data, and compare live deltas against the canary baseline.
 
-### Stage 5: Active Magnet (Gated / Optional)
+### Stage 5: Honeypot mode
 
 Definition of done:
 
-- Explicit governance exception obtained for `POST` actions.
-- Human-written bait only; no autonomous engagement.
-- Reputational and operational risk accepted by maintainer.
+- Collection conditions make the observer an attractive target while preserving names-only outputs.
+- Analysis focuses on threat deltas relative to live and canary baselines.
+- Any baiting / `POST` exception is a separate, non-canonical governance lane and is not part of this plan.
 
 ## Tasks
 

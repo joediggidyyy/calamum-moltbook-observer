@@ -6,6 +6,17 @@
 
 Execution report for integrating CodeSentinel baseline readiness with Calamum observer/watchdog/Keymaster governance lanes.
 
+## 2026-03-19 external impact linkage
+
+- Impact assessment: `projects/calamum-moltbook-observer/docs/reports/operations/audits/CURRENT_EVENTS_IMPACT_ASSESSMENT_BASELINE_AND_LIVE_MODE_20260319.md`
+- Carry-forward note: the integrated baseline contract remains valid, but future baseline packets should carry policy snapshot, identity-assurance, operator-responsibility, external dependency, and platform-drift fields before they are treated as promotion-ready.
+
+## 2026-03-19 status ambiguity note
+
+- Report content reflects a closed/completed integration lane.
+- Metadata remains coupled to the current SSOT anomaly where `operations/tasks.json` still shows the task as `open`.
+- For readiness planning, treat this lane as technically complete but administratively pending SSOT normalization.
+
 ## Acceptance checklist
 
 - [x] Terminal lane guard canonized for multi-window safety (protected registration + fail-closed prune)

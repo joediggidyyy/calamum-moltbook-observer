@@ -23,6 +23,12 @@ from pathlib import Path
 from typing import Any, Dict, List, Optional, Tuple
 
 from calamum_config import get_calamum_control_dir, get_calamum_data_dir, get_calamum_health_dir
+from observerctl_sandbox_registry import get_definition as sandbox_get_definition
+from observerctl_sandbox_registry import get_definitions as sandbox_get_definitions
+from observerctl_sandbox_registry import run_definition as sandbox_run_definition
+from observerctl_sandbox_render import render_human_packet as render_sandbox_human_packet
+from observerctl_sandbox_runs import get_run as sandbox_get_run
+from observerctl_sandbox_runs import list_runs as sandbox_list_runs
 
 
 MODES = ('watch', 'canary', 'live', 'honeypot')
@@ -40,7 +46,26 @@ WATCHDOG_POSTURE_FILE = 'watchdog_posture_state.json'
 WATCHDOG_RESOURCE_FILE = 'watchdog_resource_state.json'
 GATE_PACKET_MAX_AGE_SEC = float(os.getenv('CALAMUM_GATE_PACKET_MAX_AGE_SEC', '300'))
 AGENT_PID_FILE = 'calamum_agent.pid'
-RESOURCE_PROFILES = ('normal', 'rapid')
+BASELINE_MONITOR_PID_FILE = 'calamum_baseline_monitor.pid'
+BASELINE_MONITOR_STATE_FILE = 'baseline_monitor_state.json'
+RESOURCE_PROFILES = ('normal', 'baseline')
+RESOURCE_PROFILE_ALIASES = {
+    'normal': 'normal',
+    'baseline': 'baseline',
+    'rapid': 'baseline',
+}
+RESOURCE_PROFILE_CLI_CHOICES = ('normal', 'baseline', 'rapid')
+ISOLATION_HEARTBEAT_INTERVAL_SEC = 10.0
+ISOLATION_BASELINE_VALIDATION_INTERVAL_SEC = 120.0
+LOCKDOWN_HEARTBEAT_INTERVAL_SEC = 4.0
+LOCKDOWN_BASELINE_VALIDATION_INTERVAL_SEC = 45.0
+RESOURCE_NORMAL_INTERVAL_SEC = float(os.getenv('CALAMUM_RESOURCE_NORMAL_INTERVAL_SEC', '30.0'))
+RESOURCE_BASELINE_INTERVAL_SEC = float(os.getenv('CALAMUM_RESOURCE_BASELINE_INTERVAL_SEC', '2.0'))
+RESOURCE_BASELINE_WINDOW_SEC = float(os.getenv('CALAMUM_RESOURCE_BASELINE_WINDOW_SEC', '10.0'))
+RESOURCE_BASELINE_STREAM_MAX_AGE_SEC = float(os.getenv('CALAMUM_RESOURCE_STREAM_MAX_AGE_SEC', '180.0'))
+RESOURCE_BASELINE_WINDOW_MAX_AGE_SEC = float(os.getenv('CALAMUM_RESOURCE_BASELINE_WINDOW_MAX_AGE_SEC', '180.0'))
+RESOURCE_BASELINE_MIN_NORMAL_SAMPLES = int(os.getenv('CALAMUM_RESOURCE_BASELINE_MIN_NORMAL_SAMPLES', '2'))
+RESOURCE_BASELINE_MIN_BASELINE_SAMPLES = int(os.getenv('CALAMUM_RESOURCE_BASELINE_MIN_BASELINE_SAMPLES', '3'))
 FS_BASELINE_FILE = 'observerctl_fs_baseline.json'
 FS_BASELINE_EXCLUDE = {
     '.git',
@@ -85,6 +110,43 @@ def _normalize_source(source: str) -> str:
 
 def _posture_for_mode(mode: str) -> str:
     return 'lockdown' if mode in ('live', 'honeypot') else 'isolation'
+
+
+def _normalize_resource_profile(profile: str) -> str:
+    p = str(profile or '').strip().lower()
+    return RESOURCE_PROFILE_ALIASES.get(p, 'normal')
+
+
+def _resource_stream_type(profile: str) -> str:
+    return 'resource_{0}'.format(_normalize_resource_profile(profile))
+
+
+def _resource_profile_matches(stream_type: str, profile: str) -> bool:
+    stream = str(stream_type or '').strip().lower()
+    canonical = _normalize_resource_profile(profile)
+    if canonical == 'baseline':
+        return stream in ('resource_baseline', 'resource_rapid')
+    return stream == _resource_stream_type(canonical)
+
+
+def _posture_cadence_defaults(mode: str) -> Dict[str, Any]:
+    posture = _posture_for_mode(mode)
+    if posture == 'lockdown':
+        return {
+            'posture_trigger': 'lockdown',
+            'heartbeat_interval_seconds': float(LOCKDOWN_HEARTBEAT_INTERVAL_SEC),
+            'baseline_validation_interval_seconds': float(LOCKDOWN_BASELINE_VALIDATION_INTERVAL_SEC),
+        }
+    return {
+        'posture_trigger': 'isolation',
+        'heartbeat_interval_seconds': float(ISOLATION_HEARTBEAT_INTERVAL_SEC),
+        'baseline_validation_interval_seconds': float(ISOLATION_BASELINE_VALIDATION_INTERVAL_SEC),
+    }
+
+
+def _is_lockdown_baseline_cadence(value: Any) -> bool:
+    interval = _to_float_or_none(value)
+    return bool(interval is not None and 30.0 <= float(interval) <= 60.0)
 
 
 def _control_file(name: str) -> Path:
@@ -311,6 +373,14 @@ def _librarian_pid_path() -> Path:
     return _project_root() / 'calamum_librarian.pid'
 
 
+def _baseline_monitor_pid_path() -> Path:
+    return _project_root() / BASELINE_MONITOR_PID_FILE
+
+
+def _baseline_monitor_state_path() -> Path:
+    return _control_file(BASELINE_MONITOR_STATE_FILE)
+
+
 def _read_pid(path: Path) -> Optional[int]:
     try:
         if not path.exists():
@@ -446,6 +516,228 @@ def _runtime_librarian_status(max_age_sec: float = 120.0) -> Dict[str, Any]:
             'value': pid,
             'alive': pid_alive,
         },
+    }
+
+
+def _runtime_baseline_monitor_status(max_age_sec: float = 90.0) -> Dict[str, Any]:
+    hb = _check_heartbeat(get_calamum_health_dir() / 'calamum_baseline_monitor.heartbeat', max_age_sec=max_age_sec)
+    pid_path = _baseline_monitor_pid_path()
+    pid = _read_pid(pid_path)
+    pid_alive = _pid_alive(pid)
+    state_doc = _load_json_file(_baseline_monitor_state_path(), {})
+
+    if hb.get('status') == 'ok' and pid_alive:
+        state = 'active'
+    elif hb.get('status') == 'ok' or pid_alive:
+        state = 'degraded'
+    else:
+        state = 'stopped'
+
+    return {
+        'timestamp_utc': _utc_now(),
+        'runtime_cli_surface': 'observerctl',
+        'runtime_label': 'baseline-monitor',
+        'state': state,
+        'heartbeat': hb,
+        'pid': {
+            'path': str(pid_path).replace('\\', '/'),
+            'value': pid,
+            'alive': pid_alive,
+        },
+        'monitor_state': state_doc,
+    }
+
+
+def _posture_receipt_output_path(source: str, mode: str, event: str) -> Path:
+    ts = datetime.now(timezone.utc).strftime('%Y%m%dT%H%M%SZ')
+    src = _normalize_source(source)
+    m = str(mode or 'watch').strip().lower()
+    if m not in MODES:
+        m = 'watch'
+    ev = str(event or 'posture').strip().lower().replace(' ', '-').replace('_', '-')
+    return get_calamum_data_dir() / 'observer_derived' / src / m / 'evidence' / 'observerctl_{0}_{1}.json'.format(ev, ts)
+
+
+def _apply_watchdog_posture(source: str, mode: str, event: str = 'posture-apply') -> Dict[str, Any]:
+    src = _normalize_source(source)
+    m = str(mode or 'watch').strip().lower()
+    if m not in MODES:
+        m = 'watch'
+
+    linkage = _make_run_linkage(m, event=event)
+    defaults = _posture_cadence_defaults(m)
+    existing = _load_json_file(_control_file(WATCHDOG_POSTURE_FILE), {})
+    posture_state_path = str(_control_file(WATCHDOG_POSTURE_FILE)).replace('\\', '/')
+    receipt_path = ''
+    payload = {
+        'updated_at_utc': _utc_now(),
+        'runtime_cli_surface': 'observerctl',
+        'source': src,
+        'mode': m,
+        'posture_trigger': defaults['posture_trigger'],
+        'heartbeat_interval_seconds': defaults['heartbeat_interval_seconds'],
+        'baseline_validation_interval_seconds': defaults['baseline_validation_interval_seconds'],
+        'writer': 'observerctl',
+        'reason': event,
+        'readback_verified': False,
+    }
+    payload.update(linkage)
+    _write_json_file(_control_file(WATCHDOG_POSTURE_FILE), payload)
+    readback = _load_json_file(_control_file(WATCHDOG_POSTURE_FILE), {})
+    readback_verified = (
+        str(readback.get('posture_trigger', '')).strip().lower() == str(payload['posture_trigger']).strip().lower()
+        and _to_float_or_none(readback.get('heartbeat_interval_seconds')) == float(payload['heartbeat_interval_seconds'])
+        and _to_float_or_none(readback.get('baseline_validation_interval_seconds')) == float(payload['baseline_validation_interval_seconds'])
+        and str(readback.get('mode', '')).strip().lower() == m
+        and _normalize_source(str(readback.get('source', 'sim'))) == src
+    )
+    payload['readback_verified'] = bool(readback_verified)
+    if readback_verified and payload != existing:
+        out_path = _posture_receipt_output_path(src, m, event)
+        receipt_path = str(out_path).replace('\\', '/')
+        receipt = {
+            'timestamp_utc': _utc_now(),
+            'runtime_cli_surface': 'observerctl',
+            'decision': 'go',
+            'action': 'posture-apply',
+            'source': src,
+            'mode': m,
+            'posture': payload,
+            'reason_codes': [],
+            'provenance': {
+                'generated_at_utc': _utc_now(),
+                'producer_process': 'observerctl {0}'.format(event),
+                'artifact_path': '',
+                'artifact_sha256': '',
+                'upstream_inputs': {
+                    'watchdog_posture_state': posture_state_path,
+                },
+            },
+            'methodology': {
+                'sampling_strategy': 'deterministic posture write plus readback verification',
+                'runtime_constraints': ['names-only outputs', 'observerctl standalone surface'],
+            },
+            'process': {
+                'phase': 'posture_application',
+                'event': event,
+                'decision': 'go',
+                'reason_codes': [],
+                'evidence_refs': [posture_state_path],
+            },
+        }
+        receipt.update(linkage)
+        receipt = _write_packet(receipt, out_path)
+        _append_jsonl(_evidence_index_path(src, m), {
+            'timestamp_utc': _utc_now(),
+            'packet_path': str(out_path).replace('\\', '/'),
+            'decision': 'go',
+            'run_id': receipt.get('run_id', ''),
+            'scope': {'source': src, 'mode': m},
+            'event': event,
+        })
+    return {
+        'timestamp_utc': _utc_now(),
+        'runtime_cli_surface': 'observerctl',
+        'decision': 'go' if readback_verified else 'no-go',
+        'action': 'posture-apply',
+        'source': src,
+        'mode': m,
+        'posture_trigger': payload['posture_trigger'],
+        'heartbeat_interval_seconds': payload['heartbeat_interval_seconds'],
+        'baseline_validation_interval_seconds': payload['baseline_validation_interval_seconds'],
+        'reason_codes': [] if readback_verified else ['critical_check_failed:watchdog_posture_persist_failed'],
+        'readback_verified': bool(readback_verified),
+        'posture_state_path': posture_state_path,
+        'receipt_path': receipt_path,
+    }
+
+
+def _resource_index_health(source: str, mode: str, max_age_sec: float) -> Dict[str, Any]:
+    idx = _resource_index_path(source, mode)
+    latest_record: Optional[Dict[str, Any]] = None
+    total_records = 0
+    expected_stream_type = 'resource_normal'
+    if idx.exists():
+        try:
+            with idx.open('r', encoding='utf-8', errors='ignore') as f:
+                for line in f:
+                    line = str(line or '').strip()
+                    if not line:
+                        continue
+                    try:
+                        row = json.loads(line)
+                    except Exception:
+                        continue
+                    if not isinstance(row, dict):
+                        continue
+                    if str(row.get('stream_type', '')).strip().lower() != expected_stream_type:
+                        continue
+                    latest_record = row
+                    try:
+                        total_records += int(row.get('segment_records', 0) or 0)
+                    except Exception:
+                        total_records += 0
+        except Exception:
+            latest_record = None
+    latest_ts = _parse_utc_iso8601((latest_record or {}).get('timestamp_utc')) if latest_record else None
+    age_seconds = None if latest_ts is None else max(0.0, (datetime.now(timezone.utc) - latest_ts).total_seconds())
+    segment_path = Path(str((latest_record or {}).get('segment_path', '') or '')) if latest_record else None
+    segment_exists = bool(segment_path and segment_path.exists())
+    ready = bool(idx.exists() and latest_record and segment_exists and age_seconds is not None and age_seconds <= float(max_age_sec))
+    return {
+        'path': str(idx).replace('\\', '/'),
+        'exists': idx.exists(),
+        'expected_stream_type': expected_stream_type,
+        'latest_record': latest_record or {},
+        'segment_exists': bool(segment_exists),
+        'age_seconds': None if age_seconds is None else round(float(age_seconds), 3),
+        'max_age_seconds': float(max_age_sec),
+        'records_indexed': int(total_records),
+        'status': 'ok' if ready else 'err',
+    }
+
+
+def _latest_baseline_analysis(source: str, mode: str) -> Dict[str, Any]:
+    idx = _evidence_index_path(source, mode)
+    latest_packet: Dict[str, Any] = {}
+    if not idx.exists():
+        return latest_packet
+    try:
+        lines = [ln for ln in idx.read_text(encoding='utf-8', errors='ignore').splitlines() if ln.strip()]
+    except Exception:
+        return latest_packet
+    for line in reversed(lines):
+        try:
+            row = json.loads(line)
+        except Exception:
+            continue
+        if not isinstance(row, dict):
+            continue
+        if str(row.get('event', '')).strip().lower() != 'baseline_analysis':
+            continue
+        packet_path = Path(str(row.get('packet_path', '') or '').replace('/', os.sep))
+        if not packet_path.exists():
+            continue
+        packet = _load_json_file(packet_path, {})
+        if packet:
+            latest_packet = packet
+            break
+    return latest_packet
+
+
+def _baseline_window_health(source: str, mode: str, max_age_sec: float) -> Dict[str, Any]:
+    packet = _latest_baseline_analysis(source, mode)
+    ts = _parse_utc_iso8601(packet.get('timestamp_utc')) if packet else None
+    age_seconds = None if ts is None else max(0.0, (datetime.now(timezone.utc) - ts).total_seconds())
+    decision = str(packet.get('decision', 'no-go')).strip().lower() if packet else 'no-go'
+    ready = bool(packet and decision == 'go' and age_seconds is not None and age_seconds <= float(max_age_sec))
+    return {
+        'packet_path': str(((packet.get('provenance', {}) or {}).get('artifact_path', '')) or ''),
+        'decision': decision,
+        'age_seconds': None if age_seconds is None else round(float(age_seconds), 3),
+        'max_age_seconds': float(max_age_sec),
+        'sample_counts': packet.get('sample_counts', {}) if isinstance(packet.get('sample_counts', {}), dict) else {},
+        'status': 'ok' if ready else 'err',
     }
 
 
@@ -597,11 +889,311 @@ def _librarian_restart(timeout_sec: float = 8.0, startup_probe_sec: float = 6.0)
     }
 
 
+def _baseline_monitor_stop(timeout_sec: float = 8.0) -> Dict[str, Any]:
+    pid_path = _baseline_monitor_pid_path()
+    old_pid = _read_pid(pid_path)
+    stopped_cleanly = True
+    if old_pid and _pid_alive(old_pid):
+        stopped_cleanly = _terminate_pid_best_effort(old_pid, graceful_timeout_sec=max(0.0, float(timeout_sec)))
+
+    if stopped_cleanly:
+        try:
+            if pid_path.exists():
+                pid_path.unlink()
+        except Exception:
+            pass
+        try:
+            hb = get_calamum_health_dir() / 'calamum_baseline_monitor.heartbeat'
+            if hb.exists():
+                hb.unlink()
+        except Exception:
+            pass
+
+    return {
+        'timestamp_utc': _utc_now(),
+        'runtime_cli_surface': 'observerctl',
+        'action': 'baseline-monitor-stop',
+        'decision': 'go' if stopped_cleanly else 'no-go',
+        'reason_codes': [] if stopped_cleanly else ['critical_check_failed:baseline_monitor_stop_timeout'],
+        'old_pid': old_pid,
+        'stopped_cleanly': bool(stopped_cleanly),
+    }
+
+
+def _baseline_monitor_once(
+    source: str,
+    mode: str,
+    normal_interval_sec: float,
+    baseline_interval_sec: float,
+    baseline_window_sec: float,
+    baseline_sample_interval_sec: float,
+    min_normal_samples: int,
+    min_baseline_samples: int,
+) -> Dict[str, Any]:
+    state = _load_state()
+    src = _normalize_source(str(state.get('source', source or 'sim')))
+    m = str(state.get('mode', mode or 'watch')).strip().lower()
+    if m not in MODES:
+        m = 'watch'
+
+    posture_packet = _apply_watchdog_posture(src, m, event='baseline-monitor-cycle')
+    now = time.time()
+    monitor_state = _load_json_file(_baseline_monitor_state_path(), {})
+    last_normal_epoch = _to_float_or_none(monitor_state.get('last_normal_sample_epoch_s')) or 0.0
+    last_baseline_epoch = _to_float_or_none(monitor_state.get('last_baseline_window_epoch_s')) or 0.0
+    last_analysis_epoch = _to_float_or_none(monitor_state.get('last_analysis_epoch_s')) or 0.0
+
+    normal_packet: Dict[str, Any] = {}
+    baseline_packet: Dict[str, Any] = {}
+    analysis_packet: Dict[str, Any] = {}
+
+    if last_normal_epoch <= 0.0 or (now - last_normal_epoch) >= float(max(1.0, normal_interval_sec)):
+        normal_packet = _baseline_collect(
+            source=src,
+            mode=m,
+            profile='normal',
+            duration_sec=0.0,
+            interval_sec=float(max(0.1, normal_interval_sec)),
+            segment_records=1000,
+            window_id='monitor_normal_{0}'.format(datetime.now(timezone.utc).strftime('%Y%m%dT%H%M%SZ')),
+            output='',
+        )
+        last_normal_epoch = now
+
+    if _posture_for_mode(m) == 'lockdown' and (last_analysis_epoch <= 0.0 or (now - last_analysis_epoch) >= float(max(1.0, baseline_interval_sec))):
+        baseline_packet = _baseline_collect(
+            source=src,
+            mode=m,
+            profile='baseline',
+            duration_sec=float(max(0.1, baseline_window_sec)),
+            interval_sec=float(max(0.05, baseline_sample_interval_sec)),
+            segment_records=1000,
+            window_id='monitor_baseline_{0}'.format(datetime.now(timezone.utc).strftime('%Y%m%dT%H%M%SZ')),
+            output='',
+        )
+        analysis_packet = _baseline_analyze(
+            source=src,
+            mode=m,
+            hours=max(1.0, float(max(RESOURCE_BASELINE_WINDOW_MAX_AGE_SEC, baseline_interval_sec * 2.0)) / 3600.0),
+            profile='all',
+            min_normal_samples=int(max(1, min_normal_samples)),
+            min_rapid_samples=int(max(1, min_baseline_samples)),
+            output='',
+        )
+        last_baseline_epoch = now
+        last_analysis_epoch = now
+
+    monitor_payload = {
+        'updated_at_utc': _utc_now(),
+        'source': src,
+        'mode': m,
+        'posture_trigger': _posture_for_mode(m),
+        'last_normal_sample_epoch_s': float(last_normal_epoch),
+        'last_baseline_window_epoch_s': float(last_baseline_epoch),
+        'last_analysis_epoch_s': float(last_analysis_epoch),
+        'normal_interval_sec': float(normal_interval_sec),
+        'baseline_validation_interval_seconds': float(baseline_interval_sec),
+        'baseline_window_sec': float(baseline_window_sec),
+        'baseline_sample_interval_sec': float(baseline_sample_interval_sec),
+        'min_normal_samples': int(max(1, min_normal_samples)),
+        'min_baseline_samples': int(max(1, min_baseline_samples)),
+        'last_normal_packet_path': str(((normal_packet.get('provenance', {}) or {}).get('artifact_path', '')) or ''),
+        'last_baseline_packet_path': str(((baseline_packet.get('provenance', {}) or {}).get('artifact_path', '')) or ''),
+        'last_analysis_packet_path': str(((analysis_packet.get('provenance', {}) or {}).get('artifact_path', '')) or ''),
+        'last_analysis_decision': str(analysis_packet.get('decision', '')) if analysis_packet else '',
+        'watchdog_posture_apply_decision': str(posture_packet.get('decision', 'no-go')),
+    }
+    _write_json_file(_baseline_monitor_state_path(), monitor_payload)
+
+    hb = get_calamum_health_dir() / 'calamum_baseline_monitor.heartbeat'
+    hb.parent.mkdir(parents=True, exist_ok=True)
+    hb.touch(exist_ok=True)
+
+    decision = 'go'
+    reasons: List[str] = []
+    if str(posture_packet.get('decision', 'no-go')) != 'go':
+        decision = 'no-go'
+        reasons.extend(list(posture_packet.get('reason_codes', [])))
+    if analysis_packet and str(analysis_packet.get('decision', 'no-go')) != 'go':
+        decision = 'no-go'
+        reasons.extend(list(analysis_packet.get('reason_codes', [])))
+
+    return {
+        'timestamp_utc': _utc_now(),
+        'runtime_cli_surface': 'observerctl',
+        'decision': decision,
+        'action': 'baseline-monitor-once',
+        'reason_codes': reasons,
+        'source': src,
+        'mode': m,
+        'posture_packet': posture_packet,
+        'normal_packet': {'decision': normal_packet.get('decision', ''), 'artifact_path': str(((normal_packet.get('provenance', {}) or {}).get('artifact_path', '')) or '')} if normal_packet else {},
+        'baseline_packet': {'decision': baseline_packet.get('decision', ''), 'artifact_path': str(((baseline_packet.get('provenance', {}) or {}).get('artifact_path', '')) or '')} if baseline_packet else {},
+        'analysis_packet': {'decision': analysis_packet.get('decision', ''), 'artifact_path': str(((analysis_packet.get('provenance', {}) or {}).get('artifact_path', '')) or '')} if analysis_packet else {},
+        'monitor_state_path': str(_baseline_monitor_state_path()).replace('\\', '/'),
+    }
+
+
+def _baseline_monitor_loop(
+    source: str,
+    mode: str,
+    normal_interval_sec: float,
+    baseline_interval_sec: float,
+    baseline_window_sec: float,
+    baseline_sample_interval_sec: float,
+    min_normal_samples: int,
+    min_baseline_samples: int,
+    run_once: bool,
+) -> Dict[str, Any]:
+    pid_path = _baseline_monitor_pid_path()
+    try:
+        pid_path.write_text(str(os.getpid()), encoding='utf-8')
+    except Exception:
+        pass
+
+    loop_sleep_sec = min(float(max(0.25, normal_interval_sec)), float(max(0.25, baseline_interval_sec)), 1.0)
+    last_packet: Dict[str, Any] = {}
+    while True:
+        last_packet = _baseline_monitor_once(
+            source=source,
+            mode=mode,
+            normal_interval_sec=normal_interval_sec,
+            baseline_interval_sec=baseline_interval_sec,
+            baseline_window_sec=baseline_window_sec,
+            baseline_sample_interval_sec=baseline_sample_interval_sec,
+            min_normal_samples=min_normal_samples,
+            min_baseline_samples=min_baseline_samples,
+        )
+        if run_once:
+            return last_packet
+        _safe_sleep(loop_sleep_sec)
+
+
+def _baseline_monitor_start(
+    source: str,
+    mode: str,
+    normal_interval_sec: float,
+    baseline_interval_sec: float,
+    baseline_window_sec: float,
+    baseline_sample_interval_sec: float,
+    min_normal_samples: int,
+    min_baseline_samples: int,
+    startup_probe_sec: float = 3.0,
+) -> Dict[str, Any]:
+    status = _runtime_baseline_monitor_status(max_age_sec=max(90.0, float(normal_interval_sec) * 3.0))
+    if str(status.get('state', 'stopped')) in ('active', 'degraded'):
+        return {
+            'timestamp_utc': _utc_now(),
+            'runtime_cli_surface': 'observerctl',
+            'decision': 'go',
+            'action': 'baseline-monitor-start',
+            'reason_codes': [],
+            'state': status.get('state', 'active'),
+            'pid': status.get('pid', {}),
+            'startup_verified': True,
+        }
+
+    script_path = Path(__file__).resolve()
+    env = os.environ.copy()
+    env['CALAMUM_REPO_ROOT'] = str(_project_root())
+    env['CALAMUM_LOG_DIR'] = str(_project_root() / 'logs')
+
+    creationflags = 0
+    if os.name == 'nt':
+        creationflags = int(getattr(subprocess, 'CREATE_NEW_PROCESS_GROUP', 0)) | int(getattr(subprocess, 'CREATE_NO_WINDOW', 0))
+
+    stdout_path = _project_root() / 'logs' / 'calamum_baseline_monitor.stdout.log'
+    stderr_path = _project_root() / 'logs' / 'calamum_baseline_monitor.stderr.log'
+    stdout_path.parent.mkdir(parents=True, exist_ok=True)
+
+    cmd = [
+        sys.executable,
+        '-u',
+        str(script_path),
+        'baseline',
+        'monitor-loop',
+        '--source', str(_normalize_source(source)),
+        '--mode', str(mode),
+        '--normal-interval-sec', str(normal_interval_sec),
+        '--baseline-interval-sec', str(baseline_interval_sec),
+        '--baseline-window-sec', str(baseline_window_sec),
+        '--baseline-sample-interval-sec', str(baseline_sample_interval_sec),
+        '--min-normal-samples', str(min_normal_samples),
+        '--min-baseline-samples', str(min_baseline_samples),
+    ]
+
+    out_f = None
+    err_f = None
+    try:
+        out_f = stdout_path.open('a', encoding='utf-8')
+        err_f = stderr_path.open('a', encoding='utf-8')
+        proc = subprocess.Popen(
+            cmd,
+            env=env,
+            cwd=str(_project_root()),
+            stdin=subprocess.DEVNULL,
+            stdout=out_f,
+            stderr=err_f,
+            creationflags=creationflags,
+        )
+    except Exception:
+        try:
+            if out_f is not None:
+                out_f.close()
+            if err_f is not None:
+                err_f.close()
+        except Exception:
+            pass
+        return {
+            'timestamp_utc': _utc_now(),
+            'runtime_cli_surface': 'observerctl',
+            'decision': 'no-go',
+            'action': 'baseline-monitor-start',
+            'reason_codes': ['critical_check_failed:baseline_monitor_start_failed'],
+        }
+
+    try:
+        if out_f is not None:
+            out_f.close()
+        if err_f is not None:
+            err_f.close()
+    except Exception:
+        pass
+
+    try:
+        _baseline_monitor_pid_path().write_text(str(int(getattr(proc, 'pid', 0) or 0)), encoding='utf-8')
+    except Exception:
+        pass
+
+    deadline = time.time() + max(0.0, float(startup_probe_sec))
+    final_status = _runtime_baseline_monitor_status(max_age_sec=max(90.0, float(normal_interval_sec) * 3.0))
+    while time.time() <= deadline:
+        final_status = _runtime_baseline_monitor_status(max_age_sec=max(90.0, float(normal_interval_sec) * 3.0))
+        if str(final_status.get('state', 'stopped')) == 'active':
+            break
+        time.sleep(0.25)
+
+    startup_verified = str(final_status.get('state', 'stopped')) in ('active', 'degraded')
+    return {
+        'timestamp_utc': _utc_now(),
+        'runtime_cli_surface': 'observerctl',
+        'decision': 'go' if startup_verified else 'no-go',
+        'action': 'baseline-monitor-start',
+        'reason_codes': [] if startup_verified else ['critical_check_failed:baseline_monitor_startup_unverified'],
+        'pid': final_status.get('pid', {}),
+        'state': final_status.get('state', 'stopped'),
+        'startup_verified': bool(startup_verified),
+        'stdout_log': str(stdout_path).replace('\\', '/'),
+        'stderr_log': str(stderr_path).replace('\\', '/'),
+    }
+
+
 def _ops_runtime_status() -> Dict[str, Any]:
     return _runtime_observer_status()
 
 
 def _ops_runtime_stop(timeout_sec: float = 8.0) -> Dict[str, Any]:
+    baseline_monitor_packet = _baseline_monitor_stop(timeout_sec=max(0.0, float(timeout_sec)))
     payload = {
         'ts': _utc_now(),
         'signal': 'kill',
@@ -651,11 +1243,13 @@ def _ops_runtime_stop(timeout_sec: float = 8.0) -> Dict[str, Any]:
     reasons: List[str] = []
     if not stopped_cleanly:
         reasons.append('critical_check_failed:runtime_stop_timeout')
+    if str(baseline_monitor_packet.get('decision', 'go')) != 'go':
+        reasons.extend(list(baseline_monitor_packet.get('reason_codes', [])))
 
     return {
         'timestamp_utc': _utc_now(),
         'runtime_cli_surface': 'observerctl',
-        'decision': 'go' if stopped_cleanly else 'no-go',
+        'decision': 'go' if (stopped_cleanly and str(baseline_monitor_packet.get('decision', 'go')) == 'go') else 'no-go',
         'action': 'runtime-stop',
         'reason_codes': reasons,
         'signal_path': str(signal_path).replace('\\', '/'),
@@ -663,6 +1257,7 @@ def _ops_runtime_stop(timeout_sec: float = 8.0) -> Dict[str, Any]:
         'observer_pid': pid_value,
         'stopped_cleanly': bool(stopped_cleanly),
         'escalated_terminate': bool(escalated_terminate),
+        'baseline_monitor_packet': baseline_monitor_packet,
     }
 
 
@@ -757,12 +1352,26 @@ def _ops_runtime_start(source: str, mode: str, interval_sec: float, timeout_sec:
 
     if timeout_s <= 0.0:
         status = _runtime_observer_status()
+        monitor_packet = _baseline_monitor_start(
+            source=source_norm,
+            mode=mode_norm,
+            normal_interval_sec=float(RESOURCE_NORMAL_INTERVAL_SEC),
+            baseline_interval_sec=float(_posture_cadence_defaults(mode_norm)['baseline_validation_interval_seconds']),
+            baseline_window_sec=float(RESOURCE_BASELINE_WINDOW_SEC),
+            baseline_sample_interval_sec=float(RESOURCE_BASELINE_INTERVAL_SEC),
+            min_normal_samples=int(RESOURCE_BASELINE_MIN_NORMAL_SAMPLES),
+            min_baseline_samples=int(RESOURCE_BASELINE_MIN_BASELINE_SAMPLES),
+            startup_probe_sec=3.0,
+        )
+        reasons = []
+        if str(monitor_packet.get('decision', 'go')) != 'go':
+            reasons.extend(list(monitor_packet.get('reason_codes', ['critical_check_failed:baseline_monitor_start_failed'])))
         return {
             'timestamp_utc': _utc_now(),
             'runtime_cli_surface': 'observerctl',
-            'decision': 'go',
+            'decision': 'go' if len(reasons) == 0 else 'no-go',
             'action': 'runtime-start',
-            'reason_codes': [],
+            'reason_codes': reasons,
             'launcher_path': str(launcher_path).replace('\\', '/'),
             'launcher_pid': int(getattr(proc, 'pid', 0) or 0),
             'launcher_stdout_log': str(start_stdout_path).replace('\\', '/'),
@@ -770,18 +1379,33 @@ def _ops_runtime_start(source: str, mode: str, interval_sec: float, timeout_sec:
             'startup_verified': bool(str(status.get('state', '')) == 'active'),
             'state': status.get('state', 'degraded'),
             'pid': status.get('pid', {}),
+            'baseline_monitor_packet': monitor_packet,
         }
 
     deadline = time.time() + timeout_s
     while time.time() <= deadline:
         status = _runtime_observer_status()
         if str(status.get('state', '')) == 'active':
+            monitor_packet = _baseline_monitor_start(
+                source=source_norm,
+                mode=mode_norm,
+                normal_interval_sec=float(RESOURCE_NORMAL_INTERVAL_SEC),
+                baseline_interval_sec=float(_posture_cadence_defaults(mode_norm)['baseline_validation_interval_seconds']),
+                baseline_window_sec=float(RESOURCE_BASELINE_WINDOW_SEC),
+                baseline_sample_interval_sec=float(RESOURCE_BASELINE_INTERVAL_SEC),
+                min_normal_samples=int(RESOURCE_BASELINE_MIN_NORMAL_SAMPLES),
+                min_baseline_samples=int(RESOURCE_BASELINE_MIN_BASELINE_SAMPLES),
+                startup_probe_sec=3.0,
+            )
+            reasons = []
+            if str(monitor_packet.get('decision', 'go')) != 'go':
+                reasons.extend(list(monitor_packet.get('reason_codes', ['critical_check_failed:baseline_monitor_start_failed'])))
             return {
                 'timestamp_utc': _utc_now(),
                 'runtime_cli_surface': 'observerctl',
-                'decision': 'go',
+                'decision': 'go' if len(reasons) == 0 else 'no-go',
                 'action': 'runtime-start',
-                'reason_codes': [],
+                'reason_codes': reasons,
                 'launcher_path': str(launcher_path).replace('\\', '/'),
                 'launcher_pid': int(getattr(proc, 'pid', 0) or 0),
                 'launcher_stdout_log': str(start_stdout_path).replace('\\', '/'),
@@ -789,16 +1413,31 @@ def _ops_runtime_start(source: str, mode: str, interval_sec: float, timeout_sec:
                 'startup_verified': True,
                 'state': status.get('state', 'degraded'),
                 'pid': status.get('pid', {}),
+                'baseline_monitor_packet': monitor_packet,
             }
         time.sleep(0.25)
 
     final_status = _runtime_observer_status()
+    monitor_packet = _baseline_monitor_start(
+        source=source_norm,
+        mode=mode_norm,
+        normal_interval_sec=float(RESOURCE_NORMAL_INTERVAL_SEC),
+        baseline_interval_sec=float(_posture_cadence_defaults(mode_norm)['baseline_validation_interval_seconds']),
+        baseline_window_sec=float(RESOURCE_BASELINE_WINDOW_SEC),
+        baseline_sample_interval_sec=float(RESOURCE_BASELINE_INTERVAL_SEC),
+        min_normal_samples=int(RESOURCE_BASELINE_MIN_NORMAL_SAMPLES),
+        min_baseline_samples=int(RESOURCE_BASELINE_MIN_BASELINE_SAMPLES),
+        startup_probe_sec=3.0,
+    )
+    reasons = []
+    if str(monitor_packet.get('decision', 'go')) != 'go':
+        reasons.extend(list(monitor_packet.get('reason_codes', ['critical_check_failed:baseline_monitor_start_failed'])))
     return {
         'timestamp_utc': _utc_now(),
         'runtime_cli_surface': 'observerctl',
-        'decision': 'go',
+        'decision': 'go' if len(reasons) == 0 else 'no-go',
         'action': 'runtime-start',
-        'reason_codes': [],
+        'reason_codes': reasons,
         'advisory_reason_codes': ['startup_pending:observer_not_active_within_probe_window'],
         'launcher_path': str(launcher_path).replace('\\', '/'),
         'launcher_pid': int(getattr(proc, 'pid', 0) or 0),
@@ -807,6 +1446,7 @@ def _ops_runtime_start(source: str, mode: str, interval_sec: float, timeout_sec:
         'startup_verified': False,
         'state': final_status.get('state', 'degraded'),
         'pid': final_status.get('pid', {}),
+        'baseline_monitor_packet': monitor_packet,
     }
 
 
@@ -983,6 +1623,26 @@ def collect_runtime_status(source: str = 'sim') -> Dict[str, Any]:
         'status': 'ok' if all(v is not None for v in [cpu_now, ram_now, cpu_p95, ram_p95, spike_score, sample_age_s]) else 'err',
     }
 
+    monitor_status = _runtime_baseline_monitor_status(max_age_sec=max(90.0, RESOURCE_NORMAL_INTERVAL_SEC * 3.0))
+    checks['runtime.baseline_monitor'] = {
+        'state': monitor_status.get('state', 'stopped'),
+        'status': 'ok' if str(monitor_status.get('state', 'stopped')) in ('active', 'degraded') else 'err',
+        'heartbeat': monitor_status.get('heartbeat', {}),
+        'pid': monitor_status.get('pid', {}),
+        'monitor_state': monitor_status.get('monitor_state', {}),
+    }
+
+    resource_health = _resource_index_health(source_norm, mode, max_age_sec=max(RESOURCE_BASELINE_STREAM_MAX_AGE_SEC, RESOURCE_NORMAL_INTERVAL_SEC * 3.0))
+    checks['watchdog.resource_stream_retention'] = resource_health
+
+    defaults = _posture_cadence_defaults(mode)
+    baseline_window_health = _baseline_window_health(
+        source_norm,
+        mode,
+        max_age_sec=max(RESOURCE_BASELINE_WINDOW_MAX_AGE_SEC, float(defaults['baseline_validation_interval_seconds']) * 2.0),
+    )
+    checks['watchdog.resource_baseline_window'] = baseline_window_health
+
     return {
         'timestamp_utc': _utc_now(),
         'runtime_label': 'observer',
@@ -1050,8 +1710,11 @@ def evaluate_gate_decision(status_packet: Dict[str, Any], target_mode: Optional[
     linkage = _make_run_linkage(to_mode, event='gate')
     posture_required = _posture_for_mode(to_mode)
     runtime_posture = str((checks.get('watchdog.trigger_posture') or {}).get('posture_trigger', '')).strip().lower()
-    if runtime_posture != posture_required:
+    posture_transition_pending = bool(mode != to_mode and runtime_posture != posture_required)
+    if runtime_posture != posture_required and not posture_transition_pending:
         reasons.append('critical_check_failed:watchdog_trigger_posture_invalid')
+    elif posture_transition_pending:
+        advisories.append('major_check_failed:watchdog_posture_transition_pending')
 
     # C20 run linkage reference must exist and resolve to a real artifact path (names-only).
     if not linkage['security_report_ref'] or not _is_resolvable_report_ref(str(linkage.get('security_report_ref', ''))):
@@ -1067,6 +1730,14 @@ def evaluate_gate_decision(status_packet: Dict[str, Any], target_mode: Optional[
             reasons.append('critical_check_failed:lockdown_heartbeat_rate_not_escalated')
         if not baseline_escalated:
             reasons.append('critical_check_failed:lockdown_baseline_rate_not_escalated')
+
+        resource_stream_health = checks.get('watchdog.resource_stream_retention') or {}
+        if str(resource_stream_health.get('status', 'err')).lower() != 'ok':
+            reasons.append('critical_check_failed:resource_stream_retention_unavailable')
+
+        baseline_window_health = checks.get('watchdog.resource_baseline_window') or {}
+        if str(baseline_window_health.get('status', 'err')).lower() != 'ok':
+            reasons.append('critical_check_failed:resource_baseline_window_incomplete')
 
     resource_metrics = checks.get('watchdog.resource_metrics') or {}
     cpu_now = _to_float_or_none(resource_metrics.get('cpu_pct_now'))
@@ -1131,24 +1802,203 @@ def evaluate_gate_decision(status_packet: Dict[str, Any], target_mode: Optional[
     return packet
 
 
+def _collect_evidence_refs(checks: Dict[str, Any]) -> List[str]:
+    refs: List[str] = []
+
+    def _add(value: Any) -> None:
+        text = str(value or '').strip()
+        if text and text not in refs:
+            refs.append(text)
+
+    _add((checks.get('heartbeat.watchdog') or {}).get('path', ''))
+    _add((checks.get('heartbeat.observer') or {}).get('path', ''))
+    _add((checks.get('heartbeat.librarian') or {}).get('path', ''))
+    _add((checks.get('watchdog.trigger_posture') or {}).get('path', ''))
+    _add((checks.get('watchdog.resource_metrics') or {}).get('path', ''))
+    _add((checks.get('store.pointer_consistent') or {}).get('active_store_pointer', ''))
+
+    monitor_row = checks.get('runtime.baseline_monitor') or {}
+    _add((monitor_row.get('heartbeat') or {}).get('path', ''))
+    _add((monitor_row.get('pid') or {}).get('path', ''))
+    _add(str(_baseline_monitor_state_path()).replace('\\', '/'))
+
+    resource_row = checks.get('watchdog.resource_stream_retention') or {}
+    _add(resource_row.get('path', ''))
+    latest_record = resource_row.get('latest_record', {}) if isinstance(resource_row.get('latest_record', {}), dict) else {}
+    _add(latest_record.get('segment_path', ''))
+
+    baseline_row = checks.get('watchdog.resource_baseline_window') or {}
+    _add(baseline_row.get('packet_path', ''))
+
+    return refs
+
+
+def _build_readiness_surfaces(status_packet: Dict[str, Any], gate_packet: Dict[str, Any]) -> Dict[str, Any]:
+    checks = status_packet.get('checks', {}) if isinstance(status_packet, dict) else {}
+    target_state = str(gate_packet.get('to_state', ''))
+    target_mode = target_state.split(':')[-1] if ':' in target_state else str(status_packet.get('mode', 'watch'))
+    current_mode = str(status_packet.get('mode', 'watch')).strip().lower()
+
+    monitor_row = checks.get('runtime.baseline_monitor') or {}
+    resource_row = checks.get('watchdog.resource_stream_retention') or {}
+    baseline_row = checks.get('watchdog.resource_baseline_window') or {}
+    monitor_state = monitor_row.get('monitor_state', {}) if isinstance(monitor_row.get('monitor_state', {}), dict) else {}
+    projection_mode = 'non-activation' if target_mode != current_mode else 'current-state'
+    projected_defaults = _posture_cadence_defaults(target_mode)
+
+    return {
+        'target_state': target_state,
+        'target_mode': target_mode,
+        'current_mode': current_mode,
+        'projection_mode': projection_mode,
+        'target_posture': _posture_for_mode(target_mode),
+        'gate_decision': str(gate_packet.get('decision', 'no-go')).lower(),
+        'gate_reason_codes': list(gate_packet.get('reason_codes', [])) if isinstance(gate_packet.get('reason_codes', []), list) else [],
+        'posture_receipt': {
+            'status': str((checks.get('watchdog.trigger_posture') or {}).get('status', 'err')).lower(),
+            'path': str((checks.get('watchdog.trigger_posture') or {}).get('path', '')),
+            'posture_trigger': str((checks.get('watchdog.trigger_posture') or {}).get('posture_trigger', '')),
+            'heartbeat_interval_seconds': (checks.get('watchdog.heartbeat_interval_seconds') or {}).get('value'),
+            'baseline_validation_interval_seconds': (checks.get('watchdog.baseline_validation_interval_seconds') or {}).get('value'),
+        },
+        'projected_posture_receipt': {
+            'status': 'ok' if projection_mode == 'non-activation' else 'not_applicable',
+            'projection_basis': 'target_mode_defaults' if projection_mode == 'non-activation' else 'current-state',
+            'posture_trigger': str(projected_defaults.get('posture_trigger', '')),
+            'heartbeat_interval_seconds': projected_defaults.get('heartbeat_interval_seconds'),
+            'baseline_validation_interval_seconds': projected_defaults.get('baseline_validation_interval_seconds'),
+        },
+        'resource_metrics': {
+            'status': str((checks.get('watchdog.resource_metrics') or {}).get('status', 'err')).lower(),
+            'path': str((checks.get('watchdog.resource_metrics') or {}).get('path', '')),
+            'sample_age_seconds': (checks.get('watchdog.resource_metrics') or {}).get('sample_age_seconds'),
+        },
+        'baseline_monitor': {
+            'status': str(monitor_row.get('status', 'err')).lower(),
+            'state': str(monitor_row.get('state', 'stopped')),
+            'heartbeat_path': str((monitor_row.get('heartbeat') or {}).get('path', '')),
+            'pid_path': str((monitor_row.get('pid') or {}).get('path', '')),
+            'monitor_state_path': str(_baseline_monitor_state_path()).replace('\\', '/'),
+            'monitor_state': monitor_state,
+        },
+        'resource_stream_retention': {
+            'status': str(resource_row.get('status', 'err')).lower(),
+            'index_path': str(resource_row.get('path', '')),
+            'latest_segment_path': str(((resource_row.get('latest_record', {}) or {}).get('segment_path', '')) if isinstance(resource_row.get('latest_record', {}), dict) else ''),
+            'records_indexed': int(resource_row.get('records_indexed', 0) or 0),
+        },
+        'baseline_window': {
+            'status': str(baseline_row.get('status', 'err')).lower(),
+            'packet_path': str(baseline_row.get('packet_path', '')),
+            'decision': str(baseline_row.get('decision', 'no-go')),
+            'sample_counts': baseline_row.get('sample_counts', {}) if isinstance(baseline_row.get('sample_counts', {}), dict) else {},
+        },
+        'librarian_retention': {
+            'status': str((checks.get('store.integrity_ok') or {}).get('status', 'err')).lower(),
+            'active_store_pointer': str((checks.get('store.pointer_consistent') or {}).get('active_store_pointer', '')),
+            'retention_state': str((checks.get('store.integrity_ok') or {}).get('retention_state', '')),
+        },
+    }
+
+
+def _build_stage5_prerequisites(readiness_surfaces: Dict[str, Any]) -> Dict[str, Any]:
+    target_posture = str(readiness_surfaces.get('target_posture', '')).strip().lower()
+    posture_receipt = readiness_surfaces.get('posture_receipt', {}) if isinstance(readiness_surfaces.get('posture_receipt', {}), dict) else {}
+    projected_posture_receipt = readiness_surfaces.get('projected_posture_receipt', {}) if isinstance(readiness_surfaces.get('projected_posture_receipt', {}), dict) else {}
+    resource_stream = readiness_surfaces.get('resource_stream_retention', {}) if isinstance(readiness_surfaces.get('resource_stream_retention', {}), dict) else {}
+    baseline_window = readiness_surfaces.get('baseline_window', {}) if isinstance(readiness_surfaces.get('baseline_window', {}), dict) else {}
+    baseline_monitor = readiness_surfaces.get('baseline_monitor', {}) if isinstance(readiness_surfaces.get('baseline_monitor', {}), dict) else {}
+    projection_mode = str(readiness_surfaces.get('projection_mode', 'current-state')).strip().lower()
+
+    cadence_source = posture_receipt
+    cadence_evidence_refs: List[str] = [str(posture_receipt.get('path', ''))] if str(posture_receipt.get('path', '')).strip() else []
+    if target_posture == 'lockdown' and projection_mode == 'non-activation':
+        cadence_source = projected_posture_receipt
+        cadence_evidence_refs = [str(posture_receipt.get('path', ''))] if str(posture_receipt.get('path', '')).strip() else []
+
+    hb_interval = _to_float_or_none(cadence_source.get('heartbeat_interval_seconds'))
+    baseline_interval = _to_float_or_none(cadence_source.get('baseline_validation_interval_seconds'))
+    cadence_ready = bool(
+        target_posture == 'lockdown'
+        and hb_interval is not None and 3.0 <= hb_interval <= 5.0
+        and _is_lockdown_baseline_cadence(baseline_interval)
+    )
+    resource_ready = str(resource_stream.get('status', 'err')).lower() == 'ok'
+    baseline_ready = (
+        str(baseline_window.get('status', 'err')).lower() == 'ok'
+        and str(baseline_window.get('decision', 'no-go')).lower() == 'go'
+    )
+    monitor_ready = str(baseline_monitor.get('status', 'err')).lower() == 'ok'
+
+    prereqs = {
+        'C22_baseline_validation_rate_escalated': {
+            'status': 'ok' if cadence_ready else ('not_applicable' if target_posture != 'lockdown' else 'err'),
+            'reason_codes': [] if cadence_ready or target_posture != 'lockdown' else ['critical_check_failed:lockdown_baseline_rate_not_escalated'],
+            'expected_heartbeat_interval_seconds_band': [3, 5],
+            'expected_baseline_validation_interval_seconds_band': [30, 60],
+            'actual_heartbeat_interval_seconds': hb_interval,
+            'actual_baseline_validation_interval_seconds': baseline_interval,
+            'projection_mode': projection_mode,
+            'evidence_refs': cadence_evidence_refs,
+        },
+        'C24_resource_stream_retention_ready': {
+            'status': 'ok' if resource_ready else 'err',
+            'reason_codes': [] if resource_ready else ['critical_check_failed:resource_stream_retention_unavailable'],
+            'records_indexed': int(resource_stream.get('records_indexed', 0) or 0),
+            'evidence_refs': [
+                ref for ref in [
+                    str(resource_stream.get('index_path', '')),
+                    str(resource_stream.get('latest_segment_path', '')),
+                ] if ref.strip()
+            ],
+        },
+        'C25_resource_baseline_window_ready': {
+            'status': 'ok' if baseline_ready else 'err',
+            'reason_codes': [] if baseline_ready else ['critical_check_failed:resource_baseline_window_incomplete'],
+            'decision': str(baseline_window.get('decision', 'no-go')),
+            'sample_counts': baseline_window.get('sample_counts', {}) if isinstance(baseline_window.get('sample_counts', {}), dict) else {},
+            'evidence_refs': [str(baseline_window.get('packet_path', ''))] if str(baseline_window.get('packet_path', '')).strip() else [],
+        },
+        'baseline_monitor_runtime_ready': {
+            'status': 'ok' if monitor_ready else 'err',
+            'reason_codes': [] if monitor_ready else ['critical_check_failed:baseline_monitor_runtime_inactive'],
+            'state': str(baseline_monitor.get('state', 'stopped')),
+            'evidence_refs': [
+                ref for ref in [
+                    str(baseline_monitor.get('heartbeat_path', '')),
+                    str(baseline_monitor.get('pid_path', '')),
+                    str(baseline_monitor.get('monitor_state_path', '')),
+                ] if ref.strip()
+            ],
+        },
+    }
+
+    overall_ready = all(
+        str((row or {}).get('status', 'err')).lower() == 'ok'
+        for row in prereqs.values()
+        if isinstance(row, dict) and str((row or {}).get('status', 'err')).lower() != 'not_applicable'
+    )
+    prereqs['overall'] = {
+        'status': 'ok' if overall_ready else 'err',
+        'target_posture': target_posture,
+        'evaluated_classes': ['C22_baseline_validation_rate_escalated', 'C24_resource_stream_retention_ready', 'C25_resource_baseline_window_ready', 'baseline_monitor_runtime_ready'],
+    }
+    return prereqs
+
+
 def build_evidence_pack(status_packet: Dict[str, Any], gate_packet: Dict[str, Any], event: str = 'manual') -> Dict[str, Any]:
     checks = status_packet.get('checks', {}) if isinstance(status_packet, dict) else {}
-    evidence_refs = [
-        str((checks.get('heartbeat.watchdog') or {}).get('path', '')),
-        str((checks.get('heartbeat.observer') or {}).get('path', '')),
-        str((checks.get('heartbeat.librarian') or {}).get('path', '')),
-    ]
-    evidence_refs = [p for p in evidence_refs if p]
-    store_ref = str((checks.get('store.pointer_consistent') or {}).get('active_store_pointer', '')).strip()
-    if store_ref:
-        evidence_refs.append(store_ref)
+    evidence_refs = _collect_evidence_refs(checks)
+    readiness_surfaces = _build_readiness_surfaces(status_packet, gate_packet)
+    stage5_prerequisites = _build_stage5_prerequisites(readiness_surfaces)
 
     methodology = {
-        'sampling_strategy': 'names-only runtime posture sampling from health/data/control artifacts',
+        'sampling_strategy': 'names-only runtime posture and retained-readiness sampling from health/data/control artifacts',
         'runtime_constraints': [
             'standalone observer scope only',
             'no CodeSentinel runtime process dependency',
             'fail-closed gate semantics',
+            'non-activation readiness projection supported via target-mode gate evaluation',
         ],
         'data_handling_invariants': [
             'no secret value output',
@@ -1164,6 +2014,7 @@ def build_evidence_pack(status_packet: Dict[str, Any], gate_packet: Dict[str, An
         'repro_steps': [
             'observerctl ops preflight --json',
             'observerctl ops gate-check --json',
+            'observerctl ops evidence pack --to <mode> --event <event> --json',
             'observerctl ops evidence pack --event <event> --json',
         ],
     }
@@ -1184,6 +2035,8 @@ def build_evidence_pack(status_packet: Dict[str, Any], gate_packet: Dict[str, An
         'runtime_cli_surface': 'observerctl',
         'status_packet': status_packet,
         'gate_packet': gate_packet,
+        'readiness_surfaces': readiness_surfaces,
+        'stage5_prerequisites': stage5_prerequisites,
         'provenance': {
             'artifact_path': 'stdout',
             'artifact_sha256': '',
@@ -1221,6 +2074,32 @@ def _default_output_path(source: str = 'sim', mode: str = 'watch', event: str = 
         m = 'watch'
     ev = str(event or 'manual').strip().lower().replace(' ', '-')
     return get_calamum_data_dir() / 'observer_derived' / src / m / 'evidence' / 'observerctl_{0}_evidence_{1}.json'.format(ev, ts)
+
+
+def _resolve_min_baseline_samples(args: argparse.Namespace, default: int) -> int:
+    canonical = getattr(args, 'min_baseline_samples', None)
+    legacy = getattr(args, 'min_rapid_samples', None)
+
+    try:
+        canonical_i = None if canonical is None else int(canonical)
+    except Exception:
+        canonical_i = None
+    try:
+        legacy_i = None if legacy is None else int(legacy)
+    except Exception:
+        legacy_i = None
+
+    if canonical_i is not None and canonical_i != int(default):
+        return canonical_i
+    if legacy_i is not None and legacy_i > 0:
+        return legacy_i
+    if canonical_i is not None:
+        return canonical_i
+    return int(default)
+
+
+def _resolve_cli_min_baseline_samples(args: argparse.Namespace) -> int:
+    return _resolve_min_baseline_samples(args, 300)
 
 
 def _evidence_index_path(source: str, mode: str) -> Path:
@@ -1470,9 +2349,7 @@ def _resource_segment_prefix(source: str, mode: str, profile: str, window_id: st
     m = str(mode or 'watch').strip().lower()
     if m not in MODES:
         m = 'watch'
-    prof = str(profile or 'normal').strip().lower()
-    if prof not in RESOURCE_PROFILES:
-        prof = 'normal'
+    prof = _normalize_resource_profile(profile)
     wid = str(window_id or '').strip() or datetime.now(timezone.utc).strftime('%Y%m%dT%H%M%SZ')
     return 'resource_{0}_{1}_{2}_{3}'.format(src, m, prof, wid)
 
@@ -1593,7 +2470,7 @@ def _resource_candidate_files(source: str, mode: str, profile: Optional[str] = N
     m = str(mode or 'watch').strip().lower()
     if m not in MODES:
         m = 'watch'
-    prof = str(profile or '').strip().lower()
+    prof = _normalize_resource_profile(profile) if str(profile or '').strip() else ''
     pattern_prefix = 'resource_{0}_{1}_'.format(src, m)
 
     files: List[Path] = []
@@ -1601,14 +2478,20 @@ def _resource_candidate_files(source: str, mode: str, profile: Optional[str] = N
         name = p.name.lower()
         if not name.startswith(pattern_prefix):
             continue
-        if prof and ('_{0}_'.format(prof) not in name):
+        if prof == 'baseline':
+            if ('_baseline_' not in name) and ('_rapid_' not in name):
+                continue
+        elif prof and ('_{0}_'.format(prof) not in name):
             continue
         files.append(p)
     for p in sorted(archive_dir.glob('resource_{0}_{1}_*.jsonl.gz'.format(src, m))):
         name = p.name.lower()
         if not name.startswith(pattern_prefix):
             continue
-        if prof and ('_{0}_'.format(prof) not in name):
+        if prof == 'baseline':
+            if ('_baseline_' not in name) and ('_rapid_' not in name):
+                continue
+        elif prof and ('_{0}_'.format(prof) not in name):
             continue
         files.append(p)
     return files
@@ -1725,6 +2608,9 @@ def _render_librarian_stores_human(packet: Dict[str, Any]) -> List[str]:
 def _render_human_known_packet(packet: Dict[str, Any]) -> Optional[List[str]]:
     if not isinstance(packet, dict):
         return None
+    sandbox_lines = render_sandbox_human_packet(packet)
+    if isinstance(sandbox_lines, list) and len(sandbox_lines) > 0:
+        return sandbox_lines
     stores = packet.get('stores', [])
     if not isinstance(stores, list):
         return None
@@ -1804,6 +2690,106 @@ def _baseline_catalog_path() -> Path:
     return _project_root() / 'local_untracked' / 'observerctl' / 'baselines' / 'catalog.json'
 
 
+def _sandbox_list() -> Dict[str, Any]:
+    return {
+        'timestamp_utc': _utc_now(),
+        'runtime_cli_surface': 'observerctl',
+        'action': 'sandbox-list',
+        'template_class': 'decision',
+        'template_variant': 'catalog',
+        'decision': 'go',
+        'definitions': [
+            {
+                'id': str(row.get('id', '') or ''),
+                'title': str(row.get('title', '') or ''),
+                'summary': str(row.get('summary', '') or ''),
+                'status': str(row.get('status', '') or ''),
+                'category': str(row.get('category', '') or ''),
+                'writes_to': str(row.get('writes_to', '') or ''),
+            }
+            for row in sandbox_get_definitions()
+        ],
+    }
+
+
+def _sandbox_show(definition_id: str) -> Dict[str, Any]:
+    definition = sandbox_get_definition(definition_id)
+    if definition is None:
+        return {
+            'timestamp_utc': _utc_now(),
+            'runtime_cli_surface': 'observerctl',
+            'action': 'sandbox-show',
+            'template_class': 'validation',
+            'template_variant': 'definition_detail',
+            'decision': 'no-go',
+            'reason_codes': ['critical_check_failed:unknown_sandbox_definition'],
+            'definition_id': str(definition_id or ''),
+        }
+    return {
+        'timestamp_utc': _utc_now(),
+        'runtime_cli_surface': 'observerctl',
+        'action': 'sandbox-show',
+        'template_class': 'validation',
+        'template_variant': 'definition_detail',
+        'decision': 'go',
+        'definition': {
+            key: value
+            for key, value in definition.items()
+            if key != 'runner'
+        },
+    }
+
+
+def _sandbox_run(definition_id: str) -> Dict[str, Any]:
+    packet = sandbox_run_definition(definition_id)
+    packet.update({
+        'timestamp_utc': _utc_now(),
+        'runtime_cli_surface': 'observerctl',
+        'action': 'sandbox-run',
+        'template_class': 'transition',
+        'template_variant': 'execution',
+    })
+    return packet
+
+
+def _sandbox_runs_list() -> Dict[str, Any]:
+    return {
+        'timestamp_utc': _utc_now(),
+        'runtime_cli_surface': 'observerctl',
+        'action': 'sandbox-runs-list',
+        'template_class': 'validation',
+        'template_variant': 'run_catalog',
+        'decision': 'go',
+        'runs': sandbox_list_runs(),
+    }
+
+
+def _sandbox_runs_show(run_id: str) -> Dict[str, Any]:
+    found = sandbox_get_run(run_id)
+    if found is None:
+        return {
+            'timestamp_utc': _utc_now(),
+            'runtime_cli_surface': 'observerctl',
+            'action': 'sandbox-runs-show',
+            'template_class': 'validation',
+            'template_variant': 'run_review',
+            'decision': 'no-go',
+            'reason_codes': ['critical_check_failed:sandbox_run_not_found'],
+            'run_id': str(run_id or ''),
+        }
+    run_row, report_payload = found
+    return {
+        'timestamp_utc': _utc_now(),
+        'runtime_cli_surface': 'observerctl',
+        'action': 'sandbox-runs-show',
+        'template_class': 'validation',
+        'template_variant': 'run_review',
+        'decision': 'go',
+        'run': run_row,
+        'report': report_payload,
+    }
+
+
 def _load_baselines() -> Dict[str, Any]:
     default = {
         'active': 'baseline-default',
@@ -1868,17 +2854,50 @@ def _ops_mode_set(source: str, to_mode: str) -> Dict[str, Any]:
             'reason_codes': ['critical_check_failed:gate_packet_missing_or_stale'],
             'runtime_cli_surface': 'observerctl',
         }
+    prior_state = _load_state()
+    rollback_anchor = {
+        'source': str(prior_state.get('source', 'sim')),
+        'mode': str(prior_state.get('mode', 'watch')),
+    }
     state = _save_state(source=source, mode=to_mode)
+    posture_packet = _apply_watchdog_posture(state['source'], state['mode'], event='mode-set')
+    if posture_packet.get('decision') != 'go':
+        restored_state = _save_state(source=rollback_anchor['source'], mode=rollback_anchor['mode'])
+        restored_readback = _load_state()
+        rollback_verified = (
+            _normalize_source(str(restored_readback.get('source', 'sim'))) == _normalize_source(rollback_anchor['source'])
+            and str(restored_readback.get('mode', 'watch')).strip().lower() == str(rollback_anchor['mode']).strip().lower()
+        )
+        reason_codes = list(posture_packet.get('reason_codes', ['critical_check_failed:watchdog_posture_persist_failed']))
+        if not rollback_verified and 'critical_check_failed:mode_set_rollback_unverified' not in reason_codes:
+            reason_codes.append('critical_check_failed:mode_set_rollback_unverified')
+        return {
+            'timestamp_utc': _utc_now(),
+            'decision': 'no-go',
+            'reason_codes': reason_codes,
+            'runtime_cli_surface': 'observerctl',
+            'from_state': gate.get('from_state', ''),
+            'attempted_to_state': expected_to_state,
+            'rollback_anchor': rollback_anchor,
+            'rollback_applied': bool(rollback_verified),
+            'restored_state': {
+                'source': str(restored_state.get('source', 'sim')),
+                'mode': str(restored_state.get('mode', 'watch')),
+            },
+            'restored_readback_state': {
+                'source': str(restored_readback.get('source', 'sim')),
+                'mode': str(restored_readback.get('mode', 'watch')),
+            },
+            'posture_packet': posture_packet,
+        }
     response = {
         'timestamp_utc': _utc_now(),
         'decision': 'go',
         'runtime_cli_surface': 'observerctl',
         'from_state': gate.get('from_state', ''),
         'to_state': '{0}:{1}'.format(state['source'], state['mode']),
-        'rollback_anchor': {
-            'source': str(gate.get('from_state', 'sim:watch')).split(':')[0],
-            'mode': str(gate.get('from_state', 'sim:watch')).split(':')[-1],
-        },
+        'rollback_anchor': rollback_anchor,
+        'posture_packet': posture_packet,
     }
     response.update(_make_run_linkage(state['mode'], event='mode-set'))
     return response
@@ -2049,6 +3068,9 @@ def _ops_mode_switch(
     observer_service_status = str((post_checks.get('runtime.observer_service') or {}).get('status', 'err')).lower()
     if observer_service_status != 'ok':
         post_reasons.append('critical_check_failed:runtime_sync_inactive')
+    baseline_monitor_status = str((post_checks.get('runtime.baseline_monitor') or {}).get('status', 'err')).lower()
+    if baseline_monitor_status != 'ok':
+        post_reasons.append('critical_check_failed:baseline_monitor_runtime_inactive')
 
     evidence = build_evidence_pack(status_before, gate, event=event)
     out_path = Path(str(output).strip()) if str(output).strip() else _default_output_path(source=source_norm, mode=mode_norm, event=event)
@@ -2098,13 +3120,17 @@ def _ops_gate_check(source: str) -> Dict[str, Any]:
     gate = evaluate_gate_decision(status, target_mode=str(status.get('mode', 'watch')))
     _write_json_file(_control_file(LAST_GATE_FILE), gate)
     return gate
-
-
-def _ops_evidence_pack(source: str, event: str, output: str) -> Dict[str, Any]:
+def _ops_evidence_pack(source: str, event: str, output: str, target_mode: str = '') -> Dict[str, Any]:
     status = collect_runtime_status(source=source)
-    gate = evaluate_gate_decision(status, target_mode=str(status.get('mode', 'watch')))
+    target = str(target_mode or status.get('mode', 'watch')).strip().lower()
+    gate = evaluate_gate_decision(status, target_mode=target)
     packet = build_evidence_pack(status, gate, event=event)
-    mode = str(status.get('mode', 'watch')).strip().lower()
+    mode = target if target in MODES else str(status.get('mode', 'watch')).strip().lower()
+    packet['readiness_projection'] = {
+        'projection_mode': 'non-activation' if mode != str(status.get('mode', 'watch')).strip().lower() else 'current-state',
+        'evaluated_target_mode': mode,
+        'evaluated_target_state': '{0}:{1}'.format(_normalize_source(source), mode),
+    }
     out_path = Path(str(output).strip()) if str(output).strip() else _default_output_path(source=source, mode=mode, event=event)
     packet = _write_packet(packet, out_path)
     _append_jsonl(_evidence_index_path(source, mode), {
@@ -2168,8 +3194,61 @@ def _ops_evidence_index() -> Dict[str, Any]:
     }
 
 
+def _baseline_chunked_status() -> Dict[str, Any]:
+    catalog = _load_baselines()
+    active_id = str(catalog.get('active', ''))
+    items = catalog.get('items', [])
+    active_item = next((it for it in items if str(it.get('id', '')) == active_id), None)
+    exists = active_item is not None
+    item_status = str((active_item or {}).get('status', '')) if exists else ''
+    ready = exists and item_status == 'ready'
+    return {
+        'timestamp_utc': _utc_now(),
+        'runtime_cli_surface': 'observerctl',
+        'action': 'baseline-status',
+        'baseline_type': 'chunked_dynamic',
+        'active_baseline_id': active_id,
+        'exists': exists,
+        'created_at_utc': str((active_item or {}).get('created_at_utc', '')) if exists else '',
+        'item_status': item_status,
+        'decision': 'go' if ready else 'no-go',
+        'reason_codes': [] if ready else (
+            ['critical_check_failed:chunked_baseline_not_ready'] if exists
+            else ['critical_check_failed:chunked_baseline_missing']
+        ),
+    }
+
+
+def _baseline_chunked_check() -> Dict[str, Any]:
+    catalog = _load_baselines()
+    active_id = str(catalog.get('active', ''))
+    items = catalog.get('items', [])
+    active_item = next((it for it in items if str(it.get('id', '')) == active_id), None)
+    exists = active_item is not None
+    item_status = str((active_item or {}).get('status', '')) if exists else ''
+    ready = exists and item_status == 'ready'
+    reasons: List[str] = []
+    if not exists:
+        reasons.append('critical_check_failed:chunked_baseline_missing')
+    elif item_status != 'ready':
+        reasons.append('critical_check_failed:chunked_baseline_not_ready')
+    return {
+        'timestamp_utc': _utc_now(),
+        'runtime_cli_surface': 'observerctl',
+        'action': 'baseline-check',
+        'baseline_type': 'chunked_dynamic',
+        'active_baseline_id': active_id,
+        'exists': exists,
+        'item_status': item_status,
+        'decision': 'go' if ready else 'no-go',
+        'reason_codes': reasons,
+    }
+
+
 def _baseline_status(baseline: str = '') -> Dict[str, Any]:
-    return _baseline_hash_status(baseline)
+    if str(baseline).strip():
+        return _baseline_hash_status(baseline)
+    return _baseline_chunked_status()
 
 
 def _baseline_graph() -> Dict[str, Any]:
@@ -2184,7 +3263,9 @@ def _baseline_graph() -> Dict[str, Any]:
 
 
 def _baseline_check(baseline: str = '') -> Dict[str, Any]:
-    return _baseline_hash_check(baseline)
+    if str(baseline).strip():
+        return _baseline_hash_check(baseline)
+    return _baseline_chunked_check()
 
 
 def _baseline_list() -> Dict[str, Any]:
@@ -2218,11 +3299,10 @@ def _baseline_collect(source: str, mode: str, profile: str, duration_sec: float,
     m = str(mode or 'canary').strip().lower()
     if m not in MODES:
         m = 'canary'
-    prof = str(profile or 'normal').strip().lower()
-    if prof not in RESOURCE_PROFILES:
-        prof = 'normal'
+    profile_input = str(profile or 'normal').strip().lower()
+    prof = _normalize_resource_profile(profile_input)
 
-    default_interval = 30.0 if prof == 'normal' else 2.0
+    default_interval = float(RESOURCE_NORMAL_INTERVAL_SEC) if prof == 'normal' else float(RESOURCE_BASELINE_INTERVAL_SEC)
     interval = float(interval_sec) if float(interval_sec or 0.0) > 0.0 else default_interval
     duration = max(0.0, float(duration_sec or 0.0))
     seg_limit = max(1, int(segment_records or 1000))
@@ -2242,7 +3322,7 @@ def _baseline_collect(source: str, mode: str, profile: str, duration_sec: float,
     for idx in range(samples_target):
         _touch_observer_service_heartbeat()
         sample = _resource_sample()
-        sample['stream_type'] = 'resource_{0}'.format(prof)
+        sample['stream_type'] = _resource_stream_type(prof)
         sample['sampling_profile_id'] = 'resource_{0}_v1'.format(prof)
         sample['mode_at_capture'] = m
         sample['source_axis'] = src
@@ -2274,7 +3354,7 @@ def _baseline_collect(source: str, mode: str, profile: str, duration_sec: float,
     for p, count in segment_files.items():
         _append_jsonl(idx_path, {
             'timestamp_utc': _utc_now(),
-            'stream_type': 'resource_{0}'.format(prof),
+            'stream_type': _resource_stream_type(prof),
             'window_id': wid,
             'source': src,
             'mode': m,
@@ -2288,7 +3368,7 @@ def _baseline_collect(source: str, mode: str, profile: str, duration_sec: float,
         state_payload = {
             'updated_at_utc': _utc_now(),
             'baseline_window_id': wid,
-            'stream_type': 'resource_{0}'.format(prof),
+            'stream_type': _resource_stream_type(prof),
             'cpu_pct_now': float(cpu_vals[-1]),
             'ram_pct_now': float(ram_vals[-1]),
             'cpu_p95_15m': float(_percentile(cpu_vals, 95.0)),
@@ -2327,6 +3407,7 @@ def _baseline_collect(source: str, mode: str, profile: str, duration_sec: float,
         'source': src,
         'mode': m,
         'profile': prof,
+        'profile_input': profile_input,
         'window_id': wid,
         'sample_count': int(len(cpu_vals)),
         'interval_sec': float(interval),
@@ -2386,7 +3467,7 @@ def _baseline_analyze(source: str, mode: str, hours: float, profile: str, min_no
     if m not in MODES:
         m = 'canary'
     prof = str(profile or 'all').strip().lower()
-    profile_filter: Optional[str] = None if prof in ('all', '*', '') else prof
+    profile_filter: Optional[str] = None if prof in ('all', '*', '') else _normalize_resource_profile(prof)
     lookback_s = max(60.0, float(hours or 24.0) * 3600.0)
     cutoff = time.time() - lookback_s
 
@@ -2404,7 +3485,7 @@ def _baseline_analyze(source: str, mode: str, hours: float, profile: str, min_no
     cpu_vals = [float(r.get('cpu_pct_now', 0.0) or 0.0) for r in rows]
     ram_vals = [float(r.get('ram_pct_now', 0.0) or 0.0) for r in rows]
     normal_count = sum(1 for r in rows if str(r.get('stream_type', '')) == 'resource_normal')
-    rapid_count = sum(1 for r in rows if str(r.get('stream_type', '')) == 'resource_rapid')
+    baseline_count = sum(1 for r in rows if _resource_profile_matches(r.get('stream_type', ''), 'baseline'))
 
     cpu_rate_vals: List[float] = []
     ram_rate_vals: List[float] = []
@@ -2426,8 +3507,9 @@ def _baseline_analyze(source: str, mode: str, hours: float, profile: str, min_no
         prev_cpu = cur_cpu
         prev_ram = cur_ram
 
-    baseline_ready = bool(len(rows) >= max(2, int(min_normal_samples) + int(min_rapid_samples)) and normal_count >= int(min_normal_samples) and rapid_count >= int(min_rapid_samples))
+    baseline_ready = bool(len(rows) >= max(2, int(min_normal_samples) + int(min_rapid_samples)) and normal_count >= int(min_normal_samples) and baseline_count >= int(min_rapid_samples))
     linkage = _make_run_linkage(m, event='baseline-analyze')
+    analyze_reason_codes = [] if baseline_ready else ['critical_check_failed:resource_baseline_window_incomplete']
 
     if cpu_vals and ram_vals:
         state_payload = {
@@ -2458,11 +3540,13 @@ def _baseline_analyze(source: str, mode: str, hours: float, profile: str, min_no
         'sample_counts': {
             'total': int(len(rows)),
             'resource_normal': int(normal_count),
-            'resource_rapid': int(rapid_count),
+            'resource_baseline': int(baseline_count),
+            'resource_rapid_legacy_alias': int(baseline_count),
         },
         'minimum_requirements': {
             'resource_normal': int(min_normal_samples),
-            'resource_rapid': int(min_rapid_samples),
+            'resource_baseline': int(min_rapid_samples),
+            'resource_rapid_legacy_alias': int(min_rapid_samples),
         },
         'baseline_ready': bool(baseline_ready),
         'resource_statistics': {
@@ -2475,7 +3559,7 @@ def _baseline_analyze(source: str, mode: str, hours: float, profile: str, min_no
             'cpu_rate_p95_per_s': float(_percentile(cpu_rate_vals, 95.0)),
             'ram_rate_p95_per_s': float(_percentile(ram_rate_vals, 95.0)),
         },
-        'reason_codes': [] if baseline_ready else ['critical_check_failed:resource_baseline_window_incomplete'],
+        'reason_codes': analyze_reason_codes,
         'provenance': {
             'generated_at_utc': _utc_now(),
             'producer_process': 'observerctl baseline analyze',
@@ -2487,7 +3571,7 @@ def _baseline_analyze(source: str, mode: str, hours: float, profile: str, min_no
             },
         },
         'methodology': {
-            'sampling_strategy': 'lookback-window aggregation over resource_normal/resource_rapid telemetry segments',
+            'sampling_strategy': 'lookback-window aggregation over resource_normal/resource_baseline telemetry segments',
             'runtime_constraints': ['names-only outputs', 'publish-grade packet with linkage fields'],
             'failure_modes': ['insufficient_baseline_samples', 'archive_parse_failure'],
             'calculus': ['percentiles (p50/p95/p99)', 'first-order rate-of-change per second'],
@@ -2496,7 +3580,7 @@ def _baseline_analyze(source: str, mode: str, hours: float, profile: str, min_no
             'phase': 'baseline_analysis',
             'event': 'baseline_analyze',
             'decision': 'go' if baseline_ready else 'no-go',
-            'reason_codes': [] if baseline_ready else ['critical_check_failed:resource_baseline_window_incomplete'],
+            'reason_codes': analyze_reason_codes,
             'approver_checkpoint': 'required_for_live_transition',
             'evidence_refs': [str(_resource_archive_dir()).replace('\\', '/'), str(_resource_index_path(src, m)).replace('\\', '/')],
         },
@@ -2560,10 +3644,10 @@ def _baseline_overnight_plan(
     window_id = datetime.now(timezone.utc).strftime('%Y%m%dT%H%M%SZ')
 
     commands = [
-        'observerctl baseline collect --source {0} --mode {1} --profile rapid --duration-sec {2:.0f} --interval-sec {3:.3f} --window-id overnight_rapid_start_{4} --json'.format(src, m, rapid_phase, rapid_interval, window_id),
+        'observerctl baseline collect --source {0} --mode {1} --profile baseline --duration-sec {2:.0f} --interval-sec {3:.3f} --window-id overnight_baseline_start_{4} --json'.format(src, m, rapid_phase, rapid_interval, window_id),
         'observerctl baseline collect --source {0} --mode {1} --profile normal --duration-sec {2:.0f} --interval-sec {3:.3f} --window-id overnight_normal_{4} --json'.format(src, m, normal_window_sec, normal_interval, window_id),
-        'observerctl baseline collect --source {0} --mode {1} --profile rapid --duration-sec {2:.0f} --interval-sec {3:.3f} --window-id overnight_rapid_end_{4} --json'.format(src, m, rapid_phase, rapid_interval, window_id),
-        'observerctl baseline analyze --source {0} --mode {1} --hours {2:.2f} --min-normal-samples {3} --min-rapid-samples {4} --json'.format(src, m, overnight_h + 1.0, int(min_normal_samples), int(min_rapid_samples)),
+        'observerctl baseline collect --source {0} --mode {1} --profile baseline --duration-sec {2:.0f} --interval-sec {3:.3f} --window-id overnight_baseline_end_{4} --json'.format(src, m, rapid_phase, rapid_interval, window_id),
+        'observerctl baseline analyze --source {0} --mode {1} --hours {2:.2f} --min-normal-samples {3} --min-baseline-samples {4} --json'.format(src, m, overnight_h + 1.0, int(min_normal_samples), int(min_rapid_samples)),
     ]
 
     readiness_projection = {
@@ -2574,7 +3658,6 @@ def _baseline_overnight_plan(
         'normal_requirement_met_by_plan': bool(normal_samples >= int(min_normal_samples)),
         'rapid_requirement_met_by_plan': bool(rapid_total >= int(min_rapid_samples)),
     }
-
     packet = {
         'timestamp_utc': _utc_now(),
         'runtime_cli_surface': 'observerctl',
@@ -2582,7 +3665,7 @@ def _baseline_overnight_plan(
         'action': 'baseline-overnight-plan',
         'source': src,
         'mode': m,
-        'schedule_model': 'rapid_start_then_normal_overnight_then_rapid_end',
+        'schedule_model': 'baseline_start_then_normal_overnight_then_baseline_end',
         'window': {
             'start_utc': start_iso,
             'rapid_to_normal_utc': transition_1,
@@ -2692,20 +3775,20 @@ def _baseline_overnight_run(
             'action': str(packet.get('action', '') or ''),
         })
 
-    _emit_progress('phase_start rapid_start', enabled=emit_progress)
+    _emit_progress('phase_start baseline_start', enabled=emit_progress)
     rapid_start = _baseline_collect(
         source=src,
         mode=m,
-        profile='rapid',
+        profile='baseline',
         duration_sec=float(rapid_phase),
         interval_sec=float(rapid_interval),
         segment_records=1000,
-        window_id='overnight_rapid_start_{0}'.format(window_id),
+        window_id='overnight_baseline_start_{0}'.format(window_id),
         output='',
     )
-    _record_checkpoint('rapid_start', rapid_start)
+    _record_checkpoint('baseline_start', rapid_start)
     _emit_progress(
-        'phase_complete rapid_start decision={0} samples={1}'.format(
+        'phase_complete baseline_start decision={0} samples={1}'.format(
             str(rapid_start.get('decision', 'no-go')).lower(),
             int(rapid_start.get('sample_count', 0) or 0),
         ),
@@ -2732,20 +3815,20 @@ def _baseline_overnight_run(
         enabled=emit_progress,
     )
 
-    _emit_progress('phase_start rapid_end', enabled=emit_progress)
+    _emit_progress('phase_start baseline_end', enabled=emit_progress)
     rapid_end = _baseline_collect(
         source=src,
         mode=m,
-        profile='rapid',
+        profile='baseline',
         duration_sec=float(rapid_phase),
         interval_sec=float(rapid_interval),
         segment_records=1000,
-        window_id='overnight_rapid_end_{0}'.format(window_id),
+        window_id='overnight_baseline_end_{0}'.format(window_id),
         output='',
     )
-    _record_checkpoint('rapid_end', rapid_end)
+    _record_checkpoint('baseline_end', rapid_end)
     _emit_progress(
-        'phase_complete rapid_end decision={0} samples={1}'.format(
+        'phase_complete baseline_end decision={0} samples={1}'.format(
             str(rapid_end.get('decision', 'no-go')).lower(),
             int(rapid_end.get('sample_count', 0) or 0),
         ),
@@ -2787,10 +3870,10 @@ def _baseline_overnight_run(
         decision = 'no-go'
 
     executed_commands = [
-        'observerctl baseline collect --source {0} --mode {1} --profile rapid --duration-sec {2:.3f} --interval-sec {3:.3f} --window-id overnight_rapid_start_{4} --json'.format(src, m, rapid_phase, rapid_interval, window_id),
+        'observerctl baseline collect --source {0} --mode {1} --profile baseline --duration-sec {2:.3f} --interval-sec {3:.3f} --window-id overnight_baseline_start_{4} --json'.format(src, m, rapid_phase, rapid_interval, window_id),
         'observerctl baseline collect --source {0} --mode {1} --profile normal --duration-sec {2:.3f} --interval-sec {3:.3f} --window-id overnight_normal_{4} --json'.format(src, m, normal_window_sec, normal_interval, window_id),
-        'observerctl baseline collect --source {0} --mode {1} --profile rapid --duration-sec {2:.3f} --interval-sec {3:.3f} --window-id overnight_rapid_end_{4} --json'.format(src, m, rapid_phase, rapid_interval, window_id),
-        'observerctl baseline analyze --source {0} --mode {1} --hours {2:.3f} --min-normal-samples {3} --min-rapid-samples {4} --json'.format(src, m, max(1.0, float(overnight_h) + 1.0), int(min_normal_samples), int(min_rapid_samples)),
+        'observerctl baseline collect --source {0} --mode {1} --profile baseline --duration-sec {2:.3f} --interval-sec {3:.3f} --window-id overnight_baseline_end_{4} --json'.format(src, m, rapid_phase, rapid_interval, window_id),
+        'observerctl baseline analyze --source {0} --mode {1} --hours {2:.3f} --min-normal-samples {3} --min-baseline-samples {4} --json'.format(src, m, max(1.0, float(overnight_h) + 1.0), int(min_normal_samples), int(min_rapid_samples)),
     ]
 
     packet = {
@@ -2801,7 +3884,7 @@ def _baseline_overnight_run(
         'source': src,
         'mode': m,
         'window_id': window_id,
-        'schedule_model': 'rapid_start_then_normal_overnight_then_rapid_end',
+        'schedule_model': 'baseline_start_then_normal_overnight_then_baseline_end',
         'sampling': {
             'overnight_hours': float(overnight_h),
             'rapid_phase_sec_each': float(rapid_phase),
@@ -2811,7 +3894,7 @@ def _baseline_overnight_run(
         },
         'minimum_requirements': {
             'resource_normal': int(min_normal_samples),
-            'resource_rapid': int(min_rapid_samples),
+            'resource_baseline': int(min_rapid_samples),
         },
         'checkpoints': checkpoints,
         'analysis_summary': {
@@ -3329,6 +4412,8 @@ def _watchdog_reasons() -> Dict[str, Any]:
             'critical_check_failed:watchdog_trigger_posture_invalid',
             'critical_check_failed:lockdown_heartbeat_rate_not_escalated',
             'critical_check_failed:lockdown_baseline_rate_not_escalated',
+            'critical_check_failed:resource_stream_retention_unavailable',
+            'critical_check_failed:resource_baseline_window_incomplete',
             'critical_check_failed:run_security_report_missing',
             'critical_check_failed:watchdog_heartbeat_stale',
             'critical_check_failed:observer_heartbeat_stale',
@@ -3419,6 +4504,18 @@ def _exit_from_packet(packet: Dict[str, Any], schema_error: bool = False, depend
 
 def _dispatch(args: argparse.Namespace) -> Dict[str, Any]:
     cmd = str(args.command)
+    if cmd == 'sandbox':
+        if args.sandbox_cmd == 'list':
+            return _sandbox_list()
+        if args.sandbox_cmd == 'show':
+            return _sandbox_show(args.definition)
+        if args.sandbox_cmd == 'run':
+            return _sandbox_run(args.definition)
+        if args.sandbox_cmd == 'runs-list':
+            return _sandbox_runs_list()
+        if args.sandbox_cmd == 'runs-show':
+            return _sandbox_runs_show(args.run_id)
+
     if cmd == 'ops':
         if args.ops_cmd == 'preflight':
             return _ops_preflight(args.source)
@@ -3451,7 +4548,7 @@ def _dispatch(args: argparse.Namespace) -> Dict[str, Any]:
                 startup_probe_sec=args.startup_probe_sec,
             )
         if args.ops_cmd == 'evidence-pack':
-            return _ops_evidence_pack(args.source, args.event, args.output)
+            return _ops_evidence_pack(args.source, args.event, args.output, args.to)
         if args.ops_cmd == 'evidence-verify':
             return _ops_evidence_verify(args.packet)
         if args.ops_cmd == 'evidence-index':
@@ -3482,16 +4579,18 @@ def _dispatch(args: argparse.Namespace) -> Dict[str, Any]:
                 output=args.output,
             )
         if args.base_cmd == 'analyze':
+            min_baseline_samples = _resolve_cli_min_baseline_samples(args)
             return _baseline_analyze(
                 source=args.source,
                 mode=args.mode,
                 hours=args.hours,
                 profile=args.profile,
                 min_normal_samples=args.min_normal_samples,
-                min_rapid_samples=args.min_rapid_samples,
+                min_rapid_samples=min_baseline_samples,
                 output=args.output,
             )
         if args.base_cmd == 'overnight-plan':
+            min_baseline_samples = _resolve_cli_min_baseline_samples(args)
             return _baseline_overnight_plan(
                 source=args.source,
                 mode=args.mode,
@@ -3500,10 +4599,11 @@ def _dispatch(args: argparse.Namespace) -> Dict[str, Any]:
                 rapid_interval_sec=args.rapid_interval_sec,
                 rapid_phase_sec=args.rapid_phase_sec,
                 min_normal_samples=args.min_normal_samples,
-                min_rapid_samples=args.min_rapid_samples,
+                min_rapid_samples=min_baseline_samples,
                 output=args.output,
             )
         if args.base_cmd == 'overnight-run':
+            min_baseline_samples = _resolve_cli_min_baseline_samples(args)
             return _baseline_overnight_run(
                 source=args.source,
                 mode=args.mode,
@@ -3512,9 +4612,48 @@ def _dispatch(args: argparse.Namespace) -> Dict[str, Any]:
                 rapid_interval_sec=args.rapid_interval_sec,
                 rapid_phase_sec=args.rapid_phase_sec,
                 min_normal_samples=args.min_normal_samples,
-                min_rapid_samples=args.min_rapid_samples,
+                min_rapid_samples=min_baseline_samples,
                 output=args.output,
                 emit_progress=not bool(getattr(args, 'json', False)),
+            )
+        if args.base_cmd == 'monitor-status':
+            return _runtime_baseline_monitor_status(max_age_sec=max(90.0, float(args.normal_interval_sec) * 3.0))
+        if args.base_cmd == 'monitor-stop':
+            return _baseline_monitor_stop(timeout_sec=args.timeout_sec)
+        if args.base_cmd == 'monitor-start':
+            return _baseline_monitor_start(
+                source=args.source,
+                mode=args.mode,
+                normal_interval_sec=args.normal_interval_sec,
+                baseline_interval_sec=args.baseline_interval_sec,
+                baseline_window_sec=args.baseline_window_sec,
+                baseline_sample_interval_sec=args.baseline_sample_interval_sec,
+                min_normal_samples=args.min_normal_samples,
+                min_baseline_samples=args.min_baseline_samples,
+                startup_probe_sec=args.startup_probe_sec,
+            )
+        if args.base_cmd == 'monitor-once':
+            return _baseline_monitor_once(
+                source=args.source,
+                mode=args.mode,
+                normal_interval_sec=args.normal_interval_sec,
+                baseline_interval_sec=args.baseline_interval_sec,
+                baseline_window_sec=args.baseline_window_sec,
+                baseline_sample_interval_sec=args.baseline_sample_interval_sec,
+                min_normal_samples=args.min_normal_samples,
+                min_baseline_samples=args.min_baseline_samples,
+            )
+        if args.base_cmd == 'monitor-loop':
+            return _baseline_monitor_loop(
+                source=args.source,
+                mode=args.mode,
+                normal_interval_sec=args.normal_interval_sec,
+                baseline_interval_sec=args.baseline_interval_sec,
+                baseline_window_sec=args.baseline_window_sec,
+                baseline_sample_interval_sec=args.baseline_sample_interval_sec,
+                min_normal_samples=args.min_normal_samples,
+                min_baseline_samples=args.min_baseline_samples,
+                run_once=False,
             )
 
     if cmd == 'librarian':
@@ -3566,6 +4705,19 @@ def _build_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(description='observerctl standalone runtime operations surface (observer scope)')
     sub = parser.add_subparsers(dest='command', required=True)
 
+    sandbox = sub.add_parser('sandbox', help='Sandbox validation namespace')
+    sandbox_sub = sandbox.add_subparsers(dest='sandbox_cmd', required=True)
+    sandbox_sub.add_parser('list', help='List available sandbox definitions')
+    sandbox_show = sandbox_sub.add_parser('show', help='Show one sandbox definition in detail')
+    sandbox_show.add_argument('definition')
+    sandbox_run = sandbox_sub.add_parser('run', help='Run one sandbox definition')
+    sandbox_run.add_argument('definition')
+    sandbox_runs = sandbox_sub.add_parser('runs', help='Inspect retained sandbox runs')
+    sandbox_runs_sub = sandbox_runs.add_subparsers(dest='sandbox_runs_cmd', required=True)
+    sandbox_runs_sub.add_parser('list', help='List retained sandbox runs')
+    sandbox_runs_show = sandbox_runs_sub.add_parser('show', help='Show one retained sandbox run')
+    sandbox_runs_show.add_argument('run_id')
+
     ops = sub.add_parser('ops', help='Observer runtime operations gate surface')
     ops_sub = ops.add_subparsers(dest='ops_cmd', required=True)
 
@@ -3615,6 +4767,7 @@ def _build_parser() -> argparse.ArgumentParser:
     op_ev_sub = op_ev.add_subparsers(dest='evidence_cmd', required=True)
     op_ev_pack = op_ev_sub.add_parser('pack', help='Emit publication-grade evidence packet')
     op_ev_pack.add_argument('--source', choices=['sim', 'real'], default=_state_default_source())
+    op_ev_pack.add_argument('--to', choices=list(MODES), default='', help='Optional target mode for non-activation readiness projection')
     op_ev_pack.add_argument('--event', default='manual')
     op_ev_pack.add_argument('--output', default='')
     op_ev_verify = op_ev_sub.add_parser('verify', help='Verify packet schema and linkage fields')
@@ -3637,7 +4790,7 @@ def _build_parser() -> argparse.ArgumentParser:
     baseline_collect = baseline_sub.add_parser('collect')
     baseline_collect.add_argument('--source', choices=['sim', 'real'], default=_state_default_source())
     baseline_collect.add_argument('--mode', choices=list(MODES), default=_state_default_mode())
-    baseline_collect.add_argument('--profile', choices=list(RESOURCE_PROFILES), default='normal')
+    baseline_collect.add_argument('--profile', choices=list(RESOURCE_PROFILE_CLI_CHOICES), default='normal')
     baseline_collect.add_argument('--duration-sec', type=float, default=0.0, help='Collection duration in seconds (0 captures one sample)')
     baseline_collect.add_argument('--interval-sec', type=float, default=0.0, help='Sampling interval seconds (default by profile)')
     baseline_collect.add_argument('--segment-records', type=int, default=1000, help='Max records per raw segment before rolling to a new segment file')
@@ -3648,9 +4801,10 @@ def _build_parser() -> argparse.ArgumentParser:
     baseline_analyze.add_argument('--source', choices=['sim', 'real'], default=_state_default_source())
     baseline_analyze.add_argument('--mode', choices=list(MODES), default=_state_default_mode())
     baseline_analyze.add_argument('--hours', type=float, default=24.0, help='Lookback window in hours for baseline analysis')
-    baseline_analyze.add_argument('--profile', choices=['all'] + list(RESOURCE_PROFILES), default='all')
+    baseline_analyze.add_argument('--profile', choices=['all'] + list(RESOURCE_PROFILE_CLI_CHOICES), default='all')
     baseline_analyze.add_argument('--min-normal-samples', type=int, default=120, help='Minimum normal stream samples required for readiness')
-    baseline_analyze.add_argument('--min-rapid-samples', type=int, default=300, help='Minimum rapid baseline samples required for readiness')
+    baseline_analyze.add_argument('--min-baseline-samples', dest='min_baseline_samples', type=int, default=300, help='Minimum baseline-window samples required for readiness')
+    baseline_analyze.add_argument('--min-rapid-samples', dest='min_rapid_samples', type=int, default=0, help='Legacy alias for --min-baseline-samples')
     baseline_analyze.add_argument('--output', default='', help='Optional path for publish-grade analysis packet')
 
     baseline_plan = baseline_sub.add_parser('overnight-plan')
@@ -3658,10 +4812,11 @@ def _build_parser() -> argparse.ArgumentParser:
     baseline_plan.add_argument('--mode', choices=list(MODES), default=_state_default_mode())
     baseline_plan.add_argument('--overnight-hours', type=float, default=8.0, help='Total schedule window in hours')
     baseline_plan.add_argument('--normal-interval-sec', type=float, default=30.0, help='Normal sampling interval in seconds')
-    baseline_plan.add_argument('--rapid-interval-sec', type=float, default=2.0, help='Rapid sampling interval in seconds')
-    baseline_plan.add_argument('--rapid-phase-sec', type=float, default=1800.0, help='Duration of each rapid phase (start/end) in seconds')
+    baseline_plan.add_argument('--rapid-interval-sec', type=float, default=2.0, help='Legacy alias cadence for baseline-window sampling in seconds')
+    baseline_plan.add_argument('--rapid-phase-sec', type=float, default=1800.0, help='Legacy alias duration of each baseline-window phase (start/end) in seconds')
     baseline_plan.add_argument('--min-normal-samples', type=int, default=120, help='Minimum normal samples required by readiness gate')
-    baseline_plan.add_argument('--min-rapid-samples', type=int, default=300, help='Minimum rapid samples required by readiness gate')
+    baseline_plan.add_argument('--min-baseline-samples', dest='min_baseline_samples', type=int, default=300, help='Minimum baseline-window samples required by readiness gate')
+    baseline_plan.add_argument('--min-rapid-samples', dest='min_rapid_samples', type=int, default=0, help='Legacy alias for --min-baseline-samples')
     baseline_plan.add_argument('--output', default='', help='Optional path for publish-grade schedule packet')
 
     baseline_run = baseline_sub.add_parser('overnight-run')
@@ -3669,11 +4824,38 @@ def _build_parser() -> argparse.ArgumentParser:
     baseline_run.add_argument('--mode', choices=list(MODES), default=_state_default_mode())
     baseline_run.add_argument('--overnight-hours', type=float, default=8.0, help='Total schedule window in hours')
     baseline_run.add_argument('--normal-interval-sec', type=float, default=30.0, help='Normal sampling interval in seconds')
-    baseline_run.add_argument('--rapid-interval-sec', type=float, default=2.0, help='Rapid sampling interval in seconds')
-    baseline_run.add_argument('--rapid-phase-sec', type=float, default=1800.0, help='Duration of each rapid phase (start/end) in seconds')
+    baseline_run.add_argument('--rapid-interval-sec', type=float, default=2.0, help='Legacy alias cadence for baseline-window sampling in seconds')
+    baseline_run.add_argument('--rapid-phase-sec', type=float, default=1800.0, help='Legacy alias duration of each baseline-window phase (start/end) in seconds')
     baseline_run.add_argument('--min-normal-samples', type=int, default=120, help='Minimum normal samples required by readiness gate')
-    baseline_run.add_argument('--min-rapid-samples', type=int, default=300, help='Minimum rapid samples required by readiness gate')
+    baseline_run.add_argument('--min-baseline-samples', dest='min_baseline_samples', type=int, default=300, help='Minimum baseline-window samples required by readiness gate')
+    baseline_run.add_argument('--min-rapid-samples', dest='min_rapid_samples', type=int, default=0, help='Legacy alias for --min-baseline-samples')
     baseline_run.add_argument('--output', default='', help='Optional path for publish-grade orchestration packet')
+
+    baseline_monitor_status = baseline_sub.add_parser('monitor-status')
+    baseline_monitor_status.add_argument('--normal-interval-sec', type=float, default=float(RESOURCE_NORMAL_INTERVAL_SEC))
+
+    baseline_monitor_stop = baseline_sub.add_parser('monitor-stop')
+    baseline_monitor_stop.add_argument('--timeout-sec', type=float, default=8.0)
+
+    def _add_monitor_args(p):
+        p.add_argument('--source', choices=['sim', 'real'], default=_state_default_source())
+        p.add_argument('--mode', choices=list(MODES), default=_state_default_mode())
+        p.add_argument('--normal-interval-sec', type=float, default=float(RESOURCE_NORMAL_INTERVAL_SEC))
+        p.add_argument('--baseline-interval-sec', type=float, default=float(LOCKDOWN_BASELINE_VALIDATION_INTERVAL_SEC))
+        p.add_argument('--baseline-window-sec', type=float, default=float(RESOURCE_BASELINE_WINDOW_SEC))
+        p.add_argument('--baseline-sample-interval-sec', type=float, default=float(RESOURCE_BASELINE_INTERVAL_SEC))
+        p.add_argument('--min-normal-samples', type=int, default=int(RESOURCE_BASELINE_MIN_NORMAL_SAMPLES))
+        p.add_argument('--min-baseline-samples', type=int, default=int(RESOURCE_BASELINE_MIN_BASELINE_SAMPLES))
+
+    baseline_monitor_start = baseline_sub.add_parser('monitor-start')
+    _add_monitor_args(baseline_monitor_start)
+    baseline_monitor_start.add_argument('--startup-probe-sec', type=float, default=3.0)
+
+    baseline_monitor_once = baseline_sub.add_parser('monitor-once')
+    _add_monitor_args(baseline_monitor_once)
+
+    baseline_monitor_loop = baseline_sub.add_parser('monitor-loop')
+    _add_monitor_args(baseline_monitor_loop)
 
     librarian = sub.add_parser('librarian', help='Mode-store operations')
     librarian_sub = librarian.add_subparsers(dest='lib_cmd', required=True)
@@ -3717,6 +4899,11 @@ def _build_parser() -> argparse.ArgumentParser:
 
 
 def _normalize_nested_aliases(args: argparse.Namespace) -> argparse.Namespace:
+    if args.command == 'sandbox' and args.sandbox_cmd == 'runs':
+        if args.sandbox_runs_cmd == 'list':
+            args.sandbox_cmd = 'runs-list'
+        elif args.sandbox_runs_cmd == 'show':
+            args.sandbox_cmd = 'runs-show'
     if args.command == 'ops' and args.ops_cmd == 'mode':
         if args.mode_cmd == 'current':
             args.ops_cmd = 'mode-current'

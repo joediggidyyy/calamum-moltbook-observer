@@ -7,6 +7,8 @@
 **Scope**: `projects/calamum-moltbook-observer/`  
 **Primary stress objective**: Mitigate unintended consequences of remediation work while preserving fail-closed runtime posture.
 
+**2026-03-19 interpretation note**: This document remains an active protocol/reference surface, but the historical execution lane it governed is already closed in Job 0026. Reuse it as an audit protocol, not as evidence that live activation has been approved.
+
 ---
 
 ## 1) Audit purpose
@@ -17,6 +19,11 @@ It specifically enforces:
 1. **Unintended-consequence mitigation** as a first-class audit target (not a side note).
 2. **Stage-close hard gates** after each previously executed audit stage.
 3. **Mandatory physical inspection + validation at each stage close** before next-stage advancement.
+
+### 2026-03-19 external impact linkage
+
+- Impact assessment: `projects/calamum-moltbook-observer/docs/reports/operations/audits/CURRENT_EVENTS_IMPACT_ASSESSMENT_BASELINE_AND_LIVE_MODE_20260319.md`
+- Carry-forward note: later live-readiness reuse of this audit protocol should include platform-policy snapshotting, explicit identity-assurance disclaimers, and operator-responsibility acknowledgment in the final real-source decision packet.
 
 No phase may advance on tool output alone.
 

@@ -1,57 +1,24 @@
-# Stage 4 Plan: Multivariate Detection (Malice + Mimicry)
+# Superseded Planning Surface — Archived for Drift Cleanup
 
-**Project**: Calamum Moltbook Observer  
-**Stage**: 4 (Magnet & Analysis) - *REVISED v2*  
-**Date**: 2026-02-10  
-**Status**: APPROVED  
-**Ref**: projects/calamum-moltbook-observer/planning/
+**Original file**: `projects/calamum-moltbook-observer/planning/CALAMUM_MOLTBOOK_OBSERVER_STAGE_4_REVISED_PLAN_2026.md`  
+**Status**: superseded on 2026-03-19 due to scope drift into human-mimicry / larper detection  
+**Archive copy**: `quarantine_legacy_archive/projects/calamum-moltbook-observer/planning/CALAMUM_MOLTBOOK_OBSERVER_STAGE_4_REVISED_PLAN_2026_drift_archive_20260319.md`
 
----
+## Why this file was superseded
 
-## 1. Objective: Dual-Spectrum Detection
+- It broadened the observer hypothesis beyond threat detection.
+- It introduced human-mimicry / larper classification that is no longer in scope.
+- It conflicts with the canonical three-stage observer path now in force.
 
-Following the relevant Moltbook news analysis, Stage 4 now has a **Dual Detection Mandate**:
-1.  **Security (The Shield)**: Detect and isolate *Malicious Behavior* (Phishing, Malware, Injection) regardless of origin (Human or Bot).
-2.  **Research (The Mirror)**: Detect "Larper" activity (Human Mimicry) to separate genuine automation from performative noise.
+## Canonical replacements
 
-**Hypothesis**: High-risk vectors (TV-3) often correlate with Human Actors ("Larpers"), while low-risk vectors (TV-0) correlate with actual bots. We will test this "Malice-is-Human" hypothesis.
+- `projects/calamum-moltbook-observer/planning/CALAMUM_MOLTBOOK_OBSERVER_EXPERIMENT_PLAN_20260201.md`
+- `projects/calamum-moltbook-observer/planning/CALAMUM_BLIND_ML_EXECUTION_PLAN_2026-02-10.md`
+- `projects/calamum-moltbook-observer/jobs/CALAMUM_JOB_0022_MOLTBOOK_BASELINE_INTEGRATION_20260220.md`
+- `projects/calamum-moltbook-observer/docs/reports/operations/standards/OBSERVER_BASELINE_DRIVER_REALIGNMENT_EXECUTION_CHECKLIST_20260320.md`
 
-## 2. Methodology: Blind Regression on Obfuscated Data
+## Current rule
 
-We retain **"Obfuscation at the Edge"**. 
-
-### 2.1. Feature Extraction (Edge-Side)
-New scalar features for calamum_sampler.py:
-1.  _latency (Temporal): Time delta between posts. (Humans need sleep/coffee; Bots don't).
-2.  _complexity (Entropy): Text variance. (Bots are uniform; Humans are chaotic).
-3.  _toxicity (Safety): Presence of obfuscator_lib flagged patterns (links, injection keywords).
-4.  _code_density (Context): Technical vs. Conversational ratio.
-
-### 2.2. The Model: DualVectorClassifier
-A multi-output model predicting two probabilities per uthor_hash:
-- P(Human): The "Turing-Fail" Score.
-- P(Malicious): The Threat Score.
-
-docs/policies/pp
-Score_{Total} = \alpha * P(Human) + \beta * P(Malicious)
-docs/policies/pp
-
-### 2.3. Decision Matrix
-| P(Human) | P(Malicious) | Classification | Action |
-|---|---|---|---|
-| High | High | **Fraud/Scammer** | *Block & Report* |
-| High | Low | **Larper (Roleplayer)** | *Filter from Dataset* |
-| Low | High | **Rogue Agent** | **Primary Research Target** |
-| Low | Low | **Benign Bot** | *Baseline Noise* |
-
-## 3. Implementation Updates
-
-### Phase 4.1: Feature Engineering
-*   Update src/calamum_sampler.py to extract _toxicity alongside _latency.
-
-### Phase 4.2: Analysis
-*   Train LarpDetectorV1 (Random Forest) on the new dual-label matrix.
-*   Prioritize identification of **Rogue Agents** (Low Human / High Malice) as these represent the true "AI Safety" risk, distinct from human trolling.
-
----
-*Authorized by ORACL-Prime*
+- Scope is threat detection only.
+- Canonical observer path is `canary -> live -> honeypot`.
+- Threat inference must rely on obfuscated structural / temporal / behavioral signals without direct ingestion of the threat-vector payload.

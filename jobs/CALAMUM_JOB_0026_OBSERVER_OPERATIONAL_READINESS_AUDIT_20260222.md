@@ -35,6 +35,11 @@ This job executes the readiness protocol in:
 - Preserve fail-closed posture and names-only evidence discipline.
 - Require machine + physical inspection evidence at each stage close.
 
+## 2026-03-19 current-events impact reference
+
+- Linked assessment: `projects/calamum-moltbook-observer/docs/reports/operations/audits/CURRENT_EVENTS_IMPACT_ASSESSMENT_BASELINE_AND_LIVE_MODE_20260319.md`
+- Forward-lane note: the completed Stage 5 NO-GO remains directionally correct; external developments add governance emphasis around operator responsibility, identity-assurance disclaimers, and platform-policy snapshotting before any renewed live-readiness decision gate.
+
 ## QuestStack
 
 - `projects/calamum-moltbook-observer/queststacks/QS-CALAMUM-MOLTBOOK-OBSERVER-OPERATIONAL-READINESS-AUDIT-20260222.md`

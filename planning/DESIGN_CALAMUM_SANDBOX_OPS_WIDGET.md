@@ -68,23 +68,23 @@ The UI will be a Terminal App (Textual) featuring high-contrast data visualizati
 **Layout Concept**:
 
 ```text
-┌──────────────────────────────────────────────────────────────┐
-│  📡 CALAMUM_OPS v1.0    ::  MODE: [ CANARY ]  ::  [=====]    │
-├──────────────────────────────┬───────────────────────────────┤
-│                              │  BIO-RHYTHM (Heartbeat/Lag)   │
-│      INTEGRITY DIAMOND       │  ⡀⠄⠂⠁⠁⠂⠄⡀⡀⠄⠂⠁⠁⠂⠄     │
-│       (Radar Chart)          │       (Smooth = Good)         │
-│                              ├───────────────────────────────┤
-│    [Availability] ^          │  DENSITY HISTOGRAM (Vol/Type) │
-│                   |          │  ⣿⣿⣿⣿⣦⣀⣀                   │
-│   [Freshness] <---+---> [Int]│  ⣿⣿⣿⣿⣿⣿⣿⣄                  │
-│                   |          │  (Height = Vol, Color = Type) │
-│               [Capacity]     │                               │
-└──────────────────────────────┴───────────────────────────────┘
-│ >_ SYSTEM LOG:                                    [CTRL] >   │
-│ 14:00 [INF] Sentinel initialized loop [hash:x89a]            │
-│ 14:01 [WRN] Pulse lag detected (+40ms)                       │
-└──────────────────────────────────────────────────────────────┘
+
+   CALAMUM_OPS v1.0    ::  MODE: [ CANARY ]  ::  [=====]    
+
+                                BIO-RHYTHM (Heartbeat/Lag)   
+      INTEGRITY DIAMOND              
+       (Radar Chart)                 (Smooth = Good)         
+                              
+    [Availability] ^            DENSITY HISTOGRAM (Vol/Type) 
+                   |                               
+   [Freshness] <---+---> [Int]                    
+                   |            (Height = Vol, Color = Type) 
+               [Capacity]                                    
+
+ >_ SYSTEM LOG:                                    [CTRL] >   
+ 14:00 [INF] Sentinel initialized loop [hash:x89a]            
+ 14:01 [WRN] Pulse lag detected (+40ms)                       
+
 ```
 
 **Visual Nuance Strategy**:
@@ -120,15 +120,15 @@ Controls are available via keyboard shortcuts OR a slide-out "Control Deck" pane
 *   **Elements**: Large, clickable ASCII buttons with status indicators.
 
 ```text
-┌──────────────┐
-│ CONTROL DECK │
-├──────────────┤
-│ [ 🛑 KILL  ] │ <- (Red w/ Confirmation)
-│              │
-│ [ ⏸️ PAUSE ] │ <- (Toggles to ▶️ RESUME)
-│              │
-│ [ 🔄 ROTATE] │
-└──────────────┘
+
+ CONTROL DECK 
+
+ [  KILL  ]  <- (Red w/ Confirmation)
+              
+ [ ⏸ PAUSE ]  <- (Toggles to  RESUME)
+              
+ [  ROTATE] 
+
 ```
 
 #### 5.2 Interaction Map

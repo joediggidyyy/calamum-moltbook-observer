@@ -27,6 +27,11 @@ Implement **KEYSMITH**: a sandboxed utility/container that registers a Moltbook 
 
 Humans are permitted to complete a vendor claim/verification step using a **claim URL only** (non-secret). The secret must be transferred via a sealed-drop mechanism and then imported into VAULT / OS secret storage.
 
+## 2026-03-19 readiness carry-forward note
+
+- Linked assessment: `projects/calamum-moltbook-observer/docs/reports/operations/audits/CURRENT_EVENTS_IMPACT_ASSESSMENT_BASELINE_AND_LIVE_MODE_20260319.md`
+- Clarification: KEYSMITH remains the upstream non-human secret bootstrap path only; recent platform-policy/operator-liability changes do not reduce downstream live-readiness gating and should be treated as separate evidence requirements in KEYMASTER / live-mode lanes.
+
 This job is the implementation counterpart to the analysis/proposal:
 - `projects/calamum-moltbook-observer/docs/reports/CALAMUM_KEYSMITH_SANDBOXED_MOLTBOOK_KEY_MINTING_PROPOSAL_20260212.md`
 

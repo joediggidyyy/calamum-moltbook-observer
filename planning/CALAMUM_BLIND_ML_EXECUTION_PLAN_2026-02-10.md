@@ -6,6 +6,20 @@
 **Owner**: joediggidyyy  
 **Purpose**: Convert the gaps identified in the ML readiness assessment into an implementable, auditable sequence of artifacts.
 
+## Canonical observer path and hypothesis anchor
+
+- **Canary**: passive baseline collection and unsupervised pattern discovery
+- **Live**: active-target collection and delta analysis relative to canary
+- **Honeypot**: attractive-target collection and delta analysis relative to live and canary
+
+Threat-only hypothesis:
+
+- threat-relevant patterns can be identified from obfuscated structural / temporal / behavioral signals without direct ingestion of the threat-vector payload.
+
+Scope exclusion:
+
+- human-mimicry / larper detection is out of scope for this execution plan.
+
 ## Canonical references
 
 - Readiness assessment (gaps inventory):
@@ -79,11 +93,21 @@
 ### Problem addressed
 - No ground-truth labels exist in generated synthetic data despite TV-0..TV-3 taxonomy in `DATA_METHODOLOGY.md`.
 
+### Adopted TV contract
+- `TV-0`: benign baseline-consistent activity
+- `TV-1`: irregular but low-concern deviation from baseline
+- `TV-2`: suspicious activity with likely-hostile structural patterns
+- `TV-3`: high-risk activity that justifies the strongest level of concern
+
+For the midway study, the primary supervised boundary remains `TV-0` versus `TV-3`, while `TV-1` and `TV-2` remain intermediate categories for nuisance structure, ambiguity, and later evaluation design.
+
 ### Deliverables
 1. **Label definition doc**:
    - `src/analysis/labels.md` defining:
-     - `tv_id` in {TV-0, TV-1, TV-2, TV-3}
-     - supervised target mapping (e.g., `y = 1` iff TV-3)
+    - `tv_id` in {TV-0, TV-1, TV-2, TV-3}
+    - the adopted meaning of each TV class
+    - primary supervised target mapping (e.g., `y = 1` iff TV-3)
+    - any optional secondary mapping (e.g., `y = 1` iff TV >= 2`) must be documented as a separate experiment rather than silently replacing the primary target
 2. **Synthetic generator emits labels** (one of the following approaches):
    - Option A (preferred): extend the synthetic generation functions in `src/calamum_sampler.py` to emit `tv_id` in-memory (never emitted in live mode).
    - Option B: implement a post-generation labeling step for synthetic-only datasets that is deterministic and documented.
@@ -91,6 +115,7 @@
 ### Acceptance criteria
 - Synthetic datasets include a `tv_id` field.
 - Live/canary datasets do not invent labels; they remain unlabeled unless a separate safe labeling mechanism is defined.
+- Labeling docs explain why the main midway comparison is `TV-0` versus `TV-3` even though the full four-level ladder is retained.
 
 ---
 
@@ -178,7 +203,7 @@
 
 ---
 
-## Phase 7 - Drift checks: synthetic -> canary
+## Phase 7 - Drift checks: synthetic -> canary -> live -> honeypot
 
 ### Problem addressed
 - Proposal plans evaluation on "Canary Mode" distributions; drift can break thresholds.
@@ -186,10 +211,12 @@
 ### Deliverables
 1. `src/analysis/drift_report.py` that compares feature distributions between:
    - synthetic dataset
-   - canary dataset
+  - canary dataset
+  - live dataset
+  - honeypot dataset
 
 ### Acceptance criteria
-- Drift report summarizes which features shifted and whether retraining/threshold recalibration is required.
+- Drift report summarizes which features shifted across the three-stage observer path and whether threshold recalibration is required.
 
 ---
 

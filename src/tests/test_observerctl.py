@@ -55,6 +55,173 @@ def _set_security_report_ref(monkeypatch, base_dir: Path) -> Path:
     return report
 
 
+def test_sandbox_list_emits_definition_catalog_json(monkeypatch, capsys) -> None:
+    monkeypatch.setattr(observerctl_module, 'sandbox_get_definitions', lambda: [
+        {
+            'id': 'metadata-contract',
+            'title': 'Metadata contract probe',
+            'summary': 'Validate metadata contract expectations.',
+            'status': 'stable',
+            'category': 'metadata-probe',
+            'writes_to': 'report_tmp/frame4_metadata_contract_probe',
+        }
+    ])
+
+    rc = main(['sandbox', 'list', '--json'])
+    assert rc == 0
+
+    payload = json.loads(capsys.readouterr().out)
+    assert payload['action'] == 'sandbox-list'
+    assert payload['decision'] == 'go'
+    assert payload['definitions'][0]['id'] == 'metadata-contract'
+
+
+def test_sandbox_list_human_output_uses_structured_decision_block(monkeypatch, capsys) -> None:
+    monkeypatch.setattr(observerctl_module, 'sandbox_get_definitions', lambda: [
+        {
+            'id': 'metadata-contract',
+            'title': 'Metadata contract probe',
+            'summary': 'Validate metadata contract expectations.',
+            'status': 'stable',
+            'category': 'metadata-probe',
+            'writes_to': 'report_tmp/frame4_metadata_contract_probe',
+        }
+    ])
+
+    rc = main(['sandbox', 'list'])
+    assert rc == 0
+
+    out = capsys.readouterr().out
+    assert '[ ORACL-Prime :: observerctl ] SANDBOX/CATALOG' in out
+    assert '[OK] SANDBOX_DEFINITIONS_LISTED' in out
+    assert 'Template Class  : decision' in out
+    assert 'Definition Count: 1' in out
+    assert '- metadata-contract' in out
+    assert 'Purpose         : Validate metadata contract expectations.' in out
+
+
+def test_sandbox_show_emits_definition_detail_json(monkeypatch, capsys) -> None:
+    monkeypatch.setattr(observerctl_module, 'sandbox_get_definition', lambda definition_id: {
+        'id': definition_id,
+        'title': 'Metadata contract probe',
+        'summary': 'Validate metadata contract expectations.',
+        'status': 'stable',
+        'category': 'metadata-probe',
+        'aliases': [],
+        'selector_policy': 'exact-name-only',
+        'writes_to': 'report_tmp/frame4_metadata_contract_probe',
+        'purpose': 'Verify metadata contract fields.',
+        'command': 'observerctl sandbox run metadata-contract',
+        'run_index_path': 'report_tmp/frame4_metadata_contract_probe/run_index.jsonl',
+    })
+
+    rc = main(['sandbox', 'show', 'metadata-contract', '--json'])
+    assert rc == 0
+
+    payload = json.loads(capsys.readouterr().out)
+    assert payload['action'] == 'sandbox-show'
+    assert payload['definition']['id'] == 'metadata-contract'
+    assert payload['definition']['command'] == 'observerctl sandbox run metadata-contract'
+
+
+def test_sandbox_show_human_output_includes_alias_policy_and_trailing_contract(monkeypatch, capsys) -> None:
+    monkeypatch.setattr(observerctl_module, 'sandbox_get_definition', lambda definition_id: {
+        'id': definition_id,
+        'title': 'Baseline monitor runtime probe',
+        'summary': 'Validate baseline-monitor runtime liveness plus resource_normal retention continuity.',
+        'status': 'stable',
+        'category': 'runtime-probe',
+        'aliases': [],
+        'selector_policy': 'exact-name-only',
+        'writes_to': 'report_tmp/job0022_baseline_monitor_runtime_probe',
+        'purpose': 'Prove the sandboxed baseline-monitor runtime and retained evidence flow are intact.',
+        'command': 'observerctl sandbox run baseline-monitor-runtime',
+        'run_index_path': 'report_tmp/job0022_baseline_monitor_runtime_probe/run_index.jsonl',
+    })
+
+    rc = main(['sandbox', 'show', 'baseline-monitor-runtime'])
+    assert rc == 0
+
+    out = capsys.readouterr().out
+    assert '[OK] SANDBOX_DEFINITION_READY' in out
+    assert 'Selection' in out
+    assert 'Aliases         : none (exact-name-only)' in out
+    assert 'Guardrails' in out
+    assert 'Contract' in out
+
+
+def test_sandbox_run_emits_execution_packet_json(monkeypatch, capsys) -> None:
+    monkeypatch.setattr(observerctl_module, 'sandbox_run_definition', lambda definition_id: {
+        'decision': 'go',
+        'reason_codes': [],
+        'definition_id': definition_id,
+        'result': 'pass',
+        'returncode': 0,
+        'run_id': 'metadata-contract-001',
+        'artifacts': {
+            'report_json': 'report_tmp/frame4_metadata_contract_probe/metadata-contract-001/report.json',
+            'run_index': 'report_tmp/frame4_metadata_contract_probe/run_index.jsonl',
+        },
+        'stdout_text': 'run_id=metadata-contract-001\n',
+        'stderr_text': '',
+        'next_review_command': 'observerctl sandbox runs show metadata-contract-001',
+    })
+
+    rc = main(['sandbox', 'run', 'metadata-contract', '--json'])
+    assert rc == 0
+
+    payload = json.loads(capsys.readouterr().out)
+    assert payload['action'] == 'sandbox-run'
+    assert payload['definition_id'] == 'metadata-contract'
+    assert payload['run_id'] == 'metadata-contract-001'
+
+
+def test_sandbox_runs_list_emits_retained_runs_json(monkeypatch, capsys) -> None:
+    monkeypatch.setattr(observerctl_module, 'sandbox_list_runs', lambda: [
+        {
+            'run_id': 'baseline-monitor-runtime-001',
+            'definition_id': 'baseline-monitor-runtime',
+            'timestamp_utc': '2026-03-23T00:00:00Z',
+            'result': 'pass',
+            'report_path': 'report_tmp/job0022_baseline_monitor_runtime_probe/baseline-monitor-runtime-001/report.json',
+            'run_dir': 'report_tmp/job0022_baseline_monitor_runtime_probe/baseline-monitor-runtime-001',
+            'index_path': 'report_tmp/job0022_baseline_monitor_runtime_probe/run_index.jsonl',
+        }
+    ])
+
+    rc = main(['sandbox', 'runs', 'list', '--json'])
+    assert rc == 0
+
+    payload = json.loads(capsys.readouterr().out)
+    assert payload['action'] == 'sandbox-runs-list'
+    assert payload['runs'][0]['definition_id'] == 'baseline-monitor-runtime'
+
+
+def test_sandbox_runs_show_emits_run_review_json(monkeypatch, capsys) -> None:
+    monkeypatch.setattr(observerctl_module, 'sandbox_get_run', lambda run_id: (
+        {
+            'run_id': run_id,
+            'definition_id': 'metadata-contract',
+            'timestamp_utc': '2026-03-23T00:00:00Z',
+            'result': 'pass',
+            'report_path': 'report_tmp/frame4_metadata_contract_probe/{0}/report.json'.format(run_id),
+        },
+        {
+            'next_bite_result': 'pass',
+            'all_sample_fields_present': True,
+            'all_index_fields_present': True,
+        },
+    ))
+
+    rc = main(['sandbox', 'runs', 'show', 'metadata-contract-001', '--json'])
+    assert rc == 0
+
+    payload = json.loads(capsys.readouterr().out)
+    assert payload['action'] == 'sandbox-runs-show'
+    assert payload['run']['run_id'] == 'metadata-contract-001'
+    assert payload['report']['all_sample_fields_present'] is True
+
+
 def test_gate_check_go_in_sim_mode(tmp_path: Path, monkeypatch) -> None:
     log_dir = tmp_path / 'logs'
     health = log_dir / 'health'
@@ -229,7 +396,239 @@ def test_evidence_pack_writes_publish_grade_packet(tmp_path: Path, monkeypatch) 
     assert 'provenance' in payload
     assert 'methodology' in payload
     assert 'process' in payload
+    assert 'readiness_surfaces' in payload
+    assert 'readiness_projection' in payload
+    assert 'stage5_prerequisites' in payload
+    assert payload['readiness_surfaces']['posture_receipt']['path'].endswith('watchdog_posture_state.json')
     assert payload['provenance']['artifact_sha256']
+
+
+def test_evidence_pack_supports_non_activation_live_projection_and_retained_refs(tmp_path: Path, monkeypatch) -> None:
+    log_dir = tmp_path / 'logs'
+    health = log_dir / 'health'
+    data = log_dir / 'data' / 'calamum'
+    control = log_dir / 'control' / 'calamum'
+
+    for d in [health, data, control]:
+        d.mkdir(parents=True, exist_ok=True)
+
+    _touch(health / 'calamum_ops_watchdog.heartbeat')
+    _touch(health / 'calamum_observer.heartbeat')
+    _touch(health / 'calamum_librarian.heartbeat')
+    _touch(health / 'calamum_baseline_monitor.heartbeat')
+
+    monkeypatch.setenv('CALAMUM_LOG_DIR', str(log_dir))
+    monkeypatch.setenv('CALAMUM_DATA_SIGNING_KEY', 'unit-test-signing-key')
+    _set_security_report_ref(monkeypatch, log_dir)
+
+    observerctl_module._save_state('sim', 'canary')
+    _write_watchdog_posture(control, posture='lockdown', heartbeat_interval=4, baseline_interval=45)
+    _write_watchdog_resource(control, cpu_now=45, ram_now=50, cpu_p95=40, ram_p95=45, score=0.1, age_s=3)
+
+    monitor_state = control / 'baseline_monitor_state.json'
+    monitor_state.write_text(json.dumps({'mode': 'canary', 'posture_trigger': 'lockdown'}), encoding='utf-8')
+
+    resource_dir = data / 'observer_derived' / 'sim' / 'canary' / 'resource'
+    evidence_dir = data / 'observer_derived' / 'sim' / 'canary' / 'evidence'
+    archive_dir = data / 'archive'
+    resource_dir.mkdir(parents=True, exist_ok=True)
+    evidence_dir.mkdir(parents=True, exist_ok=True)
+    archive_dir.mkdir(parents=True, exist_ok=True)
+
+    segment_path = archive_dir / 'resource_sim_canary_normal_unit_seg0001.jsonl'
+    segment_path.write_text('{"timestamp_utc":"2026-03-22T00:00:00Z"}\n', encoding='utf-8')
+    resource_index = resource_dir / 'index.jsonl'
+    resource_index.write_text(json.dumps({
+        'timestamp_utc': observerctl_module._utc_now(),
+        'segment_path': str(segment_path).replace('\\', '/'),
+        'segment_records': 1,
+        'stream_type': 'resource_normal',
+    }) + '\n', encoding='utf-8')
+
+    baseline_packet_path = evidence_dir / 'observerctl_baseline-analysis_test.json'
+    baseline_packet_path.write_text(json.dumps({
+        'timestamp_utc': observerctl_module._utc_now(),
+        'decision': 'go',
+        'sample_counts': {'resource_normal': 5, 'resource_baseline': 5},
+        'provenance': {'artifact_path': str(baseline_packet_path).replace('\\', '/')},
+    }), encoding='utf-8')
+    evidence_index = evidence_dir / 'index.jsonl'
+    evidence_index.write_text(json.dumps({
+        'timestamp_utc': observerctl_module._utc_now(),
+        'event': 'baseline_analysis',
+        'packet_path': str(baseline_packet_path).replace('\\', '/'),
+    }) + '\n', encoding='utf-8')
+
+    pid_path = tmp_path / 'calamum_agent.pid'
+    pid_path.write_text(str(os.getpid()), encoding='utf-8')
+    monitor_pid_path = tmp_path / 'calamum_baseline_monitor.pid'
+    monitor_pid_path.write_text(str(os.getpid()), encoding='utf-8')
+    monkeypatch.setattr(observerctl_module, '_agent_pid_path', lambda: pid_path)
+    monkeypatch.setattr(observerctl_module, '_baseline_monitor_pid_path', lambda: monitor_pid_path)
+
+    output = tmp_path / 'evidence_live_projection.json'
+    rc = main(['ops', 'evidence', 'pack', '--source', 'sim', '--to', 'live', '--event', 'unit-live-proof', '--output', str(output), '--json'])
+    assert rc == 0
+    payload = json.loads(output.read_text(encoding='utf-8'))
+    assert payload['gate_packet']['to_state'] == 'sim:live'
+    assert payload['readiness_projection']['projection_mode'] == 'non-activation'
+    assert payload['stage5_prerequisites']['C22_baseline_validation_rate_escalated']['status'] == 'ok'
+    assert payload['stage5_prerequisites']['C24_resource_stream_retention_ready']['status'] == 'ok'
+    assert payload['stage5_prerequisites']['C25_resource_baseline_window_ready']['status'] == 'ok'
+    assert payload['stage5_prerequisites']['baseline_monitor_runtime_ready']['status'] == 'ok'
+    assert payload['stage5_prerequisites']['overall']['status'] == 'ok'
+    assert payload['readiness_surfaces']['baseline_monitor']['monitor_state_path'].endswith('baseline_monitor_state.json')
+    assert payload['readiness_surfaces']['resource_stream_retention']['index_path'].endswith('resource/index.jsonl')
+    assert payload['readiness_surfaces']['baseline_window']['packet_path'].endswith('observerctl_baseline-analysis_test.json')
+    assert any(str(ref).endswith('baseline_monitor_state.json') for ref in payload['process']['evidence_refs'])
+
+
+def test_non_activation_live_projection_keeps_c24_ready_when_collection_is_idle_with_fresh_resource_normal(tmp_path: Path, monkeypatch) -> None:
+    log_dir = tmp_path / 'logs'
+    health = log_dir / 'health'
+    data = log_dir / 'data' / 'calamum'
+    control = log_dir / 'control' / 'calamum'
+
+    for d in [health, data, control]:
+        d.mkdir(parents=True, exist_ok=True)
+
+    _touch(health / 'calamum_ops_watchdog.heartbeat')
+    _touch(health / 'calamum_observer.heartbeat')
+    _touch(health / 'calamum_librarian.heartbeat')
+    _touch(health / 'calamum_baseline_monitor.heartbeat')
+
+    monkeypatch.setenv('CALAMUM_LOG_DIR', str(log_dir))
+    monkeypatch.setenv('CALAMUM_DATA_SIGNING_KEY', 'unit-test-signing-key')
+    _set_security_report_ref(monkeypatch, log_dir)
+
+    observerctl_module._save_state('sim', 'canary')
+    _write_watchdog_posture(control, posture='lockdown', heartbeat_interval=4, baseline_interval=45)
+    _write_watchdog_resource(control, cpu_now=45, ram_now=50, cpu_p95=40, ram_p95=45, score=0.1, age_s=3)
+
+    monitor_state = control / 'baseline_monitor_state.json'
+    monitor_state.write_text(json.dumps({'mode': 'canary', 'posture_trigger': 'lockdown'}), encoding='utf-8')
+
+    resource_dir = data / 'observer_derived' / 'sim' / 'canary' / 'resource'
+    evidence_dir = data / 'observer_derived' / 'sim' / 'canary' / 'evidence'
+    archive_dir = data / 'archive'
+    resource_dir.mkdir(parents=True, exist_ok=True)
+    evidence_dir.mkdir(parents=True, exist_ok=True)
+    archive_dir.mkdir(parents=True, exist_ok=True)
+
+    segment_path = archive_dir / 'resource_sim_canary_normal_idle_seg0001.jsonl'
+    segment_path.write_text('{"timestamp_utc":"2026-03-22T00:00:00Z"}\n', encoding='utf-8')
+    (resource_dir / 'index.jsonl').write_text(json.dumps({
+        'timestamp_utc': observerctl_module._utc_now(),
+        'segment_path': str(segment_path).replace('\\', '/'),
+        'segment_records': 2,
+        'stream_type': 'resource_normal',
+    }) + '\n', encoding='utf-8')
+
+    baseline_packet_path = evidence_dir / 'observerctl_baseline-analysis_idle_continuity.json'
+    baseline_packet_path.write_text(json.dumps({
+        'timestamp_utc': observerctl_module._utc_now(),
+        'decision': 'go',
+        'sample_counts': {'resource_normal': 2, 'resource_baseline': 1},
+        'provenance': {'artifact_path': str(baseline_packet_path).replace('\\', '/')},
+    }), encoding='utf-8')
+    (evidence_dir / 'index.jsonl').write_text(json.dumps({
+        'timestamp_utc': observerctl_module._utc_now(),
+        'event': 'baseline_analysis',
+        'packet_path': str(baseline_packet_path).replace('\\', '/'),
+    }) + '\n', encoding='utf-8')
+
+    pid_path = tmp_path / 'calamum_agent.pid'
+    pid_path.write_text(str(os.getpid()), encoding='utf-8')
+    monitor_pid_path = tmp_path / 'calamum_baseline_monitor.pid'
+    monitor_pid_path.write_text(str(os.getpid()), encoding='utf-8')
+    monkeypatch.setattr(observerctl_module, '_agent_pid_path', lambda: pid_path)
+    monkeypatch.setattr(observerctl_module, '_baseline_monitor_pid_path', lambda: monitor_pid_path)
+
+    status = collect_runtime_status(source='sim')
+    assert status['checks']['runtime.observer_service']['status'] == 'ok'
+    assert status['checks']['runtime.collection_state']['state'] in ('idle', 'warmup', 'stopped')
+    assert status['checks']['watchdog.resource_stream_retention']['status'] == 'ok'
+    assert status['checks']['watchdog.resource_stream_retention']['records_indexed'] == 2
+
+    output = tmp_path / 'evidence_live_projection_idle_continuity.json'
+    rc = main(['ops', 'evidence', 'pack', '--source', 'sim', '--to', 'live', '--event', 'unit-idle-continuity-proof', '--output', str(output), '--json'])
+    assert rc == 0
+
+    payload = json.loads(output.read_text(encoding='utf-8'))
+    assert payload['stage5_prerequisites']['C24_resource_stream_retention_ready']['status'] == 'ok'
+    assert payload['stage5_prerequisites']['overall']['status'] == 'ok'
+
+
+def test_non_activation_live_projection_denies_c24_when_only_baseline_stream_is_fresh(tmp_path: Path, monkeypatch) -> None:
+    log_dir = tmp_path / 'logs'
+    health = log_dir / 'health'
+    data = log_dir / 'data' / 'calamum'
+    control = log_dir / 'control' / 'calamum'
+
+    for d in [health, data, control]:
+        d.mkdir(parents=True, exist_ok=True)
+
+    _touch(health / 'calamum_ops_watchdog.heartbeat')
+    _touch(health / 'calamum_observer.heartbeat')
+    _touch(health / 'calamum_librarian.heartbeat')
+    _touch(health / 'calamum_baseline_monitor.heartbeat')
+
+    monkeypatch.setenv('CALAMUM_LOG_DIR', str(log_dir))
+    monkeypatch.setenv('CALAMUM_DATA_SIGNING_KEY', 'unit-test-signing-key')
+    _set_security_report_ref(monkeypatch, log_dir)
+
+    observerctl_module._save_state('sim', 'canary')
+    _write_watchdog_posture(control, posture='lockdown', heartbeat_interval=4, baseline_interval=45)
+    _write_watchdog_resource(control, cpu_now=45, ram_now=50, cpu_p95=40, ram_p95=45, score=0.1, age_s=3)
+
+    monitor_state = control / 'baseline_monitor_state.json'
+    monitor_state.write_text(json.dumps({'mode': 'canary', 'posture_trigger': 'lockdown'}), encoding='utf-8')
+
+    resource_dir = data / 'observer_derived' / 'sim' / 'canary' / 'resource'
+    evidence_dir = data / 'observer_derived' / 'sim' / 'canary' / 'evidence'
+    archive_dir = data / 'archive'
+    resource_dir.mkdir(parents=True, exist_ok=True)
+    evidence_dir.mkdir(parents=True, exist_ok=True)
+    archive_dir.mkdir(parents=True, exist_ok=True)
+
+    baseline_segment_path = archive_dir / 'resource_sim_canary_baseline_only_seg0001.jsonl'
+    baseline_segment_path.write_text('{"timestamp_utc":"2026-03-22T00:00:00Z"}\n', encoding='utf-8')
+    (resource_dir / 'index.jsonl').write_text(json.dumps({
+        'timestamp_utc': observerctl_module._utc_now(),
+        'segment_path': str(baseline_segment_path).replace('\\', '/'),
+        'segment_records': 3,
+        'stream_type': 'resource_baseline',
+    }) + '\n', encoding='utf-8')
+
+    baseline_packet_path = evidence_dir / 'observerctl_baseline-analysis_baseline_only.json'
+    baseline_packet_path.write_text(json.dumps({
+        'timestamp_utc': observerctl_module._utc_now(),
+        'decision': 'go',
+        'sample_counts': {'resource_normal': 0, 'resource_baseline': 3},
+        'provenance': {'artifact_path': str(baseline_packet_path).replace('\\', '/')},
+    }), encoding='utf-8')
+    (evidence_dir / 'index.jsonl').write_text(json.dumps({
+        'timestamp_utc': observerctl_module._utc_now(),
+        'event': 'baseline_analysis',
+        'packet_path': str(baseline_packet_path).replace('\\', '/'),
+    }) + '\n', encoding='utf-8')
+
+    pid_path = tmp_path / 'calamum_agent.pid'
+    pid_path.write_text(str(os.getpid()), encoding='utf-8')
+    monitor_pid_path = tmp_path / 'calamum_baseline_monitor.pid'
+    monitor_pid_path.write_text(str(os.getpid()), encoding='utf-8')
+    monkeypatch.setattr(observerctl_module, '_agent_pid_path', lambda: pid_path)
+    monkeypatch.setattr(observerctl_module, '_baseline_monitor_pid_path', lambda: monitor_pid_path)
+
+    output = tmp_path / 'evidence_live_projection_baseline_only.json'
+    rc = main(['ops', 'evidence', 'pack', '--source', 'sim', '--to', 'live', '--event', 'unit-baseline-only-not-continuity', '--output', str(output), '--json'])
+    assert rc == 0
+
+    payload = json.loads(output.read_text(encoding='utf-8'))
+    c24 = payload['stage5_prerequisites']['C24_resource_stream_retention_ready']
+    assert c24['status'] == 'err'
+    assert 'critical_check_failed:resource_stream_retention_unavailable' in c24['reason_codes']
+    assert payload['stage5_prerequisites']['overall']['status'] == 'err'
 
 
 def test_ops_mode_gate_and_set_flow(tmp_path: Path, monkeypatch) -> None:
@@ -325,6 +724,16 @@ def test_ops_mode_switch_single_action_syncs_runtime_and_state(tmp_path: Path, m
             'pending_stop_signal': False,
         },
     )
+    monkeypatch.setattr(
+        observerctl_module,
+        '_runtime_baseline_monitor_status',
+        lambda max_age_sec=90.0: {
+            'state': 'active',
+            'heartbeat': {'status': 'ok'},
+            'pid': {'value': 2222, 'alive': True},
+            'monitor_state': {'mode': 'canary'},
+        },
+    )
 
     calls = {'stop': 0, 'start': 0}
 
@@ -407,6 +816,16 @@ def test_ops_mode_switch_defaults_source_from_ssot_state(tmp_path: Path, monkeyp
             'heartbeat': {'status': 'ok'},
             'pid': {'value': 1111, 'alive': True},
             'pending_stop_signal': False,
+        },
+    )
+    monkeypatch.setattr(
+        observerctl_module,
+        '_runtime_baseline_monitor_status',
+        lambda max_age_sec=90.0: {
+            'state': 'active',
+            'heartbeat': {'status': 'ok'},
+            'pid': {'value': 3333, 'alive': True},
+            'monitor_state': {'mode': 'canary'},
         },
     )
     monkeypatch.setattr(observerctl_module, '_ops_runtime_status', lambda: {
@@ -524,6 +943,9 @@ def test_baseline_collect_writes_publish_grade_packet_and_resource_state(tmp_pat
     assert packet.get('profile') == 'normal'
     assert int(packet.get('sample_count', 0)) >= 2
     assert packet.get('provenance', {}).get('artifact_sha256')
+    assert 'interpretation_policy_ref' not in packet
+    assert 'authorization_boundary_ref' not in packet
+    assert 'recommendation_profile' not in packet
 
     resource_state = log_dir / 'control' / 'calamum' / 'watchdog_resource_state.json'
     assert resource_state.exists()
@@ -547,8 +969,8 @@ def test_baseline_analyze_returns_go_when_minimums_met(tmp_path: Path, monkeypat
     ]) == 0
     assert main([
         'baseline', 'collect',
-        '--source', 'sim', '--mode', 'canary', '--profile', 'rapid',
-        '--duration-sec', '0.02', '--interval-sec', '0.01', '--window-id', 'unit-window-rapid', '--json',
+        '--source', 'sim', '--mode', 'canary', '--profile', 'baseline',
+        '--duration-sec', '0.02', '--interval-sec', '0.01', '--window-id', 'unit-window-baseline', '--json',
     ]) == 0
 
     out = tmp_path / 'baseline_analysis_packet.json'
@@ -573,6 +995,10 @@ def test_baseline_analyze_returns_go_when_minimums_met(tmp_path: Path, monkeypat
     assert 'cpu_p95' in stats
     assert 'cpu_rate_p95_per_s' in stats
     assert packet.get('provenance', {}).get('artifact_sha256')
+    assert 'recommendation_profile' not in packet
+    assert 'policy_snapshot_ref' not in packet
+    assert 'identity_assurance' not in packet
+    assert 'human_impersonation_risk' not in packet
 
 
 def test_baseline_analyze_no_go_when_window_incomplete(tmp_path: Path, monkeypatch) -> None:
@@ -605,6 +1031,7 @@ def test_baseline_analyze_no_go_when_window_incomplete(tmp_path: Path, monkeypat
     packet = json.loads(out.read_text(encoding='utf-8'))
     assert packet.get('decision') == 'no-go'
     assert 'critical_check_failed:resource_baseline_window_incomplete' in packet.get('reason_codes', [])
+    assert 'recommendation_profile' not in packet
 
 
 def test_baseline_overnight_plan_emits_publish_grade_schedule_packet(tmp_path: Path, monkeypatch) -> None:
@@ -632,15 +1059,19 @@ def test_baseline_overnight_plan_emits_publish_grade_schedule_packet(tmp_path: P
     packet = json.loads(out.read_text(encoding='utf-8'))
     assert packet.get('decision') == 'go'
     assert packet.get('action') == 'baseline-overnight-plan'
-    assert packet.get('schedule_model') == 'rapid_start_then_normal_overnight_then_rapid_end'
+    assert packet.get('schedule_model') == 'baseline_start_then_normal_overnight_then_baseline_end'
     assert packet.get('provenance', {}).get('artifact_sha256')
     cmds = packet.get('execution_commands', [])
     assert isinstance(cmds, list)
     assert len(cmds) == 4
     assert 'baseline collect' in cmds[0]
-    assert 'profile rapid' in cmds[0]
+    assert 'profile baseline' in cmds[0]
     assert 'profile normal' in cmds[1]
     assert 'baseline analyze' in cmds[3]
+    assert 'recommendation_profile' not in packet
+    assert 'policy_snapshot_ref' not in packet
+    assert 'identity_assurance' not in packet
+    assert 'human_impersonation_risk' not in packet
 
 
 def test_baseline_overnight_plan_flags_projection_when_thresholds_too_high(tmp_path: Path, monkeypatch) -> None:
@@ -677,7 +1108,6 @@ def test_baseline_overnight_plan_flags_projection_when_thresholds_too_high(tmp_p
     assert projection.get('normal_requirement_met_by_plan') is False
     assert projection.get('rapid_requirement_met_by_plan') is False
 
-
 def test_baseline_overnight_run_executes_all_phases_and_returns_go(tmp_path: Path, monkeypatch) -> None:
     log_dir = tmp_path / 'logs'
     for d in [log_dir / 'health', log_dir / 'data' / 'calamum', log_dir / 'control' / 'calamum']:
@@ -709,7 +1139,7 @@ def test_baseline_overnight_run_executes_all_phases_and_returns_go(tmp_path: Pat
     assert isinstance(checkpoints, list)
     assert len(checkpoints) == 4
     phases = [cp.get('phase') for cp in checkpoints]
-    assert phases == ['rapid_start', 'normal_overnight', 'rapid_end', 'analysis']
+    assert phases == ['baseline_start', 'normal_overnight', 'baseline_end', 'analysis']
     assert all(str(cp.get('decision', 'no-go')) == 'go' for cp in checkpoints)
     assert packet.get('provenance', {}).get('artifact_sha256')
 
@@ -772,9 +1202,285 @@ def test_baseline_overnight_run_emits_progress_lines_without_json(tmp_path: Path
     captured = capsys.readouterr()
     err = captured.err
     assert 'baseline overnight run started' in err
-    assert 'phase_start rapid_start' in err
+    assert 'phase_start baseline_start' in err
     assert 'phase_complete analysis decision=go baseline_ready=True' in err
     assert 'baseline overnight run completed decision=go' in err
+
+
+def test_ops_mode_set_persists_lockdown_posture_packet(tmp_path: Path, monkeypatch) -> None:
+    log_dir = tmp_path / 'logs'
+    health = log_dir / 'health'
+    data = log_dir / 'data' / 'calamum'
+    control = log_dir / 'control' / 'calamum'
+
+    for d in [health, data, control]:
+        d.mkdir(parents=True, exist_ok=True)
+
+    _touch(health / 'calamum_ops_watchdog.heartbeat')
+    _touch(health / 'calamum_observer.heartbeat')
+    _touch(health / 'calamum_librarian.heartbeat')
+
+    monkeypatch.setenv('CALAMUM_LOG_DIR', str(log_dir))
+    monkeypatch.setenv('CALAMUM_DATA_SIGNING_KEY', 'unit-test-signing-key')
+    _set_security_report_ref(monkeypatch, log_dir)
+
+    gate_doc = {
+        'decision': 'go',
+        'timestamp_utc': observerctl_module._utc_now(),
+        'from_state': 'sim:canary',
+        'to_state': 'sim:live',
+    }
+    (control / 'observerctl_last_gate.json').write_text(json.dumps(gate_doc), encoding='utf-8')
+
+    packet = observerctl_module._ops_mode_set(source='sim', to_mode='live')
+    assert packet.get('decision') == 'go'
+    posture_packet = packet.get('posture_packet', {})
+    assert posture_packet.get('decision') == 'go'
+    assert posture_packet.get('readback_verified') is True
+    assert posture_packet.get('posture_trigger') == 'lockdown'
+    assert float(posture_packet.get('heartbeat_interval_seconds', 0)) == 4.0
+    assert float(posture_packet.get('baseline_validation_interval_seconds', 0)) == 45.0
+
+    posture_state_path = Path(str(posture_packet.get('posture_state_path', '')).replace('/', os.sep))
+    receipt_path = Path(str(posture_packet.get('receipt_path', '')).replace('/', os.sep))
+    assert posture_state_path.exists()
+    assert receipt_path.exists()
+
+    posture_doc = json.loads((control / 'watchdog_posture_state.json').read_text(encoding='utf-8'))
+    assert posture_doc.get('posture_trigger') == 'lockdown'
+    assert float(posture_doc.get('heartbeat_interval_seconds', 0)) == 4.0
+    assert float(posture_doc.get('baseline_validation_interval_seconds', 0)) == 45.0
+    assert posture_doc.get('readback_verified') is False
+
+    receipt_doc = json.loads(receipt_path.read_text(encoding='utf-8'))
+    assert receipt_doc.get('decision') == 'go'
+    assert receipt_doc.get('action') == 'posture-apply'
+    assert receipt_doc.get('mode') == 'live'
+    assert (receipt_doc.get('posture') or {}).get('readback_verified') is True
+    assert (receipt_doc.get('provenance') or {}).get('artifact_sha256')
+
+
+def test_ops_mode_set_rolls_back_state_when_posture_apply_fails(tmp_path: Path, monkeypatch) -> None:
+    log_dir = tmp_path / 'logs'
+    health = log_dir / 'health'
+    data = log_dir / 'data' / 'calamum'
+    control = log_dir / 'control' / 'calamum'
+
+    for d in [health, data, control]:
+        d.mkdir(parents=True, exist_ok=True)
+
+    _touch(health / 'calamum_ops_watchdog.heartbeat')
+    _touch(health / 'calamum_observer.heartbeat')
+    _touch(health / 'calamum_librarian.heartbeat')
+
+    monkeypatch.setenv('CALAMUM_LOG_DIR', str(log_dir))
+    monkeypatch.setenv('CALAMUM_DATA_SIGNING_KEY', 'unit-test-signing-key')
+    _set_security_report_ref(monkeypatch, log_dir)
+
+    observerctl_module._save_state('sim', 'canary')
+    gate_doc = {
+        'decision': 'go',
+        'timestamp_utc': observerctl_module._utc_now(),
+        'from_state': 'sim:canary',
+        'to_state': 'sim:live',
+    }
+    (control / 'observerctl_last_gate.json').write_text(json.dumps(gate_doc), encoding='utf-8')
+
+    monkeypatch.setattr(observerctl_module, '_apply_watchdog_posture', lambda source, mode, event='mode-set': {
+        'timestamp_utc': observerctl_module._utc_now(),
+        'runtime_cli_surface': 'observerctl',
+        'decision': 'no-go',
+        'action': 'posture-apply',
+        'source': source,
+        'mode': mode,
+        'reason_codes': ['critical_check_failed:watchdog_posture_persist_failed'],
+        'readback_verified': False,
+        'posture_state_path': str(control / 'watchdog_posture_state.json').replace('\\', '/'),
+        'receipt_path': '',
+    })
+
+    packet = observerctl_module._ops_mode_set(source='sim', to_mode='live')
+    assert packet.get('decision') == 'no-go'
+    assert 'critical_check_failed:watchdog_posture_persist_failed' in packet.get('reason_codes', [])
+    assert packet.get('attempted_to_state') == 'sim:live'
+    assert packet.get('rollback_anchor') == {'source': 'sim', 'mode': 'canary'}
+    assert packet.get('rollback_applied') is True
+    assert packet.get('restored_state') == {'source': 'sim', 'mode': 'canary'}
+    assert packet.get('restored_readback_state') == {'source': 'sim', 'mode': 'canary'}
+
+    state = observerctl_module._load_state()
+    assert state.get('source') == 'sim'
+    assert state.get('mode') == 'canary'
+
+
+def test_ops_mode_transition_surfaces_mode_set_rollback_failure(tmp_path: Path, monkeypatch) -> None:
+    log_dir = tmp_path / 'logs'
+    health = log_dir / 'health'
+    data = log_dir / 'data' / 'calamum'
+    control = log_dir / 'control' / 'calamum'
+
+    for d in [health, data, control]:
+        d.mkdir(parents=True, exist_ok=True)
+
+    _touch(health / 'calamum_ops_watchdog.heartbeat')
+    _touch(health / 'calamum_observer.heartbeat')
+    _touch(health / 'calamum_librarian.heartbeat')
+
+    monkeypatch.setenv('CALAMUM_LOG_DIR', str(log_dir))
+    monkeypatch.setenv('CALAMUM_DATA_SIGNING_KEY', 'unit-test-signing-key')
+    _set_security_report_ref(monkeypatch, log_dir)
+    _write_watchdog_posture(control, posture='isolation', heartbeat_interval=10, baseline_interval=120)
+    _write_watchdog_resource(control, cpu_now=55, ram_now=60, cpu_p95=50, ram_p95=55, score=0.2, age_s=5)
+
+    observerctl_module._save_state('sim', 'canary')
+    monkeypatch.setattr(observerctl_module, 'evaluate_gate_decision', lambda status, target_mode='watch': {
+        'timestamp_utc': observerctl_module._utc_now(),
+        'runtime_cli_surface': 'observerctl',
+        'decision': 'go',
+        'phase': 'gate',
+        'reason_codes': [],
+        'advisory_reason_codes': [],
+        'source': 'sim',
+        'from_state': 'sim:canary',
+        'to_state': 'sim:live',
+        'target_mode': target_mode,
+    })
+    monkeypatch.setattr(observerctl_module, '_apply_watchdog_posture', lambda source, mode, event='mode-set': {
+        'timestamp_utc': observerctl_module._utc_now(),
+        'runtime_cli_surface': 'observerctl',
+        'decision': 'no-go',
+        'action': 'posture-apply',
+        'source': source,
+        'mode': mode,
+        'reason_codes': ['critical_check_failed:watchdog_posture_persist_failed'],
+        'readback_verified': False,
+        'posture_state_path': str(control / 'watchdog_posture_state.json').replace('\\', '/'),
+        'receipt_path': '',
+    })
+
+    packet = observerctl_module._ops_mode_transition(source='sim', to_mode='live', event='unit-transition-rollback', output='')
+    assert packet.get('decision') == 'no-go'
+    assert 'critical_check_failed:watchdog_posture_persist_failed' in packet.get('reason_codes', [])
+    assert (packet.get('gate_packet') or {}).get('decision') == 'go'
+    mode_set_packet = packet.get('mode_set_packet') or {}
+    assert mode_set_packet.get('decision') == 'no-go'
+    assert mode_set_packet.get('rollback_applied') is True
+    assert mode_set_packet.get('rollback_anchor') == {'source': 'sim', 'mode': 'canary'}
+
+
+def test_baseline_monitor_once_writes_state_and_normal_stream(tmp_path: Path, monkeypatch) -> None:
+    log_dir = tmp_path / 'logs'
+    for d in [log_dir / 'health', log_dir / 'data' / 'calamum', log_dir / 'control' / 'calamum']:
+        d.mkdir(parents=True, exist_ok=True)
+
+    monkeypatch.setenv('CALAMUM_LOG_DIR', str(log_dir))
+    monkeypatch.setenv('CALAMUM_DATA_SIGNING_KEY', 'unit-test-signing-key')
+    _set_security_report_ref(monkeypatch, log_dir)
+
+    observerctl_module._save_state('sim', 'canary')
+
+    rc = main([
+        'baseline', 'monitor-once',
+        '--source', 'sim',
+        '--mode', 'canary',
+        '--normal-interval-sec', '0.01',
+        '--baseline-interval-sec', '45',
+        '--baseline-window-sec', '0.2',
+        '--baseline-sample-interval-sec', '0.05',
+        '--min-normal-samples', '1',
+        '--min-baseline-samples', '1',
+        '--json',
+    ])
+    assert rc == 0
+
+    monitor_state = log_dir / 'control' / 'calamum' / 'baseline_monitor_state.json'
+    assert monitor_state.exists()
+    monitor_doc = json.loads(monitor_state.read_text(encoding='utf-8'))
+    assert monitor_doc.get('mode') == 'canary'
+
+    resource_index = log_dir / 'data' / 'calamum' / 'observer_derived' / 'sim' / 'canary' / 'resource' / 'index.jsonl'
+    assert resource_index.exists()
+    latest = json.loads([ln for ln in resource_index.read_text(encoding='utf-8').splitlines() if ln.strip()][-1])
+    assert latest.get('stream_type') == 'resource_normal'
+
+
+def test_non_activation_live_projection_can_prove_c22_from_projected_lockdown_defaults(tmp_path: Path, monkeypatch) -> None:
+    log_dir = tmp_path / 'logs'
+    health = log_dir / 'health'
+    data = log_dir / 'data' / 'calamum'
+    control = log_dir / 'control' / 'calamum'
+
+    for d in [health, data, control]:
+        d.mkdir(parents=True, exist_ok=True)
+
+    _touch(health / 'calamum_ops_watchdog.heartbeat')
+    _touch(health / 'calamum_observer.heartbeat')
+    _touch(health / 'calamum_librarian.heartbeat')
+
+    monkeypatch.setenv('CALAMUM_LOG_DIR', str(log_dir))
+    monkeypatch.setenv('CALAMUM_DATA_SIGNING_KEY', 'unit-test-signing-key')
+    _set_security_report_ref(monkeypatch, log_dir)
+
+    observerctl_module._save_state('sim', 'canary')
+    _write_watchdog_posture(control, posture='isolation', heartbeat_interval=10, baseline_interval=120)
+    _write_watchdog_resource(control, cpu_now=45, ram_now=50, cpu_p95=40, ram_p95=45, score=0.1, age_s=3)
+
+    pid_path = tmp_path / 'calamum_agent.pid'
+    pid_path.write_text(str(os.getpid()), encoding='utf-8')
+    monitor_pid_path = tmp_path / 'calamum_baseline_monitor.pid'
+    monitor_pid_path.write_text(str(os.getpid()), encoding='utf-8')
+    monkeypatch.setattr(observerctl_module, '_agent_pid_path', lambda: pid_path)
+    monkeypatch.setattr(observerctl_module, '_baseline_monitor_pid_path', lambda: monitor_pid_path)
+
+    monitor_state = control / 'baseline_monitor_state.json'
+    monitor_state.write_text(json.dumps({'mode': 'canary', 'posture_trigger': 'isolation'}), encoding='utf-8')
+
+    resource_dir = data / 'observer_derived' / 'sim' / 'canary' / 'resource'
+    evidence_dir = data / 'observer_derived' / 'sim' / 'canary' / 'evidence'
+    archive_dir = data / 'archive'
+    resource_dir.mkdir(parents=True, exist_ok=True)
+    evidence_dir.mkdir(parents=True, exist_ok=True)
+    archive_dir.mkdir(parents=True, exist_ok=True)
+
+    segment_path = archive_dir / 'resource_sim_canary_normal_projection_seg0001.jsonl'
+    segment_path.write_text('{"timestamp_utc":"2026-03-22T00:00:00Z"}\n', encoding='utf-8')
+    (resource_dir / 'index.jsonl').write_text(json.dumps({
+        'timestamp_utc': observerctl_module._utc_now(),
+        'segment_path': str(segment_path).replace('\\', '/'),
+        'segment_records': 1,
+        'stream_type': 'resource_normal',
+    }) + '\n', encoding='utf-8')
+
+    baseline_packet_path = evidence_dir / 'observerctl_baseline-analysis_projection_test.json'
+    baseline_packet_path.write_text(json.dumps({
+        'timestamp_utc': observerctl_module._utc_now(),
+        'decision': 'go',
+        'sample_counts': {'resource_normal': 1, 'resource_baseline': 1},
+        'provenance': {'artifact_path': str(baseline_packet_path).replace('\\', '/')},
+    }), encoding='utf-8')
+    (evidence_dir / 'index.jsonl').write_text(json.dumps({
+        'timestamp_utc': observerctl_module._utc_now(),
+        'event': 'baseline_analysis',
+        'packet_path': str(baseline_packet_path).replace('\\', '/'),
+    }) + '\n', encoding='utf-8')
+
+    output = tmp_path / 'evidence_live_projection_from_monitor.json'
+    rc_pack = main([
+        'ops', 'evidence', 'pack',
+        '--source', 'sim',
+        '--to', 'live',
+        '--event', 'unit-live-proof-from-monitor',
+        '--output', str(output),
+        '--json',
+    ])
+    assert rc_pack == 0
+
+    payload = json.loads(output.read_text(encoding='utf-8'))
+    assert payload['readiness_projection']['projection_mode'] == 'non-activation'
+    assert payload['stage5_prerequisites']['C22_baseline_validation_rate_escalated']['status'] == 'ok'
+    assert payload['stage5_prerequisites']['C24_resource_stream_retention_ready']['status'] == 'ok'
+    assert payload['stage5_prerequisites']['C25_resource_baseline_window_ready']['status'] == 'ok'
+    assert payload['stage5_prerequisites']['overall']['status'] == 'ok'
 
 
 def test_baseline_generate_and_check_filesystem_hashes(tmp_path: Path, monkeypatch) -> None:
@@ -1364,6 +2070,16 @@ def test_ops_runtime_start_delegates_launcher_non_interactive(tmp_path: Path, mo
         return _DummyProc()
 
     monkeypatch.setattr(observerctl_module.subprocess, 'Popen', _fake_popen)
+    monkeypatch.setattr(observerctl_module, '_baseline_monitor_start', lambda **kwargs: {
+        'timestamp_utc': '2026-01-01T00:00:00Z',
+        'runtime_cli_surface': 'observerctl',
+        'decision': 'go',
+        'action': 'baseline-monitor-start',
+        'reason_codes': [],
+        'state': 'active',
+        'pid': {'value': 2468, 'alive': True},
+        'startup_verified': True,
+    })
 
     rc = main([
         'ops', 'runtime', 'start',
@@ -1374,3 +2090,113 @@ def test_ops_runtime_start_delegates_launcher_non_interactive(tmp_path: Path, mo
         '--json',
     ])
     assert rc == 0
+
+
+def test_ops_runtime_start_fails_closed_when_monitor_start_fails(tmp_path: Path, monkeypatch) -> None:
+    log_dir = tmp_path / 'logs'
+    health = log_dir / 'health'
+    health.mkdir(parents=True, exist_ok=True)
+    monkeypatch.setenv('CALAMUM_LOG_DIR', str(log_dir))
+
+    launcher = tmp_path / 'launch_ghost_console.ps1'
+    launcher.write_text('# test launcher\n', encoding='utf-8')
+    monkeypatch.setattr(observerctl_module, '_project_root', lambda: tmp_path)
+
+    class _DummyProc:
+        pid = 12345
+
+    def _fake_popen(cmd, env, cwd, stdin, stdout, stderr, creationflags):
+        (tmp_path / 'calamum_agent.pid').write_text(str(os.getpid()), encoding='utf-8')
+        _touch(health / 'calamum_observer.heartbeat')
+        return _DummyProc()
+
+    monkeypatch.setattr(observerctl_module.subprocess, 'Popen', _fake_popen)
+    monkeypatch.setattr(observerctl_module, '_baseline_monitor_start', lambda **kwargs: {
+        'timestamp_utc': '2026-01-01T00:00:00Z',
+        'runtime_cli_surface': 'observerctl',
+        'decision': 'no-go',
+        'action': 'baseline-monitor-start',
+        'reason_codes': ['critical_check_failed:baseline_monitor_startup_unverified'],
+        'state': 'stopped',
+        'pid': {'value': None, 'alive': False},
+        'startup_verified': False,
+    })
+
+    rc = main([
+        'ops', 'runtime', 'start',
+        '--source', 'sim',
+        '--mode', 'canary',
+        '--interval-sec', '1.0',
+        '--timeout-sec', '2',
+        '--json',
+    ])
+    assert rc == 2
+
+
+def test_ops_mode_switch_fails_when_postflight_monitor_inactive(tmp_path: Path, monkeypatch) -> None:
+    log_dir = tmp_path / 'logs'
+    health = log_dir / 'health'
+    data = log_dir / 'data' / 'calamum'
+    control = log_dir / 'control' / 'calamum'
+
+    for d in [health, data, control]:
+        d.mkdir(parents=True, exist_ok=True)
+
+    _touch(health / 'calamum_ops_watchdog.heartbeat')
+    _touch(health / 'calamum_observer.heartbeat')
+    _touch(health / 'calamum_librarian.heartbeat')
+
+    monkeypatch.setenv('CALAMUM_LOG_DIR', str(log_dir))
+    monkeypatch.setenv('CALAMUM_DATA_SIGNING_KEY', 'unit-test-signing-key')
+    _set_security_report_ref(monkeypatch, log_dir)
+    _write_watchdog_posture(control, posture='isolation', heartbeat_interval=10, baseline_interval=120)
+    _write_watchdog_resource(control, cpu_now=55, ram_now=60, cpu_p95=50, ram_p95=55, score=0.2, age_s=5)
+
+    observerctl_module._save_state('sim', 'watch')
+
+    monkeypatch.setattr(
+        observerctl_module,
+        '_runtime_observer_status',
+        lambda max_age_sec=60.0: {
+            'state': 'active',
+            'heartbeat': {'status': 'ok'},
+            'pid': {'value': 1111, 'alive': True},
+            'pending_stop_signal': False,
+        },
+    )
+    monkeypatch.setattr(observerctl_module, '_ops_runtime_status', lambda: {
+        'state': 'active',
+        'heartbeat': {'status': 'ok'},
+        'pid': {'value': 1111, 'alive': True},
+        'pending_stop_signal': False,
+    })
+    monkeypatch.setattr(observerctl_module, '_ops_runtime_stop', lambda timeout_sec=8.0: {
+        'timestamp_utc': '2026-01-01T00:00:00Z',
+        'runtime_cli_surface': 'observerctl',
+        'decision': 'go',
+        'action': 'runtime-stop',
+        'reason_codes': [],
+    })
+    monkeypatch.setattr(observerctl_module, '_ops_runtime_start', lambda source, mode, interval_sec, timeout_sec: {
+        'timestamp_utc': '2026-01-01T00:00:01Z',
+        'runtime_cli_surface': 'observerctl',
+        'decision': 'go',
+        'action': 'runtime-start',
+        'reason_codes': [],
+        'startup_verified': True,
+        'state': 'active',
+        'pid': {'value': 5678, 'alive': True},
+    })
+    monkeypatch.setattr(
+        observerctl_module,
+        '_runtime_baseline_monitor_status',
+        lambda max_age_sec=90.0: {
+            'state': 'stopped',
+            'heartbeat': {'status': 'err'},
+            'pid': {'value': None, 'alive': False},
+            'monitor_state': {},
+        },
+    )
+
+    rc = main(['ops', 'mode', 'switch', '--to', 'canary', '--json'])
+    assert rc == 2

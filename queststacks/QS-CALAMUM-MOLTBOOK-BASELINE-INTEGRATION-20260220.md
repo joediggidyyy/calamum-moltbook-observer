@@ -60,6 +60,12 @@ Authoritative references:
 - Go/no-go logic is fail-closed on baseline stale/failure/timeout states.
 - Lane closure records final SessionMemory health and gate evidence pointers.
 
+## 2026-03-19 status ambiguity note
+
+- This QuestStack documents a completed lane.
+- SSOT metadata below still reflects the current `operations/tasks.json` anomaly (`open`, status reason: test job-lineage mutation).
+- Treat the lane as work-product complete, with SSOT cleanup still required before the broader readiness push.
+
 ## Metadata
 
 - Updated By: `joediggidyyy`

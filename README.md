@@ -30,20 +30,20 @@ The **Moltbook Observer** project is a security research initiative designed to 
 
 ```text
 projects/calamum-moltbook-observer/
-├── jobs/               # Job Definitions (The "Why" & "How")
-├── planning/           # Experiment Plans & Hypotheses
-├── questframes/        # Specs for execution tracking
-├── queststacks/        # Logs of execution history
-├── src/                # Source Code (The "What")
-│   ├── analysis/         # ML Models & Notebooks (Stage 4 Analysis)
-│   ├── deployment/       # Dockerfiles & Hardening Profiles (Stage 2)
-│   ├── ops/              # Ops/telemetry/control surfaces (Ghost Console V2)
-│   ├── tests/            # Validation Scripts
-│   ├── calamum_sampler.py # The Agent (Stage 1/3)
-│   ├── calamum_observer_agent.py # Local demo agent (heartbeats + JSONL + signal consumer)
-│   └── obfuscator_lib.py # Safety Layer (Stage 1/3)
-├── launch_ghost_console.ps1 # Ghost Console V2 launcher (Edge app-mode)
-└── REFERENCES.md       # Index of detailed artifact links
+ jobs/               # Job Definitions (The "Why" & "How")
+ planning/           # Experiment Plans & Hypotheses
+ questframes/        # Specs for execution tracking
+ queststacks/        # Logs of execution history
+ src/                # Source Code (The "What")
+    analysis/         # ML Models & Notebooks (Stage 4 Analysis)
+    deployment/       # Dockerfiles & Hardening Profiles (Stage 2)
+    ops/              # Ops/telemetry/control surfaces (Ghost Console V2)
+    tests/            # Validation Scripts
+    calamum_sampler.py # The Agent (Stage 1/3)
+    calamum_observer_agent.py # Local demo agent (heartbeats + JSONL + signal consumer)
+    obfuscator_lib.py # Safety Layer (Stage 1/3)
+ launch_ghost_console.ps1 # Ghost Console V2 launcher (Edge app-mode)
+ REFERENCES.md       # Index of detailed artifact links
 ```
 
 Note: Coursework write-ups and submission artifacts are maintained **locally** (not tracked in the public repository).

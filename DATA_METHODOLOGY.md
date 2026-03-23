@@ -1,7 +1,7 @@
 # Data Methodology & Simulation Protocols: Calamum Moltbook Observer
 
-**Version**: 1.0.0  
-**Date**: 2026-02-02  
+**Version**: 1.1.0  
+**Date**: 2026-03-21  
 **Owner**: ORACL-Prime  
 **Project**: Calamum Moltbook Observer  
 **Classification**: PUBLIC / ACADEMIC OPEN  
@@ -20,15 +20,17 @@ The simulation layer (`MockMoltbookClient`) serves as a deterministic digital tw
 
 | ID | Class | Description | Simulation Pattern | Purpose |
 |----|-------|-------------|--------------------|---------|
-| **TV-0** | **Benign** | Standard social chatter, weather reports, greetings. | `"Hello world"`, `"Just a normal post"` | Baseline metric calibration. |
-| **TV-1** | **Technical** | Valid code blocks, markdown, or technical schematics. | `"```python print('hi')```"` | Verifying false-positive rates for injection detection. |
-| **TV-2** | **Hostile (Injection)** | Adversarial prompts targeting LLM ingestion. | `"Ignore previous instructions"`, `"System prompt override"` | validating `obfuscator_lib` content stripping. |
-| **TV-3** | **Toxic (Phishing)** | Direct Messages (DMs) containing links or PII requests. | `"Check this link: http://malicious.com"`, `"Send credentials"` | Testing "Toxic Waste" handling in Canary Mode. |
+| **TV-0** | **Benign** | Baseline-consistent ordinary activity with structural patterns that remain within expected low-risk bounds. | ordinary posts, routine follows, baseline message timing | Baseline metric calibration. |
+| **TV-1** | **Irregular** | Low-concern deviations from baseline, including unusual but non-actionable technical or format-heavy activity. | code-dense but benign posts, atypical markdown bursts, harmless structural outliers | Stress-testing false positives against non-benign-looking but still low-risk activity. |
+| **TV-2** | **Suspicious** | Structurally abnormal activity whose timing, density, or interaction profile supports a likely-hostile interpretation. | override-like bursts, unusual link/script concentration, repeated abnormal interaction patterns | Evaluating whether metadata-only features can isolate likely-hostile structure before strongest-risk labeling. |
+| **TV-3** | **High-Risk** | Patterns that justify the strongest level of concern under the privacy-preserving labeling policy. | credential-solicitation DM simulations, concentrated malicious-link clusters, severe hostile-contact patterns | Testing highest-risk handling and intervention-grade alerting logic. |
+
+For the current DATA780 midway framing, the primary empirical boundary remains **TV-0 versus TV-3**. **TV-1** and **TV-2** are retained as intermediate categories so the project can represent nuisance structure, ambiguity, and escalation without collapsing every non-benign deviation into the highest-risk class.
 
 ### 2.2. Generator Distribution (Probabilistic mix)
 The sampler employs a stochastic generator to mix these vectors, mimicking a hostile environment:
-- **Observer Mode (Feed)**: 80% TV-0/1 (Signal), 20% TV-2 (Noise/Attack).
-- **Canary Mode (Inbound)**: 50% TV-3 (Toxic), 50% TV-0 (Benign Follows).
+- **Observer Mode (Feed)**: 80% TV-0/1 (baseline + low-concern irregular activity), 20% TV-2 (suspicious activity).
+- **Canary Mode (Inbound)**: 50% TV-3 (high-risk activity), 50% TV-0 (benign follows).
 
 ## 3. Exhaustive Logging Protocol (Trimodal Strategy)
 
@@ -73,7 +75,7 @@ Our logging architecture enforces strict separation of concerns across three dis
 Reproducing the experiment requires no access to the live target, ensuring academic peer review safety.
 
 1.  **Build**: `deployment/secure_run.ps1` builds the immutable container image `calamum-observer:stage2`.
-2.  **Inject**: Providing the flag `--mode canary` switches the Generator to the TV-3 (Toxic) distribution.
+2.  **Inject**: Providing the flag `--mode canary` switches the Generator to the TV-3 (High-Risk) distribution.
 3.  **Validate**: Executing `tests/test_container_constraints.py` asserts that the agent cannot write to its own filesystem, validating the "Glass Box" isolation property.
 
 ## 5. Defense In Depth (The Safety Onion)
@@ -129,4 +131,4 @@ To avoid hammering a dead endpoint (or a network-restricted environment), live c
 If `CALAMUM_MOLTBOOK_SOURCE=live` is selected but `MOLTBOOK_API_KEY` is absent, the observer must fail closed for live ingest (no crash; no secret prompts) and continue to operate safely in a no-write posture for live items.
 
 ---
-*Verified by ORACL-Prime on 2026-02-02.*
+*Verified by ORACL-Prime on 2026-03-21.*

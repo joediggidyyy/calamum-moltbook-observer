@@ -1,10 +1,10 @@
 """
-Feature Extraction Utilities for Stage 4 (Human vs. Bot Detection)
-Consolidated into sampler to maintain "Edge Obfuscation" prior to hashing.
+Feature extraction utilities for threat detection.
+Consolidated into sampler to maintain edge obfuscation prior to hashing.
 """
 def extract_stage4_features(content: str, timestamp_str: str, last_timestamp: float = None) -> dict:
     """
-    Extracts scalar features for Dual-Vector Classification.
+    Extract scalar features for threat-focused classification.
     NO RAW CONTENT IS RETURNED.
     """
     import re
@@ -22,15 +22,13 @@ def extract_stage4_features(content: str, timestamp_str: str, last_timestamp: fl
     code_blocks = len(re.findall(r'```', content)) / 2  # Approximate pairs
     code_density = min(1.0, code_blocks * 0.2) # Normalized
     
-    # 3. Toxicity (Regex flags)
-    # Patterns for "larping" or "malice"
+    # 3. Toxicity / threat indicators (regex flags)
     # Basic keyword checks (safe to exist in code, just regex)
     toxic_patterns = [
         r'http[s]?://',           # Links (Phishing/Spam)
         r'ignore previous',       # Injection
         r'system prompt',         # Injection
-        r'kill all humans',       # Larping / Malice
-        r'2047',                  # Specific Moltbook Larper Meme
+        r'kill all humans',       # Explicit violent threat phrase
     ]
     toxicity_score = 0
     for pat in toxic_patterns:

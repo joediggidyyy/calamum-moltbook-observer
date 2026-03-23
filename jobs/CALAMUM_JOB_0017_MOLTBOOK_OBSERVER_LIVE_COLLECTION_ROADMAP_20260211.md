@@ -30,6 +30,25 @@ Bring the backend into **LIVE COLLECTION** mode today ("honeypot active and coll
 - Live metrics/samples are flowing and fresh.
 - Critical failures (security trigger, observer down, watchdog down) generate **Windows popup alerts**.
 
+## 2026-03-19 current-events impact reference
+
+- Linked assessment: `projects/calamum-moltbook-observer/docs/reports/operations/audits/CURRENT_EVENTS_IMPACT_ASSESSMENT_BASELINE_AND_LIVE_MODE_20260319.md`
+- Resume guidance: recent Meta / Moltbook policy and security reporting does **not** relax live-entry criteria; treat operator-liability, platform policy drift, and low default identity assurance as additional pre-activation evidence requirements for any future `source=real` / live or honeypot attempt.
+
+## 2026-03-19 historical-scope clarification
+
+- The “bring the backend into live collection mode today” framing is preserved as the historical scope of this 2026-02-11 lane, not as current standing authorization.
+- Current readiness interpretation must defer to later governance surfaces, especially Job 0026 Stage 5 decision-gate outcomes and Job 0029 baseline-promotion readiness guidance.
+- Current vocabulary note: this historical lane predates the now-canonical distinction between `source=real` and mode/posture labels `live|honeypot`; read older wording through the current observer policy vocabulary rather than literally.
+
+## 2026-03-20 baseline monitoring execution handoff reference
+
+- Detailed morning execution handoff prepared at:
+  - `projects/calamum-moltbook-observer/docs/reports/operations/standards/OBSERVER_BASELINE_MONITORING_EXECUTION_HANDOFF_20260320.md`
+- Active implementation gap register and phased checklist prepared under:
+  - `projects/calamum-moltbook-observer/jobs/CALAMUM_JOB_0022_MOLTBOOK_BASELINE_INTEGRATION_20260220.md`
+- Until that uplift lane is implemented and evidenced, treat renewed Stage 5 live/honeypot gating as blocked on baseline-monitoring readiness work rather than as an env-only or paperwork-only resume step.
+
 ## Operator intent note (future GUI pivot)
 
 When we pivot back to Calamum GUI:
