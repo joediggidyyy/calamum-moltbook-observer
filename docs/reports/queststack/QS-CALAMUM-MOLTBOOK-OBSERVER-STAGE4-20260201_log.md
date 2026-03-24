@@ -1,4 +1,0 @@
-# QuestStack Log — QS-CALAMUM-MOLTBOOK-OBSERVER-STAGE4-20260201
-
-- Initialized: 2026-02-03T02:34:23.638992Z
-- Notes: (names-only)

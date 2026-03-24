@@ -12,6 +12,8 @@
 > 
 > **Last updated (UTC)**: 2026-02-23
 
+> **Public-lockdown interpretation note (2026-03-24)**: This is an operator-facing execution policy. It may reference lifecycle surfaces that are now retained locally / untracked under the locked-down public boundary (for example project `jobs/`, `planning/`, `questframes/`, `queststacks/`, and `docs/reports/operations/`). Read those references as internal execution lineage, not as a public orientation map of the current tracked repo surface.
+
 ---
 
 ## 1) Purpose
@@ -41,6 +43,8 @@ Operator-friendly CLI companion runbook:
 
 - `projects/calamum-moltbook-observer/docs/OBSERVERCTL_CLI_TRANSITION_OPERATOR_GUIDE_20260221.md`
 
+That runbook remains public-kept, but some lineage references inside it point to local-only execution surfaces retained outside the tracked public boundary.
+
 ---
 
 ## 2) Canonical execution surfaces (SSOT)
@@ -62,9 +66,11 @@ Traversal authority rule (normative):
 - Historical/out-of-framework artifacts are non-direct lifecycle targets until canonical legacy-intake registration creates a new SSOT task + bridge stub (planned `job create --legacy`).
 - For new lanes created via `codesentinel job create`, use the emitted/generated `task_id` from command output (there is no `--task-id` input on create).
 
-### 2.2 QuestStack is the parse surface for PRE_JOB
+### 2.2 QuestStack is the local parse surface for PRE_JOB
 
 The CodeSentinel PRE_JOB gate parses the QuestStack markdown for artifact references.
+
+Under the locked public/private boundary, these lifecycle parse surfaces remain operator-local execution artifacts even when this policy document is tracked publicly.
 
 **Minimum required** (fail-closed if missing):
 
@@ -91,7 +97,7 @@ If the QuestStack scaffold is malformed or incomplete, start-gate behavior is fa
 
 ### 3.1 Required linked paths (names-only)
 
-Every Calamum QuestStack document under:
+Every local Calamum QuestStack document retained under:
 
 - `projects/calamum-moltbook-observer/queststacks/*.md`
 
@@ -137,6 +143,11 @@ However, CodeSentinel’s umbrella job lifecycle intentionally writes **system-l
 
 This is not optional; it is required for consistent governance across all CodeSentinel-managed domains.
 
+Public-lockdown clarification:
+
+- the project-local lifecycle lanes referenced above are no longer part of the public-tracked project surface
+- this policy remains authoritative for operator execution, not for public repo orientation
+
 ### 3.3 Important: how the gate detects `jobs/`
 
 The PRE_JOB gate searches the QuestStack markdown for the first substring `jobs/` and treats it as the job doc link.
@@ -170,6 +181,8 @@ Approved observer operations report bucket subfolders for typed artifacts:
 - `projects/calamum-moltbook-observer/docs/reports/operations/standards/`
 - `projects/calamum-moltbook-observer/docs/reports/operations/migration_indexes/`
 - `projects/calamum-moltbook-observer/docs/reports/operations/compat_packets/`
+
+These are now operator/local lineage buckets under the locked public boundary, not part of the intended public-facing repo map.
 
 ---
 

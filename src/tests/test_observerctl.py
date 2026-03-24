@@ -11,6 +11,7 @@ if str(SRC_DIR) not in sys.path:
     sys.path.insert(0, str(SRC_DIR))
 
 import observerctl as observerctl_module
+from calamum_librarian import Librarian
 
 from observerctl import (  # noqa: E402
     _default_output_path,
@@ -25,6 +26,32 @@ from observerctl import (  # noqa: E402
 def _touch(path: Path) -> None:
     path.parent.mkdir(parents=True, exist_ok=True)
     path.write_text('{"status":"ok"}\n', encoding='utf-8')
+
+
+def _read_jsonl_rows(path: Path) -> list[dict]:
+    rows = []
+    if not path.exists():
+        return rows
+    for line in path.read_text(encoding='utf-8').splitlines():
+        line = str(line).strip()
+        if not line:
+            continue
+        rows.append(json.loads(line))
+    return rows
+
+
+def _latest_jsonl_row_for_stream(path: Path, stream_type: str) -> dict:
+    for row in reversed(_read_jsonl_rows(path)):
+        if str(row.get('stream_type', '')).strip().lower() == str(stream_type).strip().lower():
+            return row
+    return {}
+
+
+def _latest_jsonl_row_for_event(path: Path, event: str) -> dict:
+    for row in reversed(_read_jsonl_rows(path)):
+        if str(row.get('event', '')).strip().lower() == str(event).strip().lower():
+            return row
+    return {}
 
 
 def _write_watchdog_posture(control_dir: Path, posture: str, heartbeat_interval: float, baseline_interval: float) -> None:
@@ -436,19 +463,32 @@ def test_evidence_pack_supports_non_activation_live_projection_and_retained_refs
     archive_dir.mkdir(parents=True, exist_ok=True)
 
     segment_path = archive_dir / 'resource_sim_canary_normal_unit_seg0001.jsonl'
+    baseline_segment_path = archive_dir / 'resource_sim_canary_baseline_frame8-proof_seg0001.jsonl'
     segment_path.write_text('{"timestamp_utc":"2026-03-22T00:00:00Z"}\n', encoding='utf-8')
+    baseline_segment_path.write_text('{"timestamp_utc":"2026-03-22T00:00:00Z","baseline_window_id":"frame8-proof-window"}\n', encoding='utf-8')
     resource_index = resource_dir / 'index.jsonl'
-    resource_index.write_text(json.dumps({
-        'timestamp_utc': observerctl_module._utc_now(),
-        'segment_path': str(segment_path).replace('\\', '/'),
-        'segment_records': 1,
-        'stream_type': 'resource_normal',
-    }) + '\n', encoding='utf-8')
+    resource_index.write_text(
+        json.dumps({
+            'timestamp_utc': observerctl_module._utc_now(),
+            'segment_path': str(segment_path).replace('\\', '/'),
+            'segment_records': 1,
+            'stream_type': 'resource_normal',
+        }) + '\n' + json.dumps({
+            'timestamp_utc': observerctl_module._utc_now(),
+            'segment_path': str(baseline_segment_path).replace('\\', '/'),
+            'segment_records': 1,
+            'stream_type': 'resource_baseline',
+            'baseline_window_id': 'frame8-proof-window',
+            'window_id': 'frame8-proof-window',
+        }) + '\n',
+        encoding='utf-8',
+    )
 
     baseline_packet_path = evidence_dir / 'observerctl_baseline-analysis_test.json'
     baseline_packet_path.write_text(json.dumps({
         'timestamp_utc': observerctl_module._utc_now(),
         'decision': 'go',
+        'baseline_window_id': 'frame8-proof-window',
         'sample_counts': {'resource_normal': 5, 'resource_baseline': 5},
         'provenance': {'artifact_path': str(baseline_packet_path).replace('\\', '/')},
     }), encoding='utf-8')
@@ -516,18 +556,31 @@ def test_non_activation_live_projection_keeps_c24_ready_when_collection_is_idle_
     archive_dir.mkdir(parents=True, exist_ok=True)
 
     segment_path = archive_dir / 'resource_sim_canary_normal_idle_seg0001.jsonl'
+    baseline_segment_path = archive_dir / 'resource_sim_canary_baseline_idle_seg0001.jsonl'
     segment_path.write_text('{"timestamp_utc":"2026-03-22T00:00:00Z"}\n', encoding='utf-8')
-    (resource_dir / 'index.jsonl').write_text(json.dumps({
-        'timestamp_utc': observerctl_module._utc_now(),
-        'segment_path': str(segment_path).replace('\\', '/'),
-        'segment_records': 2,
-        'stream_type': 'resource_normal',
-    }) + '\n', encoding='utf-8')
+    baseline_segment_path.write_text('{"timestamp_utc":"2026-03-22T00:00:00Z","baseline_window_id":"frame8-idle-window"}\n', encoding='utf-8')
+    (resource_dir / 'index.jsonl').write_text(
+        json.dumps({
+            'timestamp_utc': observerctl_module._utc_now(),
+            'segment_path': str(segment_path).replace('\\', '/'),
+            'segment_records': 2,
+            'stream_type': 'resource_normal',
+        }) + '\n' + json.dumps({
+            'timestamp_utc': observerctl_module._utc_now(),
+            'segment_path': str(baseline_segment_path).replace('\\', '/'),
+            'segment_records': 1,
+            'stream_type': 'resource_baseline',
+            'baseline_window_id': 'frame8-idle-window',
+            'window_id': 'frame8-idle-window',
+        }) + '\n',
+        encoding='utf-8',
+    )
 
     baseline_packet_path = evidence_dir / 'observerctl_baseline-analysis_idle_continuity.json'
     baseline_packet_path.write_text(json.dumps({
         'timestamp_utc': observerctl_module._utc_now(),
         'decision': 'go',
+        'baseline_window_id': 'frame8-idle-window',
         'sample_counts': {'resource_normal': 2, 'resource_baseline': 1},
         'provenance': {'artifact_path': str(baseline_packet_path).replace('\\', '/')},
     }), encoding='utf-8')
@@ -629,6 +682,354 @@ def test_non_activation_live_projection_denies_c24_when_only_baseline_stream_is_
     assert c24['status'] == 'err'
     assert 'critical_check_failed:resource_stream_retention_unavailable' in c24['reason_codes']
     assert payload['stage5_prerequisites']['overall']['status'] == 'err'
+
+
+def test_resource_stream_retention_resolves_archived_normal_segment_via_manifest(tmp_path: Path, monkeypatch) -> None:
+    log_dir = tmp_path / 'logs'
+    for d in [log_dir / 'health', log_dir / 'data' / 'calamum', log_dir / 'control' / 'calamum']:
+        d.mkdir(parents=True, exist_ok=True)
+
+    monkeypatch.setenv('CALAMUM_LOG_DIR', str(log_dir))
+    monkeypatch.setenv('CALAMUM_DATA_SIGNING_KEY', 'unit-test-signing-key')
+    _set_security_report_ref(monkeypatch, log_dir)
+
+    observerctl_module._save_state('sim', 'canary')
+
+    assert main([
+        'baseline', 'collect',
+        '--source', 'sim',
+        '--mode', 'canary',
+        '--profile', 'normal',
+        '--duration-sec', '0.02',
+        '--interval-sec', '0.01',
+        '--window-id', 'frame7-archived-normal',
+        '--json',
+    ]) == 0
+
+    archive_dir = log_dir / 'data' / 'calamum' / 'archive'
+    raw_segments_before = sorted(archive_dir.glob('resource_sim_canary_normal_frame7-archived-normal_seg*.jsonl'))
+    assert len(raw_segments_before) >= 1
+
+    Librarian(interval_sec=0.01).run_once()
+
+    raw_segments_after = sorted(archive_dir.glob('resource_sim_canary_normal_frame7-archived-normal_seg*.jsonl'))
+    archived_segments = sorted(archive_dir.glob('resource_sim_canary_normal_frame7-archived-normal_seg*.jsonl.gz'))
+    assert raw_segments_after == []
+    assert len(archived_segments) >= 1
+
+    status = collect_runtime_status(source='sim')
+    resource_row = status['checks']['watchdog.resource_stream_retention']
+    assert resource_row['status'] == 'ok'
+    assert resource_row['segment_exists'] is True
+    assert resource_row['segment_resolution'] == 'archived'
+    assert resource_row['resolved_segment_path'].endswith('.jsonl.gz')
+    assert resource_row['archive_manifest_exists'] is True
+
+
+def test_baseline_window_health_resolves_archived_baseline_segment_via_manifest(tmp_path: Path, monkeypatch) -> None:
+    log_dir = tmp_path / 'logs'
+    for d in [log_dir / 'health', log_dir / 'data' / 'calamum', log_dir / 'control' / 'calamum']:
+        d.mkdir(parents=True, exist_ok=True)
+
+    monkeypatch.setenv('CALAMUM_LOG_DIR', str(log_dir))
+    monkeypatch.setenv('CALAMUM_DATA_SIGNING_KEY', 'unit-test-signing-key')
+    _set_security_report_ref(monkeypatch, log_dir)
+
+    observerctl_module._save_state('sim', 'canary')
+
+    assert main([
+        'baseline', 'collect',
+        '--source', 'sim',
+        '--mode', 'canary',
+        '--profile', 'normal',
+        '--duration-sec', '0.02',
+        '--interval-sec', '0.01',
+        '--window-id', 'frame8-normal-support',
+        '--json',
+    ]) == 0
+
+    assert main([
+        'baseline', 'collect',
+        '--source', 'sim',
+        '--mode', 'canary',
+        '--profile', 'baseline',
+        '--duration-sec', '0.02',
+        '--interval-sec', '0.01',
+        '--window-id', 'frame8-archived-baseline',
+        '--json',
+    ]) == 0
+
+    Librarian(interval_sec=0.01).run_once()
+
+    assert main([
+        'baseline', 'analyze',
+        '--source', 'sim',
+        '--mode', 'canary',
+        '--hours', '1',
+        '--min-normal-samples', '1',
+        '--min-baseline-samples', '1',
+        '--json',
+    ]) == 0
+
+    status = collect_runtime_status(source='sim')
+    baseline_row = status['checks']['watchdog.resource_baseline_window']
+    assert baseline_row['status'] == 'ok'
+    assert baseline_row['baseline_window_id'] == 'frame8-archived-baseline'
+    assert baseline_row['segment_count'] >= 1
+    assert baseline_row['resolved_segment_count'] == baseline_row['segment_count']
+    assert baseline_row['segment_resolution'] == 'archived'
+    assert baseline_row['archive_manifest_exists'] is True
+    assert any(str(ref).endswith('.jsonl.gz') for ref in baseline_row['resolved_segment_paths'])
+
+
+def test_non_activation_live_projection_keeps_c24_ready_when_latest_normal_segment_is_archived(tmp_path: Path, monkeypatch) -> None:
+    log_dir = tmp_path / 'logs'
+    health = log_dir / 'health'
+    data = log_dir / 'data' / 'calamum'
+    control = log_dir / 'control' / 'calamum'
+
+    for d in [health, data, control]:
+        d.mkdir(parents=True, exist_ok=True)
+
+    _touch(health / 'calamum_ops_watchdog.heartbeat')
+    _touch(health / 'calamum_observer.heartbeat')
+    _touch(health / 'calamum_librarian.heartbeat')
+    _touch(health / 'calamum_baseline_monitor.heartbeat')
+
+    monkeypatch.setenv('CALAMUM_LOG_DIR', str(log_dir))
+    monkeypatch.setenv('CALAMUM_DATA_SIGNING_KEY', 'unit-test-signing-key')
+    _set_security_report_ref(monkeypatch, log_dir)
+
+    observerctl_module._save_state('sim', 'canary')
+    _write_watchdog_posture(control, posture='lockdown', heartbeat_interval=4, baseline_interval=45)
+    _write_watchdog_resource(control, cpu_now=45, ram_now=50, cpu_p95=40, ram_p95=45, score=0.1, age_s=3)
+
+    monitor_state = control / 'baseline_monitor_state.json'
+    monitor_state.write_text(json.dumps({'mode': 'canary', 'posture_trigger': 'lockdown'}), encoding='utf-8')
+
+    assert main([
+        'baseline', 'collect',
+        '--source', 'sim',
+        '--mode', 'canary',
+        '--profile', 'normal',
+        '--duration-sec', '0.02',
+        '--interval-sec', '0.01',
+        '--window-id', 'frame7-live-proof-archived',
+        '--json',
+    ]) == 0
+
+    Librarian(interval_sec=0.01).run_once()
+
+    evidence_dir = data / 'observer_derived' / 'sim' / 'canary' / 'evidence'
+    evidence_dir.mkdir(parents=True, exist_ok=True)
+    baseline_packet_path = evidence_dir / 'observerctl_baseline-analysis_frame7_archived.json'
+    baseline_packet_path.write_text(json.dumps({
+        'timestamp_utc': observerctl_module._utc_now(),
+        'decision': 'go',
+        'sample_counts': {'resource_normal': 2, 'resource_baseline': 1},
+        'provenance': {'artifact_path': str(baseline_packet_path).replace('\\', '/')},
+    }), encoding='utf-8')
+    (evidence_dir / 'index.jsonl').write_text(json.dumps({
+        'timestamp_utc': observerctl_module._utc_now(),
+        'event': 'baseline_analysis',
+        'packet_path': str(baseline_packet_path).replace('\\', '/'),
+    }) + '\n', encoding='utf-8')
+
+    pid_path = tmp_path / 'calamum_agent.pid'
+    pid_path.write_text(str(os.getpid()), encoding='utf-8')
+    monitor_pid_path = tmp_path / 'calamum_baseline_monitor.pid'
+    monitor_pid_path.write_text(str(os.getpid()), encoding='utf-8')
+    monkeypatch.setattr(observerctl_module, '_agent_pid_path', lambda: pid_path)
+    monkeypatch.setattr(observerctl_module, '_baseline_monitor_pid_path', lambda: monitor_pid_path)
+
+    output = tmp_path / 'evidence_live_projection_archived_normal.json'
+    rc = main(['ops', 'evidence', 'pack', '--source', 'sim', '--to', 'live', '--event', 'unit-archived-normal-proof', '--output', str(output), '--json'])
+    assert rc == 0
+
+    payload = json.loads(output.read_text(encoding='utf-8'))
+    resource_surface = payload['readiness_surfaces']['resource_stream_retention']
+    c24 = payload['stage5_prerequisites']['C24_resource_stream_retention_ready']
+    assert resource_surface['status'] == 'ok'
+    assert resource_surface['segment_resolution'] == 'archived'
+    assert resource_surface['resolved_segment_path'].endswith('.jsonl.gz')
+    assert resource_surface['archive_manifest_path'].endswith('archive/manifest.json')
+    assert c24['status'] == 'ok'
+    assert c24['segment_resolution'] == 'archived'
+    assert any(str(ref).endswith('archive/manifest.json') for ref in c24['evidence_refs'])
+    assert any(str(ref).endswith('.jsonl.gz') for ref in c24['evidence_refs'])
+
+
+def test_non_activation_live_projection_denies_c25_when_archived_baseline_artifact_is_missing(tmp_path: Path, monkeypatch) -> None:
+    log_dir = tmp_path / 'logs'
+    health = log_dir / 'health'
+    data = log_dir / 'data' / 'calamum'
+    control = log_dir / 'control' / 'calamum'
+
+    for d in [health, data, control]:
+        d.mkdir(parents=True, exist_ok=True)
+
+    _touch(health / 'calamum_ops_watchdog.heartbeat')
+    _touch(health / 'calamum_observer.heartbeat')
+    _touch(health / 'calamum_librarian.heartbeat')
+    _touch(health / 'calamum_baseline_monitor.heartbeat')
+
+    monkeypatch.setenv('CALAMUM_LOG_DIR', str(log_dir))
+    monkeypatch.setenv('CALAMUM_DATA_SIGNING_KEY', 'unit-test-signing-key')
+    _set_security_report_ref(monkeypatch, log_dir)
+
+    observerctl_module._save_state('sim', 'canary')
+    _write_watchdog_posture(control, posture='lockdown', heartbeat_interval=4, baseline_interval=45)
+    _write_watchdog_resource(control, cpu_now=45, ram_now=50, cpu_p95=40, ram_p95=45, score=0.1, age_s=3)
+
+    monitor_state = control / 'baseline_monitor_state.json'
+    monitor_state.write_text(json.dumps({'mode': 'canary', 'posture_trigger': 'lockdown'}), encoding='utf-8')
+
+    assert main([
+        'baseline', 'collect',
+        '--source', 'sim',
+        '--mode', 'canary',
+        '--profile', 'normal',
+        '--duration-sec', '0.02',
+        '--interval-sec', '0.01',
+        '--window-id', 'frame8-normal-continuity',
+        '--json',
+    ]) == 0
+
+    assert main([
+        'baseline', 'collect',
+        '--source', 'sim',
+        '--mode', 'canary',
+        '--profile', 'baseline',
+        '--duration-sec', '0.02',
+        '--interval-sec', '0.01',
+        '--window-id', 'frame8-missing-baseline',
+        '--json',
+    ]) == 0
+
+    Librarian(interval_sec=0.01).run_once()
+
+    assert main([
+        'baseline', 'analyze',
+        '--source', 'sim',
+        '--mode', 'canary',
+        '--hours', '1',
+        '--min-normal-samples', '1',
+        '--min-baseline-samples', '1',
+        '--json',
+    ]) == 0
+
+    archive_dir = data / 'archive'
+    archived_baseline_segments = sorted(archive_dir.glob('resource_sim_canary_baseline_frame8-missing-baseline_seg*.jsonl.gz'))
+    assert archived_baseline_segments
+    for path in archived_baseline_segments:
+        path.unlink()
+
+    pid_path = tmp_path / 'calamum_agent.pid'
+    pid_path.write_text(str(os.getpid()), encoding='utf-8')
+    monitor_pid_path = tmp_path / 'calamum_baseline_monitor.pid'
+    monitor_pid_path.write_text(str(os.getpid()), encoding='utf-8')
+    monkeypatch.setattr(observerctl_module, '_agent_pid_path', lambda: pid_path)
+    monkeypatch.setattr(observerctl_module, '_baseline_monitor_pid_path', lambda: monitor_pid_path)
+
+    output = tmp_path / 'evidence_live_projection_missing_archived_baseline.json'
+    rc = main(['ops', 'evidence', 'pack', '--source', 'sim', '--to', 'live', '--event', 'unit-missing-archived-baseline', '--output', str(output), '--json'])
+    assert rc == 0
+
+    payload = json.loads(output.read_text(encoding='utf-8'))
+    c24 = payload['stage5_prerequisites']['C24_resource_stream_retention_ready']
+    baseline_surface = payload['readiness_surfaces']['baseline_window']
+    c25 = payload['stage5_prerequisites']['C25_resource_baseline_window_ready']
+    assert c24['status'] == 'ok'
+    assert baseline_surface['status'] == 'err'
+    assert baseline_surface['baseline_window_id'] == 'frame8-missing-baseline'
+    assert baseline_surface['segment_resolution'] == 'missing'
+    assert baseline_surface['resolved_segment_count'] == 0
+    assert any('frame8-missing-baseline' in str(ref) for ref in baseline_surface['missing_segment_paths'])
+    assert c25['status'] == 'err'
+    assert 'critical_check_failed:resource_baseline_window_incomplete' in c25['reason_codes']
+
+
+def test_non_activation_live_projection_denies_c24_when_archived_manifest_artifact_is_missing(tmp_path: Path, monkeypatch) -> None:
+    log_dir = tmp_path / 'logs'
+    health = log_dir / 'health'
+    data = log_dir / 'data' / 'calamum'
+    control = log_dir / 'control' / 'calamum'
+
+    for d in [health, data, control]:
+        d.mkdir(parents=True, exist_ok=True)
+
+    _touch(health / 'calamum_ops_watchdog.heartbeat')
+    _touch(health / 'calamum_observer.heartbeat')
+    _touch(health / 'calamum_librarian.heartbeat')
+    _touch(health / 'calamum_baseline_monitor.heartbeat')
+
+    monkeypatch.setenv('CALAMUM_LOG_DIR', str(log_dir))
+    monkeypatch.setenv('CALAMUM_DATA_SIGNING_KEY', 'unit-test-signing-key')
+    _set_security_report_ref(monkeypatch, log_dir)
+
+    observerctl_module._save_state('sim', 'canary')
+    _write_watchdog_posture(control, posture='lockdown', heartbeat_interval=4, baseline_interval=45)
+    _write_watchdog_resource(control, cpu_now=45, ram_now=50, cpu_p95=40, ram_p95=45, score=0.1, age_s=3)
+
+    monitor_state = control / 'baseline_monitor_state.json'
+    monitor_state.write_text(json.dumps({'mode': 'canary', 'posture_trigger': 'lockdown'}), encoding='utf-8')
+
+    archive_dir = data / 'archive'
+    resource_dir = data / 'observer_derived' / 'sim' / 'canary' / 'resource'
+    evidence_dir = data / 'observer_derived' / 'sim' / 'canary' / 'evidence'
+    archive_dir.mkdir(parents=True, exist_ok=True)
+    resource_dir.mkdir(parents=True, exist_ok=True)
+    evidence_dir.mkdir(parents=True, exist_ok=True)
+
+    raw_segment_path = archive_dir / 'resource_sim_canary_normal_frame7-missing-archive_seg0001.jsonl'
+    manifest_path = archive_dir / 'manifest.json'
+    manifest_path.write_text(json.dumps({
+        raw_segment_path.name: {
+            'artifact_path': 'resource_sim_canary_normal_frame7-missing-archive_seg0001.jsonl.gz',
+            'records': 2,
+            'uncompressed_bytes': 100,
+        }
+    }), encoding='utf-8')
+
+    (resource_dir / 'index.jsonl').write_text(json.dumps({
+        'timestamp_utc': observerctl_module._utc_now(),
+        'segment_path': str(raw_segment_path).replace('\\', '/'),
+        'segment_records': 2,
+        'stream_type': 'resource_normal',
+    }) + '\n', encoding='utf-8')
+
+    baseline_packet_path = evidence_dir / 'observerctl_baseline-analysis_frame7_missing_archive.json'
+    baseline_packet_path.write_text(json.dumps({
+        'timestamp_utc': observerctl_module._utc_now(),
+        'decision': 'go',
+        'sample_counts': {'resource_normal': 2, 'resource_baseline': 1},
+        'provenance': {'artifact_path': str(baseline_packet_path).replace('\\', '/')},
+    }), encoding='utf-8')
+    (evidence_dir / 'index.jsonl').write_text(json.dumps({
+        'timestamp_utc': observerctl_module._utc_now(),
+        'event': 'baseline_analysis',
+        'packet_path': str(baseline_packet_path).replace('\\', '/'),
+    }) + '\n', encoding='utf-8')
+
+    pid_path = tmp_path / 'calamum_agent.pid'
+    pid_path.write_text(str(os.getpid()), encoding='utf-8')
+    monitor_pid_path = tmp_path / 'calamum_baseline_monitor.pid'
+    monitor_pid_path.write_text(str(os.getpid()), encoding='utf-8')
+    monkeypatch.setattr(observerctl_module, '_agent_pid_path', lambda: pid_path)
+    monkeypatch.setattr(observerctl_module, '_baseline_monitor_pid_path', lambda: monitor_pid_path)
+
+    output = tmp_path / 'evidence_live_projection_missing_archived_normal.json'
+    rc = main(['ops', 'evidence', 'pack', '--source', 'sim', '--to', 'live', '--event', 'unit-missing-archived-normal', '--output', str(output), '--json'])
+    assert rc == 0
+
+    payload = json.loads(output.read_text(encoding='utf-8'))
+    resource_surface = payload['readiness_surfaces']['resource_stream_retention']
+    c24 = payload['stage5_prerequisites']['C24_resource_stream_retention_ready']
+    assert resource_surface['status'] == 'err'
+    assert resource_surface['segment_resolution'] == 'missing'
+    assert resource_surface['archive_manifest_path'].endswith('archive/manifest.json')
+    assert c24['status'] == 'err'
+    assert 'critical_check_failed:resource_stream_retention_unavailable' in c24['reason_codes']
 
 
 def test_ops_mode_gate_and_set_flow(tmp_path: Path, monkeypatch) -> None:
@@ -952,6 +1353,69 @@ def test_baseline_collect_writes_publish_grade_packet_and_resource_state(tmp_pat
     resource_doc = json.loads(resource_state.read_text(encoding='utf-8'))
     assert float(resource_doc.get('sample_count', 0)) >= 2
     assert resource_doc.get('stream_type') == 'resource_normal'
+
+
+def test_baseline_collect_preserves_frame4_metadata_contract_on_samples_and_index_rows(tmp_path: Path, monkeypatch) -> None:
+    log_dir = tmp_path / 'logs'
+    for d in [log_dir / 'health', log_dir / 'data' / 'calamum', log_dir / 'control' / 'calamum']:
+        d.mkdir(parents=True, exist_ok=True)
+
+    monkeypatch.setenv('CALAMUM_LOG_DIR', str(log_dir))
+
+    normal_out = tmp_path / 'baseline_collect_normal_packet.json'
+    baseline_out = tmp_path / 'baseline_collect_baseline_packet.json'
+
+    assert main([
+        'baseline', 'collect',
+        '--source', 'sim',
+        '--mode', 'canary',
+        '--profile', 'normal',
+        '--duration-sec', '0.02',
+        '--interval-sec', '0.01',
+        '--window-id', 'frame4-normal-window',
+        '--output', str(normal_out),
+        '--json',
+    ]) == 0
+
+    assert main([
+        'baseline', 'collect',
+        '--source', 'sim',
+        '--mode', 'canary',
+        '--profile', 'baseline',
+        '--duration-sec', '0.02',
+        '--interval-sec', '0.01',
+        '--window-id', 'frame4-baseline-window',
+        '--output', str(baseline_out),
+        '--json',
+    ]) == 0
+
+    normal_packet = json.loads(normal_out.read_text(encoding='utf-8'))
+    baseline_packet = json.loads(baseline_out.read_text(encoding='utf-8'))
+
+    normal_segment_path = Path(str((normal_packet.get('segments', [{}])[0] or {}).get('path', '')).replace('/', os.sep))
+    baseline_segment_path = Path(str((baseline_packet.get('segments', [{}])[0] or {}).get('path', '')).replace('/', os.sep))
+    normal_sample = _read_jsonl_rows(normal_segment_path)[0]
+    baseline_sample = _read_jsonl_rows(baseline_segment_path)[0]
+
+    resource_index = log_dir / 'data' / 'calamum' / 'observer_derived' / 'sim' / 'canary' / 'resource' / 'index.jsonl'
+    normal_index = _latest_jsonl_row_for_stream(resource_index, 'resource_normal')
+    baseline_index = _latest_jsonl_row_for_stream(resource_index, 'resource_baseline')
+
+    for row in (normal_sample, normal_index, baseline_sample, baseline_index):
+        assert row.get('sampling_profile_id')
+        assert row.get('mode_at_capture') == 'canary'
+        assert row.get('source_axis') == 'sim'
+        assert row.get('stream_type') in ('resource_normal', 'resource_baseline')
+
+    assert normal_sample.get('sampling_profile_id') == 'resource_normal_v1'
+    assert normal_index.get('sampling_profile_id') == 'resource_normal_v1'
+    assert baseline_sample.get('sampling_profile_id') == 'resource_baseline_v1'
+    assert baseline_index.get('sampling_profile_id') == 'resource_baseline_v1'
+
+    assert normal_sample.get('baseline_window_id') == 'frame4-normal-window'
+    assert 'baseline_window_id' not in normal_index
+    assert baseline_sample.get('baseline_window_id') == 'frame4-baseline-window'
+    assert baseline_index.get('baseline_window_id') == 'frame4-baseline-window'
 
 
 def test_baseline_analyze_returns_go_when_minimums_met(tmp_path: Path, monkeypatch) -> None:
@@ -1366,6 +1830,7 @@ def test_ops_mode_transition_surfaces_mode_set_rollback_failure(tmp_path: Path, 
     assert mode_set_packet.get('decision') == 'no-go'
     assert mode_set_packet.get('rollback_applied') is True
     assert mode_set_packet.get('rollback_anchor') == {'source': 'sim', 'mode': 'canary'}
+    assert any(str(ref).endswith('watchdog_posture_state.json') for ref in packet.get('evidence_refs', []))
 
 
 def test_baseline_monitor_once_writes_state_and_normal_stream(tmp_path: Path, monkeypatch) -> None:
@@ -1397,11 +1862,183 @@ def test_baseline_monitor_once_writes_state_and_normal_stream(tmp_path: Path, mo
     assert monitor_state.exists()
     monitor_doc = json.loads(monitor_state.read_text(encoding='utf-8'))
     assert monitor_doc.get('mode') == 'canary'
+    assert monitor_doc.get('last_validation_cycle_event') == 'baseline_monitor_cycle'
+    cycle_packet_path = Path(str(monitor_doc.get('last_validation_cycle_packet_path', '')).replace('/', os.sep))
+    assert cycle_packet_path.exists()
+
+    cycle_packet = json.loads(cycle_packet_path.read_text(encoding='utf-8'))
+    assert cycle_packet.get('action') == 'baseline-monitor-cycle'
+    assert cycle_packet.get('mode') == 'canary'
+    assert cycle_packet.get('posture_trigger') == 'isolation'
+    assert cycle_packet.get('baseline_window_id') == ''
+    assert cycle_packet.get('normal_packet_path')
+    assert cycle_packet.get('analysis_packet_path') == ''
+    assert (cycle_packet.get('continuity') or {}).get('state') == 'fresh_start'
+
+    evidence_index = log_dir / 'data' / 'calamum' / 'observer_derived' / 'sim' / 'canary' / 'evidence' / 'index.jsonl'
+    cycle_row = _latest_jsonl_row_for_event(evidence_index, 'baseline_monitor_cycle')
+    assert cycle_row.get('decision') == 'go'
+    assert Path(str(cycle_row.get('packet_path', '')).replace('/', os.sep)).exists()
 
     resource_index = log_dir / 'data' / 'calamum' / 'observer_derived' / 'sim' / 'canary' / 'resource' / 'index.jsonl'
     assert resource_index.exists()
     latest = json.loads([ln for ln in resource_index.read_text(encoding='utf-8').splitlines() if ln.strip()][-1])
     assert latest.get('stream_type') == 'resource_normal'
+
+
+def test_baseline_monitor_once_lockdown_cycle_emits_append_only_validation_record_with_baseline_linkage(tmp_path: Path, monkeypatch) -> None:
+    log_dir = tmp_path / 'logs'
+    for d in [log_dir / 'health', log_dir / 'data' / 'calamum', log_dir / 'control' / 'calamum']:
+        d.mkdir(parents=True, exist_ok=True)
+
+    monkeypatch.setenv('CALAMUM_LOG_DIR', str(log_dir))
+    monkeypatch.setenv('CALAMUM_DATA_SIGNING_KEY', 'unit-test-signing-key')
+    _set_security_report_ref(monkeypatch, log_dir)
+
+    observerctl_module._save_state('sim', 'live')
+
+    packet = observerctl_module._baseline_monitor_once(
+        source='sim',
+        mode='live',
+        normal_interval_sec=0.01,
+        baseline_interval_sec=0.01,
+        baseline_window_sec=0.2,
+        baseline_sample_interval_sec=0.05,
+        min_normal_samples=1,
+        min_baseline_samples=1,
+    )
+
+    assert packet.get('decision') == 'go'
+    assert packet.get('validation_cycle_event') == 'baseline_monitor_cycle'
+
+    cycle_packet_path = Path(str(packet.get('validation_cycle_packet_path', '')).replace('/', os.sep))
+    assert cycle_packet_path.exists()
+
+    cycle_packet = json.loads(cycle_packet_path.read_text(encoding='utf-8'))
+    assert cycle_packet.get('action') == 'baseline-monitor-cycle'
+    assert cycle_packet.get('mode') == 'live'
+    assert cycle_packet.get('posture_trigger') == 'lockdown'
+    assert cycle_packet.get('baseline_window_id')
+    assert cycle_packet.get('baseline_packet_path')
+    assert cycle_packet.get('analysis_packet_path')
+    assert cycle_packet.get('monitor_state_path').endswith('baseline_monitor_state.json')
+    assert (cycle_packet.get('continuity') or {}).get('state') == 'fresh_start'
+
+    evidence_index = log_dir / 'data' / 'calamum' / 'observer_derived' / 'sim' / 'live' / 'evidence' / 'index.jsonl'
+    cycle_row = _latest_jsonl_row_for_event(evidence_index, 'baseline_monitor_cycle')
+    assert cycle_row.get('decision') == 'go'
+    assert Path(str(cycle_row.get('packet_path', '')).replace('/', os.sep)).exists()
+
+    monitor_state = log_dir / 'control' / 'calamum' / 'baseline_monitor_state.json'
+    monitor_doc = json.loads(monitor_state.read_text(encoding='utf-8'))
+    assert monitor_doc.get('last_validation_cycle_event') == 'baseline_monitor_cycle'
+    assert monitor_doc.get('last_validation_cycle_decision') == 'go'
+    assert monitor_doc.get('last_validation_cycle_packet_path') == str(cycle_packet_path).replace('\\', '/')
+    assert monitor_doc.get('last_baseline_window_id') == cycle_packet.get('baseline_window_id')
+
+
+def test_baseline_monitor_once_preserves_restart_continuity_anchors_between_cycles(tmp_path: Path, monkeypatch) -> None:
+    log_dir = tmp_path / 'logs'
+    for d in [log_dir / 'health', log_dir / 'data' / 'calamum', log_dir / 'control' / 'calamum']:
+        d.mkdir(parents=True, exist_ok=True)
+
+    monkeypatch.setenv('CALAMUM_LOG_DIR', str(log_dir))
+    monkeypatch.setenv('CALAMUM_DATA_SIGNING_KEY', 'unit-test-signing-key')
+    _set_security_report_ref(monkeypatch, log_dir)
+
+    observerctl_module._save_state('sim', 'live')
+
+    observerctl_module._baseline_monitor_once(
+        source='sim',
+        mode='live',
+        normal_interval_sec=0.01,
+        baseline_interval_sec=0.01,
+        baseline_window_sec=0.2,
+        baseline_sample_interval_sec=0.05,
+        min_normal_samples=1,
+        min_baseline_samples=1,
+    )
+
+    monitor_state_path = log_dir / 'control' / 'calamum' / 'baseline_monitor_state.json'
+    first_monitor_doc = json.loads(monitor_state_path.read_text(encoding='utf-8'))
+    first_cycle_path = str(first_monitor_doc.get('last_validation_cycle_packet_path', '') or '')
+    first_baseline_packet_path = str(first_monitor_doc.get('last_baseline_packet_path', '') or '')
+    first_analysis_packet_path = str(first_monitor_doc.get('last_analysis_packet_path', '') or '')
+    first_baseline_window_id = str(first_monitor_doc.get('last_baseline_window_id', '') or '')
+
+    second_packet = observerctl_module._baseline_monitor_once(
+        source='sim',
+        mode='live',
+        normal_interval_sec=999.0,
+        baseline_interval_sec=999.0,
+        baseline_window_sec=0.2,
+        baseline_sample_interval_sec=0.05,
+        min_normal_samples=1,
+        min_baseline_samples=1,
+    )
+
+    second_cycle_path = str(second_packet.get('validation_cycle_packet_path', '') or '')
+    assert second_cycle_path
+    assert second_cycle_path != first_cycle_path
+
+    second_cycle_doc = json.loads(Path(second_cycle_path.replace('/', os.sep)).read_text(encoding='utf-8'))
+    continuity = second_cycle_doc.get('continuity') or {}
+    assert continuity.get('state') == 'preserved'
+    assert (continuity.get('previous_validation_cycle') or {}).get('packet_path') == first_cycle_path
+    assert (continuity.get('previous_baseline') or {}).get('packet_path') == first_baseline_packet_path
+    assert (continuity.get('previous_baseline') or {}).get('window_id') == first_baseline_window_id
+    assert continuity.get('previous_analysis_packet_path') == first_analysis_packet_path
+    assert second_cycle_doc.get('baseline_packet_path') == ''
+    assert second_cycle_doc.get('analysis_packet_path') == ''
+    assert first_cycle_path in ((second_cycle_doc.get('process') or {}).get('evidence_refs') or [])
+
+    second_monitor_doc = json.loads(monitor_state_path.read_text(encoding='utf-8'))
+    assert second_monitor_doc.get('last_baseline_packet_path') == first_baseline_packet_path
+    assert second_monitor_doc.get('last_analysis_packet_path') == first_analysis_packet_path
+    assert second_monitor_doc.get('last_baseline_window_id') == first_baseline_window_id
+
+
+def test_baseline_monitor_once_degrades_explicitly_when_persisted_state_is_malformed(tmp_path: Path, monkeypatch) -> None:
+    log_dir = tmp_path / 'logs'
+    for d in [log_dir / 'health', log_dir / 'data' / 'calamum', log_dir / 'control' / 'calamum']:
+        d.mkdir(parents=True, exist_ok=True)
+
+    monkeypatch.setenv('CALAMUM_LOG_DIR', str(log_dir))
+    monkeypatch.setenv('CALAMUM_DATA_SIGNING_KEY', 'unit-test-signing-key')
+    _set_security_report_ref(monkeypatch, log_dir)
+
+    observerctl_module._save_state('sim', 'canary')
+
+    malformed_state_path = log_dir / 'control' / 'calamum' / 'baseline_monitor_state.json'
+    malformed_state_path.write_text(json.dumps({
+        'last_normal_sample_epoch_s': 'not-a-float',
+        'last_validation_cycle_packet_path': 123,
+        'last_validation_cycle_at_utc': 'definitely-not-utc',
+        'last_baseline_packet_path': 456,
+    }), encoding='utf-8')
+
+    packet = observerctl_module._baseline_monitor_once(
+        source='sim',
+        mode='canary',
+        normal_interval_sec=0.01,
+        baseline_interval_sec=45.0,
+        baseline_window_sec=0.2,
+        baseline_sample_interval_sec=0.05,
+        min_normal_samples=1,
+        min_baseline_samples=1,
+    )
+
+    cycle_packet_path = Path(str(packet.get('validation_cycle_packet_path', '')).replace('/', os.sep))
+    cycle_packet = json.loads(cycle_packet_path.read_text(encoding='utf-8'))
+    continuity = cycle_packet.get('continuity') or {}
+    assert continuity.get('state') == 'degraded'
+    assert 'major_check_failed:baseline_monitor_state_malformed' in (continuity.get('reason_codes') or [])
+    assert (continuity.get('detail_codes') or [])
+    assert (continuity.get('previous_validation_cycle') or {}).get('packet_path') == '123'
+
+    repaired_state = json.loads(malformed_state_path.read_text(encoding='utf-8'))
+    assert repaired_state.get('last_normal_sample_epoch_s') != 'not-a-float'
+    assert repaired_state.get('last_baseline_packet_path') == '456'
 
 
 def test_non_activation_live_projection_can_prove_c22_from_projected_lockdown_defaults(tmp_path: Path, monkeypatch) -> None:
@@ -1443,18 +2080,31 @@ def test_non_activation_live_projection_can_prove_c22_from_projected_lockdown_de
     archive_dir.mkdir(parents=True, exist_ok=True)
 
     segment_path = archive_dir / 'resource_sim_canary_normal_projection_seg0001.jsonl'
+    baseline_segment_path = archive_dir / 'resource_sim_canary_baseline_projection_seg0001.jsonl'
     segment_path.write_text('{"timestamp_utc":"2026-03-22T00:00:00Z"}\n', encoding='utf-8')
-    (resource_dir / 'index.jsonl').write_text(json.dumps({
-        'timestamp_utc': observerctl_module._utc_now(),
-        'segment_path': str(segment_path).replace('\\', '/'),
-        'segment_records': 1,
-        'stream_type': 'resource_normal',
-    }) + '\n', encoding='utf-8')
+    baseline_segment_path.write_text('{"timestamp_utc":"2026-03-22T00:00:00Z","baseline_window_id":"frame8-monitor-window"}\n', encoding='utf-8')
+    (resource_dir / 'index.jsonl').write_text(
+        json.dumps({
+            'timestamp_utc': observerctl_module._utc_now(),
+            'segment_path': str(segment_path).replace('\\', '/'),
+            'segment_records': 1,
+            'stream_type': 'resource_normal',
+        }) + '\n' + json.dumps({
+            'timestamp_utc': observerctl_module._utc_now(),
+            'segment_path': str(baseline_segment_path).replace('\\', '/'),
+            'segment_records': 1,
+            'stream_type': 'resource_baseline',
+            'baseline_window_id': 'frame8-monitor-window',
+            'window_id': 'frame8-monitor-window',
+        }) + '\n',
+        encoding='utf-8',
+    )
 
     baseline_packet_path = evidence_dir / 'observerctl_baseline-analysis_projection_test.json'
     baseline_packet_path.write_text(json.dumps({
         'timestamp_utc': observerctl_module._utc_now(),
         'decision': 'go',
+        'baseline_window_id': 'frame8-monitor-window',
         'sample_counts': {'resource_normal': 1, 'resource_baseline': 1},
         'provenance': {'artifact_path': str(baseline_packet_path).replace('\\', '/')},
     }), encoding='utf-8')
@@ -1780,6 +2430,114 @@ def test_gate_denies_when_security_report_link_unresolvable(tmp_path: Path, monk
     gate = evaluate_gate_decision(status, target_mode='canary')
     assert gate['decision'] == 'no-go'
     assert 'critical_check_failed:run_security_report_missing' in gate['reason_codes']
+
+
+def test_live_gate_denies_when_baseline_monitor_runtime_inactive_but_surfaces_retained_evidence(tmp_path: Path, monkeypatch) -> None:
+    log_dir = tmp_path / 'logs'
+    health = log_dir / 'health'
+    data = log_dir / 'data' / 'calamum'
+    control = log_dir / 'control' / 'calamum'
+
+    for d in [health, data, control]:
+        d.mkdir(parents=True, exist_ok=True)
+
+    _touch(health / 'calamum_ops_watchdog.heartbeat')
+    _touch(health / 'calamum_observer.heartbeat')
+    _touch(health / 'calamum_librarian.heartbeat')
+
+    monkeypatch.setenv('CALAMUM_LOG_DIR', str(log_dir))
+    monkeypatch.setenv('CALAMUM_DATA_SIGNING_KEY', 'unit-test-signing-key')
+    _set_security_report_ref(monkeypatch, log_dir)
+
+    observerctl_module._save_state('sim', 'canary')
+    _write_watchdog_posture(control, posture='lockdown', heartbeat_interval=4, baseline_interval=45)
+    _write_watchdog_resource(control, cpu_now=45, ram_now=50, cpu_p95=40, ram_p95=45, score=0.1, age_s=3)
+
+    resource_dir = data / 'observer_derived' / 'sim' / 'canary' / 'resource'
+    evidence_dir = data / 'observer_derived' / 'sim' / 'canary' / 'evidence'
+    archive_dir = data / 'archive'
+    resource_dir.mkdir(parents=True, exist_ok=True)
+    evidence_dir.mkdir(parents=True, exist_ok=True)
+    archive_dir.mkdir(parents=True, exist_ok=True)
+
+    segment_path = archive_dir / 'resource_sim_canary_normal_frame9_gate_seg0001.jsonl'
+    baseline_segment_path = archive_dir / 'resource_sim_canary_baseline_frame9_gate_seg0001.jsonl'
+    segment_path.write_text('{"timestamp_utc":"2026-03-22T00:00:00Z"}\n', encoding='utf-8')
+    baseline_segment_path.write_text('{"timestamp_utc":"2026-03-22T00:00:00Z","baseline_window_id":"frame9-gate-window"}\n', encoding='utf-8')
+    (resource_dir / 'index.jsonl').write_text(
+        json.dumps({
+            'timestamp_utc': observerctl_module._utc_now(),
+            'segment_path': str(segment_path).replace('\\', '/'),
+            'segment_records': 1,
+            'stream_type': 'resource_normal',
+        }) + '\n' + json.dumps({
+            'timestamp_utc': observerctl_module._utc_now(),
+            'segment_path': str(baseline_segment_path).replace('\\', '/'),
+            'segment_records': 1,
+            'stream_type': 'resource_baseline',
+            'baseline_window_id': 'frame9-gate-window',
+            'window_id': 'frame9-gate-window',
+        }) + '\n',
+        encoding='utf-8',
+    )
+
+    baseline_packet_path = evidence_dir / 'observerctl_baseline-analysis_frame9_gate.json'
+    baseline_packet_path.write_text(json.dumps({
+        'timestamp_utc': observerctl_module._utc_now(),
+        'decision': 'go',
+        'baseline_window_id': 'frame9-gate-window',
+        'sample_counts': {'resource_normal': 2, 'resource_baseline': 1},
+        'provenance': {'artifact_path': str(baseline_packet_path).replace('\\', '/')},
+    }), encoding='utf-8')
+    (evidence_dir / 'index.jsonl').write_text(json.dumps({
+        'timestamp_utc': observerctl_module._utc_now(),
+        'event': 'baseline_analysis',
+        'packet_path': str(baseline_packet_path).replace('\\', '/'),
+    }) + '\n', encoding='utf-8')
+
+    status = collect_runtime_status(source='sim')
+    gate = evaluate_gate_decision(status, target_mode='live')
+    assert gate['decision'] == 'no-go'
+    assert 'critical_check_failed:baseline_monitor_runtime_inactive' in gate['reason_codes']
+    assert gate['stage5_prerequisites']['C24_resource_stream_retention_ready']['status'] == 'ok'
+    assert gate['stage5_prerequisites']['C25_resource_baseline_window_ready']['status'] == 'ok'
+    assert gate['stage5_prerequisites']['baseline_monitor_runtime_ready']['status'] == 'err'
+    assert any(str(ref).endswith('watchdog_posture_state.json') for ref in gate['evidence_refs'])
+    assert any(str(ref).endswith('resource/index.jsonl') for ref in gate['evidence_refs'])
+    assert any(str(ref).endswith('observerctl_baseline-analysis_frame9_gate.json') for ref in gate['evidence_refs'])
+
+
+def test_live_gate_reason_codes_follow_deterministic_activation_order(tmp_path: Path, monkeypatch) -> None:
+    log_dir = tmp_path / 'logs'
+    health = log_dir / 'health'
+    data = log_dir / 'data' / 'calamum'
+    control = log_dir / 'control' / 'calamum'
+
+    for d in [health, data, control]:
+        d.mkdir(parents=True, exist_ok=True)
+
+    _touch(health / 'calamum_ops_watchdog.heartbeat')
+    _touch(health / 'calamum_observer.heartbeat')
+    _touch(health / 'calamum_librarian.heartbeat')
+
+    monkeypatch.setenv('CALAMUM_LOG_DIR', str(log_dir))
+    monkeypatch.setenv('CALAMUM_DATA_SIGNING_KEY', 'unit-test-signing-key')
+    _set_security_report_ref(monkeypatch, log_dir)
+
+    observerctl_module._save_state('sim', 'canary')
+    _write_watchdog_posture(control, posture='lockdown', heartbeat_interval=10, baseline_interval=120)
+    _write_watchdog_resource(control, cpu_now=45, ram_now=50, cpu_p95=40, ram_p95=45, score=0.1, age_s=3)
+
+    status = collect_runtime_status(source='sim')
+    gate = evaluate_gate_decision(status, target_mode='live')
+    assert gate['decision'] == 'no-go'
+    assert gate['reason_codes'] == [
+        'critical_check_failed:lockdown_heartbeat_rate_not_escalated',
+        'critical_check_failed:lockdown_baseline_rate_not_escalated',
+        'critical_check_failed:baseline_monitor_runtime_inactive',
+        'critical_check_failed:resource_stream_retention_unavailable',
+        'critical_check_failed:resource_baseline_window_incomplete',
+    ]
 
 
 def test_live_lockdown_requires_escalated_cadence(tmp_path: Path, monkeypatch) -> None:

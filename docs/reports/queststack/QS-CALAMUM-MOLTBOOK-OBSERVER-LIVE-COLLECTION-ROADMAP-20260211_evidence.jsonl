@@ -1,3 +1,0 @@
-{"ts_utc":"2026-02-12T00:00:00Z","event":"queststack_evidence_initialized","queststack_id":"QS-CALAMUM-MOLTBOOK-OBSERVER-LIVE-COLLECTION-ROADMAP-20260211"}
-{"ts_utc":"2026-02-12T00:00:00Z","event":"implementation_delta_recorded","job_id":"CALAMUM_JOB_0017_MOLTBOOK_OBSERVER_LIVE_COLLECTION_ROADMAP_20260211","commit":"eeba7f35"}
-{"ts_utc":"2026-02-12T00:00:00Z","event":"docs_alignment_updated","refs":["projects/calamum-moltbook-observer/README.md","projects/calamum-moltbook-observer/DATA_METHODOLOGY.md","projects/calamum-moltbook-observer/REFERENCES.md"]}

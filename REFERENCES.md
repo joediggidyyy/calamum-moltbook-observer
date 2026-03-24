@@ -1,22 +1,31 @@
 # References: Calamum Moltbook Observer
 
-## Initial Resources (2026-02-02)
+This index now distinguishes between **public-kept references** and **local-only lineage surfaces**.
 
-- [QuestStack: Preparation](projects/calamum-moltbook-observer/queststacks/QS-CALAMUM-MOLTBOOK-OBSERVER-PREP-20260201.md)
-- [QuestFrame: Preparation](projects/calamum-moltbook-observer/questframes/QF-CALAMUM-MOLTBOOK-OBSERVER-PREP-20260201.json)
-- [Job: Preparation](projects/calamum-moltbook-observer/jobs/CALAMUM_JOB_0001_MOLTBOOK_OBSERVER_PREPARATION_AND_SETUP_20260201.md)
-- [Plan: Experiment Plan](projects/calamum-moltbook-observer/planning/CALAMUM_MOLTBOOK_OBSERVER_EXPERIMENT_PLAN_20260201.md)
+Public-lockdown note:
+
+- local execution/history lanes such as `jobs/`, `planning/`, `questframes/`, `queststacks/`, and `docs/reports/operations/` are retained locally / untracked and are not part of the locked-down public-tracked surface
+- references to those lanes below are lineage/context notes only, not claims that those paths remain public-tracked
+
+## Public-kept references
+
 - [Operations Policy (CodeSentinel-managed execution expectations)](projects/calamum-moltbook-observer/docs/CALAMUM_CODESENTINEL_JOB_EXECUTION_EXPECTATIONS.md)
+- [ObserverCTL CLI Transition Operator Guide](projects/calamum-moltbook-observer/docs/OBSERVERCTL_CLI_TRANSITION_OPERATOR_GUIDE_20260221.md)
+- [Data Methodology](projects/calamum-moltbook-observer/DATA_METHODOLOGY.md)
 - [Project-local Template Library](projects/calamum-moltbook-observer/template_library/README.md)
 
-## Live Collection (Stage 4 / Job 0017)
+## Local-only lineage references (retained locally / untracked)
 
-- Job (project SSOT, Markdown): `projects/calamum-moltbook-observer/jobs/CALAMUM_JOB_0017_MOLTBOOK_OBSERVER_LIVE_COLLECTION_ROADMAP_20260211.md`
-- Job (project SSOT, JSON): `projects/calamum-moltbook-observer/jobs/CALAMUM_JOB_0017_MOLTBOOK_OBSERVER_LIVE_COLLECTION_ROADMAP_20260211.json`
-- QuestStack (execution narrative): `projects/calamum-moltbook-observer/queststacks/QS-CALAMUM-MOLTBOOK-OBSERVER-LIVE-COLLECTION-ROADMAP-20260211.md`
-- QuestStack log (names-only): `logs/queststack/QS-CALAMUM-MOLTBOOK-OBSERVER-LIVE-COLLECTION-ROADMAP-20260211_log.md`
-- QuestStack evidence (names-only): `logs/queststack/QS-CALAMUM-MOLTBOOK-OBSERVER-LIVE-COLLECTION-ROADMAP-20260211_evidence.jsonl`
-- Job report (names-only): `docs/reports/operations/JOB_REPORT_QS-CALAMUM-MOLTBOOK-OBSERVER-LIVE-COLLECTION-ROADMAP-20260211.md`
+These paths remain useful for internal lineage and operator continuity, but they are not part of the public-tracked repo surface:
+
+- `projects/calamum-moltbook-observer/queststacks/QS-CALAMUM-MOLTBOOK-OBSERVER-PREP-20260201.md`
+- `projects/calamum-moltbook-observer/questframes/QF-CALAMUM-MOLTBOOK-OBSERVER-PREP-20260201.json`
+- `projects/calamum-moltbook-observer/jobs/CALAMUM_JOB_0001_MOLTBOOK_OBSERVER_PREPARATION_AND_SETUP_20260201.md`
+- `projects/calamum-moltbook-observer/planning/CALAMUM_MOLTBOOK_OBSERVER_EXPERIMENT_PLAN_20260201.md`
+- `projects/calamum-moltbook-observer/jobs/CALAMUM_JOB_0017_MOLTBOOK_OBSERVER_LIVE_COLLECTION_ROADMAP_20260211.md`
+- `projects/calamum-moltbook-observer/jobs/CALAMUM_JOB_0017_MOLTBOOK_OBSERVER_LIVE_COLLECTION_ROADMAP_20260211.json`
+- `projects/calamum-moltbook-observer/queststacks/QS-CALAMUM-MOLTBOOK-OBSERVER-LIVE-COLLECTION-ROADMAP-20260211.md`
+- `docs/reports/operations/JOB_REPORT_QS-CALAMUM-MOLTBOOK-OBSERVER-LIVE-COLLECTION-ROADMAP-20260211.md`
 
 ## External References Visited
 
@@ -25,12 +34,14 @@
 - Moltbook API base URL (default live client host): https://api.moltbook.com/v1
 - Moltbook Identity docs (identity-token / verify-identity): https://moltbook.com/api/v1
 
-## Local Operational Endpoints (for audits)
+## Local Operational Endpoints (operator-local)
 
 - Calamum ops dashboard / Ghost Console (default): http://127.0.0.1:8899
 - Alternate loopback form used in logs/audits: http://localhost:8899/
 
-## Next steps toward live-collection
+## Operator-local live-collection checkpoints
+
+These checkpoints rely on local runtime/evidence surfaces and are not a public-orientation map of the locked-down repo.
 
 1. **Confirm environment is ready (no secrets in repo)**
 	- Do not store `MOLTBOOK_API_KEY` in any tracked file (including `.env`).

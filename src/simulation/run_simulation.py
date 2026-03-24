@@ -36,7 +36,11 @@ import observerctl as observerctl_module
 
 
 FRAME4_PROBE_DIR = REPO_ROOT / 'report_tmp' / 'frame4_metadata_contract_probe'
+FRAME4_REGRESSION_PROBE_DIR = REPO_ROOT / 'report_tmp' / 'frame4_metadata_contract_regression_probe'
 JOB0022_PROBE_DIR = REPO_ROOT / 'report_tmp' / 'job0022_baseline_monitor_runtime_probe'
+FRAME5_LINEAGE_PROBE_DIR = REPO_ROOT / 'report_tmp' / 'frame5_validation_cycle_lineage_probe'
+FRAME6_RESTART_PROBE_DIR = REPO_ROOT / 'report_tmp' / 'frame6_restart_continuity_probe'
+FRAME6_RECOVERY_PROBE_DIR = REPO_ROOT / 'report_tmp' / 'frame6_state_recovery_probe'
 
 
 def _utc_stamp() -> str:
@@ -85,6 +89,14 @@ def _read_jsonl(path: Path) -> List[Dict[str, Any]]:
 def _read_jsonl_last(path: Path) -> Dict[str, Any]:
     rows = _read_jsonl(path)
     return rows[-1] if rows else {}
+
+
+def _read_jsonl_rows_for_event(path: Path, event: str) -> List[Dict[str, Any]]:
+    expected = str(event or '').strip().lower()
+    return [
+        row for row in _read_jsonl(path)
+        if str(row.get('event', '')).strip().lower() == expected
+    ]
 
 
 def _read_jsonl_latest_matching(path: Path, key: str, expected: str) -> Dict[str, Any]:
@@ -405,6 +417,8 @@ def run_metadata_contract_probe() -> int:
         all_sample_fields_present = all(all(v for v in details['sample_field_presence'].values()) for details in metadata_findings.values())
         all_index_fields_present = all(all(v for v in details['index_field_presence'].values()) for details in metadata_findings.values())
 
+        next_bite_result = 'pass' if (bool(all_sample_fields_present) and bool(all_index_fields_present)) else 'review'
+
         report = {
             'run_id': run_id,
             'phase': 'pre_edit_probe',
@@ -416,6 +430,7 @@ def run_metadata_contract_probe() -> int:
             'all_sample_fields_present': bool(all_sample_fields_present),
             'all_index_fields_present': bool(all_index_fields_present),
             'baseline_window_id_required_only_for_baseline': True,
+            'next_bite_result': next_bite_result,
         }
         review_json = run_dir / 'frame4_metadata_probe.json'
         review_md = run_dir / 'frame4_metadata_probe.md'
@@ -430,14 +445,182 @@ def run_metadata_contract_probe() -> int:
             'review_md': _rel_to_repo(review_md),
             'all_sample_fields_present': bool(all_sample_fields_present),
             'all_index_fields_present': bool(all_index_fields_present),
+            'next_bite_result': next_bite_result,
         })
 
         print('run_id={0}'.format(run_id))
         print('run_dir={0}'.format(_rel_to_repo(run_dir)))
         print('review_json={0}'.format(_rel_to_repo(review_json)))
         print('review_md={0}'.format(_rel_to_repo(review_md)))
+        print('next_bite_result={0}'.format(next_bite_result))
         print('all_sample_fields_present={0}'.format(all_sample_fields_present))
         print('all_index_fields_present={0}'.format(all_index_fields_present))
+        return 0
+    finally:
+        if original_project_root is not None:
+            _restore_probe_environment(original_env, original_project_root)
+
+
+def run_metadata_contract_regression_probe() -> int:
+    run_id = 'frame4-metadata-contract-regression-{0}'.format(_utc_stamp())
+    run_dir = FRAME4_REGRESSION_PROBE_DIR / 'runs' / run_id
+    run_index_jsonl = FRAME4_REGRESSION_PROBE_DIR / 'run_index.jsonl'
+    run_dir.mkdir(parents=True, exist_ok=True)
+
+    original_env: Dict[str, Optional[str]] = {}
+    original_project_root = None
+    try:
+        _sandbox_root, sandbox_log_dir, original_env, original_project_root = _seed_probe_environment(
+            run_dir=run_dir,
+            signing_key='frame4-regression-probe-signing-key',
+            security_report_title='# Frame 4 metadata regression probe security report\n',
+        )
+
+        resource_archive_dir = sandbox_log_dir / 'data' / 'calamum' / 'archive'
+        resource_index = sandbox_log_dir / 'data' / 'calamum' / 'observer_derived' / 'sim' / 'canary' / 'resource' / 'index.jsonl'
+        resource_archive_dir.mkdir(parents=True, exist_ok=True)
+        resource_index.parent.mkdir(parents=True, exist_ok=True)
+
+        normal_segment_path = resource_archive_dir / 'resource_sim_canary_normal_regression_seg0001.jsonl'
+        baseline_segment_path = resource_archive_dir / 'resource_sim_canary_baseline_regression_seg0001.jsonl'
+
+        normal_sample_row = {
+            'record_class': 'resource_telemetry',
+            'run_id': 'frame4-regression-normal-seed',
+            'stream_type': 'resource_normal',
+            'sampling_profile_id': 'resource_normal_v1',
+            'source_axis': 'sim',
+            'timestamp_utc': '2026-03-23T00:00:00Z',
+            'baseline_window_id': 'frame4_regression_normal',
+            'cpu_pct_now': 20.0,
+            'ram_pct_now': 40.0,
+        }
+        baseline_sample_row = {
+            'record_class': 'resource_telemetry',
+            'run_id': 'frame4-regression-baseline-seed',
+            'stream_type': 'resource_baseline',
+            'sampling_profile_id': 'resource_baseline_v1',
+            'mode_at_capture': 'canary',
+            'source_axis': 'sim',
+            'timestamp_utc': '2026-03-23T00:00:01Z',
+            'cpu_pct_now': 30.0,
+            'ram_pct_now': 42.0,
+        }
+        normal_index_row = {
+            'run_id': 'frame4-regression-normal-seed',
+            'stream_type': 'resource_normal',
+            'mode_at_capture': 'canary',
+            'source_axis': 'sim',
+            'timestamp_utc': '2026-03-23T00:00:00Z',
+            'segment_path': str(normal_segment_path).replace('\\', '/'),
+            'segment_records': 1,
+            'window_id': 'frame4_regression_normal',
+        }
+        baseline_index_row = {
+            'run_id': 'frame4-regression-baseline-seed',
+            'stream_type': 'resource_baseline',
+            'sampling_profile_id': 'resource_baseline_v1',
+            'mode_at_capture': 'canary',
+            'source_axis': 'sim',
+            'segment_path': str(baseline_segment_path).replace('\\', '/'),
+            'segment_records': 1,
+            'window_id': 'frame4_regression_baseline',
+        }
+
+        _append_jsonl(normal_segment_path, normal_sample_row)
+        _append_jsonl(baseline_segment_path, baseline_sample_row)
+        _append_jsonl(resource_index, normal_index_row)
+        _append_jsonl(resource_index, baseline_index_row)
+
+        common_fields = ['stream_type', 'sampling_profile_id', 'mode_at_capture', 'source_axis', 'timestamp_utc']
+        baseline_fields = common_fields + ['baseline_window_id']
+
+        metadata_findings = {
+            'resource_normal': {
+                'sample_row_path': str(normal_segment_path).replace('\\', '/'),
+                'index_path': str(resource_index).replace('\\', '/'),
+                'sample_field_presence': _field_presence(normal_sample_row, common_fields),
+                'index_field_presence': _field_presence(normal_index_row, common_fields),
+                'sample_row': normal_sample_row,
+                'index_row': normal_index_row,
+            },
+            'resource_baseline': {
+                'sample_row_path': str(baseline_segment_path).replace('\\', '/'),
+                'index_path': str(resource_index).replace('\\', '/'),
+                'sample_field_presence': _field_presence(baseline_sample_row, baseline_fields),
+                'index_field_presence': _field_presence(baseline_index_row, baseline_fields),
+                'sample_row': baseline_sample_row,
+                'index_row': baseline_index_row,
+            },
+        }
+
+        missing_fields = {
+            stream_name: {
+                'sample_missing': sorted([field for field, present in details['sample_field_presence'].items() if not present]),
+                'index_missing': sorted([field for field, present in details['index_field_presence'].items() if not present]),
+            }
+            for stream_name, details in metadata_findings.items()
+        }
+
+        result_matrix = {
+            'normal_sample_regression_detected': bool(missing_fields['resource_normal']['sample_missing']),
+            'normal_index_regression_detected': bool(missing_fields['resource_normal']['index_missing']),
+            'baseline_sample_regression_detected': bool(missing_fields['resource_baseline']['sample_missing']),
+            'baseline_index_regression_detected': bool(missing_fields['resource_baseline']['index_missing']),
+            'baseline_window_only_required_for_baseline': ('baseline_window_id' not in missing_fields['resource_normal']['sample_missing']) and ('baseline_window_id' in missing_fields['resource_baseline']['sample_missing']),
+        }
+
+        report = {
+            'run_id': run_id,
+            'run_dir': _rel_to_repo(run_dir),
+            'probe_dir': _rel_to_repo(FRAME4_REGRESSION_PROBE_DIR),
+            'script': _rel_to_repo(Path(__file__)),
+            'next_bite_result': _probe_result(result_matrix),
+            'command_runs': {
+                'seed_known_bad_contract': {
+                    'args': ['synthetic-known-bad-contract'],
+                    'returncode': 0,
+                    'stderr_text': '',
+                    'stdout_text': '',
+                    'stdout_json': {'seeded': True},
+                },
+            },
+            'artifact_paths': _report_path_map({
+                'resource_index': resource_index,
+                'resource_normal_segment': normal_segment_path,
+                'resource_baseline_segment': baseline_segment_path,
+            }),
+            'artifact_snapshots': {
+                'metadata_findings': metadata_findings,
+                'missing_fields': missing_fields,
+            },
+            'result_matrix': result_matrix,
+            'findings': {
+                'metadata_findings': metadata_findings,
+                'missing_fields': missing_fields,
+            },
+        }
+
+        report_json = run_dir / 'frame4_metadata_contract_regression_probe.json'
+        report_md = run_dir / 'frame4_metadata_contract_regression_probe.md'
+        _write_json(report_json, report)
+        report_md.write_text(_render_result_matrix_markdown('Frame 4 Metadata Contract Regression Probe', report), encoding='utf-8')
+
+        _append_jsonl(run_index_jsonl, {
+            'run_id': run_id,
+            'timestamp_utc': _utc_stamp(),
+            'run_dir': _rel_to_repo(run_dir),
+            'report_json': _rel_to_repo(report_json),
+            'report_md': _rel_to_repo(report_md),
+            'next_bite_result': report['next_bite_result'],
+            'regression_fields_detected': missing_fields,
+        })
+
+        print('run_id={0}'.format(run_id))
+        print('report_json={0}'.format(_rel_to_repo(report_json)))
+        print('report_md={0}'.format(_rel_to_repo(report_md)))
+        print('run_index={0}'.format(_rel_to_repo(run_index_jsonl)))
+        print('next_bite_result={0}'.format(report['next_bite_result']))
         return 0
     finally:
         if original_project_root is not None:
@@ -536,6 +719,72 @@ def _render_baseline_monitor_runtime_markdown(report: Dict[str, Any]) -> str:
         '',
     ])
     return '\n'.join(lines) + '\n'
+
+
+def _render_result_matrix_markdown(title: str, report: Dict[str, Any], matrix_heading: str = 'Result matrix') -> str:
+    lines = [
+        '# {0}'.format(title),
+        '',
+        '- Run id: `{0}`'.format(report.get('run_id', '')),
+        '- Probe dir: `{0}`'.format(report.get('probe_dir', '')),
+        '- Run dir: `{0}`'.format(report.get('run_dir', '')),
+        '- Overall result: `{0}`'.format(report.get('next_bite_result', 'review')),
+        '',
+        '## Command results',
+        '',
+    ]
+    for name, command in report.get('command_runs', {}).items():
+        lines.append('### {0}'.format(name))
+        lines.append('- returncode: `{0}`'.format(command.get('returncode', '')))
+        lines.append('- args: `{0}`'.format(' '.join(command.get('args', []))))
+        stderr_text = str(command.get('stderr_text', '') or '').strip()
+        lines.append('- stderr: `{0}`'.format(stderr_text if stderr_text else '(empty)'))
+        lines.append('')
+
+    lines.extend([
+        '## {0}'.format(matrix_heading),
+        '',
+    ])
+    for key, value in report.get('result_matrix', {}).items():
+        lines.append('- `{0}`: `{1}`'.format(key, value))
+
+    lines.extend([
+        '',
+        '## Artifact paths',
+        '',
+    ])
+    for key, value in report.get('artifact_paths', {}).items():
+        lines.append('- `{0}`: `{1}`'.format(key, value))
+
+    findings = report.get('findings', {}) if isinstance(report.get('findings', {}), dict) else {}
+    if findings:
+        lines.extend([
+            '',
+            '## Findings',
+            '',
+        ])
+        for key, value in findings.items():
+            lines.append('- `{0}`: `{1}`'.format(key, json.dumps(value, sort_keys=True)))
+
+    return '\n'.join(lines) + '\n'
+
+
+def _probe_result(matrix: Dict[str, bool]) -> str:
+    return 'pass' if matrix and all(bool(value) for value in matrix.values()) else 'review'
+
+
+def _command_stdout_path(command_result: Dict[str, Any], key: str) -> str:
+    stdout_json = command_result.get('stdout_json', {}) if isinstance(command_result.get('stdout_json', {}), dict) else {}
+    return str(stdout_json.get(key, '') or '').strip()
+
+
+def _json_from_text_path(path_text: str) -> Dict[str, Any]:
+    path = Path(str(path_text or '').replace('/', os.sep)) if str(path_text or '').strip() else Path()
+    return _read_json(path) if path and path.exists() else {}
+
+
+def _report_path_map(paths: Dict[str, Path]) -> Dict[str, str]:
+    return {key: _rel_to_repo(value) if str(value) else '' for key, value in paths.items()}
 
 
 def run_baseline_monitor_runtime_probe() -> int:
@@ -708,11 +957,364 @@ def run_baseline_monitor_runtime_probe() -> int:
             _restore_probe_environment(original_env, original_project_root)
 
 
+def run_validation_cycle_lineage_probe() -> int:
+    run_id = 'frame5-validation-cycle-lineage-{0}'.format(_utc_stamp())
+    run_dir = FRAME5_LINEAGE_PROBE_DIR / 'runs' / run_id
+    run_index_jsonl = FRAME5_LINEAGE_PROBE_DIR / 'run_index.jsonl'
+    run_dir.mkdir(parents=True, exist_ok=True)
+
+    original_env: Dict[str, Optional[str]] = {}
+    original_project_root = None
+    try:
+        _sandbox_root, log_dir, original_env, original_project_root = _seed_probe_environment(
+            run_dir=run_dir,
+            signing_key='frame5-lineage-probe-signing-key',
+            security_report_title='# Frame 5 validation-cycle lineage probe security report\n',
+        )
+        observerctl_module._save_state('sim', 'live')
+
+        command_runs = {
+            'cycle_a': _run_observerctl_cli([
+                'baseline', 'monitor-once',
+                '--source', 'sim',
+                '--mode', 'live',
+                '--normal-interval-sec', '0.01',
+                '--baseline-interval-sec', '0.01',
+                '--baseline-window-sec', '0.2',
+                '--baseline-sample-interval-sec', '0.05',
+                '--min-normal-samples', '1',
+                '--min-baseline-samples', '1',
+                '--json',
+            ]),
+        }
+        time.sleep(1.05)
+        command_runs['cycle_b'] = _run_observerctl_cli([
+            'baseline', 'monitor-once',
+            '--source', 'sim',
+            '--mode', 'live',
+            '--normal-interval-sec', '0.01',
+            '--baseline-interval-sec', '0.01',
+            '--baseline-window-sec', '0.2',
+            '--baseline-sample-interval-sec', '0.05',
+            '--min-normal-samples', '1',
+            '--min-baseline-samples', '1',
+            '--json',
+        ])
+
+        evidence_index = log_dir / 'data' / 'calamum' / 'observer_derived' / 'sim' / 'live' / 'evidence' / 'index.jsonl'
+        cycle_rows = _read_jsonl_rows_for_event(evidence_index, 'baseline_monitor_cycle')
+        first_cycle_path = _command_stdout_path(command_runs['cycle_a'], 'validation_cycle_packet_path')
+        second_cycle_path = _command_stdout_path(command_runs['cycle_b'], 'validation_cycle_packet_path')
+        first_cycle_doc = _json_from_text_path(first_cycle_path)
+        second_cycle_doc = _json_from_text_path(second_cycle_path)
+        second_continuity = second_cycle_doc.get('continuity', {}) if isinstance(second_cycle_doc.get('continuity', {}), dict) else {}
+        second_process = second_cycle_doc.get('process', {}) if isinstance(second_cycle_doc.get('process', {}), dict) else {}
+        latest_cycle_row = cycle_rows[-1] if cycle_rows else {}
+
+        result_matrix = {
+            'two_cycle_rows_present': len(cycle_rows) >= 2,
+            'cycle_packet_paths_distinct': bool(first_cycle_path and second_cycle_path and first_cycle_path != second_cycle_path),
+            'latest_cycle_links_previous_validation': str((second_continuity.get('previous_validation_cycle') or {}).get('packet_path', '') or '') == first_cycle_path,
+            'latest_cycle_links_previous_baseline': str((second_continuity.get('previous_baseline') or {}).get('packet_path', '') or '') == str(first_cycle_doc.get('baseline_packet_path', '') or ''),
+            'latest_cycle_links_previous_analysis': str(second_continuity.get('previous_analysis_packet_path', '') or '') == str(first_cycle_doc.get('analysis_packet_path', '') or ''),
+            'latest_cycle_process_refs_include_prior_cycle': first_cycle_path in list(second_process.get('evidence_refs', []) or []),
+            'latest_cycle_has_current_baseline_analysis_refs': bool(second_cycle_doc.get('baseline_packet_path') and second_cycle_doc.get('analysis_packet_path')),
+            'evidence_index_latest_matches_latest_cycle': str(latest_cycle_row.get('packet_path', '') or '') == second_cycle_path,
+        }
+
+        report = {
+            'run_id': run_id,
+            'run_dir': _rel_to_repo(run_dir),
+            'probe_dir': _rel_to_repo(FRAME5_LINEAGE_PROBE_DIR),
+            'script': _rel_to_repo(Path(__file__)),
+            'next_bite_result': _probe_result(result_matrix),
+            'command_runs': command_runs,
+            'artifact_paths': _report_path_map({
+                'evidence_index': evidence_index,
+                'first_cycle_packet': Path(first_cycle_path.replace('/', os.sep)) if first_cycle_path else Path(),
+                'second_cycle_packet': Path(second_cycle_path.replace('/', os.sep)) if second_cycle_path else Path(),
+                'monitor_state': log_dir / 'control' / 'calamum' / 'baseline_monitor_state.json',
+            }),
+            'artifact_snapshots': {
+                'cycle_rows': cycle_rows,
+                'first_cycle_packet': first_cycle_doc,
+                'second_cycle_packet': second_cycle_doc,
+            },
+            'result_matrix': result_matrix,
+            'findings': {
+                'cycle_row_count': len(cycle_rows),
+                'first_cycle_baseline_packet_path': str(first_cycle_doc.get('baseline_packet_path', '') or ''),
+                'first_cycle_analysis_packet_path': str(first_cycle_doc.get('analysis_packet_path', '') or ''),
+                'second_cycle_previous_validation': second_continuity.get('previous_validation_cycle', {}),
+                'second_cycle_previous_baseline': second_continuity.get('previous_baseline', {}),
+            },
+        }
+
+        report_json = run_dir / 'frame5_validation_cycle_lineage_probe.json'
+        report_md = run_dir / 'frame5_validation_cycle_lineage_probe.md'
+        _write_json(report_json, report)
+        report_md.write_text(_render_result_matrix_markdown('Frame 5 Validation Cycle Lineage Probe', report), encoding='utf-8')
+
+        _append_jsonl(run_index_jsonl, {
+            'run_id': run_id,
+            'timestamp_utc': _utc_stamp(),
+            'run_dir': _rel_to_repo(run_dir),
+            'report_json': _rel_to_repo(report_json),
+            'report_md': _rel_to_repo(report_md),
+            'next_bite_result': report['next_bite_result'],
+            'cycle_row_count': len(cycle_rows),
+        })
+
+        print('run_id={0}'.format(run_id))
+        print('report_json={0}'.format(_rel_to_repo(report_json)))
+        print('report_md={0}'.format(_rel_to_repo(report_md)))
+        print('run_index={0}'.format(_rel_to_repo(run_index_jsonl)))
+        print('next_bite_result={0}'.format(report['next_bite_result']))
+        return 0
+    finally:
+        if original_project_root is not None:
+            _restore_probe_environment(original_env, original_project_root)
+
+
+def run_baseline_monitor_restart_continuity_probe() -> int:
+    run_id = 'frame6-restart-continuity-{0}'.format(_utc_stamp())
+    run_dir = FRAME6_RESTART_PROBE_DIR / 'runs' / run_id
+    run_index_jsonl = FRAME6_RESTART_PROBE_DIR / 'run_index.jsonl'
+    run_dir.mkdir(parents=True, exist_ok=True)
+
+    original_env: Dict[str, Optional[str]] = {}
+    original_project_root = None
+    try:
+        _sandbox_root, log_dir, original_env, original_project_root = _seed_probe_environment(
+            run_dir=run_dir,
+            signing_key='frame6-restart-probe-signing-key',
+            security_report_title='# Frame 6 restart continuity probe security report\n',
+        )
+        observerctl_module._save_state('sim', 'live')
+
+        command_runs = {
+            'seed_cycle': _run_observerctl_cli([
+                'baseline', 'monitor-once',
+                '--source', 'sim',
+                '--mode', 'live',
+                '--normal-interval-sec', '0.01',
+                '--baseline-interval-sec', '0.01',
+                '--baseline-window-sec', '0.2',
+                '--baseline-sample-interval-sec', '0.05',
+                '--min-normal-samples', '1',
+                '--min-baseline-samples', '1',
+                '--json',
+            ]),
+            'resume_cycle': _run_observerctl_cli([
+                'baseline', 'monitor-once',
+                '--source', 'sim',
+                '--mode', 'live',
+                '--normal-interval-sec', '999',
+                '--baseline-interval-sec', '999',
+                '--baseline-window-sec', '0.2',
+                '--baseline-sample-interval-sec', '0.05',
+                '--min-normal-samples', '1',
+                '--min-baseline-samples', '1',
+                '--json',
+            ]),
+        }
+
+        monitor_state_path = log_dir / 'control' / 'calamum' / 'baseline_monitor_state.json'
+        resumed_cycle_path = _command_stdout_path(command_runs['resume_cycle'], 'validation_cycle_packet_path')
+        resumed_cycle_doc = _json_from_text_path(resumed_cycle_path)
+        final_monitor_state = _read_json(monitor_state_path) if monitor_state_path.exists() else {}
+
+        seed_cycle_path = _command_stdout_path(command_runs['seed_cycle'], 'validation_cycle_packet_path')
+        seed_cycle_doc = _json_from_text_path(seed_cycle_path)
+        continuity = resumed_cycle_doc.get('continuity', {}) if isinstance(resumed_cycle_doc.get('continuity', {}), dict) else {}
+        previous_validation = continuity.get('previous_validation_cycle', {}) if isinstance(continuity.get('previous_validation_cycle', {}), dict) else {}
+        previous_baseline = continuity.get('previous_baseline', {}) if isinstance(continuity.get('previous_baseline', {}), dict) else {}
+
+        result_matrix = {
+            'continuity_state_preserved': str(continuity.get('state', '')).strip().lower() == 'preserved',
+            'previous_validation_cycle_retained': str(previous_validation.get('packet_path', '') or '') == seed_cycle_path,
+            'previous_baseline_packet_retained': str(previous_baseline.get('packet_path', '') or '') == str(seed_cycle_doc.get('baseline_packet_path', '') or ''),
+            'previous_analysis_packet_retained': str(continuity.get('previous_analysis_packet_path', '') or '') == str(seed_cycle_doc.get('analysis_packet_path', '') or ''),
+            'previous_baseline_window_id_retained': str(previous_baseline.get('window_id', '') or '') == str(seed_cycle_doc.get('baseline_window_id', '') or ''),
+            'resume_cycle_suppressed_new_baseline_artifact': str(resumed_cycle_doc.get('baseline_packet_path', '') or '') == '',
+            'resume_cycle_suppressed_new_analysis_artifact': str(resumed_cycle_doc.get('analysis_packet_path', '') or '') == '',
+            'final_state_retains_anchor_paths': str(final_monitor_state.get('last_baseline_packet_path', '') or '') == str(seed_cycle_doc.get('baseline_packet_path', '') or ''),
+        }
+
+        report = {
+            'run_id': run_id,
+            'run_dir': _rel_to_repo(run_dir),
+            'probe_dir': _rel_to_repo(FRAME6_RESTART_PROBE_DIR),
+            'script': _rel_to_repo(Path(__file__)),
+            'next_bite_result': _probe_result(result_matrix),
+            'command_runs': command_runs,
+            'artifact_paths': _report_path_map({
+                'monitor_state': monitor_state_path,
+                'seed_cycle_packet': Path(seed_cycle_path.replace('/', os.sep)) if seed_cycle_path else Path(),
+                'resume_cycle_packet': Path(resumed_cycle_path.replace('/', os.sep)) if resumed_cycle_path else Path(),
+            }),
+            'artifact_snapshots': {
+                'seed_cycle_packet': seed_cycle_doc,
+                'resume_cycle_packet': resumed_cycle_doc,
+                'monitor_state': final_monitor_state,
+            },
+            'result_matrix': result_matrix,
+            'findings': {
+                'resume_continuity': continuity,
+                'seed_baseline_window_id': str(seed_cycle_doc.get('baseline_window_id', '') or ''),
+                'final_monitor_anchor_paths': {
+                    'last_baseline_packet_path': str(final_monitor_state.get('last_baseline_packet_path', '') or ''),
+                    'last_analysis_packet_path': str(final_monitor_state.get('last_analysis_packet_path', '') or ''),
+                    'last_baseline_window_id': str(final_monitor_state.get('last_baseline_window_id', '') or ''),
+                },
+            },
+        }
+
+        report_json = run_dir / 'frame6_restart_continuity_probe.json'
+        report_md = run_dir / 'frame6_restart_continuity_probe.md'
+        _write_json(report_json, report)
+        report_md.write_text(_render_result_matrix_markdown('Frame 6 Restart Continuity Probe', report), encoding='utf-8')
+
+        _append_jsonl(run_index_jsonl, {
+            'run_id': run_id,
+            'timestamp_utc': _utc_stamp(),
+            'run_dir': _rel_to_repo(run_dir),
+            'report_json': _rel_to_repo(report_json),
+            'report_md': _rel_to_repo(report_md),
+            'next_bite_result': report['next_bite_result'],
+            'continuity_state': str(continuity.get('state', '') or ''),
+        })
+
+        print('run_id={0}'.format(run_id))
+        print('report_json={0}'.format(_rel_to_repo(report_json)))
+        print('report_md={0}'.format(_rel_to_repo(report_md)))
+        print('run_index={0}'.format(_rel_to_repo(run_index_jsonl)))
+        print('next_bite_result={0}'.format(report['next_bite_result']))
+        return 0
+    finally:
+        if original_project_root is not None:
+            _restore_probe_environment(original_env, original_project_root)
+
+
+def run_baseline_monitor_state_recovery_probe() -> int:
+    run_id = 'frame6-state-recovery-{0}'.format(_utc_stamp())
+    run_dir = FRAME6_RECOVERY_PROBE_DIR / 'runs' / run_id
+    run_index_jsonl = FRAME6_RECOVERY_PROBE_DIR / 'run_index.jsonl'
+    run_dir.mkdir(parents=True, exist_ok=True)
+
+    original_env: Dict[str, Optional[str]] = {}
+    original_project_root = None
+    try:
+        _sandbox_root, log_dir, original_env, original_project_root = _seed_probe_environment(
+            run_dir=run_dir,
+            signing_key='frame6-recovery-probe-signing-key',
+            security_report_title='# Frame 6 state recovery probe security report\n',
+        )
+        observerctl_module._save_state('sim', 'canary')
+
+        monitor_state_path = log_dir / 'control' / 'calamum' / 'baseline_monitor_state.json'
+        malformed_state = {
+            'last_normal_sample_epoch_s': 'not-a-float',
+            'last_validation_cycle_packet_path': 123,
+            'last_validation_cycle_at_utc': 'definitely-not-utc',
+            'last_baseline_packet_path': 456,
+        }
+        _write_json(monitor_state_path, malformed_state)
+
+        command_runs = {
+            'recovery_cycle': _run_observerctl_cli([
+                'baseline', 'monitor-once',
+                '--source', 'sim',
+                '--mode', 'canary',
+                '--normal-interval-sec', '0.01',
+                '--baseline-interval-sec', '45',
+                '--baseline-window-sec', '0.2',
+                '--baseline-sample-interval-sec', '0.05',
+                '--min-normal-samples', '1',
+                '--min-baseline-samples', '1',
+                '--json',
+            ]),
+        }
+
+        cycle_packet_path = _command_stdout_path(command_runs['recovery_cycle'], 'validation_cycle_packet_path')
+        cycle_packet = _json_from_text_path(cycle_packet_path)
+        repaired_state = _read_json(monitor_state_path) if monitor_state_path.exists() else {}
+        continuity = cycle_packet.get('continuity', {}) if isinstance(cycle_packet.get('continuity', {}), dict) else {}
+        previous_validation = continuity.get('previous_validation_cycle', {}) if isinstance(continuity.get('previous_validation_cycle', {}), dict) else {}
+
+        result_matrix = {
+            'continuity_marked_degraded': str(continuity.get('state', '')).strip().lower() == 'degraded',
+            'malformed_reason_code_emitted': 'major_check_failed:baseline_monitor_state_malformed' in list(continuity.get('reason_codes', []) or []),
+            'detail_codes_present': bool(list(continuity.get('detail_codes', []) or [])),
+            'previous_validation_path_stringified': str(previous_validation.get('packet_path', '') or '') == '123',
+            'repaired_numeric_anchor_normalized': isinstance(repaired_state.get('last_normal_sample_epoch_s'), (int, float)),
+            'repaired_text_anchor_preserved': str(repaired_state.get('last_baseline_packet_path', '') or '') == '456',
+            'new_cycle_written_back': bool(str(repaired_state.get('last_validation_cycle_packet_path', '') or '').strip()),
+        }
+
+        report = {
+            'run_id': run_id,
+            'run_dir': _rel_to_repo(run_dir),
+            'probe_dir': _rel_to_repo(FRAME6_RECOVERY_PROBE_DIR),
+            'script': _rel_to_repo(Path(__file__)),
+            'next_bite_result': _probe_result(result_matrix),
+            'command_runs': command_runs,
+            'artifact_paths': _report_path_map({
+                'monitor_state': monitor_state_path,
+                'cycle_packet': Path(cycle_packet_path.replace('/', os.sep)) if cycle_packet_path else Path(),
+                'evidence_index': log_dir / 'data' / 'calamum' / 'observer_derived' / 'sim' / 'canary' / 'evidence' / 'index.jsonl',
+            }),
+            'artifact_snapshots': {
+                'malformed_state_seed': malformed_state,
+                'cycle_packet': cycle_packet,
+                'repaired_state': repaired_state,
+            },
+            'result_matrix': result_matrix,
+            'findings': {
+                'continuity': continuity,
+                'repaired_state_anchor_subset': {
+                    'last_normal_sample_epoch_s': repaired_state.get('last_normal_sample_epoch_s'),
+                    'last_baseline_packet_path': repaired_state.get('last_baseline_packet_path'),
+                    'last_validation_cycle_packet_path': repaired_state.get('last_validation_cycle_packet_path'),
+                },
+            },
+        }
+
+        report_json = run_dir / 'frame6_state_recovery_probe.json'
+        report_md = run_dir / 'frame6_state_recovery_probe.md'
+        _write_json(report_json, report)
+        report_md.write_text(_render_result_matrix_markdown('Frame 6 State Recovery Probe', report), encoding='utf-8')
+
+        _append_jsonl(run_index_jsonl, {
+            'run_id': run_id,
+            'timestamp_utc': _utc_stamp(),
+            'run_dir': _rel_to_repo(run_dir),
+            'report_json': _rel_to_repo(report_json),
+            'report_md': _rel_to_repo(report_md),
+            'next_bite_result': report['next_bite_result'],
+            'continuity_state': str(continuity.get('state', '') or ''),
+        })
+
+        print('run_id={0}'.format(run_id))
+        print('report_json={0}'.format(_rel_to_repo(report_json)))
+        print('report_md={0}'.format(_rel_to_repo(report_md)))
+        print('run_index={0}'.format(_rel_to_repo(run_index_jsonl)))
+        print('next_bite_result={0}'.format(report['next_bite_result']))
+        return 0
+    finally:
+        if original_project_root is not None:
+            _restore_probe_environment(original_env, original_project_root)
+
+
 def _definition_registry() -> Dict[str, Callable[[], int]]:
     return {
         'feedback-loop': run_feedback_loop_simulation,
         'metadata-contract': run_metadata_contract_probe,
+        'metadata-contract-regression': run_metadata_contract_regression_probe,
         'baseline-monitor-runtime': run_baseline_monitor_runtime_probe,
+        'validation-cycle-lineage': run_validation_cycle_lineage_probe,
+        'baseline-monitor-restart-continuity': run_baseline_monitor_restart_continuity_probe,
+        'baseline-monitor-state-recovery': run_baseline_monitor_state_recovery_probe,
     }
 
 
@@ -722,7 +1324,7 @@ def build_parser() -> argparse.ArgumentParser:
         'definition',
         nargs='?',
         default='feedback-loop',
-        help='Definition to run: feedback-loop, metadata-contract, baseline-monitor-runtime',
+        help='Definition to run: feedback-loop, metadata-contract, metadata-contract-regression, baseline-monitor-runtime, validation-cycle-lineage, baseline-monitor-restart-continuity, baseline-monitor-state-recovery',
     )
     parser.add_argument(
         '--list-definitions',
@@ -738,7 +1340,15 @@ def main(argv: Optional[List[str]] = None) -> int:
     registry = _definition_registry()
 
     if args.list_definitions:
-        for name in ['feedback-loop', 'metadata-contract', 'baseline-monitor-runtime']:
+        for name in [
+            'feedback-loop',
+            'metadata-contract',
+            'metadata-contract-regression',
+            'baseline-monitor-runtime',
+            'validation-cycle-lineage',
+            'baseline-monitor-restart-continuity',
+            'baseline-monitor-state-recovery',
+        ]:
             print(name)
         return 0
 

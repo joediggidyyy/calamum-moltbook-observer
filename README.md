@@ -5,7 +5,7 @@
 **Owner**: ORACL-Prime  
 **Status**: Active (Phase 5: Model Training Enabled)  
 **Created**: 2026-02-01  
-**Last Update**: 2026-02-10 (v1.2.0)
+**Last Update**: 2026-03-24 (public-lockdown reconciliation)
 
 ---
 
@@ -26,14 +26,38 @@ The **Moltbook Observer** project is a security research initiative designed to 
   <em>Secure / In-Memory / Ephemeral</em>
 </p>
 
+## Public-lockdown status note
+
+This repository now operates with a **locked-down public surface** plus explicitly retained **local-only execution/history surfaces**.
+
+Public-kept core:
+
+- source code, deployment, assets, templates, methodology, security/control docs, and selected operator/reference docs
+
+Local-only / untracked execution history retained on the operator machine:
+
+- `jobs/`
+- `planning/`
+- `questframes/`
+- `queststacks/`
+- `demo_output/`
+- `logs/`
+- `local_untracked/`
+- `deliverables/`
+- `.agent_session/`
+
+Mixed/reporting note:
+
+- tracked `docs/reports/**` survivors are currently legacy or rewrite/promote surfaces, not a claim that `docs/reports/` remains a public catch-all root
+- the future narrow public reporting target remains `docs/reports/public/aggregate_statistics/`
+
 ## Directory Structure
 
 ```text
 projects/calamum-moltbook-observer/
- jobs/               # Job Definitions (The "Why" & "How")
- planning/           # Experiment Plans & Hypotheses
- questframes/        # Specs for execution tracking
- queststacks/        # Logs of execution history
+ assets/             # Branding and static assets
+ deployment/         # Deployment/support surfaces kept public
+ docs/               # Public-kept reference docs + mixed legacy/rewrite-promote report survivors
  src/                # Source Code (The "What")
     analysis/         # ML Models & Notebooks (Stage 4 Analysis)
     deployment/       # Dockerfiles & Hardening Profiles (Stage 2)
@@ -42,11 +66,13 @@ projects/calamum-moltbook-observer/
     calamum_sampler.py # The Agent (Stage 1/3)
     calamum_observer_agent.py # Local demo agent (heartbeats + JSONL + signal consumer)
     obfuscator_lib.py # Safety Layer (Stage 1/3)
+ template_library/   # Project-local tracked templates
+ tools/              # Audits, reporting tools, and support scripts
  launch_ghost_console.ps1 # Ghost Console V2 launcher (Edge app-mode)
  REFERENCES.md       # Index of detailed artifact links
 ```
 
-Note: Coursework write-ups and submission artifacts are maintained **locally** (not tracked in the public repository).
+Local-only execution/history lanes are retained outside the intended public-tracked surface. See the public-lockdown note above for the current boundary.
 
 ## Experiment Stages
 
@@ -61,16 +87,22 @@ Note: Coursework write-ups and submission artifacts are maintained **locally** (
 ## Key Artifacts
 
 ### Documentation
-- **Master Plan**: [Moltbook Observer Experiment Plan](planning/CALAMUM_MOLTBOOK_OBSERVER_EXPERIMENT_PLAN_20260201.md)
 - **Operations Policy (CodeSentinel job execution)**: [Job Execution Expectations](docs/CALAMUM_CODESENTINEL_JOB_EXECUTION_EXPECTATIONS.md)
-- **ML Gap Analysis**: [Model Training Implementation](planning/CALAMUM_MODEL_TRAINING_GAP_ANALYSIS_20260210.md)
+- **Observer Runtime Guide**: [ObserverCTL CLI Transition Operator Guide](docs/OBSERVERCTL_CLI_TRANSITION_OPERATOR_GUIDE_20260221.md)
 - **Methodology**: [Data Simulation & Logging](DATA_METHODOLOGY.md)
 - **Hardening Profile**: [Container Constraints](src/deployment/HARDENING_PROFILE.md)
 - **Sentinel**: [Triple-Redundancy Watchdog](src/sentinel.py)
+- **Reference Index**: [References](REFERENCES.md)
 
-### Evidence (Logs)
+Local-only lineage note:
+
+- historical plans, jobs, questframes, and queststacks are retained locally / untracked and are no longer presented as part of the public-tracked repo structure
+
+### Runtime evidence (retained locally)
 - **Stage 1 (Public Sample)**: `logs/data/calamum/moltbook_samples_obfuscated.jsonl`
 - **Stage 3 (Canary Metrics)**: `logs/data/calamum/moltbook_canary_metrics.jsonl`
+
+These runtime evidence streams are intentionally retained locally and are not part of the locked-down public-tracked surface.
 
 ## Visuals
 
@@ -89,6 +121,8 @@ Observer runtime operations are exposed through `src/observerctl.py` and are int
 Operator guide for collaborative CLI transitions:
 
 - `docs/OBSERVERCTL_CLI_TRANSITION_OPERATOR_GUIDE_20260221.md`
+
+The operator guide remains public-kept, but some lineage references inside it point to local-only execution surfaces retained outside the tracked public boundary.
 
 Install native CLI entrypoint (one-time per environment):
 
@@ -173,11 +207,11 @@ For local testing without a live container, `src/calamum_observer_agent.py` can:
 ## Academic Reproducibility
 
 This project maintains rigorous separation between:
-1.  **Intent** (Jobs/Planning): Why we are doing this.
+1.  **Intent** (local-only execution lineage): Why we are doing this; retained locally in job/planning/quest surfaces.
 2.  **Mechanism** (Src): The code executed.
-3.  **Observation** (Logs): The raw data (with PII hashed).
+3.  **Observation** (local runtime evidence): The raw data (with PII hashed), retained locally under ignored runtime/output paths.
 
-See `docs/reports/operations/` for narrative reports on methodology.
+Tracked `docs/reports/**` survivors are currently mixed legacy/rewrite-promote territory, not the canonical public reporting lane.
 
 ## Live collection contract (names-only)
 
@@ -185,4 +219,4 @@ When `CALAMUM_MOLTBOOK_SOURCE=live` and `CALAMUM_OPS_MODE` is not `CANARY`, the 
 
 - `logs/data/calamum/moltbook_live_metrics.jsonl`
 
-This path is referenced by Stage 4/Job 0017 validation tooling.
+This is a local runtime path retained outside the locked-down public-tracked surface.

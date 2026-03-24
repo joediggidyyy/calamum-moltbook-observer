@@ -6,6 +6,8 @@
 >
 > Status: Active runbook (living manual)
 
+> Public-lockdown note (2026-03-24): this guide remains a tracked operator/reference surface, but some historical execution-lineage references inside it point to local-only / untracked project lanes (for example `planning/` and `jobs/`). Treat those as internal lineage context rather than as the public-facing repo map.
+
 ---
 
 ## 1) Purpose
@@ -25,8 +27,8 @@ This guide is designed to be updated as execution matures (especially simulation
 Primary policy anchors:
 
 - `docs/CALAMUM_CODESENTINEL_JOB_EXECUTION_EXPECTATIONS.md`
-- `planning/OBSERVERCTL_MODE_TRANSITION_MATRIX_CHAPTER_20260221.md`
-- `jobs/CALAMUM_JOB_0023_OBSERVERCTL_COMMAND_SURFACE_PLANNING_20260221.md`
+- local-only lineage reference: `planning/OBSERVERCTL_MODE_TRANSITION_MATRIX_CHAPTER_20260221.md`
+- local-only lineage reference: `jobs/CALAMUM_JOB_0023_OBSERVERCTL_COMMAND_SURFACE_PLANNING_20260221.md`
 
 ---
 
@@ -57,7 +59,7 @@ Simulation policy:
 
 Use this for any active lane:
 
-1. Record task start in your local tracker/run log.
+1. Record task start in your local tracker/run log or other approved local-only execution surface.
 2. Execute runtime work using `observerctl` commands.
 3. Keep evidence/log/report artifacts current while work proceeds.
 4. Record task close in your local tracker/run log.
@@ -146,6 +148,8 @@ For lockdown transitions, cadence-escalation checks must be satisfied.
 ---
 
 ## 8) Canonical output and evidence paths
+
+All paths in this section are operator/runtime paths. Their presence here does not imply they belong to the public-tracked repo surface.
 
 Observer-derived metrics:
 

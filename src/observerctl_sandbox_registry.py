@@ -11,16 +11,34 @@ from typing import Any, Callable, Dict, List, Optional, cast
 DefinitionRecord = Dict[str, Any]
 
 
-_PROJECT_ROOT = Path(__file__).resolve().parent.parent
-_REPORT_TMP = _PROJECT_ROOT / 'report_tmp'
+_SRC_DIR = Path(__file__).resolve().parent
+_PROJECT_ROOT = _SRC_DIR.parent
+_REPO_ROOT = _PROJECT_ROOT.parents[1]
+_REPORT_TMP = _REPO_ROOT / 'report_tmp'
 
 
 def _metadata_contract_run_index() -> Path:
     return _REPORT_TMP / 'frame4_metadata_contract_probe' / 'run_index.jsonl'
 
 
+def _metadata_contract_regression_run_index() -> Path:
+    return _REPORT_TMP / 'frame4_metadata_contract_regression_probe' / 'run_index.jsonl'
+
+
 def _baseline_monitor_runtime_run_index() -> Path:
     return _REPORT_TMP / 'job0022_baseline_monitor_runtime_probe' / 'run_index.jsonl'
+
+
+def _validation_cycle_lineage_run_index() -> Path:
+    return _REPORT_TMP / 'frame5_validation_cycle_lineage_probe' / 'run_index.jsonl'
+
+
+def _baseline_monitor_restart_continuity_run_index() -> Path:
+    return _REPORT_TMP / 'frame6_restart_continuity_probe' / 'run_index.jsonl'
+
+
+def _baseline_monitor_state_recovery_run_index() -> Path:
+    return _REPORT_TMP / 'frame6_state_recovery_probe' / 'run_index.jsonl'
 
 
 def _load_simulation_runner() -> Any:
@@ -35,8 +53,24 @@ def _run_metadata_contract() -> int:
     return int(_load_simulation_runner().run_metadata_contract_probe())
 
 
+def _run_metadata_contract_regression() -> int:
+    return int(_load_simulation_runner().run_metadata_contract_regression_probe())
+
+
 def _run_baseline_monitor_runtime() -> int:
     return int(_load_simulation_runner().run_baseline_monitor_runtime_probe())
+
+
+def _run_validation_cycle_lineage() -> int:
+    return int(_load_simulation_runner().run_validation_cycle_lineage_probe())
+
+
+def _run_baseline_monitor_restart_continuity() -> int:
+    return int(_load_simulation_runner().run_baseline_monitor_restart_continuity_probe())
+
+
+def _run_baseline_monitor_state_recovery() -> int:
+    return int(_load_simulation_runner().run_baseline_monitor_state_recovery_probe())
 
 
 def get_definitions() -> List[DefinitionRecord]:
@@ -70,6 +104,20 @@ def get_definitions() -> List[DefinitionRecord]:
             'runner': _run_metadata_contract,
         },
         {
+            'id': 'metadata-contract-regression',
+            'title': 'Metadata contract regression probe',
+            'summary': 'Validate that known-bad retained metadata rows are flagged as contract regressions.',
+            'status': 'stable',
+            'category': 'metadata-probe',
+            'aliases': [],
+            'selector_policy': 'exact-name-only',
+            'writes_to': 'report_tmp/frame4_metadata_contract_regression_probe',
+            'purpose': 'Prove Frame 4 negative-path regression detection catches missing required metadata fields.',
+            'command': 'observerctl sandbox run metadata-contract-regression',
+            'run_index_path': str(_metadata_contract_regression_run_index()).replace('\\', '/'),
+            'runner': _run_metadata_contract_regression,
+        },
+        {
             'id': 'baseline-monitor-runtime',
             'title': 'Baseline monitor runtime probe',
             'summary': 'Validate baseline-monitor runtime liveness plus resource_normal retention continuity.',
@@ -82,6 +130,48 @@ def get_definitions() -> List[DefinitionRecord]:
             'command': 'observerctl sandbox run baseline-monitor-runtime',
             'run_index_path': str(_baseline_monitor_runtime_run_index()).replace('\\', '/'),
             'runner': _run_baseline_monitor_runtime,
+        },
+        {
+            'id': 'validation-cycle-lineage',
+            'title': 'Validation cycle lineage probe',
+            'summary': 'Validate append-only validation-cycle evidence growth and prior-cycle linkage semantics.',
+            'status': 'stable',
+            'category': 'evidence-probe',
+            'aliases': [],
+            'selector_policy': 'exact-name-only',
+            'writes_to': 'report_tmp/frame5_validation_cycle_lineage_probe',
+            'purpose': 'Prove Frame 5 validation-cycle lineage is append-only and references prior retained evidence correctly.',
+            'command': 'observerctl sandbox run validation-cycle-lineage',
+            'run_index_path': str(_validation_cycle_lineage_run_index()).replace('\\', '/'),
+            'runner': _run_validation_cycle_lineage,
+        },
+        {
+            'id': 'baseline-monitor-restart-continuity',
+            'title': 'Baseline monitor restart continuity probe',
+            'summary': 'Validate restart-safe continuity anchor preservation across resumed monitor cycles.',
+            'status': 'stable',
+            'category': 'continuity-probe',
+            'aliases': [],
+            'selector_policy': 'exact-name-only',
+            'writes_to': 'report_tmp/frame6_restart_continuity_probe',
+            'purpose': 'Prove Frame 6 restart continuity preserves prior validation and baseline anchors across resumed cycles.',
+            'command': 'observerctl sandbox run baseline-monitor-restart-continuity',
+            'run_index_path': str(_baseline_monitor_restart_continuity_run_index()).replace('\\', '/'),
+            'runner': _run_baseline_monitor_restart_continuity,
+        },
+        {
+            'id': 'baseline-monitor-state-recovery',
+            'title': 'Baseline monitor state recovery probe',
+            'summary': 'Validate malformed persisted monitor state degrades explicitly and repairs cleanly.',
+            'status': 'stable',
+            'category': 'recovery-probe',
+            'aliases': [],
+            'selector_policy': 'exact-name-only',
+            'writes_to': 'report_tmp/frame6_state_recovery_probe',
+            'purpose': 'Prove malformed persisted baseline-monitor state is surfaced as degraded continuity and normalized on writeback.',
+            'command': 'observerctl sandbox run baseline-monitor-state-recovery',
+            'run_index_path': str(_baseline_monitor_state_recovery_run_index()).replace('\\', '/'),
+            'runner': _run_baseline_monitor_state_recovery,
         },
     ]
 

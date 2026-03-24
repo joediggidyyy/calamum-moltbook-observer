@@ -37,6 +37,24 @@ REASON_MAP = {
     'critical_check_failed:heartbeat.watchdog': 'critical_check_failed:watchdog_heartbeat_stale',
     'critical_check_failed:heartbeat.observer': 'critical_check_failed:observer_heartbeat_stale',
 }
+ACTIVATION_REASON_PRIORITY = [
+    'critical_check_failed:watchdog_heartbeat_stale',
+    'critical_check_failed:observer_heartbeat_stale',
+    'critical_check_failed:env.signing_key',
+    'critical_check_failed:env.moltbook_api_key',
+    'critical_check_failed:watchdog_trigger_posture_invalid',
+    'critical_check_failed:run_security_report_missing',
+    'critical_check_failed:lockdown_heartbeat_rate_not_escalated',
+    'critical_check_failed:lockdown_baseline_rate_not_escalated',
+    'critical_check_failed:baseline_monitor_runtime_inactive',
+    'critical_check_failed:resource_stream_retention_unavailable',
+    'critical_check_failed:resource_baseline_window_incomplete',
+    'critical_check_failed:resource_baseline_invalid',
+    'critical_check_failed:resource_sampling_stale',
+    'critical_check_failed:cpu_spike_lockdown',
+    'critical_check_failed:ram_spike_lockdown',
+    'critical_check_failed:resource_spike_score_critical',
+]
 STATE_FILE = 'observerctl_state.json'
 LAST_GATE_FILE = 'observerctl_last_gate.json'
 POLICY_FILE = 'observerctl_policy.json'
@@ -91,6 +109,10 @@ def _utc_now() -> str:
     return datetime.now(timezone.utc).isoformat().replace('+00:00', 'Z')
 
 
+def _utc_compact_stamp() -> str:
+    return datetime.now(timezone.utc).strftime('%Y%m%dT%H%M%S%fZ')
+
+
 def _project_root() -> Path:
     return Path(__file__).resolve().parent.parent
 
@@ -101,6 +123,30 @@ def _read_env_presence(name: str) -> bool:
 
 def _sha256_text(text: str) -> str:
     return hashlib.sha256(text.encode('utf-8')).hexdigest()
+
+
+def _merge_evidence_refs(*collections: Any) -> List[str]:
+    refs: List[str] = []
+    for collection in collections:
+        if isinstance(collection, list):
+            for item in collection:
+                text = str(item or '').strip()
+                if text and text not in refs:
+                    refs.append(text)
+        else:
+            text = str(collection or '').strip()
+            if text and text not in refs:
+                refs.append(text)
+    return refs
+
+
+def _order_reason_codes(reason_codes: List[str], for_activation_path: bool = False) -> List[str]:
+    if not for_activation_path:
+        return list(reason_codes)
+    priority = {code: idx for idx, code in enumerate(ACTIVATION_REASON_PRIORITY)}
+    indexed = list(enumerate(reason_codes))
+    indexed.sort(key=lambda item: (priority.get(str(item[1]), len(priority)), item[0]))
+    return [str(code) for _, code in indexed]
 
 
 def _normalize_source(source: str) -> str:
@@ -381,6 +427,74 @@ def _baseline_monitor_state_path() -> Path:
     return _control_file(BASELINE_MONITOR_STATE_FILE)
 
 
+def _monitor_state_text(raw: Dict[str, Any], key: str, issues: List[str]) -> str:
+    value = raw.get(key, '')
+    if value in ('', None):
+        return ''
+    if not isinstance(value, str):
+        issues.append('invalid_type:{0}'.format(key))
+    return str(value).strip()
+
+
+def _monitor_state_float(raw: Dict[str, Any], key: str, issues: List[str]) -> float:
+    value = raw.get(key, 0.0)
+    if value in ('', None):
+        return 0.0
+    parsed = _to_float_or_none(value)
+    if parsed is None or float(parsed) < 0.0:
+        issues.append('invalid_float:{0}'.format(key))
+        return 0.0
+    return float(parsed)
+
+
+def _load_monitor_continuity(raw_state: Dict[str, Any]) -> Dict[str, Any]:
+    raw = raw_state if isinstance(raw_state, dict) else {}
+    issues: List[str] = []
+
+    anchors = {
+        'last_normal_sample_epoch_s': _monitor_state_float(raw, 'last_normal_sample_epoch_s', issues),
+        'last_baseline_window_epoch_s': _monitor_state_float(raw, 'last_baseline_window_epoch_s', issues),
+        'last_analysis_epoch_s': _monitor_state_float(raw, 'last_analysis_epoch_s', issues),
+        'last_normal_packet_path': _monitor_state_text(raw, 'last_normal_packet_path', issues),
+        'last_baseline_packet_path': _monitor_state_text(raw, 'last_baseline_packet_path', issues),
+        'last_analysis_packet_path': _monitor_state_text(raw, 'last_analysis_packet_path', issues),
+        'last_validation_cycle_packet_path': _monitor_state_text(raw, 'last_validation_cycle_packet_path', issues),
+        'last_validation_cycle_decision': _monitor_state_text(raw, 'last_validation_cycle_decision', issues),
+        'last_validation_cycle_event': _monitor_state_text(raw, 'last_validation_cycle_event', issues),
+        'last_validation_cycle_at_utc': _monitor_state_text(raw, 'last_validation_cycle_at_utc', issues),
+        'last_baseline_window_id': _monitor_state_text(raw, 'last_baseline_window_id', issues),
+    }
+
+    ts_text = anchors['last_validation_cycle_at_utc']
+    if ts_text and _parse_utc_iso8601(ts_text) is None:
+        issues.append('invalid_timestamp:last_validation_cycle_at_utc')
+        anchors['last_validation_cycle_at_utc'] = ''
+
+    if not anchors['last_baseline_window_id'] and anchors['last_baseline_packet_path']:
+        baseline_packet = _load_json_file(Path(anchors['last_baseline_packet_path'].replace('/', os.sep)), {})
+        derived_window_id = str(baseline_packet.get('window_id', '') or '').strip()
+        if derived_window_id:
+            anchors['last_baseline_window_id'] = derived_window_id
+
+    prior_cycle_present = bool(anchors['last_validation_cycle_packet_path'])
+    if issues:
+        state = 'degraded'
+        reason_codes = ['major_check_failed:baseline_monitor_state_malformed']
+    elif prior_cycle_present:
+        state = 'preserved'
+        reason_codes = []
+    else:
+        state = 'fresh_start'
+        reason_codes = []
+
+    return {
+        'state': state,
+        'reason_codes': reason_codes,
+        'detail_codes': issues,
+        'anchors': anchors,
+    }
+
+
 def _read_pid(path: Path) -> Optional[int]:
     try:
         if not path.exists():
@@ -549,7 +663,7 @@ def _runtime_baseline_monitor_status(max_age_sec: float = 90.0) -> Dict[str, Any
 
 
 def _posture_receipt_output_path(source: str, mode: str, event: str) -> Path:
-    ts = datetime.now(timezone.utc).strftime('%Y%m%dT%H%M%SZ')
+    ts = _utc_compact_stamp()
     src = _normalize_source(source)
     m = str(mode or 'watch').strip().lower()
     if m not in MODES:
@@ -654,47 +768,120 @@ def _apply_watchdog_posture(source: str, mode: str, event: str = 'posture-apply'
 
 def _resource_index_health(source: str, mode: str, max_age_sec: float) -> Dict[str, Any]:
     idx = _resource_index_path(source, mode)
-    latest_record: Optional[Dict[str, Any]] = None
-    total_records = 0
     expected_stream_type = 'resource_normal'
-    if idx.exists():
+    index_rows = _load_resource_index_rows(source, mode, stream_type=expected_stream_type)
+    latest_record = index_rows[-1] if index_rows else None
+    total_records = 0
+    for row in index_rows:
         try:
-            with idx.open('r', encoding='utf-8', errors='ignore') as f:
-                for line in f:
-                    line = str(line or '').strip()
-                    if not line:
-                        continue
-                    try:
-                        row = json.loads(line)
-                    except Exception:
-                        continue
-                    if not isinstance(row, dict):
-                        continue
-                    if str(row.get('stream_type', '')).strip().lower() != expected_stream_type:
-                        continue
-                    latest_record = row
-                    try:
-                        total_records += int(row.get('segment_records', 0) or 0)
-                    except Exception:
-                        total_records += 0
+            total_records += int(row.get('segment_records', 0) or 0)
         except Exception:
-            latest_record = None
+            total_records += 0
     latest_ts = _parse_utc_iso8601((latest_record or {}).get('timestamp_utc')) if latest_record else None
     age_seconds = None if latest_ts is None else max(0.0, (datetime.now(timezone.utc) - latest_ts).total_seconds())
-    segment_path = Path(str((latest_record or {}).get('segment_path', '') or '')) if latest_record else None
-    segment_exists = bool(segment_path and segment_path.exists())
-    ready = bool(idx.exists() and latest_record and segment_exists and age_seconds is not None and age_seconds <= float(max_age_sec))
+
+    manifest_path = _resource_archive_dir() / 'manifest.json'
+    manifest_payload = _load_json_file(manifest_path, {}) if manifest_path.exists() else {}
+    resolution = _resolve_resource_segment(str((latest_record or {}).get('segment_path', '') or ''), manifest_payload)
+
+    ready = bool(idx.exists() and latest_record and bool(resolution.get('segment_exists')) and age_seconds is not None and age_seconds <= float(max_age_sec))
     return {
         'path': str(idx).replace('\\', '/'),
         'exists': idx.exists(),
         'expected_stream_type': expected_stream_type,
         'latest_record': latest_record or {},
-        'segment_exists': bool(segment_exists),
+        'archive_manifest_path': str(manifest_path).replace('\\', '/'),
+        'archive_manifest_exists': bool(manifest_path.exists()),
+        'segment_resolution': str(resolution.get('segment_resolution', 'missing')),
+        'resolved_segment_path': str(resolution.get('resolved_segment_path', '')),
+        'archived_artifact_path': str(resolution.get('archived_artifact_path', '')),
+        'segment_exists': bool(resolution.get('segment_exists')),
         'age_seconds': None if age_seconds is None else round(float(age_seconds), 3),
         'max_age_seconds': float(max_age_sec),
         'records_indexed': int(total_records),
         'status': 'ok' if ready else 'err',
     }
+
+
+def _load_resource_index_rows(
+    source: str,
+    mode: str,
+    stream_type: str = '',
+    baseline_window_id: str = '',
+) -> List[Dict[str, Any]]:
+    idx = _resource_index_path(source, mode)
+    rows: List[Dict[str, Any]] = []
+    if not idx.exists():
+        return rows
+
+    expected_stream_type = str(stream_type or '').strip().lower()
+    expected_window_id = str(baseline_window_id or '').strip()
+    try:
+        with idx.open('r', encoding='utf-8', errors='ignore') as f:
+            for line in f:
+                line = str(line or '').strip()
+                if not line:
+                    continue
+                try:
+                    row = json.loads(line)
+                except Exception:
+                    continue
+                if not isinstance(row, dict):
+                    continue
+                row_stream_type = str(row.get('stream_type', '')).strip().lower()
+                if expected_stream_type and row_stream_type != expected_stream_type:
+                    continue
+                row_window_id = str(row.get('baseline_window_id') or row.get('window_id') or '').strip()
+                if expected_window_id and row_window_id != expected_window_id:
+                    continue
+                rows.append(row)
+    except Exception:
+        return []
+    return rows
+
+
+def _resolve_resource_segment(raw_segment_path_text: str, manifest_payload: Dict[str, Any]) -> Dict[str, Any]:
+    raw_segment_path = Path(str(raw_segment_path_text or '').replace('/', os.sep)) if str(raw_segment_path_text or '').strip() else None
+    archived_artifact_path = ''
+    segment_exists = False
+    resolved_segment_path = ''
+    segment_resolution = 'missing'
+
+    if raw_segment_path and raw_segment_path.exists():
+        segment_exists = True
+        resolved_segment_path = str(raw_segment_path).replace('\\', '/')
+        segment_resolution = 'raw'
+    elif raw_segment_path:
+        manifest_row = manifest_payload.get(raw_segment_path.name, {}) if isinstance(manifest_payload, dict) else {}
+        artifact_rel = str((manifest_row or {}).get('artifact_path', '') or '').strip() if isinstance(manifest_row, dict) else ''
+        if artifact_rel:
+            artifact_path = _resource_archive_dir() / artifact_rel
+            archived_artifact_path = str(artifact_path).replace('\\', '/')
+            if artifact_path.exists():
+                segment_exists = True
+                resolved_segment_path = archived_artifact_path
+                segment_resolution = 'archived'
+
+    return {
+        'segment_path': str(raw_segment_path_text or '').strip(),
+        'segment_exists': bool(segment_exists),
+        'resolved_segment_path': resolved_segment_path,
+        'archived_artifact_path': archived_artifact_path,
+        'segment_resolution': segment_resolution,
+    }
+
+
+def _summarize_segment_resolutions(segment_rows: List[Dict[str, Any]]) -> str:
+    if not segment_rows:
+        return 'missing'
+    resolutions = {str(row.get('segment_resolution', 'missing')).strip().lower() or 'missing' for row in segment_rows}
+    if resolutions == {'raw'}:
+        return 'raw'
+    if resolutions == {'archived'}:
+        return 'archived'
+    if 'missing' in resolutions:
+        return 'missing'
+    return 'mixed'
 
 
 def _latest_baseline_analysis(source: str, mode: str) -> Dict[str, Any]:
@@ -730,13 +917,56 @@ def _baseline_window_health(source: str, mode: str, max_age_sec: float) -> Dict[
     ts = _parse_utc_iso8601(packet.get('timestamp_utc')) if packet else None
     age_seconds = None if ts is None else max(0.0, (datetime.now(timezone.utc) - ts).total_seconds())
     decision = str(packet.get('decision', 'no-go')).strip().lower() if packet else 'no-go'
-    ready = bool(packet and decision == 'go' and age_seconds is not None and age_seconds <= float(max_age_sec))
+
+    idx = _resource_index_path(source, mode)
+    manifest_path = _resource_archive_dir() / 'manifest.json'
+    manifest_payload = _load_json_file(manifest_path, {}) if manifest_path.exists() else {}
+    all_baseline_rows = _load_resource_index_rows(source, mode, stream_type='resource_baseline')
+
+    baseline_window_id = str(packet.get('baseline_window_id') or packet.get('window_id') or '').strip()
+    if not baseline_window_id and all_baseline_rows:
+        baseline_window_id = str((all_baseline_rows[-1].get('baseline_window_id') or all_baseline_rows[-1].get('window_id') or '')).strip()
+
+    baseline_rows = _load_resource_index_rows(source, mode, stream_type='resource_baseline', baseline_window_id=baseline_window_id) if baseline_window_id else []
+    resolved_segments = [_resolve_resource_segment(str(row.get('segment_path', '') or ''), manifest_payload) for row in baseline_rows]
+    resolved_segment_paths = [str(row.get('resolved_segment_path', '')) for row in resolved_segments if str(row.get('resolved_segment_path', '')).strip()]
+    raw_segment_paths = [str(row.get('segment_path', '') or '').strip() for row in baseline_rows if str(row.get('segment_path', '') or '').strip()]
+    archived_artifact_paths = [str(row.get('archived_artifact_path', '')) for row in resolved_segments if str(row.get('archived_artifact_path', '')).strip()]
+    missing_segment_paths = [
+        str(row.get('segment_path', '') or '').strip()
+        for row, resolved in zip(baseline_rows, resolved_segments)
+        if not bool(resolved.get('segment_exists'))
+    ]
+    segment_resolution = _summarize_segment_resolutions(resolved_segments)
+    resolved_segment_count = sum(1 for row in resolved_segments if bool(row.get('segment_exists')))
+
+    ready = bool(
+        packet
+        and decision == 'go'
+        and age_seconds is not None
+        and age_seconds <= float(max_age_sec)
+        and baseline_window_id
+        and baseline_rows
+        and resolved_segment_count == len(resolved_segments)
+    )
     return {
         'packet_path': str(((packet.get('provenance', {}) or {}).get('artifact_path', '')) or ''),
         'decision': decision,
         'age_seconds': None if age_seconds is None else round(float(age_seconds), 3),
         'max_age_seconds': float(max_age_sec),
         'sample_counts': packet.get('sample_counts', {}) if isinstance(packet.get('sample_counts', {}), dict) else {},
+        'baseline_window_id': baseline_window_id,
+        'index_path': str(idx).replace('\\', '/'),
+        'archive_manifest_path': str(manifest_path).replace('\\', '/'),
+        'archive_manifest_exists': bool(manifest_path.exists()),
+        'segment_count': int(len(resolved_segments)),
+        'resolved_segment_count': int(resolved_segment_count),
+        'segment_resolution': segment_resolution,
+        'segment_paths': raw_segment_paths,
+        'latest_segment_path': raw_segment_paths[-1] if raw_segment_paths else '',
+        'resolved_segment_paths': resolved_segment_paths,
+        'archived_artifact_paths': archived_artifact_paths,
+        'missing_segment_paths': missing_segment_paths,
         'status': 'ok' if ready else 'err',
     }
 
@@ -939,9 +1169,11 @@ def _baseline_monitor_once(
     posture_packet = _apply_watchdog_posture(src, m, event='baseline-monitor-cycle')
     now = time.time()
     monitor_state = _load_json_file(_baseline_monitor_state_path(), {})
-    last_normal_epoch = _to_float_or_none(monitor_state.get('last_normal_sample_epoch_s')) or 0.0
-    last_baseline_epoch = _to_float_or_none(monitor_state.get('last_baseline_window_epoch_s')) or 0.0
-    last_analysis_epoch = _to_float_or_none(monitor_state.get('last_analysis_epoch_s')) or 0.0
+    continuity = _load_monitor_continuity(monitor_state)
+    continuity_anchors = continuity['anchors']
+    last_normal_epoch = float(continuity_anchors.get('last_normal_sample_epoch_s', 0.0) or 0.0)
+    last_baseline_epoch = float(continuity_anchors.get('last_baseline_window_epoch_s', 0.0) or 0.0)
+    last_analysis_epoch = float(continuity_anchors.get('last_analysis_epoch_s', 0.0) or 0.0)
 
     normal_packet: Dict[str, Any] = {}
     baseline_packet: Dict[str, Any] = {}
@@ -955,7 +1187,7 @@ def _baseline_monitor_once(
             duration_sec=0.0,
             interval_sec=float(max(0.1, normal_interval_sec)),
             segment_records=1000,
-            window_id='monitor_normal_{0}'.format(datetime.now(timezone.utc).strftime('%Y%m%dT%H%M%SZ')),
+            window_id='monitor_normal_{0}'.format(_utc_compact_stamp()),
             output='',
         )
         last_normal_epoch = now
@@ -968,7 +1200,7 @@ def _baseline_monitor_once(
             duration_sec=float(max(0.1, baseline_window_sec)),
             interval_sec=float(max(0.05, baseline_sample_interval_sec)),
             segment_records=1000,
-            window_id='monitor_baseline_{0}'.format(datetime.now(timezone.utc).strftime('%Y%m%dT%H%M%SZ')),
+            window_id='monitor_baseline_{0}'.format(_utc_compact_stamp()),
             output='',
         )
         analysis_packet = _baseline_analyze(
@@ -982,6 +1214,11 @@ def _baseline_monitor_once(
         )
         last_baseline_epoch = now
         last_analysis_epoch = now
+
+    current_normal_packet_path = str(((normal_packet.get('provenance', {}) or {}).get('artifact_path', '')) or '')
+    current_baseline_packet_path = str(((baseline_packet.get('provenance', {}) or {}).get('artifact_path', '')) or '')
+    current_analysis_packet_path = str(((analysis_packet.get('provenance', {}) or {}).get('artifact_path', '')) or '')
+    current_baseline_window_id = str(baseline_packet.get('window_id', '') or '').strip() if baseline_packet else ''
 
     monitor_payload = {
         'updated_at_utc': _utc_now(),
@@ -997,9 +1234,10 @@ def _baseline_monitor_once(
         'baseline_sample_interval_sec': float(baseline_sample_interval_sec),
         'min_normal_samples': int(max(1, min_normal_samples)),
         'min_baseline_samples': int(max(1, min_baseline_samples)),
-        'last_normal_packet_path': str(((normal_packet.get('provenance', {}) or {}).get('artifact_path', '')) or ''),
-        'last_baseline_packet_path': str(((baseline_packet.get('provenance', {}) or {}).get('artifact_path', '')) or ''),
-        'last_analysis_packet_path': str(((analysis_packet.get('provenance', {}) or {}).get('artifact_path', '')) or ''),
+        'last_normal_packet_path': current_normal_packet_path or str(continuity_anchors.get('last_normal_packet_path', '') or ''),
+        'last_baseline_packet_path': current_baseline_packet_path or str(continuity_anchors.get('last_baseline_packet_path', '') or ''),
+        'last_analysis_packet_path': current_analysis_packet_path or str(continuity_anchors.get('last_analysis_packet_path', '') or ''),
+        'last_baseline_window_id': current_baseline_window_id or str(continuity_anchors.get('last_baseline_window_id', '') or ''),
         'last_analysis_decision': str(analysis_packet.get('decision', '')) if analysis_packet else '',
         'watchdog_posture_apply_decision': str(posture_packet.get('decision', 'no-go')),
     }
@@ -1018,6 +1256,98 @@ def _baseline_monitor_once(
         decision = 'no-go'
         reasons.extend(list(analysis_packet.get('reason_codes', [])))
 
+    baseline_window_id = current_baseline_window_id
+
+    cycle_event = 'baseline_monitor_cycle'
+    cycle_output_event = 'baseline_validation_cycle'
+    cycle_packet = {
+        'timestamp_utc': _utc_now(),
+        'runtime_cli_surface': 'observerctl',
+        'decision': decision,
+        'action': 'baseline-monitor-cycle',
+        'source': src,
+        'mode': m,
+        'posture_trigger': _posture_for_mode(m),
+        'baseline_window_id': baseline_window_id,
+        'result': 'pass' if decision == 'go' else 'fail',
+        'reason_codes': reasons,
+        'posture_packet_path': str(posture_packet.get('receipt_path', '') or ''),
+        'normal_packet_path': str(((normal_packet.get('provenance', {}) or {}).get('artifact_path', '')) or ''),
+        'baseline_packet_path': str(((baseline_packet.get('provenance', {}) or {}).get('artifact_path', '')) or ''),
+        'analysis_packet_path': str(((analysis_packet.get('provenance', {}) or {}).get('artifact_path', '')) or ''),
+        'monitor_state_path': str(_baseline_monitor_state_path()).replace('\\', '/'),
+        'continuity': {
+            'state': str(continuity.get('state', 'fresh_start')),
+            'reason_codes': list(continuity.get('reason_codes', [])),
+            'detail_codes': list(continuity.get('detail_codes', [])),
+            'previous_validation_cycle': {
+                'event': str(continuity_anchors.get('last_validation_cycle_event', '') or ''),
+                'decision': str(continuity_anchors.get('last_validation_cycle_decision', '') or ''),
+                'timestamp_utc': str(continuity_anchors.get('last_validation_cycle_at_utc', '') or ''),
+                'packet_path': str(continuity_anchors.get('last_validation_cycle_packet_path', '') or ''),
+            },
+            'previous_baseline': {
+                'packet_path': str(continuity_anchors.get('last_baseline_packet_path', '') or ''),
+                'window_id': str(continuity_anchors.get('last_baseline_window_id', '') or ''),
+            },
+            'previous_analysis_packet_path': str(continuity_anchors.get('last_analysis_packet_path', '') or ''),
+            'previous_normal_packet_path': str(continuity_anchors.get('last_normal_packet_path', '') or ''),
+        },
+        'provenance': {
+            'generated_at_utc': _utc_now(),
+            'producer_process': 'observerctl baseline monitor-once',
+            'artifact_path': '',
+            'artifact_sha256': '',
+            'upstream_inputs': {
+                'watchdog_posture_state': str(_control_file(WATCHDOG_POSTURE_FILE)).replace('\\', '/'),
+                'baseline_monitor_state': str(_baseline_monitor_state_path()).replace('\\', '/'),
+                'resource_index': str(_resource_index_path(src, m)).replace('\\', '/'),
+                'evidence_index': str(_evidence_index_path(src, m)).replace('\\', '/'),
+            },
+        },
+        'methodology': {
+            'sampling_strategy': 'single baseline-monitor cycle composed from posture apply, continuous resource sampling, optional baseline window, and retained analysis',
+            'runtime_constraints': ['names-only outputs', 'append-only validation-cycle evidence'],
+            'failure_modes': ['posture_apply_failed', 'baseline_analysis_failed', 'cycle_packet_write_failed'],
+        },
+        'process': {
+            'phase': 'baseline_monitor_validation_cycle',
+            'event': cycle_event,
+            'decision': decision,
+            'reason_codes': reasons,
+            'approver_checkpoint': 'required_for_live_transition',
+            'evidence_refs': [
+                str(_baseline_monitor_state_path()).replace('\\', '/'),
+            ] + [
+                ref for ref in [
+                    str(continuity_anchors.get('last_validation_cycle_packet_path', '') or ''),
+                    str(continuity_anchors.get('last_baseline_packet_path', '') or ''),
+                    str(posture_packet.get('receipt_path', '') or ''),
+                    str(((normal_packet.get('provenance', {}) or {}).get('artifact_path', '')) or ''),
+                    str(((baseline_packet.get('provenance', {}) or {}).get('artifact_path', '')) or ''),
+                    str(((analysis_packet.get('provenance', {}) or {}).get('artifact_path', '')) or ''),
+                ] if str(ref).strip()
+            ],
+        },
+    }
+    cycle_packet.update(_make_run_linkage(m, event=cycle_event))
+    cycle_output_path = _resource_evidence_output_path(src, m, cycle_output_event)
+    cycle_packet = _write_packet(cycle_packet, cycle_output_path)
+    _append_jsonl(_evidence_index_path(src, m), {
+        'timestamp_utc': _utc_now(),
+        'packet_path': str(cycle_output_path).replace('\\', '/'),
+        'decision': cycle_packet.get('decision', 'no-go'),
+        'run_id': cycle_packet.get('run_id', ''),
+        'scope': {'source': src, 'mode': m},
+        'event': cycle_event,
+    })
+
+    monitor_payload['last_validation_cycle_packet_path'] = str(cycle_output_path).replace('\\', '/')
+    monitor_payload['last_validation_cycle_decision'] = str(cycle_packet.get('decision', decision))
+    monitor_payload['last_validation_cycle_event'] = cycle_event
+    monitor_payload['last_validation_cycle_at_utc'] = str(cycle_packet.get('timestamp_utc', ''))
+    _write_json_file(_baseline_monitor_state_path(), monitor_payload)
+
     return {
         'timestamp_utc': _utc_now(),
         'runtime_cli_surface': 'observerctl',
@@ -1031,6 +1361,9 @@ def _baseline_monitor_once(
         'baseline_packet': {'decision': baseline_packet.get('decision', ''), 'artifact_path': str(((baseline_packet.get('provenance', {}) or {}).get('artifact_path', '')) or '')} if baseline_packet else {},
         'analysis_packet': {'decision': analysis_packet.get('decision', ''), 'artifact_path': str(((analysis_packet.get('provenance', {}) or {}).get('artifact_path', '')) or '')} if analysis_packet else {},
         'monitor_state_path': str(_baseline_monitor_state_path()).replace('\\', '/'),
+        'validation_cycle_packet_path': str(cycle_output_path).replace('\\', '/'),
+        'validation_cycle_packet_decision': str(cycle_packet.get('decision', decision)),
+        'validation_cycle_event': cycle_event,
     }
 
 
@@ -1731,6 +2064,10 @@ def evaluate_gate_decision(status_packet: Dict[str, Any], target_mode: Optional[
         if not baseline_escalated:
             reasons.append('critical_check_failed:lockdown_baseline_rate_not_escalated')
 
+        baseline_monitor_runtime = checks.get('runtime.baseline_monitor') or {}
+        if str(baseline_monitor_runtime.get('status', 'err')).lower() != 'ok':
+            reasons.append('critical_check_failed:baseline_monitor_runtime_inactive')
+
         resource_stream_health = checks.get('watchdog.resource_stream_retention') or {}
         if str(resource_stream_health.get('status', 'err')).lower() != 'ok':
             reasons.append('critical_check_failed:resource_stream_retention_unavailable')
@@ -1782,6 +2119,7 @@ def evaluate_gate_decision(status_packet: Dict[str, Any], target_mode: Optional[
     for r in normalized:
         if r not in deduped:
             deduped.append(r)
+    deduped = _order_reason_codes(deduped, for_activation_path=bool(posture_required == 'lockdown'))
 
     profile = 'GP-4' if to_mode in ('live', 'honeypot') or source == 'real' else 'GP-1'
     decision = 'go' if not deduped else 'no-go'
@@ -1799,6 +2137,10 @@ def evaluate_gate_decision(status_packet: Dict[str, Any], target_mode: Optional[
         'advisory_reason_codes': advisories,
     }
     packet.update(linkage)
+    packet['evidence_refs'] = _collect_evidence_refs(checks)
+    readiness_surfaces = _build_readiness_surfaces(status_packet, packet)
+    packet['readiness_surfaces'] = readiness_surfaces
+    packet['stage5_prerequisites'] = _build_stage5_prerequisites(readiness_surfaces)
     return packet
 
 
@@ -1824,11 +2166,20 @@ def _collect_evidence_refs(checks: Dict[str, Any]) -> List[str]:
 
     resource_row = checks.get('watchdog.resource_stream_retention') or {}
     _add(resource_row.get('path', ''))
+    _add(resource_row.get('archive_manifest_path', ''))
+    _add(resource_row.get('resolved_segment_path', ''))
     latest_record = resource_row.get('latest_record', {}) if isinstance(resource_row.get('latest_record', {}), dict) else {}
     _add(latest_record.get('segment_path', ''))
 
     baseline_row = checks.get('watchdog.resource_baseline_window') or {}
     _add(baseline_row.get('packet_path', ''))
+    _add(baseline_row.get('index_path', ''))
+    _add(baseline_row.get('archive_manifest_path', ''))
+    _add(baseline_row.get('latest_segment_path', ''))
+    for ref in baseline_row.get('resolved_segment_paths', []) if isinstance(baseline_row.get('resolved_segment_paths', []), list) else []:
+        _add(ref)
+    for ref in baseline_row.get('segment_paths', []) if isinstance(baseline_row.get('segment_paths', []), list) else []:
+        _add(ref)
 
     return refs
 
@@ -1885,13 +2236,28 @@ def _build_readiness_surfaces(status_packet: Dict[str, Any], gate_packet: Dict[s
             'status': str(resource_row.get('status', 'err')).lower(),
             'index_path': str(resource_row.get('path', '')),
             'latest_segment_path': str(((resource_row.get('latest_record', {}) or {}).get('segment_path', '')) if isinstance(resource_row.get('latest_record', {}), dict) else ''),
+            'resolved_segment_path': str(resource_row.get('resolved_segment_path', '')),
+            'segment_resolution': str(resource_row.get('segment_resolution', 'missing')),
+            'archive_manifest_path': str(resource_row.get('archive_manifest_path', '')),
+            'archived_artifact_path': str(resource_row.get('archived_artifact_path', '')),
             'records_indexed': int(resource_row.get('records_indexed', 0) or 0),
         },
         'baseline_window': {
             'status': str(baseline_row.get('status', 'err')).lower(),
             'packet_path': str(baseline_row.get('packet_path', '')),
             'decision': str(baseline_row.get('decision', 'no-go')),
+            'baseline_window_id': str(baseline_row.get('baseline_window_id', '')),
             'sample_counts': baseline_row.get('sample_counts', {}) if isinstance(baseline_row.get('sample_counts', {}), dict) else {},
+            'index_path': str(baseline_row.get('index_path', '')),
+            'archive_manifest_path': str(baseline_row.get('archive_manifest_path', '')),
+            'archive_manifest_exists': bool(baseline_row.get('archive_manifest_exists')),
+            'segment_count': int(baseline_row.get('segment_count', 0) or 0),
+            'resolved_segment_count': int(baseline_row.get('resolved_segment_count', 0) or 0),
+            'segment_resolution': str(baseline_row.get('segment_resolution', 'missing')),
+            'latest_segment_path': str(baseline_row.get('latest_segment_path', '')),
+            'segment_paths': list(baseline_row.get('segment_paths', [])) if isinstance(baseline_row.get('segment_paths', []), list) else [],
+            'resolved_segment_paths': list(baseline_row.get('resolved_segment_paths', [])) if isinstance(baseline_row.get('resolved_segment_paths', []), list) else [],
+            'missing_segment_paths': list(baseline_row.get('missing_segment_paths', [])) if isinstance(baseline_row.get('missing_segment_paths', []), list) else [],
         },
         'librarian_retention': {
             'status': str((checks.get('store.integrity_ok') or {}).get('status', 'err')).lower(),
@@ -1945,10 +2311,13 @@ def _build_stage5_prerequisites(readiness_surfaces: Dict[str, Any]) -> Dict[str,
             'status': 'ok' if resource_ready else 'err',
             'reason_codes': [] if resource_ready else ['critical_check_failed:resource_stream_retention_unavailable'],
             'records_indexed': int(resource_stream.get('records_indexed', 0) or 0),
+            'segment_resolution': str(resource_stream.get('segment_resolution', 'missing')),
             'evidence_refs': [
                 ref for ref in [
                     str(resource_stream.get('index_path', '')),
                     str(resource_stream.get('latest_segment_path', '')),
+                    str(resource_stream.get('resolved_segment_path', '')),
+                    str(resource_stream.get('archive_manifest_path', '')),
                 ] if ref.strip()
             ],
         },
@@ -1956,8 +2325,23 @@ def _build_stage5_prerequisites(readiness_surfaces: Dict[str, Any]) -> Dict[str,
             'status': 'ok' if baseline_ready else 'err',
             'reason_codes': [] if baseline_ready else ['critical_check_failed:resource_baseline_window_incomplete'],
             'decision': str(baseline_window.get('decision', 'no-go')),
+            'baseline_window_id': str(baseline_window.get('baseline_window_id', '')),
             'sample_counts': baseline_window.get('sample_counts', {}) if isinstance(baseline_window.get('sample_counts', {}), dict) else {},
-            'evidence_refs': [str(baseline_window.get('packet_path', ''))] if str(baseline_window.get('packet_path', '')).strip() else [],
+            'segment_count': int(baseline_window.get('segment_count', 0) or 0),
+            'resolved_segment_count': int(baseline_window.get('resolved_segment_count', 0) or 0),
+            'segment_resolution': str(baseline_window.get('segment_resolution', 'missing')),
+            'evidence_refs': [
+                ref for ref in (
+                    [
+                        str(baseline_window.get('packet_path', '')),
+                        str(baseline_window.get('index_path', '')),
+                        str(baseline_window.get('latest_segment_path', '')),
+                        str(baseline_window.get('archive_manifest_path', '')),
+                    ]
+                    + list(baseline_window.get('resolved_segment_paths', []))
+                )
+                if str(ref).strip()
+            ],
         },
         'baseline_monitor_runtime_ready': {
             'status': 'ok' if monitor_ready else 'err',
@@ -2329,7 +2713,7 @@ def _resource_index_path(source: str, mode: str) -> Path:
 
 
 def _resource_evidence_output_path(source: str, mode: str, event: str) -> Path:
-    ts = datetime.now(timezone.utc).strftime('%Y%m%dT%H%M%SZ')
+    ts = _utc_compact_stamp()
     src = _normalize_source(source)
     m = str(mode or 'watch').strip().lower()
     if m not in MODES:
@@ -2853,6 +3237,7 @@ def _ops_mode_set(source: str, to_mode: str) -> Dict[str, Any]:
             'decision': 'no-go',
             'reason_codes': ['critical_check_failed:gate_packet_missing_or_stale'],
             'runtime_cli_surface': 'observerctl',
+            'evidence_refs': _merge_evidence_refs(gate.get('evidence_refs', [])),
         }
     prior_state = _load_state()
     rollback_anchor = {
@@ -2889,6 +3274,11 @@ def _ops_mode_set(source: str, to_mode: str) -> Dict[str, Any]:
                 'mode': str(restored_readback.get('mode', 'watch')),
             },
             'posture_packet': posture_packet,
+            'evidence_refs': _merge_evidence_refs(
+                gate.get('evidence_refs', []),
+                str(posture_packet.get('posture_state_path', '') or ''),
+                str(posture_packet.get('receipt_path', '') or ''),
+            ),
         }
     response = {
         'timestamp_utc': _utc_now(),
@@ -2898,6 +3288,13 @@ def _ops_mode_set(source: str, to_mode: str) -> Dict[str, Any]:
         'to_state': '{0}:{1}'.format(state['source'], state['mode']),
         'rollback_anchor': rollback_anchor,
         'posture_packet': posture_packet,
+        'readiness_surfaces': gate.get('readiness_surfaces', {}),
+        'stage5_prerequisites': gate.get('stage5_prerequisites', {}),
+        'evidence_refs': _merge_evidence_refs(
+            gate.get('evidence_refs', []),
+            str(posture_packet.get('posture_state_path', '') or ''),
+            str(posture_packet.get('receipt_path', '') or ''),
+        ),
     }
     response.update(_make_run_linkage(state['mode'], event='mode-set'))
     return response
@@ -2915,6 +3312,7 @@ def _ops_mode_transition(source: str, to_mode: str, event: str, output: str) -> 
             'phase': 'mode-transition',
             'gate_packet': gate,
             'reason_codes': gate.get('reason_codes', []),
+            'evidence_refs': _merge_evidence_refs(gate.get('evidence_refs', [])),
         }
 
     mode_set = _ops_mode_set(source, to_mode)
@@ -2927,6 +3325,7 @@ def _ops_mode_transition(source: str, to_mode: str, event: str, output: str) -> 
             'gate_packet': gate,
             'mode_set_packet': mode_set,
             'reason_codes': mode_set.get('reason_codes', ['critical_check_failed:mode_set_failed']),
+            'evidence_refs': _merge_evidence_refs(gate.get('evidence_refs', []), mode_set.get('evidence_refs', [])),
         }
 
     evidence = build_evidence_pack(status_before, gate, event=event)
@@ -2950,6 +3349,7 @@ def _ops_mode_transition(source: str, to_mode: str, event: str, output: str) -> 
             'mode_set_packet': mode_set,
             'evidence_packet': evidence,
             'reason_codes': ((evidence.get('gate_packet') or {}).get('reason_codes') or evidence.get('reason_codes') or ['critical_check_failed:evidence_gate_failed']),
+            'evidence_refs': _merge_evidence_refs(gate.get('evidence_refs', []), mode_set.get('evidence_refs', []), ((evidence.get('process') or {}).get('evidence_refs') or [])),
         }
 
     result = {
@@ -2966,6 +3366,7 @@ def _ops_mode_transition(source: str, to_mode: str, event: str, output: str) -> 
         'from_state': gate.get('from_state', ''),
         'to_state': mode_set.get('to_state', gate.get('to_state', '')),
         'reason_codes': [],
+        'evidence_refs': _merge_evidence_refs(gate.get('evidence_refs', []), mode_set.get('evidence_refs', []), ((evidence.get('process') or {}).get('evidence_refs') or [])),
     }
     for key in ('run_id', 'posture_trigger_id', 'posture_trigger', 'security_report_ref'):
         result[key] = mode_set.get(key, gate.get(key, ''))
@@ -3004,6 +3405,7 @@ def _ops_mode_switch(
             'phase': 'mode-switch',
             'reason_codes': gate.get('reason_codes', []),
             'gate_packet': gate,
+            'evidence_refs': _merge_evidence_refs(gate.get('evidence_refs', [])),
         }
 
     mode_set = _ops_mode_set(source_norm, mode_norm)
@@ -3016,6 +3418,7 @@ def _ops_mode_switch(
             'reason_codes': mode_set.get('reason_codes', ['critical_check_failed:mode_set_failed']),
             'gate_packet': gate,
             'mode_set_packet': mode_set,
+            'evidence_refs': _merge_evidence_refs(gate.get('evidence_refs', []), mode_set.get('evidence_refs', [])),
         }
 
     runtime_before = _ops_runtime_status()
@@ -3034,6 +3437,7 @@ def _ops_mode_switch(
                 'mode_set_packet': mode_set,
                 'runtime_before': runtime_before,
                 'runtime_stop_packet': runtime_stop_packet,
+                'evidence_refs': _merge_evidence_refs(gate.get('evidence_refs', []), mode_set.get('evidence_refs', [])),
             }
 
     runtime_start_packet = _ops_runtime_start(
@@ -3054,6 +3458,7 @@ def _ops_mode_switch(
             'runtime_before': runtime_before,
             'runtime_stop_packet': runtime_stop_packet,
             'runtime_start_packet': runtime_start_packet,
+            'evidence_refs': _merge_evidence_refs(gate.get('evidence_refs', []), mode_set.get('evidence_refs', [])),
         }
 
     post_status = collect_runtime_status(source=source_norm)
@@ -3102,6 +3507,7 @@ def _ops_mode_switch(
             'provenance': evidence.get('provenance', {}),
             'process': evidence.get('process', {}),
         },
+        'evidence_refs': _merge_evidence_refs(gate.get('evidence_refs', []), mode_set.get('evidence_refs', []), ((evidence.get('process') or {}).get('evidence_refs') or [])),
     }
 
     advisory: List[str] = []
@@ -3352,16 +3758,22 @@ def _baseline_collect(source: str, mode: str, profile: str, duration_sec: float,
     # Publish resource index entries for downstream analytics/replay.
     idx_path = _resource_index_path(src, m)
     for p, count in segment_files.items():
-        _append_jsonl(idx_path, {
+        index_row = {
             'timestamp_utc': _utc_now(),
             'stream_type': _resource_stream_type(prof),
             'window_id': wid,
             'source': src,
             'mode': m,
+            'sampling_profile_id': 'resource_{0}_v1'.format(prof),
+            'mode_at_capture': m,
+            'source_axis': src,
             'segment_path': p,
             'segment_records': int(count),
             'run_id': linkage.get('run_id', ''),
-        })
+        }
+        if prof == 'baseline':
+            index_row['baseline_window_id'] = wid
+        _append_jsonl(idx_path, index_row)
 
     # Update control resource state for gate consumers.
     if cpu_vals and ram_vals:
@@ -3486,6 +3898,29 @@ def _baseline_analyze(source: str, mode: str, hours: float, profile: str, min_no
     ram_vals = [float(r.get('ram_pct_now', 0.0) or 0.0) for r in rows]
     normal_count = sum(1 for r in rows if str(r.get('stream_type', '')) == 'resource_normal')
     baseline_count = sum(1 for r in rows if _resource_profile_matches(r.get('stream_type', ''), 'baseline'))
+    latest_baseline_window_id = ''
+    for row in reversed(rows):
+        if not _resource_profile_matches(row.get('stream_type', ''), 'baseline'):
+            continue
+        latest_baseline_window_id = str(row.get('baseline_window_id') or row.get('window_id') or '').strip()
+        if latest_baseline_window_id:
+            break
+
+    baseline_index_rows = _load_resource_index_rows(src, m, stream_type='resource_baseline', baseline_window_id=latest_baseline_window_id) if latest_baseline_window_id else []
+    manifest_path = _resource_archive_dir() / 'manifest.json'
+    manifest_payload = _load_json_file(manifest_path, {}) if manifest_path.exists() else {}
+    baseline_segment_rows = [_resolve_resource_segment(str(row.get('segment_path', '') or ''), manifest_payload) for row in baseline_index_rows]
+    baseline_segment_resolution = _summarize_segment_resolutions(baseline_segment_rows)
+    baseline_window_evidence_refs: List[str] = [str(_resource_index_path(src, m)).replace('\\', '/')]
+    if manifest_path.exists():
+        baseline_window_evidence_refs.append(str(manifest_path).replace('\\', '/'))
+    for row in baseline_segment_rows:
+        resolved_ref = str(row.get('resolved_segment_path', '') or '').strip()
+        raw_ref = str(row.get('segment_path', '') or '').strip()
+        if resolved_ref and resolved_ref not in baseline_window_evidence_refs:
+            baseline_window_evidence_refs.append(resolved_ref)
+        elif raw_ref and raw_ref not in baseline_window_evidence_refs:
+            baseline_window_evidence_refs.append(raw_ref)
 
     cpu_rate_vals: List[float] = []
     ram_rate_vals: List[float] = []
@@ -3549,6 +3984,11 @@ def _baseline_analyze(source: str, mode: str, hours: float, profile: str, min_no
             'resource_rapid_legacy_alias': int(min_rapid_samples),
         },
         'baseline_ready': bool(baseline_ready),
+        'baseline_window_id': latest_baseline_window_id,
+        'baseline_window_segment_count': int(len(baseline_segment_rows)),
+        'baseline_window_segment_resolution': baseline_segment_resolution,
+        'baseline_window_segment_paths': [str(row.get('segment_path', '') or '').strip() for row in baseline_index_rows if str(row.get('segment_path', '') or '').strip()],
+        'baseline_window_resolved_segment_paths': [str(row.get('resolved_segment_path', '') or '').strip() for row in baseline_segment_rows if str(row.get('resolved_segment_path', '') or '').strip()],
         'resource_statistics': {
             'cpu_p50': float(_percentile(cpu_vals, 50.0)),
             'cpu_p95': float(_percentile(cpu_vals, 95.0)),
@@ -3567,6 +4007,7 @@ def _baseline_analyze(source: str, mode: str, hours: float, profile: str, min_no
             'artifact_sha256': '',
             'upstream_inputs': {
                 'resource_archive_dir': str(_resource_archive_dir()).replace('\\', '/'),
+                'resource_index': str(_resource_index_path(src, m)).replace('\\', '/'),
                 'watchdog_resource_state': str(_control_file(WATCHDOG_RESOURCE_FILE)).replace('\\', '/'),
             },
         },
@@ -3582,7 +4023,7 @@ def _baseline_analyze(source: str, mode: str, hours: float, profile: str, min_no
             'decision': 'go' if baseline_ready else 'no-go',
             'reason_codes': analyze_reason_codes,
             'approver_checkpoint': 'required_for_live_transition',
-            'evidence_refs': [str(_resource_archive_dir()).replace('\\', '/'), str(_resource_index_path(src, m)).replace('\\', '/')],
+            'evidence_refs': [str(_resource_archive_dir()).replace('\\', '/')] + baseline_window_evidence_refs,
         },
     }
     packet.update(linkage)

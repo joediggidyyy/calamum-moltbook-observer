@@ -3,7 +3,7 @@
     "id": "calamum-moltbook-observer",
     "name": "Calamum Moltbook Observer",
     "scope": "projects/calamum-moltbook-observer",
-    "description": "Student-facing observer + reporting tools for Moltbook telemetry, with tracked templates and local-only artifacts.",
+    "description": "Locked-down public repo core for Moltbook telemetry tooling, with local-only execution/history artifacts retained outside the tracked surface.",
     "created_utc": "2026-02-09T00:00:00Z"
   },
   "layout": {
@@ -11,17 +11,20 @@
       "tools/",
       "template_library/",
       "src/",
-      "jobs/",
       "docs/",
       "deployment/",
-      "demo_output/",
-      "queststacks/",
-      "questframes/",
-      "planning/",
       "assets/"
     ],
     "ignored_roots": [
+      ".agent_session/",
+      "demo_output/",
+      "jobs/",
+      "planning/",
+      "questframes/",
+      "queststacks/",
       "local_untracked/",
+      "docs/reports/operations/",
+      "docs/reports/queststack/",
       "src/logs/",
       "src/.agent_session/",
       "logs/",
@@ -40,8 +43,8 @@
     }
   },
   "provenance": {
-    "policy": "Outputs are written to local_untracked/ (ignored). Reports are offline, and JSONL logs append snapshots/baselines for traceability without publishing runtime artifacts.",
+    "policy": "Public-kept repo structure lives in tracked_roots. Runtime outputs and execution history remain in ignored local-only roots. Tracked docs/reports survivors are legacy or rewrite-promote territory until narrowed into public-safe derivatives.",
     "no_secrets": true
   },
-  "version": "1.0"
+  "version": "1.1"
 }

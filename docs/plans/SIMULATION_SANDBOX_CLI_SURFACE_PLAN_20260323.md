@@ -408,9 +408,9 @@ That is consistent with this lane and should remain the primary retained review 
 
 ## 15) One-push execution micro-plan
 
-### 15.1 One-push objective
+### 15.1 Historical one-push objective
 
-Finish this side lane in one implementation push so the sandbox family stops drifting and the main lane can return to the **Frame 4 wrapup** immediately afterward.
+This side lane was scoped to finish in one implementation push so the sandbox family would stop drifting and the main lane could return to the then-open **Frame 4 wrapup** immediately afterward.
 
 The deliverable for this push is:
 
@@ -418,7 +418,7 @@ The deliverable for this push is:
 - exact canonical definition names with no secondary naming layer,
 - implemented list/show/run/runs-list/runs-show surfaces,
 - focused tests and docs updated in the same pass,
-- a clean handoff back to the Frame 4 wrapup lane.
+- a clean handoff back to the then-open Frame 4 wrapup lane.
 
 ### 15.2 Micro-frame A — surface lock before mutation
 
@@ -546,9 +546,30 @@ This side job is considered done when all of the following are true:
 3. focused tests and docs are green/aligned;
 4. there is no unresolved naming drift in the touched sandbox surfaces.
 
-Once those conditions are met, the very next lane is:
+Once those conditions were met, the very next lane was:
 
 - **return to the Frame 4 wrapup**
+
+### 16.1 2026-03-23 completion note
+
+This side lane has now landed its intended command family and cleared its return gate.
+
+Fresh return-to-main-lane evidence:
+
+- `observerctl sandbox list/show/run/runs list/runs show` implemented
+- focused sandbox CLI validation passed
+- fresh Frame 4 metadata probe run:
+      - `report_tmp/frame4_metadata_contract_probe/runs/frame4-metadata-contract-20260323T074830Z/frame4_metadata_probe.md`
+      - `report_tmp/frame4_metadata_contract_probe/runs/frame4-metadata-contract-20260323T074830Z/frame4_metadata_probe.json`
+
+Observed Frame 4 reality at return time:
+
+- sample-row metadata contract is green
+- retained index/readback metadata is now green as well
+
+So the return target that motivated this side lane has now been satisfied; Frame 4 is closed and the next active lane is beyond the metadata-contract seam.
+
+As of the latest baseline-monitoring reconciliation, the active lane has advanced further: Frame 5 is also closed, and the current next bite is Frame 6 restart-safe monitor continuity under Job 0022.
 
 ## 17) Locked design decisions from this pass
 

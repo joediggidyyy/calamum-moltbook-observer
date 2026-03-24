@@ -1,10 +1,10 @@
 # Runtime Artifacts
 *.log
 *.jsonl
-!docs/reports/queststack/*.jsonl
 *.sqlite
 *.pid
 logs/
+.agent_session/
 src/logs/
 src/.agent_session/
 
@@ -42,6 +42,17 @@ log/
 
 # Coursework deliverables are local-only (do not track/publish)
 deliverables/
+demo_output/
+jobs/
+planning/
+questframes/
+queststacks/
 
 # Local-only (intentionally not tracked)
 local_untracked/
+
+# Frame 3 boundary codification — local-only reporting / execution surfaces
+# Keep this narrow so future public-safe derivatives under docs/reports/public/
+# remain trackable when that lane is created.
+docs/reports/operations/
+docs/reports/queststack/
