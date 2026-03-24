@@ -34,7 +34,7 @@ When this job is registered in `operations/tasks.json`, set `status_source_strat
 ## Project execution expectations (Calamum)
 
 - Canonical ops policy (names-only):
-	- `projects/calamum-moltbook-observer/docs/CALAMUM_CODESENTINEL_JOB_EXECUTION_EXPECTATIONS.md`
+	- `projects/calamum-moltbook-observer/docs/manuals/OBSERVERCTL_CLI_TRANSITION_OPERATOR_GUIDE_20260221.md`
 - Secret handling doctrine: KEYSMITH (claim_url-only human ceremony; sealed-drop secret import). Never write/print secrets; validate env vars by presence only.
 
 ## Redaction palette (use these placeholders)

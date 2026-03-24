@@ -1,6 +1,6 @@
 # Calamum Operations Parameters Report
 
-- Policy (names-only): `projects/calamum-moltbook-observer/docs/CALAMUM_CODESENTINEL_JOB_EXECUTION_EXPECTATIONS.md`
+- Operator guide (names-only): `projects/calamum-moltbook-observer/docs/manuals/OBSERVERCTL_CLI_TRANSITION_OPERATOR_GUIDE_20260221.md`
 - Secret handling: never embed secret values (presence-only env checks).
 
 - Timestamp (UTC): `{{ timestamp_utc }}`

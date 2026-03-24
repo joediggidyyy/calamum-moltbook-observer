@@ -1,0 +1,52 @@
+# Aggregate Report
+
+**Document ID**: `{{ document_id }}`
+**Status**: {{ status }}
+**Owner**: {{ owner }}
+**Project**: {{ project }}
+**Last updated**: {{ last_updated }}
+**Runtime observation point**: {{ runtime_observation_point }}
+**Runtime source surfaces**: {{ runtime_source_surfaces }}
+**Aggregation window**: {{ aggregation_window }}
+**Source families**: {{ source_families }}
+**Primary question**: {{ primary_question }}
+
+## Executive summary
+
+{{ executive_summary_block }}
+
+## Runtime evidence aggregate
+
+{{ runtime_evidence_block }}
+
+## Research question
+
+{{ research_question_block }}
+
+## Corpus and selection rule
+
+{{ corpus_and_selection_block }}
+
+## Methods
+
+{{ methods_block }}
+
+## Aggregate findings
+
+{{ aggregate_findings_block }}
+
+## Quality controls
+
+{{ quality_controls_block }}
+
+## Limitations
+
+{{ limitations_block }}
+
+## Provenance
+
+{{ provenance_block }}
+
+## Related surfaces
+
+{{ related_surfaces_block }}

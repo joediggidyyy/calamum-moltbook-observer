@@ -1,24 +1,12 @@
 # Project: Calamum Moltbook Observer
 
-> **Managed by CodeSentinel** | *Ethical Security Research Initiative*
-
+**Document ID**: `CALAMUM_PUBLIC_README_20260324`  
+**Status**: Public project overview  
 **Owner**: ORACL-Prime  
-**Status**: Active (Phase 5: Model Training Enabled)  
-**Created**: 2026-02-01  
-**Last Update**: 2026-03-24 (public-lockdown reconciliation)
+**Project**: Calamum Moltbook Observer  
+**Last updated**: 2026-03-24
 
 ---
-
-## Executive Summary
-
-The **Moltbook Observer** project is a security research initiative designed to measure the density of hostile agent activity on the Moltbook platform. The experiment operates through a series of escalating "Observer Stages," ranging from purely passive sampling (Stage 1) to active honeypots (Stage 4) and machine learning analysis (Phase 5).
-
-**Key Constraint**: The observer must remain invisible and secure. It employs "Obfuscation at the Edge" to ensure no raw content (potential prompt injection vectors or illegal content) ever touches the Observer's disk.
-
-**Architecture v1.2.0**:
--   **Observer Agent**: Lightweight producer that streams obfuscated, signed records to `logs/data`. Rotates files atomically based on policy.
--   **Librarian Daemon**: Background process that compresses active logs, validates integrity, and effectively "trains" the Agent by updating the `rotation_policy.json` based on actual data density.
--   **Blind ML Pipeline**: Local training pipeline (`src/analysis/`) that consumes obfuscated logs to produce `scikit-learn` models (Random Forest, Isolation Forest) without exposing raw message semantics.
 
 <p align="center">
   <img src="assets/branding/calamum_logo_color.png" alt="Calamum Logo" width="400">
@@ -26,197 +14,288 @@ The **Moltbook Observer** project is a security research initiative designed to 
   <em>Secure / In-Memory / Ephemeral</em>
 </p>
 
-## Public-lockdown status note
+## Purpose
 
-This repository now operates with a **locked-down public surface** plus explicitly retained **local-only execution/history surfaces**.
+**Calamum Moltbook Observer** is a security research toolkit for measuring hostile-agent activity on the Moltbook platform using privacy-preserving telemetry, guarded runtime controls, and local analysis workflows.
 
-Public-kept core:
+The project is built around one non-negotiable rule: **no raw Moltbook content is written to disk**. Instead, telemetry is reduced to names-only, schema-bound signals before persistence so the system can support reproducible research without normalizing unsafe retention practices.
 
-- source code, deployment, assets, templates, methodology, security/control docs, and selected operator/reference docs
+Security engineering is not a decorative sidebar here. Containment, minimization, posture enforcement, and fail-closed behavior are part of the operating contract.
 
-Local-only / untracked execution history retained on the operator machine:
+## Start here
 
-- `jobs/`
-- `planning/`
-- `questframes/`
-- `queststacks/`
-- `demo_output/`
-- `logs/`
-- `local_untracked/`
-- `deliverables/`
-- `.agent_session/`
+This README is the public front door for the project. Use it to understand what the observer is, what it retains, and which public document to read next.
 
-Mixed/reporting note:
+| If you want to understand... | Read next |
+|---|---|
+| the overall documentation map | [Docs Index](docs/INDEX.md) |
+| the security policy and disclosure boundary | [Security Policy](SECURITY.md) |
+| the telemetry and packet contract | [Data Methodology](DATA_METHODOLOGY.md) |
+| the runtime/manual catalog | [Manual Index](docs/manuals/INDEX.md) |
+| the security architecture in more depth | [Observer Security Model](docs/manuals/OBSERVER_SECURITY_MODEL_20260324.md) |
+| the mode/transition command contract | [ObserverCTL Mode Transition Matrix](docs/manuals/OBSERVERCTL_MODE_TRANSITION_MATRIX_20260221.md) |
 
-- tracked `docs/reports/**` survivors are currently legacy or rewrite/promote surfaces, not a claim that `docs/reports/` remains a public catch-all root
-- the future narrow public reporting target remains `docs/reports/public/aggregate_statistics/`
+## At a glance
 
-## Directory Structure
+- **Research focus**: hostile-agent measurement, telemetry, and downstream analysis
+- **Data posture**: names-only persistence; no raw-content storage by default
+- **Operational model**: explicit posture control, watchdog oversight, and local evidence retention
+- **Analysis model**: local ML workflows on obfuscated telemetry only
+- **Public repo scope**: code, docs, deployment surfaces, branding, and curated public artifacts
+- **Canonical current runtime family**: `logs/data/calamum/observer_derived/<source>/<mode>/...`
+
+## Verified current runtime model
+
+The current public architecture centers on three primary components and two telemetry families.
+
+- **Observer Agent**  
+  A lightweight producer that emits obfuscated, signed names-only records under the observer-derived runtime tree.
+
+- **Librarian Daemon**  
+  A background process responsible for compression, integrity checks, and retention lifecycle management over active telemetry artifacts.
+
+- **Blind ML Pipeline**  
+  The local analysis stack under `src/analysis/`, which consumes obfuscated telemetry to train supervised and unsupervised models without exposing raw message semantics.
+
+Telemetry families:
+
+- **Direct telemetry artifacts** provide names-only local telemetry outputs.
+- **Observer-derived artifacts** provide the canonical runtime and evidence surfaces for current observer-agent and `observerctl` behavior.
+
+## Security posture
+
+The observer treats the upstream platform and its content stream as hostile by default. That assumption drives the rest of the design:
+
+- **Data minimization first**: persist structured telemetry, not raw content
+- **Fail-closed control flow**: deny or stop on invalid posture, stale state, or missing prerequisites
+- **Layered containment**: runtime, watchdog, and persistence boundaries are intentionally separate
+- **Local evidence discipline**: high-detail operational residue remains operator-local
+- **Credential hygiene**: secrets are environment-injected and presence-checked; values never belong in tracked workflows
+
+For the root policy surface, read [Security Policy](SECURITY.md). For the deeper posture and enforcement architecture, read [Observer Security Model](docs/manuals/OBSERVER_SECURITY_MODEL_20260324.md).
+
+## Public repository scope
+
+This repository presents the **public observer surface** only:
+
+- source code
+- deployment assets
+- branding
+- public manuals
+- curated public reports
+- reusable project templates
+
+Runtime logs and operator-local governance surfaces remain outside the tracked public presentation.
+
+## Project layout
 
 ```text
 projects/calamum-moltbook-observer/
- assets/             # Branding and static assets
- deployment/         # Deployment/support surfaces kept public
- docs/               # Public-kept reference docs + mixed legacy/rewrite-promote report survivors
- src/                # Source Code (The "What")
-    analysis/         # ML Models & Notebooks (Stage 4 Analysis)
-    deployment/       # Dockerfiles & Hardening Profiles (Stage 2)
-    ops/              # Ops/telemetry/control surfaces (Ghost Console V2)
-    tests/            # Validation Scripts
-    calamum_sampler.py # The Agent (Stage 1/3)
-    calamum_observer_agent.py # Local demo agent (heartbeats + JSONL + signal consumer)
-    obfuscator_lib.py # Safety Layer (Stage 1/3)
- template_library/   # Project-local tracked templates
- tools/              # Audits, reporting tools, and support scripts
- launch_ghost_console.ps1 # Ghost Console V2 launcher (Edge app-mode)
- REFERENCES.md       # Index of detailed artifact links
+ assets/              # Branding and static assets
+ deployment/          # Deployment/support surfaces kept public
+ docs/                # Public documentation (`manuals/` + `reports/`)
+ src/                 # Source code
+    analysis/         # Local ML and analysis workflows
+    deployment/       # Dockerfiles and hardening profiles
+    ops/              # Ops, telemetry, and control surfaces
+    tests/            # Validation suites
+    calamum_sampler.py
+    calamum_observer_agent.py
+    obfuscator_lib.py
+ template_library/    # Project-local tracked templates
+ tools/               # Audits, reporting tools, and support scripts
+ launch_ghost_console.ps1
 ```
 
-Local-only execution/history lanes are retained outside the intended public-tracked surface. See the public-lockdown note above for the current boundary.
+## Research workstreams
 
-## Experiment Stages
+| Workstream | Current status | Public meaning |
+|---|---|---|
+| **Observe & Sample** | **COMPLETE** | Read-only sampling of the public feed with obfuscation safety validated. |
+| **Container Hardening** | **COMPLETE** | Deployment of the read-only “Glass Box” runtime environment. |
+| **Passive Canary** | **COMPLETE** | Silent account deployment for measuring inbound background activity. |
+| **Active Magnet (Honeypot)** | *PLANNED* | Soft-target deployment path for higher-risk hostile-agent measurement. |
+| **Blind ML Analysis** | **ACTIVE** | Local supervised and unsupervised analysis on obfuscated telemetry. |
 
-| Stage | Name | Status | Description |
-|-------|------|--------|-------------|
-| **1** | **Observe & Sample** | **COMPLETE** | Read-only sampling of public feed. Validated `obfuscator_lib` safety. |
-| **2** | **Container Hardening** | **COMPLETE** | Deployment of "Glass Box" read-only container environment. |
-| **3** | **Passive Canary** | **COMPLETE** | Deployment of silent account to measure inbound "background radiation" (DMs/follows). |
-| **4** | **Magnet (Honeypot)** | *PLANNED* | Active "Soft Target" deployment to attract hostile agents. |
-| **5** | **Blind ML Analysis** | **ACTIVE** | Local training of supervised/unsupervised models on obfuscated telemetry. |
+## Reference map
 
-## Key Artifacts
+### Public documents
 
-### Documentation
-- **Operations Policy (CodeSentinel job execution)**: [Job Execution Expectations](docs/CALAMUM_CODESENTINEL_JOB_EXECUTION_EXPECTATIONS.md)
-- **Observer Runtime Guide**: [ObserverCTL CLI Transition Operator Guide](docs/OBSERVERCTL_CLI_TRANSITION_OPERATOR_GUIDE_20260221.md)
-- **Methodology**: [Data Simulation & Logging](DATA_METHODOLOGY.md)
-- **Hardening Profile**: [Container Constraints](src/deployment/HARDENING_PROFILE.md)
-- **Sentinel**: [Triple-Redundancy Watchdog](src/sentinel.py)
-- **Reference Index**: [References](REFERENCES.md)
+| Surface | Purpose |
+|---|---|
+| this `README.md` | Project overview |
+| [Docs Index](docs/INDEX.md) | Documentation hub |
+| [Manual Index](docs/manuals/INDEX.md) | Manual catalog |
+| [Security Policy](SECURITY.md) | Security policy |
+| [Data Methodology](DATA_METHODOLOGY.md) | Methodology contract |
+| [Observer Security Model](docs/manuals/OBSERVER_SECURITY_MODEL_20260324.md) | Security architecture |
+| [ObserverCTL Mode Transition Matrix](docs/manuals/OBSERVERCTL_MODE_TRANSITION_MATRIX_20260221.md) | Runtime transition contract |
+| [Container Constraints](src/deployment/HARDENING_PROFILE.md) | Container hardening profile |
 
-Local-only lineage note:
+### Source surfaces
 
-- historical plans, jobs, questframes, and queststacks are retained locally / untracked and are no longer presented as part of the public-tracked repo structure
+| Surface | Path |
+|---|---|
+| Observer runtime CLI | `src/observerctl.py` |
+| Watchdog runtime (`sentinel.py`) | `src/sentinel.py` |
+| Observer agent | `src/calamum_observer_agent.py` |
+| Analysis workflows | `src/analysis/` |
 
 ### Runtime evidence (retained locally)
-- **Stage 1 (Public Sample)**: `logs/data/calamum/moltbook_samples_obfuscated.jsonl`
-- **Stage 3 (Canary Metrics)**: `logs/data/calamum/moltbook_canary_metrics.jsonl`
 
-These runtime evidence streams are intentionally retained locally and are not part of the locked-down public-tracked surface.
+| Evidence family | Canonical path |
+|---|---|
+| Direct telemetry artifacts | `logs/data/calamum/moltbook_samples_obfuscated.jsonl` and `logs/data/calamum/moltbook_canary_metrics.jsonl` |
+| Canonical observer-runtime stream | `logs/data/calamum/observer_derived/<sim|real>/<watch|canary|live|honeypot>/moltbook_metrics.jsonl` |
+| Baseline/resource evidence family | `logs/data/calamum/observer_derived/<sim|real>/<mode>/{resource,evidence}/` |
 
-## Visuals
+These evidence streams are retained locally and sit outside the tracked public repo surface.
 
-### Operational Radar
+## Contract summary
+
+The current public contract can be summarized as follows:
+
+- direct telemetry outputs and observer-derived outputs both exist,
+- the active runtime and readiness surfaces live under `observer_derived/`,
+- gate/evidence outputs are expected to be names-only and carry run-linkage fields,
+- the packet-level details live in `DATA_METHODOLOGY.md`, not in this overview page.
+
+## Visual surfaces
+
+### Operational radar
+
 <img src="assets/branding/calamum_obs_radar.png" alt="Observer Radar" width="600">
 
-### CLI Dashboard (deprecated TUI concept)
+### CLI dashboard reference
+
 <img src="assets/branding/syslog_scroll.png" alt="CLI Dashboard" width="600">
 
-## Operation Manual
+## Runtime operations
 
 ### Observer runtime CLI (`observerctl`)
 
-Observer runtime operations are exposed through `src/observerctl.py` and are intentionally standalone from CodeSentinel runtime process surfaces.
+Observer runtime operations are exposed through `src/observerctl.py` and remain standalone from CodeSentinel runtime process surfaces.
 
-Operator guide for collaborative CLI transitions:
-
-- `docs/OBSERVERCTL_CLI_TRANSITION_OPERATOR_GUIDE_20260221.md`
-
-The operator guide remains public-kept, but some lineage references inside it point to local-only execution surfaces retained outside the tracked public boundary.
-
-Install native CLI entrypoint (one-time per environment):
+Install the native CLI entrypoint once per environment:
 
 - `python -m pip install -e .`
 
 After installation, use the observer-native command surface directly:
 
-- Preflight status packet (names-only):
-  - `observerctl ops preflight --source sim --json`
-- Gate decision packet (`go` / `no-go`):
-  - `observerctl ops gate-check --source sim --json`
-- Publication-grade evidence packet (provenance/methodology/process):
-  - `observerctl ops evidence pack --source sim --json`
-- Atomic transition workflow (gate + set + evidence):
-  - `observerctl ops mode transition --to canary --source sim --event transition-canary --output logs/data/calamum/observer_derived/sim/canary/evidence/transition_canary.json --json`
+- **Preflight status packet**  
+  `observerctl ops preflight --source sim --json`
+- **Gate decision packet**  
+  `observerctl ops gate-check --source sim --json`
+- **Publication-grade evidence packet**  
+  `observerctl ops evidence pack --source sim --json`
+- **Atomic transition workflow**  
+  `observerctl ops mode transition --to canary --source sim --event transition-canary --output logs/data/calamum/observer_derived/sim/canary/evidence/transition_canary.json --json`
 
-Critical note: `ops gate-check` is fail-closed and returns non-zero when required inputs are missing (for example, no signing-key context).
+`ops gate-check` is fail-closed and returns non-zero when required inputs are missing or invalid.
 
-### Launching (Windows Host)
+For the lower-level transition/evidence contract, see:
+
+- `docs/manuals/OBSERVERCTL_MODE_TRANSITION_MATRIX_20260221.md`
+- `docs/manuals/OBSERVERCTL_CLI_TRANSITION_OPERATOR_GUIDE_20260221.md`
+
+### Launching on a Windows host
+
 #### A) Ghost Console V2 (Ops Dashboard)
-The Ghost Console is a fixed-size, "digital brutalism" ops dashboard (NiceGUI + ECharts) designed to show **names-only** telemetry.
 
-- **Start UI (recommended)**: run `projects/calamum-moltbook-observer/launch_ghost_console.ps1`
-	- starts the backend hidden (no terminal window)
-	- opens Microsoft Edge in app-mode at **1100×720**
+The Ghost Console is a fixed-size NiceGUI + ECharts dashboard designed to present **names-only** telemetry.
 
-**Dashboard source**: `src/ops_dashboard.py`
+- Start UI (recommended): `projects/calamum-moltbook-observer/launch_ghost_console.ps1`
+  - starts the backend hidden
+  - opens Microsoft Edge in app-mode at **1100×720**
 
-#### B) Observer + Watchdog (legacy/manual)
-1. **Start Observer**: `./src/deployment/secure_run.ps1`
-2. **Start Watchdog**: `python src/sentinel.py`
+Dashboard source: `src/ops_dashboard.py`
 
-## Ghost Console V2: Data + Control Contracts
+#### B) Observer + Watchdog (direct)
 
-### Telemetry inputs (names-only)
-The dashboard reads from:
-- **CPU/MEM**: `psutil` (local host)
-- **Observer liveness**: heartbeat marker freshness OR recent JSONL activity
-- **Watchdog liveness**: watchdog heartbeat marker freshness
-- **Records/Density**: append-only JSONL metrics (counts only)
+1. Start observer: `./src/deployment/secure_run.ps1`
+2. Start watchdog runtime: `python src/sentinel.py`
 
-Default locations (repo-root relative):
+## Ghost Console data and control model
+
+### Telemetry inputs
+
+The dashboard reads from names-only local surfaces such as:
+
+- CPU and memory telemetry via `psutil`
+- observer heartbeat freshness or recent JSONL activity
+- watchdog heartbeat freshness
+- append-only JSONL metrics for counts and density
+
+Default locations include:
+
 - `logs/health/calamum_ops_watchdog.heartbeat`
 - `logs/health/calamum_observer.heartbeat`
-- `logs/data/calamum/*.jsonl` (newest file is treated as active)
+- `logs/data/calamum/*.jsonl`
 
-### Control surface (file-based intents)
-Control Deck actions emit JSON control signals (safe for later container wiring):
-- `logs/control/calamum/kill.signal.json`
-- `logs/control/calamum/isolate.signal.json`
-- `logs/control/calamum/refresh.signal.json`
+### Control surface
 
-**Doctrine**:
-- The GUI is an interface/exhibition tool. It is not SSOT and no system behavior may depend on it.
-- Watchdog is system-level governance and is always-on for the duration of active experimentation (24/7).
-- If Watchdog is down, the node must remain isolated/quarantined until Watchdog returns via self-resilience recovery, or (if self-recovery fails) an operator/external agent performs an explicit recovery action.
+Control Deck actions emit file-based JSON intents for later runtime handling:
 
-### Local end-to-end demo agent
-For local testing without a live container, `src/calamum_observer_agent.py` can:
+| Action family | Intent path |
+|---|---|
+| Kill | `logs/control/calamum/kill.signal.json` |
+| Isolate | `logs/control/calamum/isolate.signal.json` |
+| Refresh | `logs/control/calamum/refresh.signal.json` |
+
+The governing doctrine is simple:
+
+- the GUI is a presentation and operator interface surface, not SSOT
+- watchdog remains the system-level governance layer
+- if watchdog is down, the node remains isolated or quarantined until safe operating conditions are explicitly re-established
+
+### Local runtime simulation agent
+
+For local simulation and controlled runtime testing, `src/calamum_observer_agent.py` can:
+
 - touch heartbeat files
 - append JSONL records
-- consume/acknowledge control signals
+- consume or acknowledge control signals
 
-**Doctrine alignment note (2026-02-15):**
-- The above local demo lane is telemetry simulation only and is **not** authorized for Moltbook-facing collection.
-- Any Moltbook-facing observer execution is container-only per `docs/CALAMUM_CODESENTINEL_JOB_EXECUTION_EXPECTATIONS.md`.
+This local demo lane is telemetry simulation only and is **not** documented here as an authorized public Moltbook-facing workflow.
 
-## Environment variables (optional overrides)
-- `CALAMUM_OPS_MODE`: dashboard mode label (normalized; defaults to `CANARY`)
-- `CALAMUM_FRESHNESS_SEC`: heartbeat freshness threshold (default: `15`)
-- `CALAMUM_WATCHDOG_HEARTBEAT_PATH`: path to watchdog heartbeat marker
-- `CALAMUM_OBSERVER_HEARTBEAT_PATH`: path to observer heartbeat marker
-- `CALAMUM_DATA_DIR`: directory containing JSONL metrics
-- `CALAMUM_DENSITY_SLICE_SEC`: histogram time-slice width (default: `15`)
-- `CALAMUM_MOLTBOOK_SOURCE`: observer agent source selector (`sim` or `real`; default: `sim`)
-- `MOLTBOOK_API_KEY`: required for live collection (presence-only; never commit values). For key acquisition and handling doctrine, see: [Job Execution Expectations](docs/CALAMUM_CODESENTINEL_JOB_EXECUTION_EXPECTATIONS.md)
-- `MOLTBOOK_HOST`: optional override for the Moltbook API base URL (default: `https://api.moltbook.com/v1`)
-- `CALAMUM_LIVE_BATCH_LIMIT`: live feed batch size cap (default: `50`; clamped)
-- `CALAMUM_LIVE_EMPTY_BACKOFF_SEC`: backoff time when live fetch yields zero items (default: `10`)
-- `CALAMUM_BRAND_THUMB_PATH`, `CALAMUM_BRAND_PANEL_PATH`: optional branding asset overrides
+## Environment variables
 
-## Academic Reproducibility
+Common optional overrides include:
 
-This project maintains rigorous separation between:
-1.  **Intent** (local-only execution lineage): Why we are doing this; retained locally in job/planning/quest surfaces.
-2.  **Mechanism** (Src): The code executed.
-3.  **Observation** (local runtime evidence): The raw data (with PII hashed), retained locally under ignored runtime/output paths.
+- `CALAMUM_OPS_MODE`
+- `CALAMUM_FRESHNESS_SEC`
+- `CALAMUM_WATCHDOG_HEARTBEAT_PATH`
+- `CALAMUM_OBSERVER_HEARTBEAT_PATH`
+- `CALAMUM_DATA_DIR`
+- `CALAMUM_DENSITY_SLICE_SEC`
+- `CALAMUM_MOLTBOOK_SOURCE`
+- `MOLTBOOK_API_KEY` — required for live collection; acquire and inject it through operator-local secret handling only
+- `MOLTBOOK_HOST`
+- `CALAMUM_LIVE_BATCH_LIMIT`
+- `CALAMUM_LIVE_EMPTY_BACKOFF_SEC`
+- `CALAMUM_BRAND_THUMB_PATH`
+- `CALAMUM_BRAND_PANEL_PATH`
 
-Tracked `docs/reports/**` survivors are currently mixed legacy/rewrite-promote territory, not the canonical public reporting lane.
+## Reproducibility and evidence boundaries
 
-## Live collection contract (names-only)
+This project keeps three layers distinct:
 
-When `CALAMUM_MOLTBOOK_SOURCE=live` and `CALAMUM_OPS_MODE` is not `CANARY`, the observer agent writes the canonical live metrics stream:
+1. **Method** — tracked code and public reference documents
+2. **Mechanism** — runtime and analysis implementation in `src/`
+3. **Observation** — project-local runtime evidence produced during controlled execution
 
-- `logs/data/calamum/moltbook_live_metrics.jsonl`
+That separation is both a documentation choice and a security boundary. Public surfaces remain readable and reproducible, while high-detail operational residue stays out of the tracked artifact set.
 
-This is a local runtime path retained outside the locked-down public-tracked surface.
+## Live collection contract
+
+When `CALAMUM_MOLTBOOK_SOURCE=live` is selected, the current runtime normalizes that source onto the retained `real` axis used by the observer-derived evidence tree. The canonical observer-agent stream is therefore:
+
+- `logs/data/calamum/observer_derived/real/<watch|canary|live|honeypot>/moltbook_metrics.jsonl`
+
+Adjacent baseline and readiness evidence are retained under the matching `observer_derived/real/<mode>/resource/` and `observer_derived/real/<mode>/evidence/` directories.
+
+This runtime family is local evidence retained outside the public tracked documentation set.
+
+## Scope note
+
+This README introduces the project, summarizes the public contract, and routes readers to the deeper policy, methodology, and manual surfaces. Use those adjacent references for implementation-level detail.

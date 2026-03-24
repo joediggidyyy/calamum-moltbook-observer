@@ -1,0 +1,45 @@
+# Public Run Ledger
+
+**Document ID**: `{{ document_id }}`
+**Status**: {{ status }}
+**Owner**: {{ owner }}
+**Project**: {{ project }}
+**Last updated**: {{ last_updated }}
+**Observation point**: {{ observation_point }}
+**Runtime snapshot source surfaces**: {{ runtime_snapshot_source_surfaces }}
+
+## Purpose
+
+{{ purpose_paragraph }}
+
+## How to read this ledger
+
+{{ how_to_read_block }}
+
+## Current runtime evidence aggregate
+
+{{ runtime_evidence_block }}
+
+## Current runtime lane census
+
+{{ runtime_lane_census_table }}
+
+## Audit and report-family ledger census
+
+{{ ledger_census_table }}
+
+## Audit and report-family aggregate summary
+
+{{ cross_ledger_summary_block }}
+
+## Interpretive notes
+
+{{ interpretive_notes_block }}
+
+## Provenance
+
+{{ provenance_block }}
+
+## Related surfaces
+
+{{ related_surfaces_block }}

@@ -2,49 +2,48 @@
   "project": {
     "id": "calamum-moltbook-observer",
     "name": "Calamum Moltbook Observer",
-    "scope": "projects/calamum-moltbook-observer",
-    "description": "Locked-down public repo core for Moltbook telemetry tooling, with local-only execution/history artifacts retained outside the tracked surface.",
-    "created_utc": "2026-02-09T00:00:00Z"
+    "root": ".",
+    "description": "Public observer toolkit for privacy-preserving Moltbook telemetry, guarded runtime operations, and local analysis workflows.",
+    "created_utc": "2026-02-09T00:00:00Z",
+    "version": "1.2"
   },
-  "layout": {
-    "tracked_roots": [
-      "tools/",
-      "template_library/",
-      "src/",
-      "docs/",
-      "deployment/",
-      "assets/"
+  "public_surface": {
+    "root_documents": [
+      "README.md",
+      "DATA_METHODOLOGY.md",
+      "SECURITY.md",
+      "CONTRIBUTING.md",
+      "LICENSE",
+      ".env.example",
+      "pyproject.toml",
+      "PROJECT_MANIFEST.json",
+      "launch_ghost_console.ps1"
     ],
-    "ignored_roots": [
-      ".agent_session/",
-      "demo_output/",
-      "jobs/",
-      "planning/",
-      "questframes/",
-      "queststacks/",
-      "local_untracked/",
-      "docs/reports/operations/",
-      "docs/reports/queststack/",
-      "src/logs/",
-      "src/.agent_session/",
-      "logs/",
-      "deliverables/",
-      ".venv/",
-      "venv/",
-      ".env"
+    "content_roots": {
+      "assets/": "Branding, visuals, and static presentation assets.",
+      "deployment/": "Deployment packaging, container assets, and service definitions.",
+      "docs/manuals/": "Public runtime and operator-reference manuals.",
+      "docs/reports/": "Curated public reports and evaluation artifacts.",
+      "src/": "Observer runtime, analysis pipeline, and tests.",
+      "template_library/": "Reusable names-only templates shipped with the project.",
+      "tools/": "Project support, audit, and reporting utilities."
+    },
+    "primary_entrypoints": [
+      "src/observerctl.py",
+      "launch_ghost_console.ps1",
+      "src/deployment/secure_run.ps1"
     ]
   },
-  "audit": {
-    "repo_health": {
-      "tool": "tools/audit_repo_health.py",
-      "template": "template_library/reports/CALAMUM_REPO_HEALTH_AUDIT_TEMPLATE.md.template",
-      "output_root": "local_untracked/audits/repo_health/",
-      "jsonl_log": "local_untracked/audit_log/repo_health_audit.jsonl"
-    }
-  },
-  "provenance": {
-    "policy": "Public-kept repo structure lives in tracked_roots. Runtime outputs and execution history remain in ignored local-only roots. Tracked docs/reports survivors are legacy or rewrite-promote territory until narrowed into public-safe derivatives.",
-    "no_secrets": true
-  },
-  "version": "1.1"
+  "public_reports": [
+    "docs/reports/model_eval/THRESHOLD_SELECTION_REPORT_20260210.md",
+    "docs/reports/model_eval/THRESHOLD_SELECTION_REPORT_20260210.json"
+  ],
+  "public_manuals": [
+    "docs/manuals/OBSERVERCTL_MODE_TRANSITION_MATRIX_20260221.md"
+  ],
+  "standards": {
+    "names_only": true,
+    "no_secrets_in_tracked_files": true,
+    "observer_root_relative_paths": true
+  }
 }

@@ -24,7 +24,7 @@
       "PP_GOV_PROTOCOL_POL_JOB_COMPLEXITY_REQUIREMENT_20251126"
     ],
     "execution_expectations_policy_paths": [
-      "projects/calamum-moltbook-observer/docs/CALAMUM_CODESENTINEL_JOB_EXECUTION_EXPECTATIONS.md"
+      "projects/calamum-moltbook-observer/docs/manuals/OBSERVERCTL_CLI_TRANSITION_OPERATOR_GUIDE_20260221.md"
     ],
     "plan_paths": ["<PLAN_PATH_OR_EMPTY>"],
     "evidence_paths": []

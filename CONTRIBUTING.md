@@ -1,6 +1,6 @@
 # Contributing to Calamum Moltbook Observer
 
-> **Managed by CodeSentinel** | *Operations governed by automated sentinel policy.*
+> **Managed by CodeSentinel** | *Operations governed by automated watchdog policy.*
 
 ## Academic Integrity
 This project is part of a university coursework submission (DATA740/DATA780). 
@@ -18,4 +18,4 @@ All contributors must adhere to the project’s privacy/safety constraints and e
 	- Safe default (no live creds required): `src/deployment/secure_run.ps1 -Mode canary -Source sim`
 	- Live source (requires env-injected `MOLTBOOK_API_KEY`; names-only): `src/deployment/secure_run.ps1 -Mode sampler -Source live`
 2. Run tests via `pytest src/tests/`.
-3. Ensure the 'Sentinel' watchdog is active during any live-wire testing.
+3. Ensure the watchdog runtime (`src/sentinel.py`) is active during any live-wire testing.

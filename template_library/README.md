@@ -9,12 +9,13 @@ This folder is the **project-local template library** for the Calamum Moltbook O
 
 ## Normalized documentation pointers (Calamum)
 
-When authoring or rendering documents from these templates, follow the project’s normalized execution expectations:
+When authoring or rendering documents from these templates, follow the public documentation guardrails that remain published in the locked-down repo:
 
-- **Operations policy (CodeSentinel-managed execution; names-only)**:
-	- `projects/calamum-moltbook-observer/docs/CALAMUM_CODESENTINEL_JOB_EXECUTION_EXPECTATIONS.md`
+- `projects/calamum-moltbook-observer/README.md`
+- `projects/calamum-moltbook-observer/SECURITY.md`
+- `projects/calamum-moltbook-observer/PROJECT_MANIFEST.json`
 
-This includes the KEYSMITH doctrine for `MOLTBOOK_API_KEY` (claim_url-only human ceremony; sealed-drop secret handling; presence-only env validation).
+Detailed operator-only lifecycle and secret-handling doctrine is retained locally; public templates should remain names-only and must never require secret values in tracked outputs.
 
 ## Structure
 

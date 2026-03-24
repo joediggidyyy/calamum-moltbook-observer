@@ -19,7 +19,7 @@
       "PP_GOV_PROTOCOL_POL_DETERMINISTIC_WORKFLOW_20251127"
     ],
     "execution_expectations_policy_paths": [
-      "projects/calamum-moltbook-observer/docs/CALAMUM_CODESENTINEL_JOB_EXECUTION_EXPECTATIONS.md"
+      "projects/calamum-moltbook-observer/docs/manuals/OBSERVERCTL_CLI_TRANSITION_OPERATOR_GUIDE_20260221.md"
     ],
     "job_path": "<JOBS_MD_PATH>",
     "status_source_strategy": "<doc_enforced|ssot_only>",

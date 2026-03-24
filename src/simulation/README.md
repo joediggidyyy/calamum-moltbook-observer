@@ -76,6 +76,4 @@ Current retained probe lanes include:
 - `baseline-monitor-restart-continuity` for Frame 6 restart-safe continuity anchor preservation
 - `baseline-monitor-state-recovery` for Frame 6 malformed persisted-state degradation and repair
 
-Planned structured sandbox CLI surface and output-frame rules are recorded in:
-
-- `projects/calamum-moltbook-observer/docs/plans/SIMULATION_SANDBOX_CLI_SURFACE_PLAN_20260323.md`
+The sandbox CLI family is now treated as implemented project behavior rather than a public planning surface; use the source code and tests in this subtree as the current authority.

@@ -32,7 +32,7 @@ The current filesystem configuration (`projects/calamum-moltbook-observer/`) has
 
 ### 2.2 Planning Directory (`planning/`)
 **Policy**: Must contain *Forward-Looking Plans* and *Approvals*. Execution reports belong in `docs/`.
-*   **[RESOLVED] Misplaced Report**: `STAGE_5_READINESS_REPORT_20260210.md` moved to `docs/reports/`.
+*   **[RESOLVED] Misplaced Report**: a Stage 5 readiness report was previously moved from `planning/` into reporting surfaces during the 2026-02 restructuring pass.
 
 ### 2.3 Quest Artifact Provenance
 The tracking of QuestStacks (`queststacks/*.json`, `queststacks/*.md`) and QuestFrames (`questframes/*.md`) is **VALID** and **MANDATORY**.
