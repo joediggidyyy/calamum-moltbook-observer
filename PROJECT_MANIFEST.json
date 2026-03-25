@@ -35,10 +35,17 @@
     ]
   },
   "public_reports": [
-    "docs/reports/model_eval/THRESHOLD_SELECTION_REPORT_20260210.md",
-    "docs/reports/model_eval/THRESHOLD_SELECTION_REPORT_20260210.json"
+    "docs/reports/INDEX.md",
+    "docs/reports/PUBLIC_RUN_LEDGER.md",
+    "docs/reports/AGGREGATE_REPORT.md",
+    "docs/reports/AGGREGATE_REPORT_SCHEMA.md",
+    "docs/reports/GENERATED_REPORT_SURFACES.md"
   ],
   "public_manuals": [
+    "docs/manuals/INDEX.md",
+    "docs/manuals/OBSERVER_WORKFLOW_MANUAL_20260324.md",
+    "docs/manuals/OBSERVER_SECURITY_MODEL_20260324.md",
+    "docs/manuals/OBSERVERCTL_CLI_TRANSITION_OPERATOR_GUIDE_20260221.md",
     "docs/manuals/OBSERVERCTL_MODE_TRANSITION_MATRIX_20260221.md"
   ],
   "standards": {

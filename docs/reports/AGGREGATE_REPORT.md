@@ -15,7 +15,7 @@
 
 This starter aggregate report now gives top billing to the current runtime evidence aggregate. The live runtime snapshot shows the active ingest lane is **`real:canary`**, with **45,610 session records** and **369,510 archived records**, for **415,120 displayed records** in the active lane. The named non-active modes (`watch`, `live`, and `honeypot`) currently show zero displayed records, while the archive manifest retains an additional **50 unclassified records**.
 
-The runtime posture is not uniformly healthy: the current gate posture is **`no-go`**, the baseline monitor is **stopped**, and the watchdog also reports **`no-go`**. Underneath that runtime headline, the audit/report-family corpus remains substantial: it contains **2,010 recorded entries**, of which **2,001** are snapshots and **9** are baselines. The latest-status distribution across the five included public audit/report families is **3 OK**, **1 WARN**, and **1 ERR**.
+The runtime posture currently shows mixed health signals: the current gate posture is **`no-go`**, the baseline monitor is **stopped**, and the watchdog also reports **`no-go`**. Underneath that runtime headline, the audit/report-family corpus remains substantial: it contains **2,010 recorded entries**, of which **2,001** are snapshots and **9** are baselines. The latest-status distribution across the five included public audit/report families is **3 OK**, **1 WARN**, and **1 ERR**.
 
 ## Runtime evidence aggregate
 
@@ -157,7 +157,7 @@ This starter aggregate report satisfies the following controls:
 - The aggregation window is defined by the currently observed ledger state.
 - The threshold-calibration subsection is a single-run analytical snapshot. Broader model-eval aggregation remains deferred.
 - Some latest-run evidence bundles report git provenance degradation caused by repository safe-directory restrictions under the executing context.
-- The family-status interpretation uses the latest available summary token and does not yet normalize all summary vocabularies into a dedicated reporting ontology.
+- The family-status interpretation currently uses the latest available summary token; a dedicated reporting ontology remains a future reporting enhancement.
 
 ## Provenance
 

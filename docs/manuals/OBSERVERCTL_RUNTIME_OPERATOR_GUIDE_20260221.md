@@ -1,6 +1,6 @@
-# ObserverCTL CLI Operator Guide
+# ObserverCTL Runtime Operator Guide
 
-**Document ID**: `OBSERVERCTL_CLI_TRANSITION_OPERATOR_GUIDE_20260221`  
+**Document ID**: `OBSERVERCTL_RUNTIME_OPERATOR_GUIDE_20260221`  
 **Status**: Public operator guide  
 **Owner**: ORACL-Prime  
 **Project**: Calamum Moltbook Observer  
