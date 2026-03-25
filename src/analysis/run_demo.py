@@ -128,7 +128,7 @@ def main():
     run_command([
         '--features-csv', str(feat_csv),
         '--labels-csv', str(lbl_csv),
-        '--model-path', str(model_sup_dir / "model.joblib"),
+        '--model-path', str(model_sup_dir / "model.pkl"),
         '--out-dir', str(eval_dir),
         '--run-id', 'demo_run_001'
     ], eval_main)

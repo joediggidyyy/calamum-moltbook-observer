@@ -4,27 +4,12 @@ import argparse
 import csv
 import json
 import pickle
-import sys
 from dataclasses import asdict, dataclass
 from pathlib import Path
 from typing import Any, Dict, List, Optional, Tuple
 
-try:
-    import joblib
-    from sklearn.ensemble import IsolationForest, RandomForestClassifier
-    from sklearn.metrics import (
-        accuracy_score,
-        classification_report,
-        confusion_matrix,
-        f1_score,
-        precision_score,
-        recall_score,
-    )
-except ImportError:
-    print("Error: scikit-learn is required. Install it with: pip install scikit-learn")
-    print("Note: If working in Calamum environment, ensure src/requirements.txt is installed.")
-    sys.exit(1)
-
+from apexlab.evaluation.metrics import classification_metrics
+from apexlab.models import IsolationForest, RandomForestClassifier
 
 from ._util import utc_now_iso
 
@@ -125,15 +110,17 @@ def main(argv: Optional[List[str]] = None) -> int:
         # If supervised, skip if no label
         if args.model_type == 'supervised' and label is None:
             continue
+
+        label_value = 1 if label == 'TV-3' else 0
             
         if split == 'train':
             X_train.append(vec)
             if label is not None:
-                y_train.append(label)
+                y_train.append(label_value)
         elif split == 'val':
             X_val.append(vec)
             if label is not None:
-                y_val.append(label)
+                y_val.append(label_value)
                 
     print(f"Training set: {len(X_train)} samples")
     print(f"Validation set: {len(X_val)} samples")
@@ -143,22 +130,29 @@ def main(argv: Optional[List[str]] = None) -> int:
     params = {'seed': args.seed, 'model_type': args.model_type}
     
     if args.model_type == 'supervised':
-        print("Training Random Forest (Supervised)...")
+        print("Training ApexLab RandomForestClassifier (Supervised)...")
         clf = RandomForestClassifier(n_estimators=100, random_state=args.seed)
         clf.fit(X_train, y_train)
         
         # Validation
         if X_val:
             y_pred = clf.predict(X_val)
-            metrics['accuracy'] = accuracy_score(y_val, y_pred)
-            metrics['f1_macro'] = f1_score(y_val, y_pred, average='macro')
-            metrics['report'] = classification_report(y_val, y_pred, output_dict=True)
+            class_metrics = classification_metrics([str(value) for value in y_val], [str(value) for value in y_pred])
+            metrics['accuracy'] = class_metrics['accuracy']
+            report = class_metrics['classification_report']
+            per_label_keys = [key for key in report.keys() if key != 'accuracy']
+            if per_label_keys:
+                metrics['f1_macro'] = sum(float(report[key]['f1-score']) for key in per_label_keys) / float(len(per_label_keys))
+            else:
+                metrics['f1_macro'] = 0.0
+            metrics['report'] = report
+            metrics['confusion_matrix'] = class_metrics['confusion_matrix']
             print(f"Validation Accuracy: {metrics['accuracy']:.4f}")
         
         model = clf
         
     elif args.model_type == 'unsupervised':
-        print("Training Isolation Forest (Unsupervised)...")
+        print("Training ApexLab IsolationForest (Unsupervised)...")
         # For IF, we train on logical 'normal' data if we knew it, or just all train data
         # Here we train on X_train (unlabeled or labeled, doesn't matter)
         clf = IsolationForest(n_estimators=100, random_state=args.seed, contamination=0.1)
@@ -175,8 +169,9 @@ def main(argv: Optional[List[str]] = None) -> int:
         model = clf
 
     # Save artifacts
-    model_path = out_dir / 'model.joblib'
-    joblib.dump(model, model_path)
+    model_path = out_dir / 'model.pkl'
+    with model_path.open('wb') as f:
+        pickle.dump(model, f)
     print(f"Saved model to {model_path}")
     
     train_manifest = TrainManifest(

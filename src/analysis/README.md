@@ -7,7 +7,7 @@ This directory contains **privacy-preserving** dataset and evaluation tooling fo
 - **No semantic leakage**: inputs and outputs must not contain raw message bodies.
 - **Names-only evidence**: reports/manifests must not embed secrets, tokens, or internal endpoints.
 - **Reproducibility**: dataset manifests and deterministic splits are first-class artifacts.
-- **Approved dependencies**: `scikit-learn` (v1.6+) is authorized for Model Training (Phase 5).
+- **Approved package lane**: ApexLab `1.2.0` is the preferred training/evaluation surface for the supported observer ML path.
 
 ## What this tooling does
 
@@ -40,8 +40,14 @@ This is gitignored by design.
 
 - `validate_jsonl.py` - validate records (and optionally verify HMAC signatures)
 - `dataset_builder.py` - build features + manifest + deterministic splits
-- `train_model.py` - train scikit-learn models (Supervised or Unsupervised)
+- `train_model.py` - train ApexLab models (Supervised or Unsupervised)
 - `evaluation_harness.py` - evaluate models and generate run ledgers
+
+## Current migration note
+
+- the supported observer model lane now targets ApexLab-owned estimators for supervised and unsupervised training
+- unsupervised anomaly semantics follow the ApexLab public contract: **higher score = more anomalous**
+- old sklearn-oriented wording in historical planning docs should be treated as background context rather than current execution authority
 
 See the ML execution plan:
 

@@ -27,12 +27,11 @@ def _write_jsonl(path: Path, records: list[dict]) -> None:
 
 
 def test_end_to_end_model_training_and_eval(tmp_path: Path) -> None:
-    # Skip if scikit-learn is not installed
+    # Skip if ApexLab is not installed in the active environment.
     try:
-        import sklearn
-        import joblib
+        import apexlab  # noqa: F401
     except ImportError:
-        pytest.skip("scikit-learn not installed")
+        pytest.skip("ApexLab not installed")
 
     from analysis.train_model import main as train_main
     from analysis.evaluation_harness import main as eval_main
@@ -90,7 +89,7 @@ def test_end_to_end_model_training_and_eval(tmp_path: Path) -> None:
         '--seed', '42'
     ])
     assert res == 0
-    assert (model_dir / 'model.joblib').exists()
+    assert (model_dir / 'model.pkl').exists()
     assert (model_dir / 'train_manifest.json').exists()
 
     # 4. Train Model (Unsupervised)
@@ -102,7 +101,7 @@ def test_end_to_end_model_training_and_eval(tmp_path: Path) -> None:
         '--seed', '42'
     ])
     assert res == 0
-    assert (model_unsup_dir / 'model.joblib').exists()
+    assert (model_unsup_dir / 'model.pkl').exists()
 
     # 5. Evaluate (Supervised Model)
     # Use features from build_dataset (located in features_csv)
@@ -111,7 +110,7 @@ def test_end_to_end_model_training_and_eval(tmp_path: Path) -> None:
     res = eval_main([
         '--features-csv', str(dataset_dir / Path(manifest.features_csv).name),
         '--labels-csv', str(dataset_dir / Path(manifest.labels_csv).name),
-        '--model-path', str(model_dir / 'model.joblib'),
+        '--model-path', str(model_dir / 'model.pkl'),
         '--out-dir', str(eval_out),
         '--run-id', 'test_run'
     ])
@@ -119,5 +118,5 @@ def test_end_to_end_model_training_and_eval(tmp_path: Path) -> None:
     assert (eval_out / 'run.json').exists()
     
     run_json = json.loads((eval_out / 'run.json').read_text(encoding='utf-8'))
-    assert run_json['model']['family'] == 'trained_sklearn'
+    assert run_json['model']['family'] == 'trained_apexlab'
     assert run_json['model']['class'] == 'RandomForestClassifier'

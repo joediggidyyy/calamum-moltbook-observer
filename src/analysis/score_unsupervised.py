@@ -3,16 +3,15 @@ from __future__ import annotations
 import argparse
 import csv
 import json
+import pickle
 import sys
 from pathlib import Path
 from typing import Any, Dict, List, Tuple
 
 try:
     import joblib
-    import numpy as np
 except ImportError:
-    print("Error: scikit-learn/numpy is required.")
-    sys.exit(1)
+    joblib = None
 
 
 def load_dataset_features(manifest_path: Path) -> Tuple[List[Dict[str, Any]], List[str]]:
@@ -65,7 +64,14 @@ def main() -> int:
         model_path = model_path.parent / Path(tm["model_path"]).name
         
     print(f"Loading model from {model_path}...")
-    model = joblib.load(model_path)
+    try:
+        with model_path.open('rb') as f:
+            model = pickle.load(f)
+    except Exception as pickle_error:
+        if joblib is None:
+            print(f"Error: could not load model via pickle and joblib is unavailable ({pickle_error})")
+            return 1
+        model = joblib.load(model_path)
     
     # 2. Load Data
     print(f"Loading features from {args.dataset}...")
@@ -89,25 +95,22 @@ def main() -> int:
     print(f"Scoring {len(X)} records...")
     
     # 3. Score
-    # decision_function: average anomaly score of X of the base classifiers.
-    # The anomaly score of an input sample is computed as the mean anomaly score of the trees in the forest.
-    # For IsolationForest: 
-    #   decision_function returns negative values for outliers (anomalies) and positive for inliers.
-    #   Wait, sklearn ISOLATION FOREST:
-    #   "The accumulation of the score is done by the ensemble. ... The lower, the more abnormal."
-    #   "decision_function: ... The strictly lower, the more abnormal."
-    #   "score_samples: ... Opposite of the anomaly score defined in the original paper."
-    # Let's use decision_function. Lower = more anomalous.
-    # To make it intuitive (Higher = Anomaly), we might negate it.
-    # Let's write the raw decision_function value and let threshold logic handle it.
-    
-    scores = model.decision_function(X)
+    # ApexLab IsolationForest public contract: higher scores are more anomalous.
+    # If an older sklearn-style artifact is loaded, normalize its lower-is-more-anomalous
+    # decision_function output into the same higher-is-more-anomalous direction.
+    if hasattr(model, 'score_samples'):
+        scores = [float(score) for score in model.score_samples(X)]
+    elif hasattr(model, 'decision_function'):
+        scores = [float(-score) for score in model.decision_function(X)]
+    else:
+        print("Error: model does not expose a supported anomaly scoring surface")
+        return 1
     
     # 4. Write Output
     args.out_file.parent.mkdir(parents=True, exist_ok=True)
     with args.out_file.open('w', encoding='utf-8', newline='') as f:
         writer = csv.writer(f)
-        writer.writerow(["record_id", "score_raw"])
+        writer.writerow(["record_id", "score_anomaly"])
         for rid, s in zip(record_ids, scores):
             writer.writerow([rid, s])
             

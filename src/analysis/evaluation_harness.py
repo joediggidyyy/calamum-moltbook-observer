@@ -3,6 +3,7 @@ from __future__ import annotations
 import argparse
 import csv
 import json
+import pickle
 import sys
 from dataclasses import asdict, dataclass
 from pathlib import Path
@@ -12,6 +13,8 @@ try:
     import joblib
 except ImportError:
     joblib = None
+
+from apexlab.evaluation.thresholds import binary_metrics, choose_threshold, confusion_counts, select_lower_tail_threshold
 
 from ._util import default_analysis_dir, sha256_path, try_get_git_sha, utc_now_iso
 
@@ -60,16 +63,15 @@ def make_model_scorer(model: Any) -> ScorerFunc:
                 except (ValueError, TypeError):
                     vec.append(0.0)
             
-            # Handle different sklearn APIs
             if hasattr(model, "predict_proba"):
-                # Classifier: return probability of positive class (index 1)
-                # Handle binary classification case
                 probas = model.predict_proba([vec])[0]
                 if len(probas) > 1:
                     return float(probas[1])
                 return float(probas[0])
+            elif hasattr(model, "score_samples"):
+                scores = model.score_samples([vec])
+                return float(scores[0])
             elif hasattr(model, "decision_function"):
-                # Isolation Forest / SVM: return raw score
                 return float(model.decision_function([vec])[0])
             elif hasattr(model, "predict"):
                 return float(model.predict([vec])[0])
@@ -138,55 +140,6 @@ def baseline_score(row: Dict[str, Any]) -> float:
     return float(tox) + 0.5 * float(has_link) + 0.2 * float(has_code) + 0.2 * code_density + 0.1 * complexity
 
 
-def _confusion(y_true: List[int], y_pred: List[int]) -> Dict[str, int]:
-    tp = fp = tn = fn = 0
-    for t, p in zip(y_true, y_pred):
-        if t == 1 and p == 1:
-            tp += 1
-        elif t == 0 and p == 1:
-            fp += 1
-        elif t == 0 and p == 0:
-            tn += 1
-        elif t == 1 and p == 0:
-            fn += 1
-    return {'tp': tp, 'fp': fp, 'tn': tn, 'fn': fn}
-
-
-def _metrics_from_conf(conf: Dict[str, int]) -> Dict[str, float]:
-    tp = float(conf.get('tp', 0))
-    fp = float(conf.get('fp', 0))
-    tn = float(conf.get('tn', 0))
-    fn = float(conf.get('fn', 0))
-
-    precision = tp / (tp + fp) if (tp + fp) > 0 else 0.0
-    recall = tp / (tp + fn) if (tp + fn) > 0 else 0.0
-    f1 = (2 * precision * recall / (precision + recall)) if (precision + recall) > 0 else 0.0
-    fpr = fp / (fp + tn) if (fp + tn) > 0 else 0.0
-    return {
-        'precision': precision,
-        'recall': recall,
-        'f1': f1,
-        'fpr': fpr,
-    }
-
-
-def _choose_threshold_for_fpr(scores: List[float], y_true: List[int], max_fpr: float) -> float:
-    """Choose the best F1 threshold while meeting the FPR constraint."""
-    candidates = sorted(set(scores))
-    best_thr = candidates[0] if candidates else 0.0
-    best_f1 = -1.0
-
-    for thr in candidates:
-        y_pred = [1 if s >= thr else 0 for s in scores]
-        conf = _confusion(y_true, y_pred)
-        m = _metrics_from_conf(conf)
-        if m['fpr'] <= max_fpr and m['f1'] >= best_f1:
-            best_f1 = m['f1']
-            best_thr = thr
-
-    return float(best_thr)
-
-
 def evaluate(
     features_csv: Path,
     *,
@@ -213,20 +166,17 @@ def evaluate(
 
     # Select threshold
     if has_labels and y_true:
-        thr = _choose_threshold_for_fpr(scores, y_true, max_fpr=max_fpr)
+        thr = choose_threshold(scores, y_true, max_fpr=max_fpr)
         y_pred = [1 if s >= thr else 0 for s in scores]
-        conf = _confusion(y_true, y_pred)
-        metrics = _metrics_from_conf(conf)
+        conf = confusion_counts(y_true, y_pred)
+        metrics = binary_metrics(conf)
         counts = conf
     else:
-        # Unlabeled: choose quantile threshold to flag ~max_fpr fraction.
+        # Unlabeled ApexLab path: higher scores are more anomalous, so we select the upper tail.
         if not scores:
             thr = 0.0
         else:
-            sorted_scores = sorted(scores)
-            # Pick cutoff so that roughly max_fpr are >= thr
-            k = int(max(0, min(len(sorted_scores) - 1, round((1.0 - max_fpr) * (len(sorted_scores) - 1)))))
-            thr = float(sorted_scores[k])
+            thr = float(-select_lower_tail_threshold([-float(score) for score in scores], target_fpr=max_fpr))
         flagged = sum(1 for s in scores if s >= thr)
         counts = {'flagged': int(flagged), 'total': int(len(scores))}
         metrics = {
@@ -294,7 +244,7 @@ def write_run_artifacts(
             'has_labels': bool(result.has_labels),
             'metrics': dict(result.metrics),
             'counts': dict(result.counts),
-            'thresholding': 'fpr_constrained_best_f1' if result.has_labels else 'quantile_flag_rate',
+            'thresholding': 'fpr_constrained_best_f1' if result.has_labels else 'upper_tail_quantile_flag_rate',
         },
         'governance': {
             'privacy_review': 'pass',
@@ -359,22 +309,29 @@ def main(argv: Optional[List[str]] = None) -> int:
     model_meta = None
 
     if args.model_path:
-        if joblib is None:
-            print("Error: scikit-learn/joblib required to load model. Install with pip install scikit-learn")
-            return 1
-            
         print(f"Loading model from {args.model_path}...")
         try:
-            model = joblib.load(args.model_path)
+            with args.model_path.open('rb') as f:
+                model = pickle.load(f)
+        except Exception as pickle_error:
+            if joblib is None:
+                print(f"Error loading model via pickle: {pickle_error}")
+                return 1
+            try:
+                model = joblib.load(args.model_path)
+            except Exception as exc:
+                print(f"Error loading model: {exc}")
+                return 1
+        try:
             scorer = make_model_scorer(model)
             model_meta = {
-                'family': 'trained_sklearn',
+                'family': 'trained_apexlab',
                 'name': args.model_path.name,
                 'class': type(model).__name__,
                 'source': str(args.model_path),
             }
         except Exception as e:
-            print(f"Error loading model: {e}")
+            print(f"Error preparing model scorer: {e}")
             return 1
 
     res = evaluate(

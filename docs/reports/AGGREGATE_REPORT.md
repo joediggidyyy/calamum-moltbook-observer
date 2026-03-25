@@ -124,7 +124,7 @@ This aggregate includes a compact threshold-calibration snapshot for the current
 |---|---:|
 | Source dataset | `canary_v1_iforest_scores.csv` |
 | Target FPR | 1.00% |
-| Logic | `Isolation Forest (Lower Score = More Anomalous)` |
+| Logic | `ApexLab Isolation Forest (Higher Score = More Anomalous)` |
 | Selected threshold | `-0.045089` |
 | Observed FPR | `1.0005% (1339/133837 records)` |
 | Distribution min | `-0.078014` |
@@ -134,7 +134,7 @@ This aggregate includes a compact threshold-calibration snapshot for the current
 
 Interpretation:
 
-- scores lower than `-0.045089` are treated as anomalous in this calibration snapshot
+- scores greater than or equal to `-0.045089` are treated as anomalous in this calibration snapshot
 - this calibration snapshot appears here as a compact reference subsection inside the aggregate report
 - broader model-eval aggregation remains deferred until the observer has successfully run through each mode and the final pre-ship lockdown lane is complete
 

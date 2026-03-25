@@ -13,10 +13,12 @@ except ImportError:
     print("Error: numpy is required.")
     sys.exit(1)
 
+from apexlab.evaluation.thresholds import select_lower_tail_threshold
+
 
 def main() -> int:
     parser = argparse.ArgumentParser(description="Calculate anomaly threshold for target FPR.")
-    parser.add_argument("--scores", required=True, type=Path, help="Path to scores.csv (record_id, score_raw)")
+    parser.add_argument("--scores", required=True, type=Path, help="Path to scores.csv (record_id plus score column)")
     parser.add_argument("--target-fpr", type=float, default=0.01, help="Target False Positive Rate e.g. 0.01 for 1 percent")
     parser.add_argument("--out-report", required=True, type=Path, help="Path to output markdown report")
     
@@ -28,7 +30,10 @@ def main() -> int:
         reader = csv.DictReader(f)
         for row in reader:
             try:
-                scores.append(float(row['score_raw']))
+                score_text = row.get('score_anomaly', row.get('score_raw'))
+                if score_text is None:
+                    continue
+                scores.append(float(score_text))
             except ValueError:
                 pass
                 
@@ -40,20 +45,15 @@ def main() -> int:
     print(f"Loaded {n} scores.")
     
     # 2. Determine Threshold
-    # Logic: IsolationForest decision_function -> Lower is more abnormal.
-    # Anomaly = score < T
-    # We assume 'scores' comes from a Benign dataset (or mostly benign).
-    # We want FPR < target.
-    # FPR = Fraction of Benign samples classified as Anomaly.
-    # Fraction(score < T) < target_fpr.
-    # T = percentile(scores, target_fpr * 100)
+    # F7 migration contract: higher scores are more anomalous.
+    # For a mostly benign score set, choose the upper-tail cutoff so that only the
+    # requested target_fpr fraction would be flagged as anomalous.
     
     scores_np = np.array(scores)
-    target_percentile = args.target_fpr * 100.0
-    threshold = np.percentile(scores_np, target_percentile)
+    threshold = float(-select_lower_tail_threshold([-float(score) for score in scores], target_fpr=args.target_fpr))
     
     # Verify
-    n_fp = np.sum(scores_np < threshold)
+    n_fp = np.sum(scores_np >= threshold)
     actual_fpr = n_fp / n
     
     print(f"Target FPR: {args.target_fpr:.4f}")
@@ -66,7 +66,7 @@ def main() -> int:
 **Date**: {Path(args.out_report).stat().st_mtime if args.out_report.exists() else 'New'}
 **Dataset**: {args.scores.name}
 **Target FPR**: {args.target_fpr * 100:.2f}%
-**Logic**: Isolation Forest (Lower Score = More Anomalous)
+**Logic**: ApexLab Isolation Forest (Higher Score = More Anomalous)
 
 ## Result
 - **Selected Threshold**: `{threshold:.6f}`
@@ -79,7 +79,7 @@ def main() -> int:
 - Median: {np.median(scores_np):.6f}
 
 ## Usage
-Scores **lower** than `{threshold:.6f}` should be flagged as Anomalies.
+Scores **greater than or equal to** `{threshold:.6f}` should be flagged as Anomalies.
 """
     
     args.out_report.parent.mkdir(parents=True, exist_ok=True)
@@ -92,7 +92,7 @@ Scores **lower** than `{threshold:.6f}` should be flagged as Anomalies.
         "target_fpr": args.target_fpr,
         "actual_fpr": float(actual_fpr),
         "n_samples": n,
-        "algo": "iforest_lower_is_anomaly"
+        "algo": "apexlab_iforest_higher_is_anomaly"
     }
     
     json_path = args.out_report.with_suffix('.json')

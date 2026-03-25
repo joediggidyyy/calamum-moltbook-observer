@@ -1,6 +1,5 @@
 requests
 pytest
-scikit-learn
 matplotlib
 seaborn
 pandas
