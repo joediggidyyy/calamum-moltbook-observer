@@ -168,10 +168,13 @@ def test_ds_wizard_emits_frame4_shell_packet_with_workflow_filtering(capsys) -> 
     assert payload['implementation_state'] == 'frame-6-durable-wizard-ready'
     assert payload['delivery_frame'] == 'frame-6'
     assert payload['workflow'] == 'run-pipeline'
+    assert payload['current_page'] == 'landing'
     assert 'flow' in payload['visible_sections']
     assert 'in' in payload['visible_sections']
     assert 'eval' in payload['visible_sections']
     assert payload['execution_state'] == 'blocked'
+    assert 'home:' in payload['wizard_view']
+    assert 'sections: flow, in, out, model, eval, report, cmd, check, run, exit' not in payload['wizard_view']
 
 
 def test_ds_wizard_state_persists_across_section_navigation() -> None:
@@ -183,6 +186,8 @@ def test_ds_wizard_state_persists_across_section_navigation() -> None:
     observerctl_module._ds_wizard_move_section(state, 'prev')
 
     assert state.active_section == 'model'
+    assert state.active_page == 'configure'
+    assert state.active_group == 'model'
     assert state.values['input_paths'] == ['alpha.jsonl']
 
 
@@ -315,6 +320,8 @@ def test_ds_wizard_save_and_load_draft_round_trip(tmp_path: Path) -> None:
 
     assert draft_path.exists()
     assert loaded.workflow == 'evaluate'
+    assert loaded.active_page == 'configure'
+    assert loaded.active_group == 'eval-report'
     assert loaded.active_section == 'report'
     assert loaded.values['run_id'] == 'draft-run-001'
     assert loaded.values['max_fpr'] == 0.03
@@ -325,7 +332,22 @@ def test_ds_wizard_save_and_load_draft_round_trip(tmp_path: Path) -> None:
     assert loaded.draft_path == str(draft_path)
 
 
-def test_ds_wizard_scope_help_from_flow_shows_long_form_menu_list() -> None:
+def test_ds_wizard_starts_on_sparse_landing_page() -> None:
+    state = observerctl_module._ds_wizard_new_state('run-pipeline')
+
+    rendered = observerctl_module._ds_wizard_render(state)
+
+    assert 'path: ds wizard > landing' in rendered
+    assert 'home:' in rendered
+    assert '1. workflow' in rendered
+    assert '2. configure' in rendered
+    assert '3. review and run' in rendered
+    assert '4. help and utilities' in rendered
+    assert 'sections: flow, in, out, model, eval, report, cmd, check, run, exit' not in rendered
+    assert not any(line.startswith('next:') for line in rendered)
+
+
+def test_ds_wizard_scope_help_from_landing_shows_top_level_choices() -> None:
     state = observerctl_module._ds_wizard_new_state('run-pipeline')
 
     state, packet, should_exit = observerctl_module._ds_wizard_handle_command(state, '?')
@@ -334,9 +356,41 @@ def test_ds_wizard_scope_help_from_flow_shows_long_form_menu_list() -> None:
     assert should_exit is False
     rendered = observerctl_module._ds_wizard_render(state)
     assert 'help:' in rendered
-    assert 'flow   workflow and run type' in rendered
-    assert 'model  model family and training' in rendered
-    assert 'run    execute current config' in rendered
+    assert 'workflow           workflow and run type' in rendered
+    assert 'configure          inputs, artifacts, model, and evaluation' in rendered
+    assert 'review and run     validation, command preview, and execution' in rendered
+
+
+def test_ds_wizard_landing_choices_route_to_top_level_pages() -> None:
+    state = observerctl_module._ds_wizard_new_state('evaluate')
+
+    state, packet, should_exit = observerctl_module._ds_wizard_handle_command(state, '2')
+    assert packet is None
+    assert should_exit is False
+    assert state.active_page == 'configure'
+    assert state.active_section == 'in'
+
+    state, packet, should_exit = observerctl_module._ds_wizard_handle_command(state, 'back')
+    assert packet is None
+    assert should_exit is False
+    assert state.active_page == 'landing'
+
+    state, packet, should_exit = observerctl_module._ds_wizard_handle_command(state, '3')
+    assert packet is None
+    assert should_exit is False
+    assert state.active_page == 'review-run'
+    assert state.active_section == 'check'
+
+    state, packet, should_exit = observerctl_module._ds_wizard_handle_command(state, 'back')
+    assert packet is None
+    assert should_exit is False
+    assert state.active_page == 'landing'
+
+    state, packet, should_exit = observerctl_module._ds_wizard_handle_command(state, '4')
+    assert packet is None
+    assert should_exit is False
+    assert state.active_page == 'utilities'
+    assert state.active_section == 'cmd'
 
 
 def test_ds_wizard_scope_help_from_section_is_section_scoped() -> None:

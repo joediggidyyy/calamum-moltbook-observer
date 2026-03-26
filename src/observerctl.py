@@ -4962,6 +4962,13 @@ _DS_WIZARD_WORKFLOWS = (
     'run-pipeline',
 )
 _DS_WIZARD_SECTION_ORDER = ('flow', 'in', 'out', 'model', 'eval', 'report', 'cmd', 'check', 'run', 'exit')
+_DS_WIZARD_LANDING_CHOICES: Tuple[Tuple[str, str], ...] = (
+    ('workflow', 'workflow and run type'),
+    ('configure', 'inputs, artifacts, model, and evaluation'),
+    ('review-run', 'validation, command preview, and execution'),
+    ('utilities', 'drafts, retained imports, and help'),
+    ('exit', 'leave wizard'),
+)
 
 
 @dataclass(frozen=True)
@@ -4983,6 +4990,8 @@ class _DSWizardFieldSpec:
 @dataclass
 class _DSWizardState:
     workflow: str = ''
+    active_page: str = 'landing'
+    active_group: str = ''
     active_section: str = 'flow'
     values: Dict[str, Any] = field(default_factory=dict)
     source: str = 'sim'
@@ -5059,6 +5068,8 @@ def _ds_wizard_new_state(workflow: str = '') -> _DSWizardState:
     ssot = _load_state()
     state = _DSWizardState(
         workflow=str(workflow or '').strip(),
+        active_page='landing',
+        active_group='',
         active_section='flow',
         values=_ds_wizard_default_values(),
         source=str(ssot.get('source', 'sim')),
@@ -5072,6 +5083,80 @@ def _ds_wizard_new_state(workflow: str = '') -> _DSWizardState:
 
 def _ds_wizard_workflow_label(workflow: str) -> str:
     return str(workflow or '').strip() or 'unset'
+
+
+def _ds_wizard_page_for_section(section: str) -> str:
+    token = str(section or '').strip().lower()
+    if token == 'flow':
+        return 'workflow'
+    if token in ('in', 'out', 'model', 'eval', 'report'):
+        return 'configure'
+    if token == 'cmd':
+        return 'utilities'
+    if token in ('check', 'run'):
+        return 'review-run'
+    return 'landing'
+
+
+def _ds_wizard_group_for_section(section: str) -> str:
+    token = str(section or '').strip().lower()
+    if token in ('in', 'out'):
+        return 'data'
+    if token == 'model':
+        return 'model'
+    if token in ('eval', 'report'):
+        return 'eval-report'
+    return ''
+
+
+def _ds_wizard_sync_page_from_section(state: _DSWizardState) -> _DSWizardState:
+    state.active_page = _ds_wizard_page_for_section(state.active_section)
+    state.active_group = _ds_wizard_group_for_section(state.active_section)
+    return state
+
+
+def _ds_wizard_open_landing(state: _DSWizardState) -> _DSWizardState:
+    state.active_page = 'landing'
+    state.active_group = ''
+    state.last_action = 'page:landing'
+    state.transient_view = ''
+    state.transient_target = ''
+    return state
+
+
+def _ds_wizard_preferred_configure_section(state: _DSWizardState) -> str:
+    for section in _ds_wizard_visible_sections(state):
+        if section not in ('flow', 'cmd', 'check', 'run', 'exit'):
+            return section
+    return 'flow'
+
+
+def _ds_wizard_open_top_level_choice(state: _DSWizardState, choice: str) -> _DSWizardState:
+    token = str(choice or '').strip().lower().replace('_', '-').replace(' and ', '-').replace(' ', '-')
+    if token in ('landing', 'home'):
+        return _ds_wizard_open_landing(state)
+    if token == 'workflow':
+        return _ds_wizard_open_section(state, 'flow')
+    if token == 'configure':
+        target = _ds_wizard_preferred_configure_section(state)
+        if not state.workflow or target == 'flow':
+            return _ds_wizard_open_section(state, 'flow')
+        return _ds_wizard_open_section(state, target)
+    if token in ('review', 'review-run', 'review-run-gate'):
+        return _ds_wizard_open_section(state, 'check')
+    if token in ('utilities', 'help', 'help-utilities'):
+        return _ds_wizard_open_section(state, 'cmd')
+    return state
+
+
+def _ds_wizard_landing_choice_map() -> Dict[str, str]:
+    choice_map: Dict[str, str] = {}
+    for key, detail in _DS_WIZARD_LANDING_CHOICES:
+        choice_map[key] = detail
+    choice_map['review'] = choice_map['review-run']
+    choice_map['help'] = choice_map['utilities']
+    choice_map['help-utilities'] = choice_map['utilities']
+    return choice_map
 
 
 def _ds_wizard_visible_sections(state: _DSWizardState) -> List[str]:
@@ -5164,6 +5249,7 @@ def _ds_wizard_set_value(state: _DSWizardState, key: str, value: Any) -> _DSWiza
         state.transient_target = ''
         if state.active_section not in _ds_wizard_visible_sections(state):
             state.active_section = 'flow'
+            _ds_wizard_sync_page_from_section(state)
         return state
     state.values[key] = coerced
     state.last_action = 'set:{0}'.format(key)
@@ -5201,6 +5287,7 @@ def _ds_wizard_move_section(state: _DSWizardState, direction: str) -> _DSWizardS
     idx = sections.index(state.active_section)
     step = 1 if str(direction).strip().lower() == 'next' else -1
     state.active_section = sections[(idx + step) % len(sections)]
+    _ds_wizard_sync_page_from_section(state)
     state.last_action = 'section:{0}'.format(state.active_section)
     state.transient_view = ''
     state.transient_target = ''
@@ -5211,6 +5298,7 @@ def _ds_wizard_open_section(state: _DSWizardState, section: str) -> _DSWizardSta
     target = str(section or '').strip().lower()
     if target in _ds_wizard_visible_sections(state):
         state.active_section = target
+        _ds_wizard_sync_page_from_section(state)
         state.last_action = 'section:{0}'.format(target)
         state.transient_view = ''
         state.transient_target = ''
@@ -5219,6 +5307,11 @@ def _ds_wizard_open_section(state: _DSWizardState, section: str) -> _DSWizardSta
 
 def _ds_wizard_menu_help_lines(state: _DSWizardState) -> List[str]:
     lines = ['help:']
+    if state.active_page == 'landing':
+        for key, detail in _DS_WIZARD_LANDING_CHOICES:
+            label = 'review and run' if key == 'review-run' else ('help and utilities' if key == 'utilities' else key)
+            lines.append('{0:<18} {1}'.format(label, detail))
+        return lines
     for section in _ds_wizard_visible_sections(state):
         info = _DS_WIZARD_SECTION_HELP.get(section, {})
         lines.append('{0:<6} {1}'.format(section, str(info.get('label', section)).strip()))
@@ -5226,6 +5319,8 @@ def _ds_wizard_menu_help_lines(state: _DSWizardState) -> List[str]:
 
 
 def _ds_wizard_scope_help_lines(state: _DSWizardState) -> List[str]:
+    if state.active_page == 'landing':
+        return _ds_wizard_menu_help_lines(state)
     current_section = state.active_section if state.active_section in _ds_wizard_visible_sections(state) else 'flow'
     if current_section == 'flow':
         return _ds_wizard_menu_help_lines(state)
@@ -5263,7 +5358,21 @@ def _ds_wizard_item_peek_lines(state: _DSWizardState, target: str) -> List[str]:
     if not token:
         return ['peek: no target provided']
     if token == 'current':
-        token = state.active_section
+        token = 'landing' if state.active_page == 'landing' else state.active_section
+    if token == 'landing':
+        return [
+            'peek: landing',
+            'Sparse top-level orientation page.',
+            'choices: workflow, configure, review and run, help and utilities, exit',
+        ]
+    landing_choice = _ds_wizard_landing_choice_map().get(token.replace(' ', '-').replace('_', '-'))
+    if landing_choice is not None:
+        label = token.replace('-', ' ')
+        return [
+            'peek: {0}'.format(label),
+            landing_choice,
+            'state: {0}'.format('active' if token.replace(' ', '-').replace('_', '-') == state.active_page else 'available'),
+        ]
     field_spec = _ds_wizard_field_by_index(state, token)
     if field_spec is not None:
         token = field_spec.key
@@ -5299,7 +5408,7 @@ def _ds_wizard_item_peek_lines(state: _DSWizardState, target: str) -> List[str]:
 
 def _ds_wizard_open_scope_help(state: _DSWizardState) -> _DSWizardState:
     state.transient_view = 'scope-help'
-    state.transient_target = state.active_section if state.active_section in _ds_wizard_visible_sections(state) else 'flow'
+    state.transient_target = 'landing' if state.active_page == 'landing' else (state.active_section if state.active_section in _ds_wizard_visible_sections(state) else 'flow')
     state.last_action = 'help:scope'
     return state
 
@@ -5431,6 +5540,8 @@ def _ds_wizard_draft_payload(state: _DSWizardState) -> Dict[str, Any]:
         'draft_version': int(_DS_WIZARD_DRAFT_VERSION),
         'saved_at_utc': _utc_now(),
         'workflow': str(state.workflow or ''),
+        'active_page': str(state.active_page or 'landing'),
+        'active_group': str(state.active_group or ''),
         'active_section': str(state.active_section or 'flow'),
         'source': str(state.source or 'sim'),
         'mode': str(state.mode or 'watch'),
@@ -5487,6 +5598,16 @@ def _ds_wizard_load_draft(draft_path: Path) -> _DSWizardState:
         state.active_section = active_section
     else:
         state.active_section = 'flow'
+
+    active_page = str(payload.get('active_page', '') or '').strip().lower()
+    if active_page == 'landing':
+        state.active_page = 'landing'
+        state.active_group = ''
+    else:
+        _ds_wizard_sync_page_from_section(state)
+    payload_group = str(payload.get('active_group', '') or '').strip().lower()
+    if state.active_page != 'landing' and payload_group:
+        state.active_group = payload_group
 
     state.last_action = 'draft:load'
     state.transient_view = ''
@@ -5647,45 +5768,88 @@ def _ds_wizard_summary_rows(state: _DSWizardState) -> List[str]:
     return rows
 
 
+def _ds_wizard_landing_summary_rows(state: _DSWizardState) -> List[str]:
+    rows = [
+        'workflow: {0}'.format(_ds_wizard_workflow_label(state.workflow)),
+        'state: {0}'.format(_ds_wizard_decision_state(state)),
+    ]
+    if state.source != 'sim' or state.mode != 'watch':
+        rows.append('context: {0} / {1}'.format(str(state.source or 'sim'), str(state.mode or 'watch')))
+    if not state.workflow:
+        rows.append('summary: choose workflow first to shape configuration and review')
+        return rows
+    if len(_ds_wizard_validation_issues(state)) == 0:
+        rows.append('summary: configuration is ready for review and run')
+    else:
+        rows.append('summary: configuration still has blockers before review and run')
+    return rows
+
+
+def _ds_wizard_path_label(state: _DSWizardState) -> str:
+    if state.active_page == 'landing':
+        return 'ds wizard > landing'
+    if state.active_page == 'workflow':
+        return 'ds wizard > workflow'
+    if state.active_page == 'configure':
+        return 'ds wizard > configure > {0}'.format(state.active_section)
+    if state.active_page == 'review-run':
+        return 'ds wizard > review and run > {0}'.format(state.active_section)
+    if state.active_page == 'utilities':
+        return 'ds wizard > help and utilities > {0}'.format(state.active_section)
+    return 'ds wizard > {0}'.format(state.active_section)
+
+
 def _ds_wizard_render(state: _DSWizardState) -> List[str]:
     visible_sections = _ds_wizard_visible_sections(state)
     current_section = state.active_section if state.active_section in visible_sections else 'flow'
     lines: List[str] = []
     lines.append('ObserverCTL DS Wizard')
-    lines.append('path: ds wizard > {0}'.format(current_section))
+    lines.append('path: {0}'.format(_ds_wizard_path_label(state)))
     lines.append('')
-    lines.extend(_ds_wizard_summary_rows(state))
-    lines.append('')
-    if current_section == 'flow':
-        lines.append('workflows:')
-        for idx, workflow in enumerate(_DS_WIZARD_WORKFLOWS, start=1):
-            marker = '*' if workflow == state.workflow else ' '
-            lines.append('{0}. [{1}] {2}'.format(idx, marker, workflow))
-    elif current_section in ('cmd', 'check', 'run', 'exit'):
-        if current_section == 'cmd':
-            lines.append('command preview:')
-            lines.append(_ds_wizard_command_preview(state))
-        elif current_section == 'check':
-            lines.append('validation:')
-            issues = _ds_wizard_validation_issues(state)
-            if not issues:
-                lines.append('- ready')
-            else:
-                for issue in issues:
-                    lines.append('- {0}'.format(issue))
-        elif current_section == 'run':
-            lines.append('execute handoff:')
-            lines.append(_ds_wizard_command_preview(state))
-            lines.append('blocked: {0}'.format('yes' if len(_ds_wizard_validation_issues(state)) > 0 else 'no'))
-        else:
-            lines.append('type exit to leave the wizard')
+    if state.active_page == 'landing':
+        lines.extend(_ds_wizard_landing_summary_rows(state))
+        lines.append('')
+        lines.append('home:')
+        lines.append('1. workflow')
+        lines.append('2. configure')
+        lines.append('3. review and run')
+        lines.append('4. help and utilities')
+        lines.append('5. exit')
+        lines.append('')
+        lines.append('actions: open number/name | validate | ? | exit')
     else:
-        lines.append('{0}:'.format(current_section))
-        for idx, spec in enumerate(_ds_wizard_fields_for_section(state, current_section), start=1):
-            lines.append('{0}. {1:<22} {2:<8} {3}'.format(idx, spec.key, _ds_wizard_status_token(state, spec), _ds_wizard_stringify_value(_ds_wizard_field_value(state, spec.key))))
-    lines.append('')
-    lines.append('sections: {0}'.format(', '.join(visible_sections)))
-    lines.append('next: next | prev | back(flow) | open <section> | set <field> <value> | clear <field> | hydrate dataset|train|model|baseline|latest|run | save draft <path> | load draft <path> | ? | ? <item> | close | validate | cmd | execute | exit')
+        lines.extend(_ds_wizard_summary_rows(state))
+        lines.append('')
+        if current_section == 'flow':
+            lines.append('workflows:')
+            for idx, workflow in enumerate(_DS_WIZARD_WORKFLOWS, start=1):
+                marker = '*' if workflow == state.workflow else ' '
+                lines.append('{0}. [{1}] {2}'.format(idx, marker, workflow))
+        elif current_section in ('cmd', 'check', 'run', 'exit'):
+            if current_section == 'cmd':
+                lines.append('command preview:')
+                lines.append(_ds_wizard_command_preview(state))
+            elif current_section == 'check':
+                lines.append('validation:')
+                issues = _ds_wizard_validation_issues(state)
+                if not issues:
+                    lines.append('- ready')
+                else:
+                    for issue in issues:
+                        lines.append('- {0}'.format(issue))
+            elif current_section == 'run':
+                lines.append('execute handoff:')
+                lines.append(_ds_wizard_command_preview(state))
+                lines.append('blocked: {0}'.format('yes' if len(_ds_wizard_validation_issues(state)) > 0 else 'no'))
+            else:
+                lines.append('type exit to leave the wizard')
+        else:
+            lines.append('{0}:'.format(current_section))
+            for idx, spec in enumerate(_ds_wizard_fields_for_section(state, current_section), start=1):
+                lines.append('{0}. {1:<22} {2:<8} {3}'.format(idx, spec.key, _ds_wizard_status_token(state, spec), _ds_wizard_stringify_value(_ds_wizard_field_value(state, spec.key))))
+        lines.append('')
+        lines.append('sections: {0}'.format(', '.join(visible_sections)))
+        lines.append('next: next | prev | back(home) | open <section> | set <field> <value> | clear <field> | hydrate dataset|train|model|baseline|latest|run | save draft <path> | load draft <path> | ? | ? <item> | close | validate | cmd | execute | exit')
     if str(state.transient_view or '').strip():
         lines.append('')
         if state.transient_view == 'scope-help':
@@ -5740,6 +5904,8 @@ def _ds_wizard_packet(state: _DSWizardState, interactive: bool = False) -> Dict[
         'delivery_frame': 'frame-6',
         'summary': 'DS wizard is available with workflow-aware navigation, retained-artifact hydration, prior-run import, and draft persistence.',
         'workflow': str(state.workflow or ''),
+        'current_page': str(state.active_page or 'landing'),
+        'active_group': str(state.active_group or ''),
         'current_section': str(state.active_section or 'flow'),
         'visible_sections': _ds_wizard_visible_sections(state),
         'execution_state': 'blocked' if issues else 'ready',
@@ -5810,8 +5976,8 @@ def _ds_wizard_handle_command(state: _DSWizardState, command: str) -> Tuple[_DSW
         return _ds_wizard_move_section(state, 'next'), None, False
     if lowered == 'prev':
         return _ds_wizard_move_section(state, 'prev'), None, False
-    if lowered == 'back':
-        return _ds_wizard_open_section(state, 'flow'), None, False
+    if lowered in ('back', 'home', 'landing'):
+        return _ds_wizard_open_landing(state), None, False
     if lowered == 'validate':
         _ds_wizard_validation_issues(state)
         return state, None, False
@@ -5832,10 +5998,16 @@ def _ds_wizard_handle_command(state: _DSWizardState, command: str) -> Tuple[_DSW
     if lowered in _DS_WIZARD_WORKFLOWS:
         _ds_wizard_set_value(state, 'workflow', lowered)
         return state, None, False
+    if lowered in ('workflow', 'configure', 'review', 'review and run', 'review-run', 'utilities', 'help', 'help and utilities'):
+        return _ds_wizard_open_top_level_choice(state, lowered), None, False
     if lowered in _ds_wizard_visible_sections(state):
         return _ds_wizard_open_section(state, lowered), None, False
     if lowered.startswith('open '):
-        return _ds_wizard_open_section(state, lowered.split(' ', 1)[1]), None, False
+        target = lowered.split(' ', 1)[1]
+        routed = _ds_wizard_open_top_level_choice(state, target)
+        if routed is not state or target in ('landing', 'home', 'workflow', 'configure', 'review', 'review and run', 'review-run', 'utilities', 'help', 'help and utilities'):
+            return routed, None, False
+        return _ds_wizard_open_section(state, target), None, False
     if lowered.startswith('set '):
         payload = text.split(' ', 2)
         if len(payload) >= 3:
@@ -5867,6 +6039,11 @@ def _ds_wizard_handle_command(state: _DSWizardState, command: str) -> Tuple[_DSW
                 return _ds_wizard_hydrate_run_ledger(state, Path(arg)), None, False
     if text.isdigit():
         idx = int(text)
+        if state.active_page == 'landing' and 1 <= idx <= len(_DS_WIZARD_LANDING_CHOICES):
+            choice = _DS_WIZARD_LANDING_CHOICES[idx - 1][0]
+            if choice == 'exit':
+                return state, _ds_wizard_packet(state, interactive=True), True
+            return _ds_wizard_open_top_level_choice(state, choice), None, False
         if state.active_section == 'flow' and 1 <= idx <= len(_DS_WIZARD_WORKFLOWS):
             return _ds_wizard_set_value(state, 'workflow', _DS_WIZARD_WORKFLOWS[idx - 1]), None, False
         section_fields = _ds_wizard_fields_for_section(state, state.active_section)
