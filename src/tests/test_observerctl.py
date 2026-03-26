@@ -5,10 +5,14 @@ import os
 import sys
 from pathlib import Path
 
+import pytest
+
 
 SRC_DIR = Path(__file__).resolve().parents[1]
 if str(SRC_DIR) not in sys.path:
     sys.path.insert(0, str(SRC_DIR))
+
+from obfuscator_lib import Obfuscator
 
 import observerctl as observerctl_module
 from calamum_librarian import Librarian
@@ -82,6 +86,554 @@ def _set_security_report_ref(monkeypatch, base_dir: Path) -> Path:
     return report
 
 
+def _write_signed_jsonl(path: Path, records: list[dict]) -> None:
+    path.parent.mkdir(parents=True, exist_ok=True)
+    with path.open('w', encoding='utf-8') as f:
+        for record in records:
+            f.write(json.dumps(Obfuscator.sign_record(record)) + '\n')
+
+
+def _make_ds_records() -> list[dict]:
+    records = []
+    for i in range(8):
+        records.append({
+            'timestamp': f'2026-02-10T00:00:{i:02d}Z',
+            'type': 'post',
+            'author_hash': f'norm{i:012d}',
+            'content_length': 10,
+            'has_code_block': False,
+            'tags_count': 0,
+            'mentions_count': 0,
+            'f_complexity': 0.1,
+            'f_code_density': 0.0,
+            'f_toxicity': 0,
+            'f_timestamp_epoch': float(i),
+            'tv_id': 'TV-0',
+        })
+    for i in range(4):
+        records.append({
+            'timestamp': f'2026-02-10T00:01:{i:02d}Z',
+            'type': 'post',
+            'author_hash': f'bad{i:013d}',
+            'content_length': 500,
+            'has_code_block': True,
+            'tags_count': 1,
+            'mentions_count': 1,
+            'f_complexity': 0.8,
+            'f_code_density': 0.2,
+            'f_toxicity': 1,
+            'f_timestamp_epoch': float(100 + i),
+            'tv_id': 'TV-3',
+        })
+    return records
+
+
+def test_observerctl_top_level_help_exposes_ds_namespace(capsys) -> None:
+    parser = observerctl_module._build_parser()
+
+    with pytest.raises(SystemExit) as exc:
+        parser.parse_args(['-h'])
+
+    assert exc.value.code == 0
+    out = capsys.readouterr().out
+    assert 'ds' in out
+    assert 'Data-science operations namespace' in out
+
+
+def test_observerctl_ds_help_exposes_frame1_command_family(capsys) -> None:
+    parser = observerctl_module._build_parser()
+
+    with pytest.raises(SystemExit) as exc:
+        parser.parse_args(['ds', '-h'])
+
+    assert exc.value.code == 0
+    out = capsys.readouterr().out
+    assert 'build' in out
+    assert 'train' in out
+    assert 'evaluate' in out
+    assert 'score' in out
+    assert 'run' in out
+    assert 'wizard' in out
+
+
+def test_ds_wizard_emits_frame4_shell_packet_with_workflow_filtering(capsys) -> None:
+    rc = main(['ds', 'wizard', '--workflow', 'run-pipeline', '--json'])
+
+    assert rc == 0
+    payload = json.loads(capsys.readouterr().out)
+    assert payload['decision'] == 'go'
+    assert payload['action'] == 'ds-wizard'
+    assert payload['command_family'] == 'ds'
+    assert payload['command_path'] == 'observerctl ds wizard'
+    assert payload['implementation_state'] == 'frame-6-durable-wizard-ready'
+    assert payload['delivery_frame'] == 'frame-6'
+    assert payload['workflow'] == 'run-pipeline'
+    assert 'flow' in payload['visible_sections']
+    assert 'in' in payload['visible_sections']
+    assert 'eval' in payload['visible_sections']
+    assert payload['execution_state'] == 'blocked'
+
+
+def test_ds_wizard_state_persists_across_section_navigation() -> None:
+    state = observerctl_module._ds_wizard_new_state('run-pipeline')
+    observerctl_module._ds_wizard_set_value(state, 'input_paths', ['alpha.jsonl'])
+
+    observerctl_module._ds_wizard_open_section(state, 'model')
+    observerctl_module._ds_wizard_move_section(state, 'next')
+    observerctl_module._ds_wizard_move_section(state, 'prev')
+
+    assert state.active_section == 'model'
+    assert state.values['input_paths'] == ['alpha.jsonl']
+
+
+def test_ds_wizard_filters_sections_by_workflow() -> None:
+    build_state = observerctl_module._ds_wizard_new_state('build')
+    demo_state = observerctl_module._ds_wizard_new_state('run-demo')
+
+    build_sections = observerctl_module._ds_wizard_visible_sections(build_state)
+    demo_sections = observerctl_module._ds_wizard_visible_sections(demo_state)
+
+    assert 'eval' not in build_sections
+    assert 'report' not in build_sections
+    assert 'in' not in demo_sections
+    assert 'model' in demo_sections
+
+
+def test_ds_wizard_hydrates_retained_artifacts(tmp_path: Path) -> None:
+    dataset_manifest = tmp_path / 'dataset_manifest.json'
+    dataset_manifest.write_text(json.dumps({
+        'features_csv': str(tmp_path / 'features.csv'),
+        'labels_csv': str(tmp_path / 'labels.csv'),
+    }), encoding='utf-8')
+    (tmp_path / 'features.csv').write_text('record_id\n', encoding='utf-8')
+    (tmp_path / 'labels.csv').write_text('record_id,label\n', encoding='utf-8')
+
+    train_manifest = tmp_path / 'train_manifest.json'
+    train_manifest.write_text(json.dumps({
+        'dataset_manifest_path': str(dataset_manifest),
+        'model_path': str(tmp_path / 'model.pkl'),
+        'model_type': 'unsupervised',
+    }), encoding='utf-8')
+    (tmp_path / 'model.pkl').write_bytes(b'model')
+
+    baseline_packet = tmp_path / 'baseline.json'
+    baseline_packet.write_text(json.dumps({'baseline_window_id': 'frame4-window'}), encoding='utf-8')
+
+    state = observerctl_module._ds_wizard_new_state('score')
+    observerctl_module._ds_wizard_hydrate_dataset_manifest(state, dataset_manifest)
+    observerctl_module._ds_wizard_hydrate_train_manifest(state, train_manifest)
+    observerctl_module._ds_wizard_hydrate_baseline_analysis(state, baseline_packet)
+
+    assert state.values['dataset_manifest'] == str(dataset_manifest)
+    assert state.values['features_csv'] == str(tmp_path / 'features.csv')
+    assert state.values['model_path'] == str(tmp_path / 'model.pkl')
+    assert state.values['model_type'] == 'unsupervised'
+    assert state.values['baseline_window_id'] == 'frame4-window'
+
+
+def test_ds_wizard_hydrates_prior_run_ledger(tmp_path: Path) -> None:
+    features_csv = tmp_path / 'features.csv'
+    labels_csv = tmp_path / 'labels.csv'
+    dataset_manifest = tmp_path / 'dataset_manifest.json'
+    model_path = tmp_path / 'model.pkl'
+    run_json = tmp_path / 'run.json'
+
+    features_csv.write_text('record_id,feature\n', encoding='utf-8')
+    labels_csv.write_text('record_id,label\n', encoding='utf-8')
+    model_path.write_bytes(b'model')
+    dataset_manifest.write_text(json.dumps({
+        'features_csv': str(features_csv),
+        'labels_csv': str(labels_csv),
+    }), encoding='utf-8')
+    run_json.write_text(json.dumps({
+        'identity': {'run_id': 'frame6-ledger-import'},
+        'context': {'constraints': {'max_fpr': 0.02}},
+        'data': {
+            'features_csv': str(features_csv),
+            'labels_csv': str(labels_csv),
+            'dataset_manifest': str(dataset_manifest),
+        },
+        'model': {
+            'family': 'trained_apexlab',
+            'source': str(model_path),
+        },
+    }), encoding='utf-8')
+
+    state = observerctl_module._ds_wizard_new_state('evaluate')
+    observerctl_module._ds_wizard_hydrate_run_ledger(state, run_json)
+
+    assert state.run_ledger_path == str(run_json)
+    assert state.values['run_id'] == 'frame6-ledger-import'
+    assert state.values['max_fpr'] == 0.02
+    assert state.values['dataset_manifest'] == str(dataset_manifest)
+    assert state.values['features_csv'] == str(features_csv)
+    assert state.values['labels_csv'] == str(labels_csv)
+    assert state.values['model_path'] == str(model_path)
+    assert state.hydrated_from['run_id'] == 'run_ledger'
+    assert state.hydrated_from['max_fpr'] == 'run_ledger'
+    assert state.hydrated_from['model_path'] == 'run_ledger'
+
+
+def test_ds_wizard_reselection_supports_keep_clear_new() -> None:
+    state = observerctl_module._ds_wizard_new_state('train')
+    observerctl_module._ds_wizard_set_value(state, 'out_dir', 'alpha')
+
+    observerctl_module._ds_wizard_apply_reselection(state, 'out_dir', 'keep')
+    assert state.values['out_dir'] == 'alpha'
+
+    observerctl_module._ds_wizard_apply_reselection(state, 'out_dir', 'clear')
+    assert state.values['out_dir'] == ''
+
+    observerctl_module._ds_wizard_apply_reselection(state, 'out_dir', 'new', 'beta')
+    assert state.values['out_dir'] == 'beta'
+
+
+def test_ds_wizard_execute_is_blocked_when_validation_has_not_passed() -> None:
+    state = observerctl_module._ds_wizard_new_state('train')
+    packet = observerctl_module._ds_wizard_attempt_execute(state)
+
+    assert packet['decision'] == 'no-go'
+    assert 'critical_check_failed:wizard_validation_blocked' in packet['reason_codes']
+    assert 'dataset_manifest is required' in packet['validation_issues']
+
+
+def test_ds_wizard_save_and_load_draft_round_trip(tmp_path: Path) -> None:
+    state = observerctl_module._ds_wizard_new_state('evaluate')
+    observerctl_module._ds_wizard_open_section(state, 'report')
+    observerctl_module._ds_wizard_set_value(state, 'run_id', 'draft-run-001')
+    observerctl_module._ds_wizard_set_value(state, 'max_fpr', '0.03')
+    state.source = 'real'
+    state.mode = 'canary'
+    state.values['source'] = 'real'
+    state.values['mode'] = 'canary'
+    state.hydrated_from['run_id'] = 'run_ledger'
+    state.run_ledger_path = str(tmp_path / 'prior_run.json')
+
+    draft_path = tmp_path / 'wizard_draft.json'
+    observerctl_module._ds_wizard_save_draft(state, draft_path)
+    loaded = observerctl_module._ds_wizard_load_draft(draft_path)
+
+    assert draft_path.exists()
+    assert loaded.workflow == 'evaluate'
+    assert loaded.active_section == 'report'
+    assert loaded.values['run_id'] == 'draft-run-001'
+    assert loaded.values['max_fpr'] == 0.03
+    assert loaded.source == 'real'
+    assert loaded.mode == 'canary'
+    assert loaded.hydrated_from['run_id'] == 'run_ledger'
+    assert loaded.run_ledger_path == str(tmp_path / 'prior_run.json')
+    assert loaded.draft_path == str(draft_path)
+
+
+def test_ds_wizard_scope_help_from_flow_shows_long_form_menu_list() -> None:
+    state = observerctl_module._ds_wizard_new_state('run-pipeline')
+
+    state, packet, should_exit = observerctl_module._ds_wizard_handle_command(state, '?')
+
+    assert packet is None
+    assert should_exit is False
+    rendered = observerctl_module._ds_wizard_render(state)
+    assert 'help:' in rendered
+    assert 'flow   workflow and run type' in rendered
+    assert 'model  model family and training' in rendered
+    assert 'run    execute current config' in rendered
+
+
+def test_ds_wizard_scope_help_from_section_is_section_scoped() -> None:
+    state = observerctl_module._ds_wizard_new_state('evaluate')
+    observerctl_module._ds_wizard_open_section(state, 'eval')
+
+    state, packet, should_exit = observerctl_module._ds_wizard_handle_command(state, '?')
+
+    assert packet is None
+    assert should_exit is False
+    rendered = observerctl_module._ds_wizard_render(state)
+    assert 'help: eval' in rendered
+    assert 'Review evaluation thresholds and report-facing controls.' in rendered
+    assert 'fields: max_fpr' in rendered
+
+
+def test_ds_wizard_item_peek_does_not_change_state() -> None:
+    state = observerctl_module._ds_wizard_new_state('evaluate')
+    observerctl_module._ds_wizard_open_section(state, 'eval')
+    observerctl_module._ds_wizard_set_value(state, 'max_fpr', '0.05')
+
+    state, packet, should_exit = observerctl_module._ds_wizard_handle_command(state, '? max_fpr')
+
+    assert packet is None
+    assert should_exit is False
+    assert state.active_section == 'eval'
+    assert state.values['max_fpr'] == 0.05
+    rendered = observerctl_module._ds_wizard_render(state)
+    assert 'peek: max_fpr' in rendered
+    assert 'Maximum false-positive rate' in rendered
+    assert 'value: 0.05' in rendered
+
+
+def test_ds_wizard_blank_input_dismisses_transient_help() -> None:
+    state = observerctl_module._ds_wizard_new_state('run-pipeline')
+    state, _, _ = observerctl_module._ds_wizard_handle_command(state, '?')
+    assert state.transient_view == 'scope-help'
+
+    state, packet, should_exit = observerctl_module._ds_wizard_handle_command(state, '')
+
+    assert packet is None
+    assert should_exit is False
+    assert state.transient_view == ''
+    rendered = observerctl_module._ds_wizard_render(state)
+    assert 'help:' not in rendered
+
+
+def test_ds_wizard_command_surface_supports_run_hydration_and_draft_round_trip(tmp_path: Path) -> None:
+    features_csv = tmp_path / 'features.csv'
+    labels_csv = tmp_path / 'labels.csv'
+    dataset_manifest = tmp_path / 'dataset_manifest.json'
+    model_path = tmp_path / 'model.pkl'
+    run_json = tmp_path / 'run.json'
+    draft_path = tmp_path / 'wizard_draft.json'
+
+    features_csv.write_text('record_id,feature\n', encoding='utf-8')
+    labels_csv.write_text('record_id,label\n', encoding='utf-8')
+    model_path.write_bytes(b'model')
+    dataset_manifest.write_text(json.dumps({
+        'features_csv': str(features_csv),
+        'labels_csv': str(labels_csv),
+    }), encoding='utf-8')
+    run_json.write_text(json.dumps({
+        'identity': {'run_id': 'frame6-command-ledger'},
+        'context': {'constraints': {'max_fpr': 0.015}},
+        'data': {
+            'features_csv': str(features_csv),
+            'labels_csv': str(labels_csv),
+            'dataset_manifest': str(dataset_manifest),
+        },
+        'model': {'source': str(model_path)},
+    }), encoding='utf-8')
+
+    state = observerctl_module._ds_wizard_new_state('evaluate')
+    state, packet, should_exit = observerctl_module._ds_wizard_handle_command(state, 'hydrate run {0}'.format(run_json))
+    assert packet is None
+    assert should_exit is False
+    assert state.values['run_id'] == 'frame6-command-ledger'
+
+    state, packet, should_exit = observerctl_module._ds_wizard_handle_command(state, 'save draft {0}'.format(draft_path))
+    assert packet is None
+    assert should_exit is False
+    assert draft_path.exists()
+
+    restored = observerctl_module._ds_wizard_new_state('evaluate')
+    restored, packet, should_exit = observerctl_module._ds_wizard_handle_command(restored, 'load draft {0}'.format(draft_path))
+    assert packet is None
+    assert should_exit is False
+    assert restored.values['run_id'] == 'frame6-command-ledger'
+    assert restored.values['max_fpr'] == 0.015
+    assert restored.draft_path == str(draft_path)
+
+
+def test_ds_run_demo_executes_wrapper_and_emits_artifact_summary(tmp_path: Path, capsys) -> None:
+    try:
+        import apexlab  # noqa: F401
+    except ImportError:
+        pytest.skip('ApexLab not installed')
+
+    out_dir = tmp_path / 'demo_flow'
+    rc = main(['ds', 'run', 'demo', '--out-dir', str(out_dir), '--json'])
+
+    assert rc == 0
+    payload = json.loads(capsys.readouterr().out)
+    assert payload['action'] == 'ds-run'
+    assert payload['run_mode'] == 'demo'
+    assert payload['implementation_state'] == 'frame-3-automation-ready'
+    assert payload['delivery_frame'] == 'frame-3'
+    assert payload['total_records'] == 60
+    assert Path(payload['artifacts']['root_dir']).exists()
+    assert Path(payload['artifacts']['dataset_manifest']).exists()
+    assert Path(payload['artifacts']['supervised_model_path']).exists()
+    assert Path(payload['artifacts']['unsupervised_model_path']).exists()
+    assert Path(payload['artifacts']['evaluation_run_json']).exists()
+    assert Path(payload['artifacts']['evaluation_run_md']).exists()
+
+
+def test_ds_run_pipeline_executes_supervised_flow_and_emits_artifact_summary(tmp_path: Path, monkeypatch, capsys) -> None:
+    try:
+        import apexlab  # noqa: F401
+    except ImportError:
+        pytest.skip('ApexLab not installed')
+
+    log_dir = tmp_path / 'logs'
+    (log_dir / 'health').mkdir(parents=True, exist_ok=True)
+    (log_dir / 'data' / 'calamum').mkdir(parents=True, exist_ok=True)
+    (log_dir / 'control' / 'calamum').mkdir(parents=True, exist_ok=True)
+
+    monkeypatch.setenv('CALAMUM_LOG_DIR', str(log_dir))
+    monkeypatch.setenv('CALAMUM_DATA_SIGNING_KEY', 'unit-test-signing-key')
+
+    input_path = tmp_path / 'input.jsonl'
+    _write_signed_jsonl(input_path, _make_ds_records())
+    out_dir = tmp_path / 'pipeline_flow'
+
+    rc = main([
+        'ds', 'run', 'pipeline',
+        '--input', str(input_path),
+        '--out-dir', str(out_dir),
+        '--model-type', 'supervised',
+        '--seed', '42',
+        '--json',
+    ])
+
+    assert rc == 0
+    payload = json.loads(capsys.readouterr().out)
+    assert payload['action'] == 'ds-run'
+    assert payload['run_mode'] == 'pipeline'
+    assert payload['implementation_state'] == 'frame-3-automation-ready'
+    assert payload['delivery_frame'] == 'frame-3'
+    assert payload['model_type'] == 'supervised'
+    assert payload['has_labels'] is True
+    assert payload['workflow_steps'] == ['build', 'train', 'evaluate']
+    assert Path(payload['artifacts']['dataset_manifest']).exists()
+    assert Path(payload['artifacts']['train_manifest']).exists()
+    assert Path(payload['artifacts']['model_path']).exists()
+    assert Path(payload['artifacts']['run_json']).exists()
+    assert Path(payload['artifacts']['run_md']).exists()
+
+
+def test_ds_build_executes_wrapper_and_emits_artifact_summary(tmp_path: Path, monkeypatch, capsys) -> None:
+    log_dir = tmp_path / 'logs'
+    (log_dir / 'health').mkdir(parents=True, exist_ok=True)
+    (log_dir / 'data' / 'calamum').mkdir(parents=True, exist_ok=True)
+    (log_dir / 'control' / 'calamum').mkdir(parents=True, exist_ok=True)
+
+    monkeypatch.setenv('CALAMUM_LOG_DIR', str(log_dir))
+    monkeypatch.setenv('CALAMUM_DATA_SIGNING_KEY', 'unit-test-signing-key')
+
+    input_path = tmp_path / 'input.jsonl'
+    _write_signed_jsonl(input_path, _make_ds_records())
+    out_dir = tmp_path / 'dataset'
+
+    rc = main(['ds', 'build', '--input', str(input_path), '--out-dir', str(out_dir), '--seed', '123', '--json'])
+    assert rc == 0
+
+    payload = json.loads(capsys.readouterr().out)
+    assert payload['action'] == 'ds-build'
+    assert payload['implementation_state'] == 'frame-2-wrapper-ready'
+    assert Path(payload['artifacts']['dataset_manifest']).exists()
+    assert Path(payload['artifacts']['features_csv']).exists()
+    assert payload['has_labels'] is True
+    assert int(payload['total_records']) == 12
+
+
+def test_ds_train_executes_wrapper_and_emits_expected_artifacts(tmp_path: Path, monkeypatch, capsys) -> None:
+    try:
+        import apexlab  # noqa: F401
+    except ImportError:
+        pytest.skip('ApexLab not installed')
+
+    log_dir = tmp_path / 'logs'
+    (log_dir / 'health').mkdir(parents=True, exist_ok=True)
+    (log_dir / 'data' / 'calamum').mkdir(parents=True, exist_ok=True)
+    (log_dir / 'control' / 'calamum').mkdir(parents=True, exist_ok=True)
+
+    monkeypatch.setenv('CALAMUM_LOG_DIR', str(log_dir))
+    monkeypatch.setenv('CALAMUM_DATA_SIGNING_KEY', 'unit-test-signing-key')
+
+    from analysis.dataset_builder import build_dataset
+
+    input_path = tmp_path / 'input.jsonl'
+    _write_signed_jsonl(input_path, _make_ds_records())
+    dataset_dir = tmp_path / 'dataset'
+    build_dataset([input_path], out_dir=dataset_dir, seed=123)
+    manifest_path = dataset_dir / 'dataset_manifest.json'
+    model_dir = tmp_path / 'models'
+
+    rc = main(['ds', 'train', '--dataset', str(manifest_path), '--out-dir', str(model_dir), '--model-type', 'supervised', '--json'])
+    assert rc == 0
+
+    payload = json.loads(capsys.readouterr().out)
+    assert payload['action'] == 'ds-train'
+    assert payload['model_type'] == 'supervised'
+    assert Path(payload['artifacts']['train_manifest']).exists()
+    assert Path(payload['artifacts']['model_path']).exists()
+    assert Path(payload['artifacts']['metrics_path']).exists()
+
+
+def test_ds_evaluate_executes_wrapper_and_emits_run_artifacts(tmp_path: Path, monkeypatch, capsys) -> None:
+    log_dir = tmp_path / 'logs'
+    (log_dir / 'health').mkdir(parents=True, exist_ok=True)
+    (log_dir / 'data' / 'calamum').mkdir(parents=True, exist_ok=True)
+    (log_dir / 'control' / 'calamum').mkdir(parents=True, exist_ok=True)
+
+    monkeypatch.setenv('CALAMUM_LOG_DIR', str(log_dir))
+    monkeypatch.setenv('CALAMUM_DATA_SIGNING_KEY', 'unit-test-signing-key')
+
+    from analysis.dataset_builder import build_dataset
+
+    input_path = tmp_path / 'input.jsonl'
+    _write_signed_jsonl(input_path, _make_ds_records())
+    dataset_dir = tmp_path / 'dataset'
+    manifest = build_dataset([input_path], out_dir=dataset_dir, seed=123)
+    eval_dir = tmp_path / 'evaluation'
+
+    rc = main([
+        'ds', 'evaluate',
+        '--features-csv', str(Path(manifest.features_csv)),
+        '--labels-csv', str(Path(manifest.labels_csv)),
+        '--dataset-manifest', str(dataset_dir / 'dataset_manifest.json'),
+        '--out-dir', str(eval_dir),
+        '--run-id', 'unit-eval',
+        '--json',
+    ])
+    assert rc == 0
+
+    payload = json.loads(capsys.readouterr().out)
+    assert payload['action'] == 'ds-evaluate'
+    assert payload['run_id'] == 'unit-eval'
+    assert Path(payload['artifacts']['run_json']).exists()
+    assert Path(payload['artifacts']['run_md']).exists()
+    assert payload['has_labels'] is True
+
+
+def test_ds_score_executes_wrapper_and_emits_score_artifact_summary(tmp_path: Path, monkeypatch, capsys) -> None:
+    try:
+        import apexlab  # noqa: F401
+    except ImportError:
+        pytest.skip('ApexLab not installed')
+
+    log_dir = tmp_path / 'logs'
+    (log_dir / 'health').mkdir(parents=True, exist_ok=True)
+    (log_dir / 'data' / 'calamum').mkdir(parents=True, exist_ok=True)
+    (log_dir / 'control' / 'calamum').mkdir(parents=True, exist_ok=True)
+
+    monkeypatch.setenv('CALAMUM_LOG_DIR', str(log_dir))
+    monkeypatch.setenv('CALAMUM_DATA_SIGNING_KEY', 'unit-test-signing-key')
+
+    from analysis.dataset_builder import build_dataset
+    from analysis.train_model import train_model
+
+    input_path = tmp_path / 'input.jsonl'
+    _write_signed_jsonl(input_path, _make_ds_records())
+    dataset_dir = tmp_path / 'dataset'
+    build_dataset([input_path], out_dir=dataset_dir, seed=123)
+    manifest_path = dataset_dir / 'dataset_manifest.json'
+    model_dir = tmp_path / 'models_unsupervised'
+    train_model(manifest_path, out_dir=model_dir, model_type='unsupervised', seed=42)
+
+    out_file = tmp_path / 'scores.csv'
+    rc = main([
+        'ds', 'score',
+        '--dataset', str(manifest_path),
+        '--model', str(model_dir / 'train_manifest.json'),
+        '--out-file', str(out_file),
+        '--json',
+    ])
+    assert rc == 0
+
+    payload = json.loads(capsys.readouterr().out)
+    assert payload['action'] == 'ds-score'
+    assert payload['records_scored'] == 12
+    assert payload['score_column'] == 'score_anomaly'
+    assert Path(payload['artifacts']['scores_csv']).exists()
+
+
 def test_sandbox_list_emits_definition_catalog_json(monkeypatch, capsys) -> None:
     monkeypatch.setattr(observerctl_module, 'sandbox_get_definitions', lambda: [
         {
@@ -149,6 +701,24 @@ def test_sandbox_show_emits_definition_detail_json(monkeypatch, capsys) -> None:
     assert payload['action'] == 'sandbox-show'
     assert payload['definition']['id'] == 'metadata-contract'
     assert payload['definition']['command'] == 'observerctl sandbox run metadata-contract'
+
+
+def test_real_sandbox_registry_includes_ds_wizard_hydration_definition() -> None:
+    definition = observerctl_module.sandbox_get_definition('ds-wizard-hydration')
+
+    assert definition is not None
+    assert definition['id'] == 'ds-wizard-hydration'
+    assert definition['command'] == 'observerctl sandbox run ds-wizard-hydration'
+    assert definition['run_index_path'].endswith('frame4_ds_wizard_hydration_probe/run_index.jsonl')
+
+
+def test_real_sandbox_registry_includes_ds_wizard_durability_definition() -> None:
+    definition = observerctl_module.sandbox_get_definition('ds-wizard-durability')
+
+    assert definition is not None
+    assert definition['id'] == 'ds-wizard-durability'
+    assert definition['command'] == 'observerctl sandbox run ds-wizard-durability'
+    assert definition['run_index_path'].endswith('frame6_ds_wizard_durability_probe/run_index.jsonl')
 
 
 def test_sandbox_show_human_output_includes_alias_policy_and_trailing_contract(monkeypatch, capsys) -> None:

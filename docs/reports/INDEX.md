@@ -24,6 +24,7 @@ Reports are distinct from manuals:
 | [`PUBLIC_RUN_LEDGER.md`](PUBLIC_RUN_LEDGER.md) | Starter public ledger foregrounding current runtime evidence and lane census before audit/report-family census data | Tracked | Provides the runtime-first public snapshot that later cross-run synthesis can cite without publishing routine runtime payloads. |
 | [`AGGREGATE_REPORT.md`](AGGREGATE_REPORT.md) | Starter aggregate report foregrounding runtime evidence aggregates before audit/report-family synthesis, with a compact threshold-calibration subsection | Tracked | Provides a public synthesis surface that leads with active runtime posture and includes the current threshold-calibration snapshot. |
 | [`AGGREGATE_REPORT_SCHEMA.md`](AGGREGATE_REPORT_SCHEMA.md) | Schema and methodological contract for future public aggregate reports | Tracked | Defines how multi-run public synthesis should be structured so it remains analytically legible and methodologically disciplined. |
+| [`APEXLAB_REFERENCE_VALIDATION_REPORT_20260324.md`](APEXLAB_REFERENCE_VALIDATION_REPORT_20260324.md) | Scientific report for the 2026-03-24 ApexLab reference-validation run used by the Observer analysis lane | Tracked | Preserves the quantitative validation interpretation in tracked Observer docs while the figure-bearing authoring copy remains in the local report lane. |
 
 ## How reports relate to manuals
 

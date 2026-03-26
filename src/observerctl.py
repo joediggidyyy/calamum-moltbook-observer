@@ -9,6 +9,7 @@ Normative constraints:
 from __future__ import annotations
 
 import argparse
+from dataclasses import dataclass, field
 import gzip
 import hashlib
 import json
@@ -2989,9 +2990,33 @@ def _render_librarian_stores_human(packet: Dict[str, Any]) -> List[str]:
     return lines
 
 
+def _render_ds_human(packet: Dict[str, Any]) -> List[str]:
+    wizard_view = packet.get('wizard_view', []) if isinstance(packet.get('wizard_view', []), list) else []
+    if str(packet.get('action', '')).strip().lower() == 'ds-wizard' and wizard_view:
+        return [str(line) for line in wizard_view]
+    lines: List[str] = []
+    lines.append('ObserverCTL DS')
+    lines.append('action: {0}'.format(str(packet.get('action', '') or 'ds')))
+    lines.append('state: {0}'.format(str(packet.get('implementation_state', '') or 'unknown')))
+    summary = str(packet.get('summary', '') or '').strip()
+    if summary:
+        lines.append('summary: {0}'.format(summary))
+    artifacts = packet.get('artifacts', {}) if isinstance(packet.get('artifacts', {}), dict) else {}
+    if artifacts:
+        lines.append('artifacts:')
+        for key in sorted(artifacts.keys()):
+            value = artifacts.get(key)
+            if value in (None, '', [], {}):
+                continue
+            lines.append('- {0}: {1}'.format(key, value))
+    return lines
+
+
 def _render_human_known_packet(packet: Dict[str, Any]) -> Optional[List[str]]:
     if not isinstance(packet, dict):
         return None
+    if str(packet.get('command_family', '')).strip().lower() == 'ds':
+        return _render_ds_human(packet)
     sandbox_lines = render_sandbox_human_packet(packet)
     if isinstance(sandbox_lines, list) and len(sandbox_lines) > 0:
         return sandbox_lines
@@ -4928,6 +4953,1408 @@ def _policy_validate() -> Dict[str, Any]:
     }
 
 
+_DS_WIZARD_WORKFLOWS = (
+    'build',
+    'train',
+    'evaluate',
+    'score',
+    'run-demo',
+    'run-pipeline',
+)
+_DS_WIZARD_SECTION_ORDER = ('flow', 'in', 'out', 'model', 'eval', 'report', 'cmd', 'check', 'run', 'exit')
+
+
+@dataclass(frozen=True)
+class _DSWizardFieldSpec:
+    key: str
+    section: str
+    workflows: Tuple[str, ...]
+    required_in: Tuple[str, ...] = ()
+    flag: str = ''
+    value_kind: str = 'text'
+    path_kind: str = ''
+    accepts_multiple: bool = False
+    default: Any = None
+    choices: Tuple[str, ...] = ()
+    description: str = ''
+    artifact_source: str = ''
+
+
+@dataclass
+class _DSWizardState:
+    workflow: str = ''
+    active_section: str = 'flow'
+    values: Dict[str, Any] = field(default_factory=dict)
+    source: str = 'sim'
+    mode: str = 'watch'
+    hydrated_from: Dict[str, str] = field(default_factory=dict)
+    run_ledger_path: str = ''
+    draft_path: str = ''
+    last_action: str = ''
+    validation_issues: List[str] = field(default_factory=list)
+    transient_view: str = ''
+    transient_target: str = ''
+
+
+_DS_WIZARD_DRAFT_VERSION = 1
+
+
+_DS_WIZARD_FIELD_SPECS: Tuple[_DSWizardFieldSpec, ...] = (
+    _DSWizardFieldSpec('workflow', 'flow', _DS_WIZARD_WORKFLOWS, required_in=_DS_WIZARD_WORKFLOWS, description='Workflow preset'),
+    _DSWizardFieldSpec('source', 'flow', _DS_WIZARD_WORKFLOWS, default='sim', description='Observer source axis', artifact_source='latest_context'),
+    _DSWizardFieldSpec('mode', 'flow', _DS_WIZARD_WORKFLOWS, default='watch', description='Observer mode', artifact_source='latest_context'),
+    _DSWizardFieldSpec('input_paths', 'in', ('build', 'run-pipeline'), required_in=('build', 'run-pipeline'), flag='--input', value_kind='path-list', path_kind='file', accepts_multiple=True, description='Telemetry JSONL inputs'),
+    _DSWizardFieldSpec('dataset_manifest', 'in', ('train', 'score', 'evaluate', 'run-pipeline', 'build'), required_in=('train', 'score'), flag='--dataset', value_kind='path', path_kind='file', description='Dataset manifest path', artifact_source='dataset_manifest'),
+    _DSWizardFieldSpec('features_csv', 'in', ('evaluate',), required_in=('evaluate',), flag='--features-csv', value_kind='path', path_kind='file', description='Features CSV path', artifact_source='dataset_manifest'),
+    _DSWizardFieldSpec('labels_csv', 'in', ('evaluate',), flag='--labels-csv', value_kind='path', path_kind='file', description='Labels CSV path', artifact_source='dataset_manifest'),
+    _DSWizardFieldSpec('out_dir', 'out', ('build', 'train', 'evaluate', 'run-demo', 'run-pipeline'), required_in=('train',), flag='--out-dir', value_kind='path', path_kind='dir', description='Artifact output directory'),
+    _DSWizardFieldSpec('scores_out', 'out', ('score',), required_in=('score',), flag='--out-file', value_kind='path', path_kind='file-write', description='Scores CSV output path'),
+    _DSWizardFieldSpec('model_type', 'model', ('train', 'run-pipeline'), flag='--model-type', default='supervised', choices=('supervised', 'unsupervised'), description='Model family', artifact_source='train_manifest'),
+    _DSWizardFieldSpec('seed', 'model', ('build', 'train', 'run-pipeline'), flag='--seed', default=42, value_kind='int', description='Deterministic seed'),
+    _DSWizardFieldSpec('dataset_seed', 'model', ('run-demo',), flag='--dataset-seed', default=123, value_kind='int', description='Demo dataset seed'),
+    _DSWizardFieldSpec('model_seed', 'model', ('run-demo',), flag='--model-seed', default=42, value_kind='int', description='Demo model seed'),
+    _DSWizardFieldSpec('split_train', 'model', ('build', 'run-pipeline'), flag='--split-train', default=0.70, value_kind='float', description='Train split'),
+    _DSWizardFieldSpec('split_val', 'model', ('build', 'run-pipeline'), flag='--split-val', default=0.15, value_kind='float', description='Validation split'),
+    _DSWizardFieldSpec('split_test', 'model', ('build', 'run-pipeline'), flag='--split-test', default=0.15, value_kind='float', description='Test split'),
+    _DSWizardFieldSpec('model_path', 'model', ('evaluate', 'score'), required_in=('score',), flag='--model', value_kind='path', path_kind='file', description='Model path', artifact_source='train_manifest'),
+    _DSWizardFieldSpec('train_manifest', 'model', ('score',), value_kind='path', path_kind='file', description='Train manifest path', artifact_source='train_manifest'),
+    _DSWizardFieldSpec('max_fpr', 'eval', ('evaluate', 'run-demo', 'run-pipeline'), flag='--max-fpr', default=0.01, value_kind='float', description='Maximum false-positive rate'),
+    _DSWizardFieldSpec('run_id', 'report', ('evaluate',), flag='--run-id', value_kind='text', description='Evaluation run identifier'),
+    _DSWizardFieldSpec('baseline_analysis_packet', 'report', ('evaluate', 'run-pipeline', 'run-demo'), value_kind='path', path_kind='file', description='Baseline analysis packet', artifact_source='baseline_analysis'),
+    _DSWizardFieldSpec('baseline_window_id', 'report', ('evaluate', 'run-pipeline', 'run-demo'), description='Baseline window id', artifact_source='baseline_analysis'),
+)
+
+
+_DS_WIZARD_SECTION_HELP: Dict[str, Dict[str, str]] = {
+    'flow': {'label': 'workflow and run type', 'detail': 'Choose the DS workflow and inspect current source/mode context.'},
+    'in': {'label': 'inputs and sources', 'detail': 'Review dataset, telemetry, and feature/label input surfaces.'},
+    'out': {'label': 'outputs and artifact paths', 'detail': 'Review output directories and score/export targets.'},
+    'model': {'label': 'model family and training', 'detail': 'Review model family, seeds, splits, and imported model artifacts.'},
+    'eval': {'label': 'labels, fpr, threshold, reports', 'detail': 'Review evaluation thresholds and report-facing controls.'},
+    'report': {'label': 'analysis handoff artifacts', 'detail': 'Review run identifiers, prior-run imports, and baseline-analysis handoff inputs.'},
+    'cmd': {'label': 'command preview and export path', 'detail': 'Inspect the equivalent non-interactive command.'},
+    'check': {'label': 'validation and blockers', 'detail': 'Inspect readiness and current validation blockers.'},
+    'run': {'label': 'execute current config', 'detail': 'Review the command handoff and whether execution is still blocked.'},
+    'exit': {'label': 'leave wizard', 'detail': 'Leave the wizard without mutating the saved runtime state.'},
+}
+
+
+def _ds_wizard_field_map() -> Dict[str, _DSWizardFieldSpec]:
+    return {spec.key: spec for spec in _DS_WIZARD_FIELD_SPECS}
+
+
+def _ds_wizard_default_values() -> Dict[str, Any]:
+    values: Dict[str, Any] = {}
+    for spec in _DS_WIZARD_FIELD_SPECS:
+        if spec.accepts_multiple:
+            values[spec.key] = []
+        elif spec.default is not None:
+            values[spec.key] = spec.default
+        else:
+            values[spec.key] = ''
+    return values
+
+
+def _ds_wizard_new_state(workflow: str = '') -> _DSWizardState:
+    ssot = _load_state()
+    state = _DSWizardState(
+        workflow=str(workflow or '').strip(),
+        active_section='flow',
+        values=_ds_wizard_default_values(),
+        source=str(ssot.get('source', 'sim')),
+        mode=str(ssot.get('mode', 'watch')),
+    )
+    state.values['source'] = state.source
+    state.values['mode'] = state.mode
+    state.values['workflow'] = state.workflow
+    return state
+
+
+def _ds_wizard_workflow_label(workflow: str) -> str:
+    return str(workflow or '').strip() or 'unset'
+
+
+def _ds_wizard_visible_sections(state: _DSWizardState) -> List[str]:
+    workflow = str(state.workflow or '').strip()
+    sections: List[str] = []
+    for section in _DS_WIZARD_SECTION_ORDER:
+        if section in ('flow', 'cmd', 'check', 'run', 'exit'):
+            sections.append(section)
+            continue
+        relevant = False
+        for spec in _DS_WIZARD_FIELD_SPECS:
+            if spec.section != section:
+                continue
+            if not workflow or workflow in spec.workflows:
+                relevant = True
+                break
+        if relevant:
+            sections.append(section)
+    return sections
+
+
+def _ds_wizard_fields_for_section(state: _DSWizardState, section: str) -> List[_DSWizardFieldSpec]:
+    workflow = str(state.workflow or '').strip()
+    fields: List[_DSWizardFieldSpec] = []
+    for spec in _DS_WIZARD_FIELD_SPECS:
+        if spec.section != section or spec.key == 'workflow':
+            continue
+        if not workflow or workflow in spec.workflows:
+            fields.append(spec)
+    return fields
+
+
+def _ds_wizard_field_value(state: _DSWizardState, key: str) -> Any:
+    if key == 'workflow':
+        return state.workflow
+    return state.values.get(key, '')
+
+
+def _ds_wizard_has_value(value: Any) -> bool:
+    if isinstance(value, list):
+        return len(value) > 0
+    return str(value or '').strip() != ''
+
+
+def _ds_wizard_status_token(state: _DSWizardState, spec: _DSWizardFieldSpec) -> str:
+    value = _ds_wizard_field_value(state, spec.key)
+    if _ds_wizard_has_value(value):
+        return 'set'
+    if spec.default is not None and spec.key not in ('source', 'mode'):
+        return 'default'
+    if state.workflow and state.workflow in spec.required_in:
+        return 'missing'
+    return 'optional'
+
+
+def _ds_wizard_stringify_value(value: Any) -> str:
+    if isinstance(value, list):
+        return ', '.join([str(item) for item in value if str(item).strip()]) or '<none>'
+    text = str(value or '').strip()
+    return text or '<none>'
+
+
+def _ds_wizard_coerce_value(spec: _DSWizardFieldSpec, raw: Any) -> Any:
+    if spec.accepts_multiple:
+        if isinstance(raw, list):
+            return [str(item).strip() for item in raw if str(item).strip()]
+        text = str(raw or '').strip()
+        if not text:
+            return []
+        return [item.strip() for item in text.split(',') if item.strip()]
+    text = str(raw or '').strip()
+    if not text:
+        return ''
+    if spec.value_kind == 'int':
+        return int(text)
+    if spec.value_kind == 'float':
+        return float(text)
+    return text
+
+
+def _ds_wizard_set_value(state: _DSWizardState, key: str, value: Any) -> _DSWizardState:
+    spec = _ds_wizard_field_map().get(key)
+    if spec is None:
+        raise KeyError('unknown wizard field: {0}'.format(key))
+    coerced = _ds_wizard_coerce_value(spec, value)
+    if key == 'workflow':
+        state.workflow = str(coerced or '').strip()
+        state.values['workflow'] = state.workflow
+        state.transient_view = ''
+        state.transient_target = ''
+        if state.active_section not in _ds_wizard_visible_sections(state):
+            state.active_section = 'flow'
+        return state
+    state.values[key] = coerced
+    state.last_action = 'set:{0}'.format(key)
+    state.transient_view = ''
+    state.transient_target = ''
+    return state
+
+
+def _ds_wizard_apply_reselection(state: _DSWizardState, key: str, action: str, new_value: Any = '') -> _DSWizardState:
+    verb = str(action or '').strip().lower()
+    if verb == 'keep':
+        state.last_action = 'keep:{0}'.format(key)
+        state.transient_view = ''
+        state.transient_target = ''
+        return state
+    if verb == 'clear':
+        spec = _ds_wizard_field_map().get(key)
+        if spec is None:
+            raise KeyError('unknown wizard field: {0}'.format(key))
+        state.values[key] = [] if spec.accepts_multiple else ''
+        state.last_action = 'clear:{0}'.format(key)
+        state.transient_view = ''
+        state.transient_target = ''
+        return state
+    if verb == 'new':
+        return _ds_wizard_set_value(state, key, new_value)
+    raise ValueError('unsupported reselection action: {0}'.format(action))
+
+
+def _ds_wizard_move_section(state: _DSWizardState, direction: str) -> _DSWizardState:
+    sections = _ds_wizard_visible_sections(state)
+    if state.active_section not in sections:
+        state.active_section = sections[0]
+        return state
+    idx = sections.index(state.active_section)
+    step = 1 if str(direction).strip().lower() == 'next' else -1
+    state.active_section = sections[(idx + step) % len(sections)]
+    state.last_action = 'section:{0}'.format(state.active_section)
+    state.transient_view = ''
+    state.transient_target = ''
+    return state
+
+
+def _ds_wizard_open_section(state: _DSWizardState, section: str) -> _DSWizardState:
+    target = str(section or '').strip().lower()
+    if target in _ds_wizard_visible_sections(state):
+        state.active_section = target
+        state.last_action = 'section:{0}'.format(target)
+        state.transient_view = ''
+        state.transient_target = ''
+    return state
+
+
+def _ds_wizard_menu_help_lines(state: _DSWizardState) -> List[str]:
+    lines = ['help:']
+    for section in _ds_wizard_visible_sections(state):
+        info = _DS_WIZARD_SECTION_HELP.get(section, {})
+        lines.append('{0:<6} {1}'.format(section, str(info.get('label', section)).strip()))
+    return lines
+
+
+def _ds_wizard_scope_help_lines(state: _DSWizardState) -> List[str]:
+    current_section = state.active_section if state.active_section in _ds_wizard_visible_sections(state) else 'flow'
+    if current_section == 'flow':
+        return _ds_wizard_menu_help_lines(state)
+    info = _DS_WIZARD_SECTION_HELP.get(current_section, {})
+    lines = ['help: {0}'.format(current_section)]
+    detail = str(info.get('detail', '')).strip()
+    if detail:
+        lines.append(detail)
+    section_fields = _ds_wizard_fields_for_section(state, current_section)
+    if section_fields:
+        lines.append('fields: {0}'.format(', '.join([spec.key for spec in section_fields])))
+    if current_section == 'check':
+        lines.append('tip: use validate to refresh blockers.')
+    elif current_section == 'cmd':
+        lines.append('tip: use cmd to re-open the command preview section.')
+    elif current_section == 'run':
+        lines.append('tip: execute stays blocked until validation passes.')
+    return lines
+
+
+def _ds_wizard_field_by_index(state: _DSWizardState, token: str) -> Optional[_DSWizardFieldSpec]:
+    if not str(token or '').isdigit():
+        return None
+    idx = int(str(token))
+    if state.active_section == 'flow':
+        return None
+    section_fields = _ds_wizard_fields_for_section(state, state.active_section)
+    if 1 <= idx <= len(section_fields):
+        return section_fields[idx - 1]
+    return None
+
+
+def _ds_wizard_item_peek_lines(state: _DSWizardState, target: str) -> List[str]:
+    token = str(target or '').strip().lower()
+    if not token:
+        return ['peek: no target provided']
+    if token == 'current':
+        token = state.active_section
+    field_spec = _ds_wizard_field_by_index(state, token)
+    if field_spec is not None:
+        token = field_spec.key
+    if token in _DS_WIZARD_SECTION_HELP:
+        info = _DS_WIZARD_SECTION_HELP.get(token, {})
+        lines = ['peek: {0}'.format(token)]
+        label = str(info.get('label', '')).strip()
+        detail = str(info.get('detail', '')).strip()
+        if label:
+            lines.append(label)
+        if detail:
+            lines.append(detail)
+        if token in _ds_wizard_visible_sections(state):
+            lines.append('state: {0}'.format('active' if token == state.active_section else 'available'))
+        section_fields = _ds_wizard_fields_for_section(state, token)
+        if section_fields:
+            lines.append('fields: {0}'.format(', '.join([spec.key for spec in section_fields[:6]])))
+        return lines
+    spec = _ds_wizard_field_map().get(token)
+    if spec is not None:
+        value = _ds_wizard_field_value(state, spec.key)
+        lines = ['peek: {0}'.format(spec.key)]
+        if str(spec.description or '').strip():
+            lines.append(str(spec.description).strip())
+        lines.append('section: {0}'.format(spec.section))
+        lines.append('status: {0}'.format(_ds_wizard_status_token(state, spec)))
+        lines.append('value: {0}'.format(_ds_wizard_stringify_value(value)))
+        if str(spec.artifact_source or '').strip():
+            lines.append('artifact-source: {0}'.format(spec.artifact_source))
+        return lines
+    return ['peek: {0}'.format(token), 'not found in current wizard scope']
+
+
+def _ds_wizard_open_scope_help(state: _DSWizardState) -> _DSWizardState:
+    state.transient_view = 'scope-help'
+    state.transient_target = state.active_section if state.active_section in _ds_wizard_visible_sections(state) else 'flow'
+    state.last_action = 'help:scope'
+    return state
+
+
+def _ds_wizard_open_item_peek(state: _DSWizardState, target: str) -> _DSWizardState:
+    state.transient_view = 'item-peek'
+    state.transient_target = str(target or '').strip()
+    state.last_action = 'help:item:{0}'.format(state.transient_target or 'unknown')
+    return state
+
+
+def _ds_wizard_clear_transient_view(state: _DSWizardState) -> _DSWizardState:
+    state.transient_view = ''
+    state.transient_target = ''
+    return state
+
+
+def _ds_wizard_hydrate_dataset_manifest(state: _DSWizardState, manifest_path: Path) -> _DSWizardState:
+    payload = json.loads(manifest_path.read_text(encoding='utf-8'))
+    if not isinstance(payload, dict):
+        raise ValueError('dataset manifest is not a JSON object')
+    state.values['dataset_manifest'] = str(manifest_path)
+    if str(payload.get('features_csv', '')).strip():
+        state.values['features_csv'] = str(payload.get('features_csv')).strip()
+        state.hydrated_from['features_csv'] = 'dataset_manifest'
+    if str(payload.get('labels_csv', '')).strip():
+        state.values['labels_csv'] = str(payload.get('labels_csv')).strip()
+        state.hydrated_from['labels_csv'] = 'dataset_manifest'
+    state.hydrated_from['dataset_manifest'] = 'dataset_manifest'
+    state.last_action = 'hydrate:dataset_manifest'
+    return state
+
+
+def _ds_wizard_hydrate_train_manifest(state: _DSWizardState, manifest_path: Path) -> _DSWizardState:
+    payload = json.loads(manifest_path.read_text(encoding='utf-8'))
+    if not isinstance(payload, dict):
+        raise ValueError('train manifest is not a JSON object')
+    state.values['train_manifest'] = str(manifest_path)
+    state.hydrated_from['train_manifest'] = 'train_manifest'
+    if str(payload.get('dataset_manifest_path', '')).strip():
+        state.values['dataset_manifest'] = str(payload.get('dataset_manifest_path')).strip()
+        state.hydrated_from['dataset_manifest'] = 'train_manifest'
+    if str(payload.get('model_path', '')).strip():
+        state.values['model_path'] = str(payload.get('model_path')).strip()
+        state.hydrated_from['model_path'] = 'train_manifest'
+    if str(payload.get('model_type', '')).strip():
+        state.values['model_type'] = str(payload.get('model_type')).strip()
+        state.hydrated_from['model_type'] = 'train_manifest'
+    state.last_action = 'hydrate:train_manifest'
+    return state
+
+
+def _ds_wizard_hydrate_model_path(state: _DSWizardState, model_path: Path) -> _DSWizardState:
+    state.values['model_path'] = str(model_path)
+    state.hydrated_from['model_path'] = 'model_path'
+    state.last_action = 'hydrate:model_path'
+    return state
+
+
+def _ds_wizard_hydrate_baseline_analysis(state: _DSWizardState, packet_path: Path) -> _DSWizardState:
+    payload = json.loads(packet_path.read_text(encoding='utf-8'))
+    if not isinstance(payload, dict):
+        raise ValueError('baseline analysis packet is not a JSON object')
+    state.values['baseline_analysis_packet'] = str(packet_path)
+    state.hydrated_from['baseline_analysis_packet'] = 'baseline_analysis'
+    if str(payload.get('baseline_window_id', '')).strip():
+        state.values['baseline_window_id'] = str(payload.get('baseline_window_id')).strip()
+        state.hydrated_from['baseline_window_id'] = 'baseline_analysis'
+    state.last_action = 'hydrate:baseline_analysis'
+    return state
+
+
+def _ds_wizard_hydrate_run_ledger(state: _DSWizardState, ledger_path: Path) -> _DSWizardState:
+    payload = json.loads(ledger_path.read_text(encoding='utf-8'))
+    if not isinstance(payload, dict):
+        raise ValueError('run ledger is not a JSON object')
+
+    identity = payload.get('identity', {}) if isinstance(payload.get('identity', {}), dict) else {}
+    context = payload.get('context', {}) if isinstance(payload.get('context', {}), dict) else {}
+    constraints = context.get('constraints', {}) if isinstance(context.get('constraints', {}), dict) else {}
+    data = payload.get('data', {}) if isinstance(payload.get('data', {}), dict) else {}
+    model = payload.get('model', {}) if isinstance(payload.get('model', {}), dict) else {}
+
+    state.run_ledger_path = str(ledger_path)
+
+    run_id = str(identity.get('run_id', '') or '').strip()
+    if run_id:
+        state.values['run_id'] = run_id
+        state.hydrated_from['run_id'] = 'run_ledger'
+
+    max_fpr = constraints.get('max_fpr')
+    if max_fpr not in ('', None):
+        state.values['max_fpr'] = _ds_wizard_coerce_value(_ds_wizard_field_map()['max_fpr'], max_fpr)
+        state.hydrated_from['max_fpr'] = 'run_ledger'
+
+    dataset_manifest_text = str(data.get('dataset_manifest', '') or '').strip()
+    if dataset_manifest_text:
+        state.values['dataset_manifest'] = dataset_manifest_text
+        state.hydrated_from['dataset_manifest'] = 'run_ledger'
+        dataset_manifest_path = Path(dataset_manifest_text)
+        if dataset_manifest_path.exists():
+            try:
+                _ds_wizard_hydrate_dataset_manifest(state, dataset_manifest_path)
+            except Exception:
+                pass
+
+    features_csv_text = str(data.get('features_csv', '') or '').strip()
+    if features_csv_text:
+        state.values['features_csv'] = features_csv_text
+        state.hydrated_from['features_csv'] = 'run_ledger'
+
+    labels_csv_text = str(data.get('labels_csv', '') or '').strip()
+    if labels_csv_text:
+        state.values['labels_csv'] = labels_csv_text
+        state.hydrated_from['labels_csv'] = 'run_ledger'
+
+    model_source_text = str(model.get('source', '') or '').strip()
+    if model_source_text:
+        state.values['model_path'] = model_source_text
+        state.hydrated_from['model_path'] = 'run_ledger'
+
+    state.last_action = 'hydrate:run_ledger'
+    return state
+
+
+def _ds_wizard_draft_payload(state: _DSWizardState) -> Dict[str, Any]:
+    return {
+        'draft_schema': 'observerctl.ds.wizard.draft.v{0}'.format(_DS_WIZARD_DRAFT_VERSION),
+        'draft_version': int(_DS_WIZARD_DRAFT_VERSION),
+        'saved_at_utc': _utc_now(),
+        'workflow': str(state.workflow or ''),
+        'active_section': str(state.active_section or 'flow'),
+        'source': str(state.source or 'sim'),
+        'mode': str(state.mode or 'watch'),
+        'values': dict(state.values),
+        'hydrated_from': dict(state.hydrated_from),
+        'run_ledger_path': str(state.run_ledger_path or ''),
+    }
+
+
+def _ds_wizard_save_draft(state: _DSWizardState, draft_path: Path) -> _DSWizardState:
+    _write_json_file(draft_path, _ds_wizard_draft_payload(state))
+    state.draft_path = str(draft_path)
+    state.last_action = 'draft:save'
+    state.transient_view = ''
+    state.transient_target = ''
+    return state
+
+
+def _ds_wizard_load_draft(draft_path: Path) -> _DSWizardState:
+    payload = json.loads(draft_path.read_text(encoding='utf-8'))
+    if not isinstance(payload, dict):
+        raise ValueError('wizard draft is not a JSON object')
+
+    workflow = str(payload.get('workflow', '') or '').strip()
+    state = _ds_wizard_new_state(workflow if workflow in _DS_WIZARD_WORKFLOWS else '')
+    values = payload.get('values', {}) if isinstance(payload.get('values', {}), dict) else {}
+    field_map = _ds_wizard_field_map()
+    for key, spec in field_map.items():
+        if key not in values:
+            continue
+        try:
+            state.values[key] = _ds_wizard_coerce_value(spec, values.get(key))
+        except (TypeError, ValueError):
+            continue
+
+    if workflow in _DS_WIZARD_WORKFLOWS:
+        state.workflow = workflow
+        state.values['workflow'] = workflow
+
+    state.source = _normalize_source(str(payload.get('source', state.source or 'sim')))
+    mode = str(payload.get('mode', state.mode or 'watch')).strip().lower()
+    if mode in MODES:
+        state.mode = mode
+    state.values['source'] = state.source
+    state.values['mode'] = state.mode
+
+    hydrated_from = payload.get('hydrated_from', {}) if isinstance(payload.get('hydrated_from', {}), dict) else {}
+    state.hydrated_from = {str(key): str(value) for key, value in hydrated_from.items() if str(key).strip()}
+    state.run_ledger_path = str(payload.get('run_ledger_path', '') or '').strip()
+    state.draft_path = str(draft_path)
+
+    active_section = str(payload.get('active_section', 'flow') or 'flow').strip().lower()
+    if active_section in _ds_wizard_visible_sections(state):
+        state.active_section = active_section
+    else:
+        state.active_section = 'flow'
+
+    state.last_action = 'draft:load'
+    state.transient_view = ''
+    state.transient_target = ''
+    return state
+
+
+def _ds_wizard_latest_baseline_analysis_path(source: str, mode: str) -> Optional[Path]:
+    index_path = get_calamum_data_dir() / 'observer_derived' / _normalize_source(source) / str(mode).strip().lower() / 'evidence' / 'index.jsonl'
+    if not index_path.exists():
+        return None
+    for line in reversed(index_path.read_text(encoding='utf-8').splitlines()):
+        text = str(line or '').strip()
+        if not text:
+            continue
+        try:
+            row = json.loads(text)
+        except json.JSONDecodeError:
+            continue
+        if str(row.get('event', '')).strip().lower() != 'baseline_analysis':
+            continue
+        packet_path = Path(str(row.get('packet_path', '')).replace('/', os.sep))
+        if packet_path.exists():
+            return packet_path
+    return None
+
+
+def _ds_wizard_hydrate_latest_context(state: _DSWizardState) -> _DSWizardState:
+    ssot = _load_state()
+    state.source = str(ssot.get('source', state.source or 'sim'))
+    state.mode = str(ssot.get('mode', state.mode or 'watch'))
+    state.values['source'] = state.source
+    state.values['mode'] = state.mode
+    state.hydrated_from['source'] = 'latest_context'
+    state.hydrated_from['mode'] = 'latest_context'
+    latest_baseline = _ds_wizard_latest_baseline_analysis_path(state.source, state.mode)
+    if latest_baseline is not None:
+        _ds_wizard_hydrate_baseline_analysis(state, latest_baseline)
+    state.last_action = 'hydrate:latest_context'
+    return state
+
+
+def _ds_wizard_validation_issues(state: _DSWizardState) -> List[str]:
+    issues: List[str] = []
+    workflow = str(state.workflow or '').strip()
+    if workflow not in _DS_WIZARD_WORKFLOWS:
+        issues.append('workflow is required')
+        state.validation_issues = issues
+        return issues
+    for spec in _DS_WIZARD_FIELD_SPECS:
+        if workflow not in spec.workflows:
+            continue
+        value = _ds_wizard_field_value(state, spec.key)
+        if workflow in spec.required_in and not _ds_wizard_has_value(value):
+            issues.append('{0} is required'.format(spec.key))
+            continue
+        if not _ds_wizard_has_value(value):
+            continue
+        if spec.path_kind == 'file':
+            values = value if isinstance(value, list) else [value]
+            for raw in values:
+                if not Path(str(raw)).exists():
+                    issues.append('{0} does not exist: {1}'.format(spec.key, raw))
+        if spec.choices and str(value) not in spec.choices:
+            issues.append('{0} must be one of: {1}'.format(spec.key, ', '.join(spec.choices)))
+    if workflow in ('build', 'run-pipeline'):
+        try:
+            total = float(state.values.get('split_train', 0.0)) + float(state.values.get('split_val', 0.0)) + float(state.values.get('split_test', 0.0))
+            if abs(total - 1.0) > 0.001:
+                issues.append('split ratios must sum to 1.0')
+        except (TypeError, ValueError):
+            issues.append('split ratios must be numeric')
+    state.validation_issues = issues
+    return issues
+
+
+def _ds_wizard_decision_state(state: _DSWizardState) -> str:
+    return 'ready' if len(_ds_wizard_validation_issues(state)) == 0 else 'needs-input'
+
+
+def _ds_wizard_command_preview(state: _DSWizardState) -> str:
+    workflow = str(state.workflow or '').strip()
+    if workflow == 'build':
+        parts = ['observerctl', 'ds', 'build']
+        for item in state.values.get('input_paths', []):
+            parts.extend(['--input', str(item)])
+        if _ds_wizard_has_value(state.values.get('out_dir')):
+            parts.extend(['--out-dir', str(state.values.get('out_dir'))])
+        parts.extend(['--seed', str(state.values.get('seed', 42))])
+        return ' '.join(parts)
+    if workflow == 'train':
+        return 'observerctl ds train --dataset {0} --out-dir {1} --model-type {2} --seed {3}'.format(
+            str(state.values.get('dataset_manifest', '')),
+            str(state.values.get('out_dir', '')),
+            str(state.values.get('model_type', 'supervised')),
+            str(state.values.get('seed', 42)),
+        )
+    if workflow == 'evaluate':
+        parts = ['observerctl', 'ds', 'evaluate', '--features-csv', str(state.values.get('features_csv', ''))]
+        if _ds_wizard_has_value(state.values.get('labels_csv')):
+            parts.extend(['--labels-csv', str(state.values.get('labels_csv'))])
+        if _ds_wizard_has_value(state.values.get('dataset_manifest')):
+            parts.extend(['--dataset-manifest', str(state.values.get('dataset_manifest'))])
+        if _ds_wizard_has_value(state.values.get('out_dir')):
+            parts.extend(['--out-dir', str(state.values.get('out_dir'))])
+        if _ds_wizard_has_value(state.values.get('run_id')):
+            parts.extend(['--run-id', str(state.values.get('run_id'))])
+        if _ds_wizard_has_value(state.values.get('model_path')):
+            parts.extend(['--model-path', str(state.values.get('model_path'))])
+        parts.extend(['--max-fpr', str(state.values.get('max_fpr', 0.01))])
+        return ' '.join(parts)
+    if workflow == 'score':
+        return 'observerctl ds score --dataset {0} --model {1} --out-file {2}'.format(
+            str(state.values.get('dataset_manifest', '')),
+            str(state.values.get('train_manifest') or state.values.get('model_path', '')),
+            str(state.values.get('scores_out', '')),
+        )
+    if workflow == 'run-demo':
+        parts = ['observerctl', 'ds', 'run', 'demo']
+        if _ds_wizard_has_value(state.values.get('out_dir')):
+            parts.extend(['--out-dir', str(state.values.get('out_dir'))])
+        parts.extend(['--dataset-seed', str(state.values.get('dataset_seed', 123)), '--model-seed', str(state.values.get('model_seed', 42)), '--max-fpr', str(state.values.get('max_fpr', 0.01))])
+        return ' '.join(parts)
+    if workflow == 'run-pipeline':
+        parts = ['observerctl', 'ds', 'run', 'pipeline']
+        for item in state.values.get('input_paths', []):
+            parts.extend(['--input', str(item)])
+        if _ds_wizard_has_value(state.values.get('out_dir')):
+            parts.extend(['--out-dir', str(state.values.get('out_dir'))])
+        parts.extend([
+            '--model-type', str(state.values.get('model_type', 'supervised')),
+            '--seed', str(state.values.get('seed', 42)),
+            '--split-train', str(state.values.get('split_train', 0.70)),
+            '--split-val', str(state.values.get('split_val', 0.15)),
+            '--split-test', str(state.values.get('split_test', 0.15)),
+            '--max-fpr', str(state.values.get('max_fpr', 0.01)),
+        ])
+        return ' '.join(parts)
+    return 'observerctl ds <choose-workflow>'
+
+
+def _ds_wizard_summary_rows(state: _DSWizardState) -> List[str]:
+    rows = [
+        'workflow: {0}'.format(_ds_wizard_workflow_label(state.workflow)),
+        'source: {0}'.format(str(state.source or 'sim')),
+        'mode: {0}'.format(str(state.mode or 'watch')),
+        'state: {0}'.format(_ds_wizard_decision_state(state)),
+    ]
+    for key in ('input_paths', 'dataset_manifest', 'out_dir', 'model_type', 'model_path', 'max_fpr', 'run_id', 'baseline_window_id'):
+        value = state.values.get(key)
+        if not _ds_wizard_has_value(value):
+            continue
+        rows.append('{0}: {1}'.format(key, _ds_wizard_stringify_value(value)))
+    if str(state.run_ledger_path or '').strip():
+        rows.append('run_ledger: {0}'.format(str(state.run_ledger_path)))
+    if str(state.draft_path or '').strip():
+        rows.append('draft: {0}'.format(str(state.draft_path)))
+    return rows
+
+
+def _ds_wizard_render(state: _DSWizardState) -> List[str]:
+    visible_sections = _ds_wizard_visible_sections(state)
+    current_section = state.active_section if state.active_section in visible_sections else 'flow'
+    lines: List[str] = []
+    lines.append('ObserverCTL DS Wizard')
+    lines.append('path: ds wizard > {0}'.format(current_section))
+    lines.append('')
+    lines.extend(_ds_wizard_summary_rows(state))
+    lines.append('')
+    if current_section == 'flow':
+        lines.append('workflows:')
+        for idx, workflow in enumerate(_DS_WIZARD_WORKFLOWS, start=1):
+            marker = '*' if workflow == state.workflow else ' '
+            lines.append('{0}. [{1}] {2}'.format(idx, marker, workflow))
+    elif current_section in ('cmd', 'check', 'run', 'exit'):
+        if current_section == 'cmd':
+            lines.append('command preview:')
+            lines.append(_ds_wizard_command_preview(state))
+        elif current_section == 'check':
+            lines.append('validation:')
+            issues = _ds_wizard_validation_issues(state)
+            if not issues:
+                lines.append('- ready')
+            else:
+                for issue in issues:
+                    lines.append('- {0}'.format(issue))
+        elif current_section == 'run':
+            lines.append('execute handoff:')
+            lines.append(_ds_wizard_command_preview(state))
+            lines.append('blocked: {0}'.format('yes' if len(_ds_wizard_validation_issues(state)) > 0 else 'no'))
+        else:
+            lines.append('type exit to leave the wizard')
+    else:
+        lines.append('{0}:'.format(current_section))
+        for idx, spec in enumerate(_ds_wizard_fields_for_section(state, current_section), start=1):
+            lines.append('{0}. {1:<22} {2:<8} {3}'.format(idx, spec.key, _ds_wizard_status_token(state, spec), _ds_wizard_stringify_value(_ds_wizard_field_value(state, spec.key))))
+    lines.append('')
+    lines.append('sections: {0}'.format(', '.join(visible_sections)))
+    lines.append('next: next | prev | back(flow) | open <section> | set <field> <value> | clear <field> | hydrate dataset|train|model|baseline|latest|run | save draft <path> | load draft <path> | ? | ? <item> | close | validate | cmd | execute | exit')
+    if str(state.transient_view or '').strip():
+        lines.append('')
+        if state.transient_view == 'scope-help':
+            lines.extend(_ds_wizard_scope_help_lines(state))
+        elif state.transient_view == 'item-peek':
+            lines.extend(_ds_wizard_item_peek_lines(state, state.transient_target))
+    return lines
+
+
+def _ds_wizard_attempt_execute(state: _DSWizardState) -> Dict[str, Any]:
+    issues = _ds_wizard_validation_issues(state)
+    if issues:
+        return {
+            'timestamp_utc': _utc_now(),
+            'runtime_cli_surface': 'observerctl',
+            'decision': 'no-go',
+            'action': 'ds-wizard-execute',
+            'command_family': 'ds',
+            'command_path': 'observerctl ds wizard',
+            'implementation_state': 'frame-6-durable-wizard-ready',
+            'delivery_frame': 'frame-6',
+            'summary': 'Wizard execution remains blocked until validation passes.',
+            'reason_codes': ['critical_check_failed:wizard_validation_blocked'],
+            'validation_issues': issues,
+            'command_preview': _ds_wizard_command_preview(state),
+        }
+    return {
+        'timestamp_utc': _utc_now(),
+        'runtime_cli_surface': 'observerctl',
+        'decision': 'go',
+        'action': 'ds-wizard-execute',
+        'command_family': 'ds',
+        'command_path': 'observerctl ds wizard',
+        'implementation_state': 'frame-6-durable-wizard-ready',
+        'delivery_frame': 'frame-6',
+        'summary': 'Wizard state is ready for non-interactive command handoff.',
+        'reason_codes': [],
+        'command_preview': _ds_wizard_command_preview(state),
+    }
+
+
+def _ds_wizard_packet(state: _DSWizardState, interactive: bool = False) -> Dict[str, Any]:
+    issues = _ds_wizard_validation_issues(state)
+    return {
+        'timestamp_utc': _utc_now(),
+        'runtime_cli_surface': 'observerctl',
+        'decision': 'go',
+        'action': 'ds-wizard',
+        'command_family': 'ds',
+        'command_path': 'observerctl ds wizard',
+        'implementation_state': 'frame-6-durable-wizard-ready',
+        'delivery_frame': 'frame-6',
+        'summary': 'DS wizard is available with workflow-aware navigation, retained-artifact hydration, prior-run import, and draft persistence.',
+        'workflow': str(state.workflow or ''),
+        'current_section': str(state.active_section or 'flow'),
+        'visible_sections': _ds_wizard_visible_sections(state),
+        'execution_state': 'blocked' if issues else 'ready',
+        'validation_issues': issues,
+        'command_preview': _ds_wizard_command_preview(state),
+        'hydrated_from': dict(state.hydrated_from),
+        'wizard_view': [] if interactive else _ds_wizard_render(state),
+        'artifacts': {
+            'dataset_manifest': str(state.values.get('dataset_manifest', '')),
+            'train_manifest': str(state.values.get('train_manifest', '')),
+            'model_path': str(state.values.get('model_path', '')),
+            'baseline_analysis_packet': str(state.values.get('baseline_analysis_packet', '')),
+            'run_ledger_path': str(state.run_ledger_path or ''),
+            'draft_path': str(state.draft_path or ''),
+        },
+        'reason_codes': [],
+    }
+
+
+def _ds_wizard_apply_cli_seed(state: _DSWizardState, args: argparse.Namespace) -> _DSWizardState:
+    load_draft_path = str(getattr(args, 'load_draft', '') or '').strip()
+    if load_draft_path:
+        state = _ds_wizard_load_draft(Path(load_draft_path))
+    if str(getattr(args, 'workflow', '') or '').strip():
+        _ds_wizard_set_value(state, 'workflow', getattr(args, 'workflow'))
+    if bool(getattr(args, 'hydrate_latest_context', False)):
+        _ds_wizard_hydrate_latest_context(state)
+    dataset_path = str(getattr(args, 'hydrate_dataset', '') or '').strip()
+    if dataset_path:
+        _ds_wizard_hydrate_dataset_manifest(state, Path(dataset_path))
+    train_path = str(getattr(args, 'hydrate_train', '') or '').strip()
+    if train_path:
+        _ds_wizard_hydrate_train_manifest(state, Path(train_path))
+    model_path = str(getattr(args, 'hydrate_model', '') or '').strip()
+    if model_path:
+        _ds_wizard_hydrate_model_path(state, Path(model_path))
+    baseline_path = str(getattr(args, 'hydrate_baseline_analysis', '') or '').strip()
+    if baseline_path:
+        _ds_wizard_hydrate_baseline_analysis(state, Path(baseline_path))
+    run_path = str(getattr(args, 'hydrate_run', '') or '').strip()
+    if run_path:
+        _ds_wizard_hydrate_run_ledger(state, Path(run_path))
+    for item in list(getattr(args, 'set_items', []) or []):
+        text = str(item or '').strip()
+        if '=' not in text:
+            continue
+        key, raw_value = text.split('=', 1)
+        _ds_wizard_set_value(state, key.strip(), raw_value.strip())
+    if str(getattr(args, 'section', '') or '').strip():
+        _ds_wizard_open_section(state, getattr(args, 'section'))
+    return state
+
+
+def _ds_wizard_handle_command(state: _DSWizardState, command: str) -> Tuple[_DSWizardState, Optional[Dict[str, Any]], bool]:
+    text = str(command or '').strip()
+    lowered = text.lower()
+    if not text:
+        if str(state.transient_view or '').strip():
+            return _ds_wizard_clear_transient_view(state), None, False
+        return state, None, False
+    if lowered in ('?', 'help'):
+        return _ds_wizard_open_scope_help(state), None, False
+    if lowered.startswith('? '):
+        return _ds_wizard_open_item_peek(state, text.split(' ', 1)[1]), None, False
+    if lowered in ('close', 'dismiss'):
+        return _ds_wizard_clear_transient_view(state), None, False
+    if lowered == 'next':
+        return _ds_wizard_move_section(state, 'next'), None, False
+    if lowered == 'prev':
+        return _ds_wizard_move_section(state, 'prev'), None, False
+    if lowered == 'back':
+        return _ds_wizard_open_section(state, 'flow'), None, False
+    if lowered == 'validate':
+        _ds_wizard_validation_issues(state)
+        return state, None, False
+    if lowered.startswith('save draft '):
+        draft_arg = text[len('save draft '):].strip()
+        if draft_arg:
+            return _ds_wizard_save_draft(state, Path(draft_arg)), None, False
+    if lowered.startswith('load draft '):
+        draft_arg = text[len('load draft '):].strip()
+        if draft_arg:
+            return _ds_wizard_load_draft(Path(draft_arg)), None, False
+    if lowered == 'cmd':
+        return _ds_wizard_open_section(state, 'cmd'), None, False
+    if lowered == 'execute':
+        return state, _ds_wizard_attempt_execute(state), True
+    if lowered == 'exit':
+        return state, _ds_wizard_packet(state, interactive=True), True
+    if lowered in _DS_WIZARD_WORKFLOWS:
+        _ds_wizard_set_value(state, 'workflow', lowered)
+        return state, None, False
+    if lowered in _ds_wizard_visible_sections(state):
+        return _ds_wizard_open_section(state, lowered), None, False
+    if lowered.startswith('open '):
+        return _ds_wizard_open_section(state, lowered.split(' ', 1)[1]), None, False
+    if lowered.startswith('set '):
+        payload = text.split(' ', 2)
+        if len(payload) >= 3:
+            return _ds_wizard_set_value(state, payload[1], payload[2]), None, False
+    if lowered.startswith('clear '):
+        payload = text.split(' ', 1)
+        if len(payload) == 2:
+            return _ds_wizard_apply_reselection(state, payload[1], 'clear'), None, False
+    if lowered.startswith('keep '):
+        payload = text.split(' ', 1)
+        if len(payload) == 2:
+            return _ds_wizard_apply_reselection(state, payload[1], 'keep'), None, False
+    if lowered.startswith('hydrate '):
+        payload = text.split(' ', 2)
+        if len(payload) >= 2:
+            target = payload[1]
+            arg = payload[2] if len(payload) > 2 else ''
+            if target == 'dataset' and arg:
+                return _ds_wizard_hydrate_dataset_manifest(state, Path(arg)), None, False
+            if target == 'train' and arg:
+                return _ds_wizard_hydrate_train_manifest(state, Path(arg)), None, False
+            if target == 'model' and arg:
+                return _ds_wizard_hydrate_model_path(state, Path(arg)), None, False
+            if target == 'baseline' and arg:
+                return _ds_wizard_hydrate_baseline_analysis(state, Path(arg)), None, False
+            if target == 'latest':
+                return _ds_wizard_hydrate_latest_context(state), None, False
+            if target == 'run' and arg:
+                return _ds_wizard_hydrate_run_ledger(state, Path(arg)), None, False
+    if text.isdigit():
+        idx = int(text)
+        if state.active_section == 'flow' and 1 <= idx <= len(_DS_WIZARD_WORKFLOWS):
+            return _ds_wizard_set_value(state, 'workflow', _DS_WIZARD_WORKFLOWS[idx - 1]), None, False
+        section_fields = _ds_wizard_fields_for_section(state, state.active_section)
+        if 1 <= idx <= len(section_fields):
+            spec = section_fields[idx - 1]
+            current_value = _ds_wizard_field_value(state, spec.key)
+            if _ds_wizard_has_value(current_value):
+                choice = input('{0} [{1}] -> keep / clear / new: '.format(spec.key, _ds_wizard_stringify_value(current_value))).strip().lower()
+                if choice == 'clear':
+                    return _ds_wizard_apply_reselection(state, spec.key, 'clear'), None, False
+                if choice == 'new':
+                    new_value = input('{0} new value: '.format(spec.key))
+                    return _ds_wizard_apply_reselection(state, spec.key, 'new', new_value), None, False
+                return _ds_wizard_apply_reselection(state, spec.key, 'keep'), None, False
+            new_value = input('{0} value: '.format(spec.key))
+            return _ds_wizard_set_value(state, spec.key, new_value), None, False
+    return state, None, False
+
+
+def _ds_wizard(args: argparse.Namespace) -> Dict[str, Any]:
+    state = _ds_wizard_new_state(str(getattr(args, 'workflow', '') or '').strip())
+    state = _ds_wizard_apply_cli_seed(state, args)
+    save_draft_path = str(getattr(args, 'save_draft', '') or '').strip()
+    if save_draft_path:
+        _ds_wizard_save_draft(state, Path(save_draft_path))
+    if bool(getattr(args, 'execute', False)):
+        return _ds_wizard_attempt_execute(state)
+    interactive = bool(sys.stdin.isatty() and not bool(getattr(args, 'json', False)))
+    if not interactive:
+        return _ds_wizard_packet(state, interactive=False)
+    while True:
+        for line in _ds_wizard_render(state):
+            print(line)
+        command = input('wizard> ')
+        state, packet, should_exit = _ds_wizard_handle_command(state, command)
+        if should_exit:
+            return packet if isinstance(packet, dict) else _ds_wizard_packet(state, interactive=True)
+        print('')
+
+
+def _ds_default_analysis_dir() -> Path:
+    from analysis._util import default_analysis_dir
+
+    return default_analysis_dir(Path(__file__))
+
+
+def _ds_build(
+    input_paths: List[Path],
+    out_dir: str,
+    seed: int,
+    split_train: float,
+    split_val: float,
+    split_test: float,
+    max_lines_per_file: Optional[int],
+) -> Dict[str, Any]:
+    from dataclasses import asdict
+
+    from analysis.dataset_builder import build_dataset
+
+    target_out_dir = Path(str(out_dir).strip()) if str(out_dir).strip() else (_ds_default_analysis_dir() / 'datasets' / 'dataset_{0}'.format(_utc_compact_stamp()))
+    manifest = build_dataset(
+        input_paths,
+        out_dir=target_out_dir,
+        seed=int(seed),
+        split={
+            'train': float(split_train),
+            'val': float(split_val),
+            'test': float(split_test),
+        },
+        max_lines_per_file=max_lines_per_file,
+    )
+    manifest_dict = asdict(manifest)
+    return {
+        'timestamp_utc': _utc_now(),
+        'runtime_cli_surface': 'observerctl',
+        'decision': 'go',
+        'action': 'ds-build',
+        'command_family': 'ds',
+        'command_path': 'observerctl ds build',
+        'implementation_state': 'frame-2-wrapper-ready',
+        'delivery_frame': 'frame-2',
+        'underlying_surface': 'analysis.dataset_builder',
+        'summary': 'Dataset built through observerctl ds.',
+        'seed': int(seed),
+        'split': dict(manifest_dict.get('split', {})),
+        'total_records': int(manifest_dict.get('total_records', 0)),
+        'has_labels': bool(manifest_dict.get('has_labels', False)),
+        'artifacts': {
+            'dataset_manifest': str(target_out_dir / 'dataset_manifest.json').replace('\\', '/'),
+            'features_csv': str(manifest_dict.get('features_csv', '')).replace('\\', '/'),
+            'labels_csv': str(manifest_dict.get('labels_csv', '') or '').replace('\\', '/'),
+            'splits_csv': str(manifest_dict.get('splits_csv', '')).replace('\\', '/'),
+            'split_manifest_json': str(manifest_dict.get('split_manifest_json', '')).replace('\\', '/'),
+        },
+        'reason_codes': [],
+    }
+
+
+def _ds_train(dataset: str, out_dir: str, model_type: str, seed: int) -> Dict[str, Any]:
+    from dataclasses import asdict
+
+    from analysis.train_model import train_model
+
+    manifest = train_model(
+        Path(dataset),
+        out_dir=Path(out_dir),
+        model_type=str(model_type),
+        seed=int(seed),
+    )
+    manifest_dict = asdict(manifest)
+    return {
+        'timestamp_utc': _utc_now(),
+        'runtime_cli_surface': 'observerctl',
+        'decision': 'go',
+        'action': 'ds-train',
+        'command_family': 'ds',
+        'command_path': 'observerctl ds train',
+        'implementation_state': 'frame-2-wrapper-ready',
+        'delivery_frame': 'frame-2',
+        'underlying_surface': 'analysis.train_model',
+        'summary': 'Model training completed through observerctl ds.',
+        'model_type': str(model_type),
+        'artifacts': {
+            'train_manifest': str(Path(out_dir) / 'train_manifest.json').replace('\\', '/'),
+            'model_path': str(manifest_dict.get('model_path', '')).replace('\\', '/'),
+            'metrics_path': str(manifest_dict.get('metrics_path', '')).replace('\\', '/'),
+        },
+        'metrics': manifest_dict.get('metrics', {}),
+        'reason_codes': [],
+    }
+
+
+def _ds_evaluate(features_csv: str, labels_csv: str, dataset_manifest: str, max_fpr: float, out_dir: str, run_id: str, model_path: str) -> Dict[str, Any]:
+    from dataclasses import asdict
+
+    from analysis._util import utc_now_iso
+    from analysis.evaluation_harness import evaluate, write_run_artifacts
+
+    target_out_dir = Path(str(out_dir).strip()) if str(out_dir).strip() else (_ds_default_analysis_dir() / 'runs' / 'run_{0}'.format(utc_now_iso().replace(':', '').replace('-', '')))
+    resolved_run_id = str(run_id).strip() or target_out_dir.name
+    result = evaluate(
+        Path(features_csv),
+        labels_csv=Path(labels_csv) if str(labels_csv).strip() else None,
+        max_fpr=float(max_fpr),
+    )
+    model_meta = None
+    if str(model_path).strip():
+        model_meta = {
+            'family': 'trained_apexlab',
+            'name': Path(model_path).name,
+            'source': str(model_path),
+        }
+    write_run_artifacts(
+        out_dir=target_out_dir,
+        run_id=resolved_run_id,
+        features_csv=Path(features_csv),
+        labels_csv=Path(labels_csv) if str(labels_csv).strip() else None,
+        result=result,
+        dataset_manifest_path=Path(dataset_manifest) if str(dataset_manifest).strip() else None,
+        model_meta=model_meta,
+    )
+    result_dict = asdict(result)
+    return {
+        'timestamp_utc': _utc_now(),
+        'runtime_cli_surface': 'observerctl',
+        'decision': 'go',
+        'action': 'ds-evaluate',
+        'command_family': 'ds',
+        'command_path': 'observerctl ds evaluate',
+        'implementation_state': 'frame-2-wrapper-ready',
+        'delivery_frame': 'frame-2',
+        'underlying_surface': 'analysis.evaluation_harness',
+        'summary': 'Evaluation completed through observerctl ds.',
+        'run_id': resolved_run_id,
+        'has_labels': bool(result_dict.get('has_labels', False)),
+        'threshold': float(result_dict.get('threshold', 0.0)),
+        'metrics': result_dict.get('metrics', {}),
+        'counts': result_dict.get('counts', {}),
+        'artifacts': {
+            'run_json': str(target_out_dir / 'run.json').replace('\\', '/'),
+            'run_md': str(target_out_dir / 'run.md').replace('\\', '/'),
+        },
+        'reason_codes': [],
+    }
+
+
+def _ds_score(dataset: str, model: str, out_file: str) -> Dict[str, Any]:
+    from analysis.score_unsupervised import score_dataset
+
+    summary = score_dataset(Path(dataset), Path(model), Path(out_file))
+    return {
+        'timestamp_utc': _utc_now(),
+        'runtime_cli_surface': 'observerctl',
+        'decision': 'go',
+        'action': 'ds-score',
+        'command_family': 'ds',
+        'command_path': 'observerctl ds score',
+        'implementation_state': 'frame-2-wrapper-ready',
+        'delivery_frame': 'frame-2',
+        'underlying_surface': 'analysis.score_unsupervised',
+        'summary': 'Unsupervised scoring completed through observerctl ds.',
+        'records_scored': int(summary.get('records_scored', 0)),
+        'artifacts': {
+            'scores_csv': str(summary.get('out_file', '')).replace('\\', '/'),
+            'resolved_model_path': str(summary.get('resolved_model_path', '')).replace('\\', '/'),
+        },
+        'score_column': str(summary.get('score_column', 'score_anomaly')),
+        'reason_codes': [],
+    }
+
+
+def _ds_run_demo(out_dir: str, dataset_seed: int, model_seed: int, max_fpr: float) -> Dict[str, Any]:
+    from analysis.run_demo import run_demo
+
+    target_out_dir = Path(str(out_dir).strip()) if str(out_dir).strip() else (_ds_default_analysis_dir() / 'demo' / 'demo_{0}'.format(_utc_compact_stamp()))
+    summary = run_demo(
+        root_dir=target_out_dir,
+        dataset_seed=int(dataset_seed),
+        model_seed=int(model_seed),
+        max_fpr=float(max_fpr),
+    )
+    run_payload = summary.get('run_payload', {}) if isinstance(summary.get('run_payload', {}), dict) else {}
+    evaluation_metrics = ((run_payload.get('evaluation', {}) or {}).get('metrics', {})) if isinstance(run_payload.get('evaluation', {}), dict) else {}
+    return {
+        'timestamp_utc': _utc_now(),
+        'runtime_cli_surface': 'observerctl',
+        'decision': 'go',
+        'action': 'ds-run',
+        'command_family': 'ds',
+        'command_path': 'observerctl ds run demo',
+        'implementation_state': 'frame-3-automation-ready',
+        'delivery_frame': 'frame-3',
+        'underlying_surface': 'analysis.run_demo',
+        'run_mode': 'demo',
+        'summary': 'Demo pipeline completed through observerctl ds.',
+        'total_records': int(summary.get('record_count', 0)),
+        'max_fpr': float(summary.get('max_fpr', max_fpr)),
+        'workflow_steps': ['generate', 'build', 'train-supervised', 'train-unsupervised', 'evaluate'],
+        'metrics': evaluation_metrics,
+        'artifacts': {
+            'root_dir': str(summary.get('root_dir', '')).replace('\\', '/'),
+            'dataset_manifest': str(summary.get('dataset_manifest', '')).replace('\\', '/'),
+            'features_csv': str(summary.get('features_csv', '')).replace('\\', '/'),
+            'labels_csv': str(summary.get('labels_csv', '')).replace('\\', '/'),
+            'supervised_model_path': str(summary.get('supervised_model_path', '')).replace('\\', '/'),
+            'supervised_train_manifest': str(summary.get('supervised_train_manifest', '')).replace('\\', '/'),
+            'unsupervised_model_path': str(summary.get('unsupervised_model_path', '')).replace('\\', '/'),
+            'unsupervised_train_manifest': str(summary.get('unsupervised_train_manifest', '')).replace('\\', '/'),
+            'evaluation_run_json': str(summary.get('evaluation_run_json', '')).replace('\\', '/'),
+            'evaluation_run_md': str(summary.get('evaluation_run_md', '')).replace('\\', '/'),
+        },
+        'reason_codes': [],
+    }
+
+
+def _ds_write_threshold_artifacts(scores_csv: Path, out_dir: Path, max_fpr: float) -> Dict[str, Any]:
+    import csv
+
+    from apexlab.evaluation.thresholds import select_lower_tail_threshold
+
+    scores: List[float] = []
+    with scores_csv.open('r', encoding='utf-8', newline='') as f:
+        reader = csv.DictReader(f)
+        for row in reader:
+            raw_score = row.get('score_anomaly', row.get('score_raw'))
+            if raw_score is None:
+                continue
+            try:
+                scores.append(float(raw_score))
+            except (TypeError, ValueError):
+                continue
+
+    if scores:
+        threshold = float(-select_lower_tail_threshold([-float(score) for score in scores], target_fpr=float(max_fpr)))
+        flagged = sum(1 for score in scores if score >= threshold)
+        actual_fpr = float(flagged) / float(len(scores))
+    else:
+        threshold = 0.0
+        flagged = 0
+        actual_fpr = 0.0
+
+    out_dir.mkdir(parents=True, exist_ok=True)
+    report_json = out_dir / 'threshold_report.json'
+    report_md = out_dir / 'threshold_report.md'
+    payload = {
+        'threshold': float(threshold),
+        'target_fpr': float(max_fpr),
+        'actual_fpr': float(actual_fpr),
+        'flagged_records': int(flagged),
+        'records_scored': int(len(scores)),
+        'scores_csv': str(scores_csv).replace('\\', '/'),
+        'algorithm': 'apexlab_iforest_higher_is_anomaly',
+    }
+    report_json.write_text(json.dumps(payload, indent=2, sort_keys=True), encoding='utf-8')
+    report_md.write_text(
+        '\n'.join([
+            '# Threshold Selection Report',
+            '',
+            '- Target FPR: {0}'.format(float(max_fpr)),
+            '- Threshold: {0}'.format(float(threshold)),
+            '- Flagged Records: {0}'.format(int(flagged)),
+            '- Records Scored: {0}'.format(int(len(scores))),
+            '- Actual FPR: {0}'.format(float(actual_fpr)),
+            '- Scores CSV: {0}'.format(str(scores_csv).replace('\\', '/')),
+            '',
+        ]),
+        encoding='utf-8',
+    )
+    payload['report_json'] = str(report_json).replace('\\', '/')
+    payload['report_md'] = str(report_md).replace('\\', '/')
+    return payload
+
+
+def _ds_run_pipeline(
+    input_paths: List[Path],
+    out_dir: str,
+    model_type: str,
+    seed: int,
+    split_train: float,
+    split_val: float,
+    split_test: float,
+    max_fpr: float,
+) -> Dict[str, Any]:
+    import pickle
+
+    try:
+        import joblib
+    except ImportError:
+        joblib = None
+
+    from analysis.dataset_builder import build_dataset
+    from analysis.evaluation_harness import evaluate, make_model_scorer, write_run_artifacts
+    from analysis.score_unsupervised import score_dataset
+    from analysis.train_model import train_model
+
+    target_root = Path(str(out_dir).strip()) if str(out_dir).strip() else (_ds_default_analysis_dir() / 'pipelines' / 'pipeline_{0}'.format(_utc_compact_stamp()))
+    dataset_dir = target_root / 'dataset'
+    model_dir = target_root / 'models' / str(model_type)
+    evaluation_dir = target_root / 'evaluation'
+    scoring_dir = target_root / 'scoring'
+
+    manifest = build_dataset(
+        input_paths,
+        out_dir=dataset_dir,
+        seed=int(seed),
+        split={
+            'train': float(split_train),
+            'val': float(split_val),
+            'test': float(split_test),
+        },
+    )
+    manifest_path = dataset_dir / 'dataset_manifest.json'
+    if str(model_type) == 'supervised' and not bool(manifest.has_labels):
+        return {
+            'timestamp_utc': _utc_now(),
+            'runtime_cli_surface': 'observerctl',
+            'decision': 'no-go',
+            'action': 'ds-run',
+            'command_family': 'ds',
+            'command_path': 'observerctl ds run pipeline',
+            'implementation_state': 'frame-3-automation-ready',
+            'delivery_frame': 'frame-3',
+            'underlying_surface': 'observerctl ds pipeline orchestration',
+            'run_mode': 'pipeline',
+            'summary': 'Supervised pipeline requires labeled telemetry records.',
+            'model_type': str(model_type),
+            'artifacts': {
+                'root_dir': str(target_root).replace('\\', '/'),
+                'dataset_manifest': str(manifest_path).replace('\\', '/'),
+            },
+            'reason_codes': ['critical_check_failed:labels_required_for_supervised_pipeline'],
+        }
+
+    train_manifest = train_model(
+        manifest_path,
+        out_dir=model_dir,
+        model_type=str(model_type),
+        seed=int(seed),
+    )
+
+    model_path = Path(train_manifest.model_path)
+    try:
+        with model_path.open('rb') as f:
+            model = pickle.load(f)
+    except Exception as pickle_error:
+        if joblib is None:
+            raise RuntimeError('could not load model via pickle and joblib is unavailable ({0})'.format(pickle_error))
+        model = joblib.load(model_path)
+
+    features_csv = Path(manifest.features_csv)
+    labels_csv = Path(manifest.labels_csv) if manifest.labels_csv else None
+    scorer = make_model_scorer(model)
+    evaluation = evaluate(
+        features_csv,
+        labels_csv=labels_csv if labels_csv is not None and labels_csv.exists() else None,
+        max_fpr=float(max_fpr),
+        scorer=scorer,
+    )
+    run_id = 'pipeline_{0}'.format(_utc_compact_stamp())
+    write_run_artifacts(
+        out_dir=evaluation_dir,
+        run_id=run_id,
+        features_csv=features_csv,
+        labels_csv=labels_csv if labels_csv is not None and labels_csv.exists() else None,
+        result=evaluation,
+        dataset_manifest_path=manifest_path,
+        model_meta={
+            'family': 'trained_apexlab',
+            'name': model_path.name,
+            'class': type(model).__name__,
+            'source': str(model_path),
+        },
+    )
+
+    workflow_steps = ['build', 'train', 'evaluate']
+    artifacts = {
+        'root_dir': str(target_root).replace('\\', '/'),
+        'dataset_manifest': str(manifest_path).replace('\\', '/'),
+        'features_csv': str(features_csv).replace('\\', '/'),
+        'labels_csv': str(labels_csv).replace('\\', '/') if labels_csv is not None else '',
+        'train_manifest': str(model_dir / 'train_manifest.json').replace('\\', '/'),
+        'model_path': str(model_path).replace('\\', '/'),
+        'metrics_path': str(Path(train_manifest.metrics_path)).replace('\\', '/'),
+        'run_json': str(evaluation_dir / 'run.json').replace('\\', '/'),
+        'run_md': str(evaluation_dir / 'run.md').replace('\\', '/'),
+    }
+    threshold_summary: Dict[str, Any] = {}
+    if str(model_type) == 'unsupervised':
+        scores_csv = scoring_dir / 'scores.csv'
+        score_summary = score_dataset(manifest_path, model_dir / 'train_manifest.json', scores_csv)
+        threshold_summary = _ds_write_threshold_artifacts(scores_csv, scoring_dir, float(max_fpr))
+        workflow_steps.extend(['score', 'threshold'])
+        artifacts['scores_csv'] = str(score_summary.get('out_file', '')).replace('\\', '/')
+        artifacts['threshold_report_json'] = str(threshold_summary.get('report_json', '')).replace('\\', '/')
+        artifacts['threshold_report_md'] = str(threshold_summary.get('report_md', '')).replace('\\', '/')
+
+    return {
+        'timestamp_utc': _utc_now(),
+        'runtime_cli_surface': 'observerctl',
+        'decision': 'go',
+        'action': 'ds-run',
+        'command_family': 'ds',
+        'command_path': 'observerctl ds run pipeline',
+        'implementation_state': 'frame-3-automation-ready',
+        'delivery_frame': 'frame-3',
+        'underlying_surface': 'observerctl ds pipeline orchestration',
+        'run_mode': 'pipeline',
+        'summary': 'Pipeline completed through observerctl ds.',
+        'model_type': str(model_type),
+        'seed': int(seed),
+        'split': {
+            'train': float(split_train),
+            'val': float(split_val),
+            'test': float(split_test),
+        },
+        'max_fpr': float(max_fpr),
+        'has_labels': bool(manifest.has_labels),
+        'total_records': int(manifest.total_records),
+        'workflow_steps': workflow_steps,
+        'metrics': dict(evaluation.metrics),
+        'counts': dict(evaluation.counts),
+        'thresholding': threshold_summary,
+        'artifacts': artifacts,
+        'reason_codes': [],
+    }
+
+
+def _ds_spine_packet(ds_cmd: str, command_path: str, underlying_surface: str, run_mode: str = '') -> Dict[str, Any]:
+    packet = {
+        'timestamp_utc': _utc_now(),
+        'runtime_cli_surface': 'observerctl',
+        'decision': 'go',
+        'action': 'ds-{0}'.format(ds_cmd),
+        'command_family': 'ds',
+        'command_path': command_path,
+        'implementation_state': 'command-spine-ready',
+        'delivery_frame': 'frame-1',
+        'next_frame': 'frame-2-non-interactive-wrappers',
+        'underlying_surface': underlying_surface,
+        'reason_codes': [],
+        'status': 'planned',
+        'summary': 'DS command spine is available; execution wiring lands in later frames.',
+    }
+    if run_mode:
+        packet['run_mode'] = run_mode
+    return packet
+
+
 def _exit_from_packet(packet: Dict[str, Any], schema_error: bool = False, dependency_error: bool = False, io_error: bool = False) -> int:
     if schema_error:
         return 3
@@ -5139,6 +6566,61 @@ def _dispatch(args: argparse.Namespace) -> Dict[str, Any]:
         if args.policy_cmd == 'validate':
             return _policy_validate()
 
+    if cmd == 'ds':
+        if args.ds_cmd == 'build':
+            return _ds_build(
+                input_paths=args.input,
+                out_dir=args.out_dir,
+                seed=args.seed,
+                split_train=args.split_train,
+                split_val=args.split_val,
+                split_test=args.split_test,
+                max_lines_per_file=args.max_lines_per_file,
+            )
+        if args.ds_cmd == 'train':
+            return _ds_train(
+                dataset=args.dataset,
+                out_dir=args.out_dir,
+                model_type=args.model_type,
+                seed=args.seed,
+            )
+        if args.ds_cmd == 'evaluate':
+            return _ds_evaluate(
+                features_csv=args.features_csv,
+                labels_csv=args.labels_csv,
+                dataset_manifest=args.dataset_manifest,
+                max_fpr=args.max_fpr,
+                out_dir=args.out_dir,
+                run_id=args.run_id,
+                model_path=args.model_path,
+            )
+        if args.ds_cmd == 'score':
+            return _ds_score(
+                dataset=args.dataset,
+                model=args.model,
+                out_file=args.out_file,
+            )
+        if args.ds_cmd == 'wizard':
+            return _ds_wizard(args)
+        if args.ds_cmd == 'run-demo':
+            return _ds_run_demo(
+                out_dir=args.out_dir,
+                dataset_seed=args.dataset_seed,
+                model_seed=args.model_seed,
+                max_fpr=args.max_fpr,
+            )
+        if args.ds_cmd == 'run-pipeline':
+            return _ds_run_pipeline(
+                input_paths=args.input,
+                out_dir=args.out_dir,
+                model_type=args.model_type,
+                seed=args.seed,
+                split_train=args.split_train,
+                split_val=args.split_val,
+                split_test=args.split_test,
+                max_fpr=args.max_fpr,
+            )
+
     return {'timestamp_utc': _utc_now(), 'decision': 'no-go', 'reason_codes': ['critical_check_failed:unknown_command']}
 
 
@@ -5335,6 +6817,68 @@ def _build_parser() -> argparse.ArgumentParser:
     policy_sub.add_parser('show')
     policy_sub.add_parser('validate')
 
+    ds = sub.add_parser('ds', help='Data-science operations namespace')
+    ds_sub = ds.add_subparsers(dest='ds_cmd', required=True)
+    ds_build = ds_sub.add_parser('build', help='Build a dataset from observer telemetry inputs')
+    ds_build.add_argument('--input', action='append', required=True, type=Path, help='JSONL input path (repeatable)')
+    ds_build.add_argument('--out-dir', default='', help='Output dataset directory')
+    ds_build.add_argument('--seed', type=int, default=1337, help='Deterministic split seed')
+    ds_build.add_argument('--split-train', type=float, default=0.7)
+    ds_build.add_argument('--split-val', type=float, default=0.15)
+    ds_build.add_argument('--split-test', type=float, default=0.15)
+    ds_build.add_argument('--max-lines-per-file', type=int, default=None)
+
+    ds_train = ds_sub.add_parser('train', help='Train a model from a dataset manifest')
+    ds_train.add_argument('--dataset', required=True, help='Path to dataset manifest.json')
+    ds_train.add_argument('--out-dir', required=True, help='Output directory for model artifacts')
+    ds_train.add_argument('--model-type', choices=['supervised', 'unsupervised'], default='supervised')
+    ds_train.add_argument('--seed', type=int, default=42)
+
+    ds_evaluate = ds_sub.add_parser('evaluate', help='Evaluate a heuristic or trained model')
+    ds_evaluate.add_argument('--features-csv', required=True, help='Path to features.csv')
+    ds_evaluate.add_argument('--labels-csv', default='', help='Optional path to labels.csv')
+    ds_evaluate.add_argument('--dataset-manifest', default='', help='Optional path to dataset manifest.json')
+    ds_evaluate.add_argument('--max-fpr', type=float, default=0.01)
+    ds_evaluate.add_argument('--out-dir', default='', help='Output directory for evaluation artifacts')
+    ds_evaluate.add_argument('--run-id', default='', help='Optional run identifier')
+    ds_evaluate.add_argument('--model-path', default='', help='Optional serialized model path for metadata handoff')
+
+    ds_score = ds_sub.add_parser('score', help='Score a dataset with an unsupervised model')
+    ds_score.add_argument('--dataset', required=True, help='Path to dataset manifest.json')
+    ds_score.add_argument('--model', required=True, help='Path to model artifact or train_manifest.json')
+    ds_score.add_argument('--out-file', required=True, help='Output path for scores CSV')
+
+    ds_run = ds_sub.add_parser('run', help='Run opinionated end-to-end DS flows')
+    ds_run_sub = ds_run.add_subparsers(dest='ds_run_cmd', required=True)
+    ds_run_demo = ds_run_sub.add_parser('demo', help='Run the existing observer demo flow')
+    ds_run_demo.add_argument('--out-dir', default='', help='Output directory for demo artifacts')
+    ds_run_demo.add_argument('--dataset-seed', type=int, default=123)
+    ds_run_demo.add_argument('--model-seed', type=int, default=42)
+    ds_run_demo.add_argument('--max-fpr', type=float, default=0.01)
+
+    ds_run_pipeline = ds_run_sub.add_parser('pipeline', help='Run the default build/train/evaluate pipeline')
+    ds_run_pipeline.add_argument('--input', action='append', required=True, type=Path, help='JSONL input path (repeatable)')
+    ds_run_pipeline.add_argument('--out-dir', default='', help='Root output directory for pipeline artifacts')
+    ds_run_pipeline.add_argument('--model-type', choices=['supervised', 'unsupervised'], default='supervised')
+    ds_run_pipeline.add_argument('--seed', type=int, default=42)
+    ds_run_pipeline.add_argument('--split-train', type=float, default=0.7)
+    ds_run_pipeline.add_argument('--split-val', type=float, default=0.15)
+    ds_run_pipeline.add_argument('--split-test', type=float, default=0.15)
+    ds_run_pipeline.add_argument('--max-fpr', type=float, default=0.01)
+    ds_wizard = ds_sub.add_parser('wizard', help='Launch the guided DS command wizard')
+    ds_wizard.add_argument('--workflow', choices=list(_DS_WIZARD_WORKFLOWS), default='')
+    ds_wizard.add_argument('--section', choices=list(_DS_WIZARD_SECTION_ORDER), default='')
+    ds_wizard.add_argument('--hydrate-dataset', default='', help='Seed wizard state from dataset manifest.json')
+    ds_wizard.add_argument('--hydrate-train', default='', help='Seed wizard state from train_manifest.json')
+    ds_wizard.add_argument('--hydrate-model', default='', help='Seed wizard state from a model artifact path')
+    ds_wizard.add_argument('--hydrate-baseline-analysis', default='', help='Seed wizard state from a baseline analysis packet')
+    ds_wizard.add_argument('--hydrate-run', default='', help='Seed wizard state from an evaluation run.json ledger')
+    ds_wizard.add_argument('--hydrate-latest-context', action='store_true', help='Seed wizard state from SSOT source/mode and latest retained baseline-analysis packet when available')
+    ds_wizard.add_argument('--load-draft', default='', help='Load wizard state from a saved draft JSON file')
+    ds_wizard.add_argument('--save-draft', default='', help='Persist the current wizard state to a draft JSON file after seeding')
+    ds_wizard.add_argument('--set', dest='set_items', action='append', default=[], help='Preload a wizard field using key=value syntax')
+    ds_wizard.add_argument('--execute', action='store_true', help='Attempt wizard execute handoff after seeding state')
+
     parser.add_argument('--json', action='store_true', help='Emit JSON output')
     return parser
 
@@ -5372,6 +6916,11 @@ def _normalize_nested_aliases(args: argparse.Namespace) -> argparse.Namespace:
             args.ops_cmd = 'evidence-verify'
         elif args.evidence_cmd == 'index':
             args.ops_cmd = 'evidence-index'
+    if args.command == 'ds' and args.ds_cmd == 'run':
+        if args.ds_run_cmd == 'demo':
+            args.ds_cmd = 'run-demo'
+        elif args.ds_run_cmd == 'pipeline':
+            args.ds_cmd = 'run-pipeline'
     return args
 
 

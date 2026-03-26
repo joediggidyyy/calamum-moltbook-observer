@@ -14,7 +14,7 @@ if str(SRC_DIR) not in sys.path:
 from obfuscator_lib import Obfuscator
 
 from analysis.dataset_builder import build_dataset
-from analysis.evaluation_harness import evaluate
+from analysis.evaluation_harness import EvalResult, evaluate, write_run_artifacts
 from analysis.validate_jsonl import validate_jsonl_file
 
 
@@ -124,3 +124,44 @@ def test_build_dataset_deterministic_splits_and_eval(tmp_path: Path) -> None:
     res = evaluate(Path(m1.features_csv), labels_csv=Path(m1.labels_csv) if m1.labels_csv else None, max_fpr=0.01)
     assert res.has_labels is True
     assert res.metrics.get('fpr', 1.0) <= 0.01
+
+
+def test_evaluation_run_ledger_emits_fields_needed_for_ds_wizard_import(tmp_path: Path) -> None:
+    features_csv = tmp_path / 'features.csv'
+    labels_csv = tmp_path / 'labels.csv'
+    dataset_manifest = tmp_path / 'dataset_manifest.json'
+    model_path = tmp_path / 'model.pkl'
+    out_dir = tmp_path / 'evaluation_run'
+
+    features_csv.write_text('record_id,feature\n', encoding='utf-8')
+    labels_csv.write_text('record_id,label\n', encoding='utf-8')
+    dataset_manifest.write_text(json.dumps({'features_csv': str(features_csv), 'labels_csv': str(labels_csv)}), encoding='utf-8')
+    model_path.write_bytes(b'model')
+
+    write_run_artifacts(
+        out_dir=out_dir,
+        run_id='frame6-ledger-contract',
+        features_csv=features_csv,
+        labels_csv=labels_csv,
+        dataset_manifest_path=dataset_manifest,
+        result=EvalResult(
+            threshold=0.42,
+            max_fpr=0.01,
+            has_labels=True,
+            counts={'tp': 1, 'fp': 0, 'tn': 1, 'fn': 0},
+            metrics={'fpr': 0.0, 'precision': 1.0},
+        ),
+        model_meta={
+            'family': 'trained_apexlab',
+            'name': 'model.pkl',
+            'source': str(model_path),
+        },
+    )
+
+    run_json = json.loads((out_dir / 'run.json').read_text(encoding='utf-8'))
+    assert run_json['identity']['run_id'] == 'frame6-ledger-contract'
+    assert run_json['context']['constraints']['max_fpr'] == 0.01
+    assert run_json['data']['features_csv'] == str(features_csv)
+    assert run_json['data']['labels_csv'] == str(labels_csv)
+    assert run_json['data']['dataset_manifest'] == str(dataset_manifest)
+    assert run_json['model']['source'] == str(model_path)

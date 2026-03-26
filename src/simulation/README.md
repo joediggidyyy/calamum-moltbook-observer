@@ -31,6 +31,18 @@ Run the Frame 4 negative-path regression probe:
 python projects\calamum-moltbook-observer\src\simulation\run_simulation.py metadata-contract-regression
 ```
 
+Run the DS wizard hydration probe through the canonical entrypoint:
+
+```powershell
+python projects\calamum-moltbook-observer\src\simulation\run_simulation.py ds-wizard-hydration
+```
+
+Run the Frame 6 DS wizard durability probe:
+
+```powershell
+python projects\calamum-moltbook-observer\src\simulation\run_simulation.py ds-wizard-durability
+```
+
 Run the baseline-monitor runtime probe through the canonical entrypoint:
 
 ```powershell
@@ -71,6 +83,8 @@ Current retained probe lanes include:
 
 - `metadata-contract` for Frame 4 metadata parity
 - `metadata-contract-regression` for Frame 4 negative-path regression detection
+- `ds-wizard-hydration` for Frame 4 DS wizard artifact hydration and narrow latest-context proof
+- `ds-wizard-durability` for Frame 6 prior-run import and draft round-trip proof
 - `baseline-monitor-runtime` for broad runtime/readiness continuity
 - `validation-cycle-lineage` for Frame 5 append-only validation-cycle lineage
 - `baseline-monitor-restart-continuity` for Frame 6 restart-safe continuity anchor preservation

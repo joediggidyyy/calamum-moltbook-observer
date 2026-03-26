@@ -37,8 +37,10 @@ import observerctl as observerctl_module
 
 FRAME4_PROBE_DIR = REPO_ROOT / 'report_tmp' / 'frame4_metadata_contract_probe'
 FRAME4_REGRESSION_PROBE_DIR = REPO_ROOT / 'report_tmp' / 'frame4_metadata_contract_regression_probe'
+FRAME4_DS_WIZARD_HYDRATION_PROBE_DIR = REPO_ROOT / 'report_tmp' / 'frame4_ds_wizard_hydration_probe'
 JOB0022_PROBE_DIR = REPO_ROOT / 'report_tmp' / 'job0022_baseline_monitor_runtime_probe'
 FRAME5_LINEAGE_PROBE_DIR = REPO_ROOT / 'report_tmp' / 'frame5_validation_cycle_lineage_probe'
+FRAME6_DS_WIZARD_DURABILITY_PROBE_DIR = REPO_ROOT / 'report_tmp' / 'frame6_ds_wizard_durability_probe'
 FRAME6_RESTART_PROBE_DIR = REPO_ROOT / 'report_tmp' / 'frame6_restart_continuity_probe'
 FRAME6_RECOVERY_PROBE_DIR = REPO_ROOT / 'report_tmp' / 'frame6_state_recovery_probe'
 
@@ -341,6 +343,273 @@ def _render_metadata_contract_markdown(report: Dict[str, Any]) -> str:
         '',
     ])
     return '\n'.join(lines) + '\n'
+
+
+def run_ds_wizard_hydration_probe() -> int:
+    run_id = 'frame4-ds-wizard-hydration-{0}'.format(_utc_stamp())
+    run_dir = FRAME4_DS_WIZARD_HYDRATION_PROBE_DIR / 'runs' / run_id
+    run_index_jsonl = FRAME4_DS_WIZARD_HYDRATION_PROBE_DIR / 'run_index.jsonl'
+    run_dir.mkdir(parents=True, exist_ok=True)
+
+    original_env: Dict[str, Optional[str]] = {}
+    original_project_root = None
+    try:
+        _sandbox_root, sandbox_log_dir, original_env, original_project_root = _seed_probe_environment(
+            run_dir=run_dir,
+            signing_key='frame4-ds-wizard-hydration-signing-key',
+            security_report_title='# Frame 4 DS wizard hydration probe security report\n',
+        )
+
+        artifacts_dir = run_dir / 'artifacts'
+        artifacts_dir.mkdir(parents=True, exist_ok=True)
+
+        dataset_manifest = artifacts_dir / 'dataset_manifest.json'
+        features_csv = artifacts_dir / 'features.csv'
+        labels_csv = artifacts_dir / 'labels.csv'
+        train_manifest = artifacts_dir / 'train_manifest.json'
+        model_path = artifacts_dir / 'model.pkl'
+        baseline_packet = sandbox_log_dir / 'data' / 'calamum' / 'observer_derived' / 'sim' / 'canary' / 'evidence' / 'baseline_analysis_probe.json'
+        baseline_index = baseline_packet.parent / 'index.jsonl'
+
+        features_csv.write_text('record_id,feature\n', encoding='utf-8')
+        labels_csv.write_text('record_id,label\n', encoding='utf-8')
+        model_path.write_bytes(b'model')
+        dataset_manifest.write_text(json.dumps({
+            'features_csv': str(features_csv),
+            'labels_csv': str(labels_csv),
+        }, indent=2, sort_keys=True) + '\n', encoding='utf-8')
+        train_manifest.write_text(json.dumps({
+            'dataset_manifest_path': str(dataset_manifest),
+            'model_path': str(model_path),
+            'model_type': 'unsupervised',
+        }, indent=2, sort_keys=True) + '\n', encoding='utf-8')
+        _write_json(baseline_packet, {
+            'timestamp_utc': observerctl_module._utc_now(),
+            'decision': 'go',
+            'baseline_window_id': 'frame4-ds-hydration-window',
+            'provenance': {'artifact_path': str(baseline_packet).replace('\\', '/')},
+        })
+        _append_jsonl(baseline_index, {
+            'timestamp_utc': observerctl_module._utc_now(),
+            'event': 'baseline_analysis',
+            'packet_path': str(baseline_packet).replace('\\', '/'),
+        })
+        observerctl_module._save_state('sim', 'canary')
+
+        hydrated_state = observerctl_module._ds_wizard_new_state('evaluate')
+        observerctl_module._ds_wizard_hydrate_dataset_manifest(hydrated_state, dataset_manifest)
+        observerctl_module._ds_wizard_hydrate_train_manifest(hydrated_state, train_manifest)
+        observerctl_module._ds_wizard_hydrate_baseline_analysis(hydrated_state, baseline_packet)
+
+        latest_state = observerctl_module._ds_wizard_new_state('evaluate')
+        observerctl_module._ds_wizard_hydrate_latest_context(latest_state)
+
+        result_matrix = {
+            'dataset_manifest_imported': str(hydrated_state.values.get('dataset_manifest', '')) == str(dataset_manifest),
+            'features_csv_imported': str(hydrated_state.values.get('features_csv', '')) == str(features_csv),
+            'labels_csv_imported': str(hydrated_state.values.get('labels_csv', '')) == str(labels_csv),
+            'train_manifest_imported': str(hydrated_state.values.get('train_manifest', '')) == str(train_manifest),
+            'model_path_imported': str(hydrated_state.values.get('model_path', '')) == str(model_path),
+            'model_type_imported': str(hydrated_state.values.get('model_type', '')) == 'unsupervised',
+            'baseline_window_imported': str(hydrated_state.values.get('baseline_window_id', '')) == 'frame4-ds-hydration-window',
+            'latest_context_source_imported': str(latest_state.values.get('source', '')) == 'sim',
+            'latest_context_mode_imported': str(latest_state.values.get('mode', '')) == 'canary',
+            'latest_context_baseline_imported': str(latest_state.values.get('baseline_analysis_packet', '')) == str(baseline_packet),
+        }
+
+        report = {
+            'run_id': run_id,
+            'run_dir': _rel_to_repo(run_dir),
+            'probe_dir': _rel_to_repo(FRAME4_DS_WIZARD_HYDRATION_PROBE_DIR),
+            'script': _rel_to_repo(Path(__file__)),
+            'next_bite_result': _probe_result(result_matrix),
+            'command_runs': {
+                'seed_ds_hydration_artifacts': {
+                    'args': ['synthetic-ds-wizard-hydration-seed'],
+                    'returncode': 0,
+                    'stderr_text': '',
+                    'stdout_text': '',
+                    'stdout_json': {'seeded': True},
+                },
+            },
+            'artifact_paths': _report_path_map({
+                'dataset_manifest': dataset_manifest,
+                'train_manifest': train_manifest,
+                'model_path': model_path,
+                'baseline_packet': baseline_packet,
+                'baseline_index': baseline_index,
+            }),
+            'artifact_snapshots': {
+                'hydrated_state_values': dict(hydrated_state.values),
+                'hydrated_state_sources': dict(hydrated_state.hydrated_from),
+                'latest_state_values': dict(latest_state.values),
+                'latest_state_sources': dict(latest_state.hydrated_from),
+            },
+            'result_matrix': result_matrix,
+            'findings': {
+                'hydrated_sources': dict(hydrated_state.hydrated_from),
+                'latest_sources': dict(latest_state.hydrated_from),
+                'latest_state_summary': observerctl_module._ds_wizard_summary_rows(latest_state),
+            },
+        }
+
+        report_json = run_dir / 'frame4_ds_wizard_hydration_probe.json'
+        report_md = run_dir / 'frame4_ds_wizard_hydration_probe.md'
+        _write_json(report_json, report)
+        report_md.write_text(_render_result_matrix_markdown('Frame 4 DS Wizard Hydration Probe', report), encoding='utf-8')
+
+        _append_jsonl(run_index_jsonl, {
+            'run_id': run_id,
+            'timestamp_utc': _utc_stamp(),
+            'run_dir': _rel_to_repo(run_dir),
+            'report_json': _rel_to_repo(report_json),
+            'report_md': _rel_to_repo(report_md),
+            'next_bite_result': report['next_bite_result'],
+            'latest_context_mode': str(latest_state.values.get('mode', '')),
+        })
+
+        print('run_id={0}'.format(run_id))
+        print('report_json={0}'.format(_rel_to_repo(report_json)))
+        print('report_md={0}'.format(_rel_to_repo(report_md)))
+        print('run_index={0}'.format(_rel_to_repo(run_index_jsonl)))
+        print('next_bite_result={0}'.format(report['next_bite_result']))
+        return 0
+    finally:
+        if original_project_root is not None:
+            _restore_probe_environment(original_env, original_project_root)
+
+
+def run_ds_wizard_durability_probe() -> int:
+    run_id = 'frame6-ds-wizard-durability-{0}'.format(_utc_stamp())
+    run_dir = FRAME6_DS_WIZARD_DURABILITY_PROBE_DIR / 'runs' / run_id
+    run_index_jsonl = FRAME6_DS_WIZARD_DURABILITY_PROBE_DIR / 'run_index.jsonl'
+    run_dir.mkdir(parents=True, exist_ok=True)
+
+    original_env: Dict[str, Optional[str]] = {}
+    original_project_root = None
+    try:
+        _sandbox_root, _sandbox_log_dir, original_env, original_project_root = _seed_probe_environment(
+            run_dir=run_dir,
+            signing_key='frame6-ds-wizard-durability-signing-key',
+            security_report_title='# Frame 6 DS wizard durability probe security report\n',
+        )
+
+        artifacts_dir = run_dir / 'artifacts'
+        artifacts_dir.mkdir(parents=True, exist_ok=True)
+
+        features_csv = artifacts_dir / 'features.csv'
+        labels_csv = artifacts_dir / 'labels.csv'
+        dataset_manifest = artifacts_dir / 'dataset_manifest.json'
+        model_path = artifacts_dir / 'model.pkl'
+        run_ledger = artifacts_dir / 'run.json'
+        draft_path = artifacts_dir / 'wizard_draft.json'
+
+        features_csv.write_text('record_id,feature\n', encoding='utf-8')
+        labels_csv.write_text('record_id,label\n', encoding='utf-8')
+        model_path.write_bytes(b'model')
+        _write_json(dataset_manifest, {
+            'features_csv': str(features_csv),
+            'labels_csv': str(labels_csv),
+        })
+        _write_json(run_ledger, {
+            'identity': {
+                'run_id': 'frame6-durability-ledger',
+                'created_at_utc': observerctl_module._utc_now(),
+                'operator': 'ORACL-Prime',
+            },
+            'context': {
+                'constraints': {'max_fpr': 0.02},
+            },
+            'data': {
+                'features_csv': str(features_csv),
+                'labels_csv': str(labels_csv),
+                'dataset_manifest': str(dataset_manifest),
+            },
+            'model': {
+                'family': 'trained_apexlab',
+                'name': 'model.pkl',
+                'source': str(model_path),
+            },
+        })
+
+        hydrated_state = observerctl_module._ds_wizard_new_state('evaluate')
+        observerctl_module._ds_wizard_hydrate_run_ledger(hydrated_state, run_ledger)
+        observerctl_module._ds_wizard_save_draft(hydrated_state, draft_path)
+        loaded_state = observerctl_module._ds_wizard_load_draft(draft_path)
+
+        result_matrix = {
+            'run_ledger_path_tracked': str(hydrated_state.run_ledger_path) == str(run_ledger),
+            'run_id_imported': str(hydrated_state.values.get('run_id', '')) == 'frame6-durability-ledger',
+            'max_fpr_imported': float(hydrated_state.values.get('max_fpr', 0.0)) == 0.02,
+            'dataset_manifest_imported': str(hydrated_state.values.get('dataset_manifest', '')) == str(dataset_manifest),
+            'features_csv_imported': str(hydrated_state.values.get('features_csv', '')) == str(features_csv),
+            'labels_csv_imported': str(hydrated_state.values.get('labels_csv', '')) == str(labels_csv),
+            'model_path_imported': str(hydrated_state.values.get('model_path', '')) == str(model_path),
+            'draft_saved': draft_path.exists(),
+            'draft_load_round_trip_values': dict(loaded_state.values) == dict(hydrated_state.values),
+            'draft_load_round_trip_hydration': dict(loaded_state.hydrated_from) == dict(hydrated_state.hydrated_from),
+        }
+
+        report = {
+            'run_id': run_id,
+            'run_dir': _rel_to_repo(run_dir),
+            'probe_dir': _rel_to_repo(FRAME6_DS_WIZARD_DURABILITY_PROBE_DIR),
+            'script': _rel_to_repo(Path(__file__)),
+            'next_bite_result': _probe_result(result_matrix),
+            'command_runs': {
+                'seed_ds_durability_artifacts': {
+                    'args': ['synthetic-ds-wizard-durability-seed'],
+                    'returncode': 0,
+                    'stderr_text': '',
+                    'stdout_text': '',
+                    'stdout_json': {'seeded': True},
+                },
+            },
+            'artifact_paths': _report_path_map({
+                'run_ledger': run_ledger,
+                'dataset_manifest': dataset_manifest,
+                'draft_path': draft_path,
+                'model_path': model_path,
+            }),
+            'artifact_snapshots': {
+                'hydrated_state_values': dict(hydrated_state.values),
+                'hydrated_state_sources': dict(hydrated_state.hydrated_from),
+                'loaded_state_values': dict(loaded_state.values),
+                'loaded_state_sources': dict(loaded_state.hydrated_from),
+                'draft_payload': _read_json(draft_path),
+            },
+            'result_matrix': result_matrix,
+            'findings': {
+                'run_ledger_path': str(hydrated_state.run_ledger_path),
+                'draft_path': str(loaded_state.draft_path),
+                'loaded_state_summary': observerctl_module._ds_wizard_summary_rows(loaded_state),
+            },
+        }
+
+        report_json = run_dir / 'frame6_ds_wizard_durability_probe.json'
+        report_md = run_dir / 'frame6_ds_wizard_durability_probe.md'
+        _write_json(report_json, report)
+        report_md.write_text(_render_result_matrix_markdown('Frame 6 DS Wizard Durability Probe', report), encoding='utf-8')
+
+        _append_jsonl(run_index_jsonl, {
+            'run_id': run_id,
+            'timestamp_utc': _utc_stamp(),
+            'run_dir': _rel_to_repo(run_dir),
+            'report_json': _rel_to_repo(report_json),
+            'report_md': _rel_to_repo(report_md),
+            'next_bite_result': report['next_bite_result'],
+            'draft_path': str(draft_path).replace('\\', '/'),
+        })
+
+        print('run_id={0}'.format(run_id))
+        print('report_json={0}'.format(_rel_to_repo(report_json)))
+        print('report_md={0}'.format(_rel_to_repo(report_md)))
+        print('run_index={0}'.format(_rel_to_repo(run_index_jsonl)))
+        print('next_bite_result={0}'.format(report['next_bite_result']))
+        return 0
+    finally:
+        if original_project_root is not None:
+            _restore_probe_environment(original_env, original_project_root)
 
 
 def run_metadata_contract_probe() -> int:
@@ -1311,6 +1580,8 @@ def _definition_registry() -> Dict[str, Callable[[], int]]:
         'feedback-loop': run_feedback_loop_simulation,
         'metadata-contract': run_metadata_contract_probe,
         'metadata-contract-regression': run_metadata_contract_regression_probe,
+        'ds-wizard-hydration': run_ds_wizard_hydration_probe,
+        'ds-wizard-durability': run_ds_wizard_durability_probe,
         'baseline-monitor-runtime': run_baseline_monitor_runtime_probe,
         'validation-cycle-lineage': run_validation_cycle_lineage_probe,
         'baseline-monitor-restart-continuity': run_baseline_monitor_restart_continuity_probe,
@@ -1324,7 +1595,7 @@ def build_parser() -> argparse.ArgumentParser:
         'definition',
         nargs='?',
         default='feedback-loop',
-        help='Definition to run: feedback-loop, metadata-contract, metadata-contract-regression, baseline-monitor-runtime, validation-cycle-lineage, baseline-monitor-restart-continuity, baseline-monitor-state-recovery',
+        help='Definition to run: feedback-loop, metadata-contract, metadata-contract-regression, ds-wizard-hydration, ds-wizard-durability, baseline-monitor-runtime, validation-cycle-lineage, baseline-monitor-restart-continuity, baseline-monitor-state-recovery',
     )
     parser.add_argument(
         '--list-definitions',
@@ -1344,6 +1615,8 @@ def main(argv: Optional[List[str]] = None) -> int:
             'feedback-loop',
             'metadata-contract',
             'metadata-contract-regression',
+            'ds-wizard-hydration',
+            'ds-wizard-durability',
             'baseline-monitor-runtime',
             'validation-cycle-lineage',
             'baseline-monitor-restart-continuity',

@@ -25,6 +25,14 @@ def _metadata_contract_regression_run_index() -> Path:
     return _REPORT_TMP / 'frame4_metadata_contract_regression_probe' / 'run_index.jsonl'
 
 
+def _ds_wizard_hydration_run_index() -> Path:
+    return _REPORT_TMP / 'frame4_ds_wizard_hydration_probe' / 'run_index.jsonl'
+
+
+def _ds_wizard_durability_run_index() -> Path:
+    return _REPORT_TMP / 'frame6_ds_wizard_durability_probe' / 'run_index.jsonl'
+
+
 def _baseline_monitor_runtime_run_index() -> Path:
     return _REPORT_TMP / 'job0022_baseline_monitor_runtime_probe' / 'run_index.jsonl'
 
@@ -55,6 +63,14 @@ def _run_metadata_contract() -> int:
 
 def _run_metadata_contract_regression() -> int:
     return int(_load_simulation_runner().run_metadata_contract_regression_probe())
+
+
+def _run_ds_wizard_hydration() -> int:
+    return int(_load_simulation_runner().run_ds_wizard_hydration_probe())
+
+
+def _run_ds_wizard_durability() -> int:
+    return int(_load_simulation_runner().run_ds_wizard_durability_probe())
 
 
 def _run_baseline_monitor_runtime() -> int:
@@ -116,6 +132,34 @@ def get_definitions() -> List[DefinitionRecord]:
             'command': 'observerctl sandbox run metadata-contract-regression',
             'run_index_path': str(_metadata_contract_regression_run_index()).replace('\\', '/'),
             'runner': _run_metadata_contract_regression,
+        },
+        {
+            'id': 'ds-wizard-hydration',
+            'title': 'DS wizard hydration probe',
+            'summary': 'Validate DS wizard artifact hydration and current narrow latest-context import behavior.',
+            'status': 'stable',
+            'category': 'ds-probe',
+            'aliases': [],
+            'selector_policy': 'exact-name-only',
+            'writes_to': 'report_tmp/frame4_ds_wizard_hydration_probe',
+            'purpose': 'Prove the DS wizard can hydrate dataset, train, baseline, and current latest-context inputs through the canonical sandbox lane.',
+            'command': 'observerctl sandbox run ds-wizard-hydration',
+            'run_index_path': str(_ds_wizard_hydration_run_index()).replace('\\', '/'),
+            'runner': _run_ds_wizard_hydration,
+        },
+        {
+            'id': 'ds-wizard-durability',
+            'title': 'DS wizard durability probe',
+            'summary': 'Validate prior-run ledger import and draft round-trip persistence for the DS wizard.',
+            'status': 'stable',
+            'category': 'ds-probe',
+            'aliases': [],
+            'selector_policy': 'exact-name-only',
+            'writes_to': 'report_tmp/frame6_ds_wizard_durability_probe',
+            'purpose': 'Prove Frame 6 durable-use behavior: prior-run import plus draft save/load through the canonical sandbox lane.',
+            'command': 'observerctl sandbox run ds-wizard-durability',
+            'run_index_path': str(_ds_wizard_durability_run_index()).replace('\\', '/'),
+            'runner': _run_ds_wizard_durability,
         },
         {
             'id': 'baseline-monitor-runtime',

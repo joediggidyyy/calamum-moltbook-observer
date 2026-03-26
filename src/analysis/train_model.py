@@ -76,43 +76,34 @@ def load_dataset(manifest_path: Path) -> Tuple[List[Dict[str, Any]], Dict[str, s
     return features, record_split_map, labels_map, manifest['feature_columns']
 
 
-def main(argv: Optional[List[str]] = None) -> int:
-    p = argparse.ArgumentParser(description='Train Calamum Observer models.')
-    p.add_argument('--dataset', required=True, type=Path, help='Path to dataset manifest.json')
-    p.add_argument('--out-dir', required=True, type=Path, help='Output directory for model artifacts')
-    p.add_argument('--model-type', choices=['supervised', 'unsupervised'], default='supervised')
-    p.add_argument('--seed', type=int, default=42)
-    
-    args = p.parse_args(argv)
-    
-    out_dir = args.out_dir
+def train_model(
+    dataset_manifest_path: Path,
+    *,
+    out_dir: Path,
+    model_type: str = 'supervised',
+    seed: int = 42,
+) -> TrainManifest:
     out_dir.mkdir(parents=True, exist_ok=True)
-    
-    print(f"Loading dataset from {args.dataset}...")
-    features, split_map, label_map, feature_cols = load_dataset(args.dataset)
-    
-    # Filter columns to only those used for training (exclude record_id)
+
+    features, split_map, label_map, feature_cols = load_dataset(dataset_manifest_path)
     train_cols = [c for c in feature_cols if c != 'record_id']
-    
-    # Prepare X and y
+
     X_train = []
     y_train = []
     X_val = []
     y_val = []
-    
+
     for row in features:
         rid = row['record_id']
         split = split_map.get(rid)
-        
+
         vec = [row[c] for c in train_cols]
         label = label_map.get(rid) if label_map else None
-        
-        # If supervised, skip if no label
-        if args.model_type == 'supervised' and label is None:
+        if model_type == 'supervised' and label is None:
             continue
 
         label_value = 1 if label == 'TV-3' else 0
-            
+
         if split == 'train':
             X_train.append(vec)
             if label is not None:
@@ -121,20 +112,15 @@ def main(argv: Optional[List[str]] = None) -> int:
             X_val.append(vec)
             if label is not None:
                 y_val.append(label_value)
-                
-    print(f"Training set: {len(X_train)} samples")
-    print(f"Validation set: {len(X_val)} samples")
-    
+
     model = None
-    metrics = {}
-    params = {'seed': args.seed, 'model_type': args.model_type}
-    
-    if args.model_type == 'supervised':
-        print("Training ApexLab RandomForestClassifier (Supervised)...")
-        clf = RandomForestClassifier(n_estimators=100, random_state=args.seed)
+    metrics: Dict[str, Any] = {}
+    params = {'seed': int(seed), 'model_type': str(model_type)}
+
+    if model_type == 'supervised':
+        clf = RandomForestClassifier(n_estimators=100, random_state=seed)
         clf.fit(X_train, y_train)
-        
-        # Validation
+
         if X_val:
             y_pred = clf.predict(X_val)
             class_metrics = classification_metrics([str(value) for value in y_val], [str(value) for value in y_pred])
@@ -147,47 +133,55 @@ def main(argv: Optional[List[str]] = None) -> int:
                 metrics['f1_macro'] = 0.0
             metrics['report'] = report
             metrics['confusion_matrix'] = class_metrics['confusion_matrix']
-            print(f"Validation Accuracy: {metrics['accuracy']:.4f}")
-        
-        model = clf
-        
-    elif args.model_type == 'unsupervised':
-        print("Training ApexLab IsolationForest (Unsupervised)...")
-        # For IF, we train on logical 'normal' data if we knew it, or just all train data
-        # Here we train on X_train (unlabeled or labeled, doesn't matter)
-        clf = IsolationForest(n_estimators=100, random_state=args.seed, contamination=0.1)
-        clf.fit(X_train)
-        
-        # Validation for unsupervised is tricky without ground truth. 
-        # If we have labels, we can treat anomalies as one class.
-        # But broadly we just save the model.
-        if X_val and y_val:
-             # simple heuristic check if we have implementation details
-             # (This is a gap in unsupervised eval spec, so we just skip specific metrics for now)
-             pass
-        
+
         model = clf
 
-    # Save artifacts
+    elif model_type == 'unsupervised':
+        clf = IsolationForest(n_estimators=100, random_state=seed, contamination=0.1)
+        clf.fit(X_train)
+        model = clf
+
     model_path = out_dir / 'model.pkl'
     with model_path.open('wb') as f:
         pickle.dump(model, f)
-    print(f"Saved model to {model_path}")
-    
+
+    metrics_path = out_dir / 'metrics.json'
+    metrics_path.write_text(json.dumps(metrics, indent=2, sort_keys=True), encoding='utf-8')
+
     train_manifest = TrainManifest(
         created_at_utc=utc_now_iso(),
-        dataset_manifest_path=str(args.dataset),
-        model_type=args.model_type,
+        dataset_manifest_path=str(dataset_manifest_path),
+        model_type=model_type,
         model_path=str(model_path),
-        metrics_path=str(out_dir / 'metrics.json'),
+        metrics_path=str(metrics_path),
         params=params,
         metrics=metrics,
-        feature_columns=feature_cols
+        feature_columns=feature_cols,
     )
-    
+
     with (out_dir / 'train_manifest.json').open('w', encoding='utf-8') as f:
         json.dump(asdict(train_manifest), f, indent=2, sort_keys=True)
-        
+
+    return train_manifest
+
+
+def main(argv: Optional[List[str]] = None) -> int:
+    p = argparse.ArgumentParser(description='Train Calamum Observer models.')
+    p.add_argument('--dataset', required=True, type=Path, help='Path to dataset manifest.json')
+    p.add_argument('--out-dir', required=True, type=Path, help='Output directory for model artifacts')
+    p.add_argument('--model-type', choices=['supervised', 'unsupervised'], default='supervised')
+    p.add_argument('--seed', type=int, default=42)
+    
+    args = p.parse_args(argv)
+    
+    print(f"Loading dataset from {args.dataset}...")
+    train_manifest = train_model(
+        args.dataset,
+        out_dir=args.out_dir,
+        model_type=args.model_type,
+        seed=args.seed,
+    )
+    print(f"Saved model to {train_manifest.model_path}")
     print("Training complete.")
     return 0
 

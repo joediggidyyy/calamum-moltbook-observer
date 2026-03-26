@@ -21,6 +21,8 @@ def test_simulation_runner_lists_available_definitions(capsys) -> None:
     assert 'feedback-loop' in out
     assert 'metadata-contract' in out
     assert 'metadata-contract-regression' in out
+    assert 'ds-wizard-hydration' in out
+    assert 'ds-wizard-durability' in out
     assert 'baseline-monitor-runtime' in out
     assert 'validation-cycle-lineage' in out
     assert 'baseline-monitor-restart-continuity' in out
@@ -55,6 +57,36 @@ def test_simulation_runner_dispatches_metadata_contract_regression_definition(mo
 
     assert rc == 0
     assert called['metadata_contract_regression'] is True
+
+
+def test_simulation_runner_dispatches_ds_wizard_hydration_definition(monkeypatch) -> None:
+    called = {'ds_wizard_hydration': False}
+
+    def fake_runner() -> int:
+        called['ds_wizard_hydration'] = True
+        return 0
+
+    monkeypatch.setattr(simulation_runner, 'run_ds_wizard_hydration_probe', fake_runner)
+
+    rc = simulation_runner.main(['ds-wizard-hydration'])
+
+    assert rc == 0
+    assert called['ds_wizard_hydration'] is True
+
+
+def test_simulation_runner_dispatches_ds_wizard_durability_definition(monkeypatch) -> None:
+    called = {'ds_wizard_durability': False}
+
+    def fake_runner() -> int:
+        called['ds_wizard_durability'] = True
+        return 0
+
+    monkeypatch.setattr(simulation_runner, 'run_ds_wizard_durability_probe', fake_runner)
+
+    rc = simulation_runner.main(['ds-wizard-durability'])
+
+    assert rc == 0
+    assert called['ds_wizard_durability'] is True
 
 
 def test_simulation_runner_defaults_to_feedback_loop_definition(monkeypatch) -> None:
@@ -121,8 +153,10 @@ def _configure_probe_roots(monkeypatch, tmp_path: Path) -> None:
     monkeypatch.setattr(simulation_runner, 'REPO_ROOT', tmp_path)
     monkeypatch.setattr(simulation_runner, 'FRAME4_PROBE_DIR', tmp_path / 'report_tmp' / 'frame4_metadata_contract_probe')
     monkeypatch.setattr(simulation_runner, 'FRAME4_REGRESSION_PROBE_DIR', tmp_path / 'report_tmp' / 'frame4_metadata_contract_regression_probe')
+    monkeypatch.setattr(simulation_runner, 'FRAME4_DS_WIZARD_HYDRATION_PROBE_DIR', tmp_path / 'report_tmp' / 'frame4_ds_wizard_hydration_probe')
     monkeypatch.setattr(simulation_runner, 'JOB0022_PROBE_DIR', tmp_path / 'report_tmp' / 'job0022_baseline_monitor_runtime_probe')
     monkeypatch.setattr(simulation_runner, 'FRAME5_LINEAGE_PROBE_DIR', tmp_path / 'report_tmp' / 'frame5_validation_cycle_lineage_probe')
+    monkeypatch.setattr(simulation_runner, 'FRAME6_DS_WIZARD_DURABILITY_PROBE_DIR', tmp_path / 'report_tmp' / 'frame6_ds_wizard_durability_probe')
     monkeypatch.setattr(simulation_runner, 'FRAME6_RESTART_PROBE_DIR', tmp_path / 'report_tmp' / 'frame6_restart_continuity_probe')
     monkeypatch.setattr(simulation_runner, 'FRAME6_RECOVERY_PROBE_DIR', tmp_path / 'report_tmp' / 'frame6_state_recovery_probe')
 
@@ -135,6 +169,16 @@ def test_new_probe_definitions_emit_retained_reports(tmp_path: Path, monkeypatch
             simulation_runner.run_metadata_contract_regression_probe,
             tmp_path / 'report_tmp' / 'frame4_metadata_contract_regression_probe' / 'run_index.jsonl',
             'frame4_metadata_contract_regression_probe.json',
+        ),
+        (
+            simulation_runner.run_ds_wizard_hydration_probe,
+            tmp_path / 'report_tmp' / 'frame4_ds_wizard_hydration_probe' / 'run_index.jsonl',
+            'frame4_ds_wizard_hydration_probe.json',
+        ),
+        (
+            simulation_runner.run_ds_wizard_durability_probe,
+            tmp_path / 'report_tmp' / 'frame6_ds_wizard_durability_probe' / 'run_index.jsonl',
+            'frame6_ds_wizard_durability_probe.json',
         ),
         (
             simulation_runner.run_validation_cycle_lineage_probe,
