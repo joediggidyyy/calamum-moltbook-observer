@@ -367,7 +367,7 @@ def test_ds_wizard_landing_choices_route_to_top_level_pages() -> None:
     state, packet, should_exit = observerctl_module._ds_wizard_handle_command(state, '1')
     assert packet is None
     assert should_exit is False
-    assert state.active_page == 'workflow'
+    assert state.active_page == 'configure'
     assert state.active_section == 'flow'
 
     state, packet, should_exit = observerctl_module._ds_wizard_handle_command(state, 'home')
@@ -400,7 +400,7 @@ def test_ds_wizard_configure_opens_guided_flow_surface_without_preselected_workf
 
     assert packet is None
     assert should_exit is False
-    assert state.active_page == 'workflow'
+    assert state.active_page == 'configure'
     assert state.active_section == 'flow'
 
 
@@ -408,7 +408,7 @@ def test_ds_wizard_configure_restores_shared_section_rail() -> None:
     state = observerctl_module._ds_wizard_new_state('run-pipeline')
 
     state, _, _ = observerctl_module._ds_wizard_handle_command(state, 'configure')
-    assert state.active_page == 'workflow'
+    assert state.active_page == 'configure'
     assert observerctl_module._ds_wizard_page_sections(state) == ['flow', 'in', 'out', 'model', 'eval', 'report', 'cmd', 'check', 'run']
     assert observerctl_module._ds_wizard_action_line(state) == 'actions: type name | next/prev | validate | cmd | ? | exit'
 
@@ -426,6 +426,41 @@ def test_ds_wizard_scope_help_from_section_is_section_scoped() -> None:
     assert 'Review evaluation thresholds and report-facing controls.' in rendered
     assert 'fields:' in rendered
     assert '  max_fpr          Maximum false-positive rate' in rendered
+    assert '  set max_fpr 0.02' in rendered
+
+
+def test_ds_wizard_eval_page_surfaces_edit_guidance() -> None:
+    state = observerctl_module._ds_wizard_new_state('evaluate')
+    observerctl_module._ds_wizard_open_section(state, 'eval')
+
+    rendered = observerctl_module._ds_wizard_render(state)
+
+    assert 'guide: type 1 to edit max_fpr, or use set max_fpr <value>.' in rendered
+    assert 'guide: use ? max_fpr for field detail before validation or execution.' in rendered
+
+
+def test_ds_wizard_context_fields_are_wired_for_direct_updates() -> None:
+    state = observerctl_module._ds_wizard_new_state('run-pipeline')
+
+    observerctl_module._ds_wizard_set_value(state, 'source', 'real')
+    observerctl_module._ds_wizard_set_value(state, 'mode', 'canary')
+
+    assert state.source == 'real'
+    assert state.mode == 'canary'
+    assert state.values['source'] == 'real'
+    assert state.values['mode'] == 'canary'
+
+
+def test_ds_wizard_hydrate_latest_explains_dataset_limit(monkeypatch, tmp_path: Path) -> None:
+    monkeypatch.setattr(observerctl_module, '_load_state', lambda: {'source': 'real', 'mode': 'canary'})
+    monkeypatch.setattr(observerctl_module, '_ds_wizard_latest_baseline_analysis_path', lambda source, mode: None)
+    state = observerctl_module._ds_wizard_new_state('evaluate')
+
+    observerctl_module._ds_wizard_hydrate_latest_context(state)
+
+    lines = observerctl_module._ds_wizard_transient_lines(state)
+    assert 'latest context loaded: source=real, mode=canary' in lines
+    assert any('hydrate latest does not discover or load datasets/models' in line for line in lines)
 
 
 def test_ds_wizard_execute_runs_workflow_and_surfaces_reports(monkeypatch) -> None:
@@ -545,6 +580,18 @@ def test_ds_wizard_interactive_redraw_skips_separator_when_clear_succeeds(monkey
     out = capsys.readouterr().out.splitlines()
     assert out[0] == 'ObserverCTL DS Wizard'
     assert 'next frame: ds wizard > configure > eval' not in out
+
+
+def test_ds_wizard_datasets_command_explains_current_limit() -> None:
+    state = observerctl_module._ds_wizard_new_state('evaluate')
+
+    state, packet, should_exit = observerctl_module._ds_wizard_handle_command(state, 'datasets')
+
+    assert packet is None
+    assert should_exit is False
+    rendered = observerctl_module._ds_wizard_render(state)
+    assert 'dataset catalog/listing is not wired into this wizard yet.' in rendered
+    assert 'for now, use hydrate dataset <manifest.json> or set dataset_manifest <path>.' in rendered
 
 
 def test_ds_wizard_command_surface_supports_run_hydration_and_draft_round_trip(tmp_path: Path) -> None:

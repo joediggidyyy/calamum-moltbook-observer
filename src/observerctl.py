@@ -5101,8 +5101,8 @@ _DS_RUNTIME_STATE_PLANNED = 'surface-planned'
 
 _DS_WIZARD_FIELD_SPECS: Tuple[_DSWizardFieldSpec, ...] = (
     _DSWizardFieldSpec('workflow', 'flow', _DS_WIZARD_WORKFLOWS, required_in=_DS_WIZARD_WORKFLOWS, description='Workflow preset'),
-    _DSWizardFieldSpec('source', 'flow', _DS_WIZARD_WORKFLOWS, default='sim', description='Observer source axis', artifact_source='latest_context'),
-    _DSWizardFieldSpec('mode', 'flow', _DS_WIZARD_WORKFLOWS, default='watch', description='Observer mode', artifact_source='latest_context'),
+    _DSWizardFieldSpec('source', 'flow', _DS_WIZARD_WORKFLOWS, default='sim', choices=('sim', 'real'), description='Observer source axis', artifact_source='latest_context'),
+    _DSWizardFieldSpec('mode', 'flow', _DS_WIZARD_WORKFLOWS, default='watch', choices=MODES, description='Observer mode', artifact_source='latest_context'),
     _DSWizardFieldSpec('input_paths', 'in', ('build', 'run-pipeline'), required_in=('build', 'run-pipeline'), flag='--input', value_kind='path-list', path_kind='file', accepts_multiple=True, description='Telemetry JSONL inputs'),
     _DSWizardFieldSpec('dataset_manifest', 'in', ('train', 'score', 'evaluate', 'run-pipeline', 'build'), required_in=('train', 'score'), flag='--dataset', value_kind='path', path_kind='file', description='Dataset manifest path', artifact_source='dataset_manifest'),
     _DSWizardFieldSpec('features_csv', 'in', ('evaluate',), required_in=('evaluate',), flag='--features-csv', value_kind='path', path_kind='file', description='Features CSV path', artifact_source='dataset_manifest'),
@@ -5179,7 +5179,7 @@ def _ds_wizard_workflow_label(workflow: str) -> str:
 def _ds_wizard_page_for_section(section: str) -> str:
     token = str(section or '').strip().lower()
     if token == 'flow':
-        return 'workflow'
+        return 'configure'
     if token in ('in', 'out', 'model', 'eval', 'report'):
         return 'configure'
     if token == 'cmd':
@@ -5371,6 +5371,41 @@ def _ds_wizard_set_value(state: _DSWizardState, key: str, value: Any) -> _DSWiza
             ],
         )
         return state
+    if key == 'source':
+        normalized_source = _normalize_source(str(coerced or state.source or 'sim'))
+        state.source = normalized_source
+        state.values['source'] = normalized_source
+        state.last_action = 'set:source'
+        _ds_wizard_set_transient_lines(
+            state,
+            [
+                'updated context: source = {0}'.format(normalized_source),
+                'this affects retained-context hydration and wizard framing only.',
+            ],
+        )
+        return state
+    if key == 'mode':
+        normalized_mode = str(coerced or '').strip().lower()
+        if normalized_mode not in MODES:
+            _ds_wizard_set_transient_lines(
+                state,
+                [
+                    'mode not updated',
+                    'choose one of: {0}'.format(', '.join(MODES)),
+                ],
+            )
+            return state
+        state.mode = normalized_mode
+        state.values['mode'] = normalized_mode
+        state.last_action = 'set:mode'
+        _ds_wizard_set_transient_lines(
+            state,
+            [
+                'updated context: mode = {0}'.format(normalized_mode),
+                'this affects retained-context hydration and wizard framing only.',
+            ],
+        )
+        return state
     state.values[key] = coerced
     state.last_action = 'set:{0}'.format(key)
     _ds_wizard_set_transient_lines(state, ['updated: {0} = {1}'.format(key, _ds_wizard_stringify_value(coerced))])
@@ -5443,10 +5478,20 @@ def _ds_wizard_menu_help_lines(state: _DSWizardState) -> List[str]:
 
 def _ds_wizard_scope_help_lines(state: _DSWizardState) -> List[str]:
     if state.active_page == 'landing':
-        return _ds_wizard_menu_help_lines(state)
+        lines = _ds_wizard_menu_help_lines(state)
+        lines.append('tips:')
+        lines.append('  type a number or choice name to open that page')
+        lines.append("  type ? <choice> to preview a page before opening it")
+        return lines
     current_section = _ds_wizard_current_section(state)
     if current_section == 'flow':
-        return _ds_wizard_menu_help_lines(state)
+        lines = _ds_wizard_menu_help_lines(state)
+        lines.append('commands:')
+        lines.append('  build | train | evaluate | score | run-demo | run-pipeline')
+        lines.append('  set source real           override the source context shown in the wizard')
+        lines.append('  set mode canary           override the mode context shown in the wizard')
+        lines.append('  ? source                  explain the current source field')
+        return lines
     info = _DS_WIZARD_SECTION_HELP.get(current_section, {})
     lines = ['help: {0}'.format(current_section)]
     detail = str(info.get('detail', '')).strip()
@@ -5466,6 +5511,38 @@ def _ds_wizard_scope_help_lines(state: _DSWizardState) -> List[str]:
         lines.append("tip: save draft, load draft, and hydrate commands are available from this page.")
     elif current_section == 'run':
         lines.append('tip: execute stays blocked until validation passes.')
+    if current_section in ('in', 'out', 'model', 'eval', 'report'):
+        lines.append('commands:')
+        lines.append('  <number>                 edit that numbered field interactively')
+        lines.append('  set <field> <value>      update a field directly')
+        lines.append('  clear <field>            remove the current value')
+        lines.append('  ? <field>                explain a field and show the current value')
+    if current_section == 'in':
+        lines.append('  hydrate dataset <dataset_manifest.json>')
+    elif current_section == 'model':
+        lines.append('  hydrate train <train_manifest.json>')
+        lines.append('  hydrate model <model.pkl>')
+    elif current_section == 'eval':
+        lines.append('  set max_fpr 0.02')
+    elif current_section == 'report':
+        lines.append('  hydrate baseline <packet.json>')
+        lines.append('  hydrate run <run.json>')
+    elif current_section == 'cmd':
+        lines.append('commands:')
+        lines.append('  save draft <file>        persist the current wizard state')
+        lines.append('  load draft <file>        restore a saved wizard state')
+        lines.append('  hydrate latest           load source/mode plus latest retained baseline only')
+        lines.append('  hydrate dataset <file>   import dataset, feature, and label paths')
+        lines.append('  hydrate train <file>     import dataset/model context from a train manifest')
+        lines.append('  hydrate run <file>       import a prior evaluation run ledger')
+        lines.append('note: dataset catalog/listing is not wired into the wizard yet.')
+    elif current_section == 'check':
+        lines.append('commands:')
+        lines.append('  validate                 recompute blockers for the current workflow')
+        lines.append('  open <section>           jump straight to the section you need to fix')
+    elif current_section == 'run':
+        lines.append('commands:')
+        lines.append('  execute                  start the configured workflow when blocked=no')
     return lines
 
 
@@ -5566,10 +5643,66 @@ def _ds_wizard_item_peek_lines(state: _DSWizardState, target: str) -> List[str]:
         lines.append('section: {0}'.format(spec.section))
         lines.append('status: {0}'.format(_ds_wizard_status_token(state, spec)))
         lines.append('value: {0}'.format(_ds_wizard_stringify_value(value)))
+        if spec.choices:
+            lines.append('choices: {0}'.format(', '.join(spec.choices)))
+        if spec.accepts_multiple:
+            lines.append('accepts: comma-separated list')
+        if str(spec.path_kind or '').strip():
+            lines.append('path-kind: {0}'.format(spec.path_kind))
         if str(spec.artifact_source or '').strip():
             lines.append('artifact-source: {0}'.format(spec.artifact_source))
         return lines
     return ['peek: {0}'.format(token), 'not found in current wizard scope']
+
+
+def _ds_wizard_inline_guidance_lines(state: _DSWizardState, section: str) -> List[str]:
+    current_section = str(section or '').strip().lower()
+    if current_section == 'flow':
+        return [
+            'guide: choose a workflow by number/name, then use next/prev or the left menu.',
+            'guide: optional context overrides use set source <sim|real> or set mode <watch|canary|live|honeypot>.',
+        ]
+    if current_section == 'in':
+        return [
+            'guide: type a field number to edit it, or use set <field> <value>.',
+            'guide: hydrate dataset <manifest.json> imports dataset, feature, and label paths.',
+        ]
+    if current_section == 'out':
+        return [
+            'guide: type a field number to edit it, or use set <field> <value>.',
+            'guide: set out_dir <folder> or set scores_out <file> to control output locations.',
+        ]
+    if current_section == 'model':
+        return [
+            'guide: type a field number to edit it, or use set <field> <value>.',
+            'guide: hydrate train <train_manifest.json> or hydrate model <model.pkl> imports retained model context.',
+        ]
+    if current_section == 'eval':
+        return [
+            'guide: type 1 to edit max_fpr, or use set max_fpr <value>.',
+            'guide: use ? max_fpr for field detail before validation or execution.',
+        ]
+    if current_section == 'report':
+        return [
+            'guide: these fields annotate generated reports; they do not browse history on their own.',
+            'guide: hydrate baseline <packet.json> or hydrate run <run.json> attaches retained context.',
+        ]
+    if current_section == 'cmd':
+        return [
+            'guide: use save/load/hydrate helpers from this page.',
+            'guide: hydrate latest refreshes source/mode and baseline only; dataset discovery is not wired yet.',
+        ]
+    if current_section == 'check':
+        return [
+            'guide: type validate to recompute blockers after edits or hydration.',
+            'guide: use open <section> or next/prev to resolve anything listed here.',
+        ]
+    if current_section == 'run':
+        return [
+            'guide: type execute only when blocked=no.',
+            'guide: completion output summarizes reports and artifact locations.',
+        ]
+    return []
 
 
 def _ds_wizard_open_scope_help(state: _DSWizardState) -> _DSWizardState:
@@ -5845,6 +5978,7 @@ def _ds_wizard_hydrate_latest_context(state: _DSWizardState) -> _DSWizardState:
         [
             'latest context loaded: source={0}, mode={1}'.format(state.source, state.mode),
             'Latest retained baseline context was attached automatically.' if latest_baseline is not None else 'No retained baseline packet was found for the current source/mode.',
+            'note: hydrate latest does not discover or load datasets/models; use hydrate dataset, hydrate train, or hydrate run for DS artifacts.',
         ],
     )
     return state
@@ -6076,6 +6210,8 @@ def _ds_wizard_build_pane(state: _DSWizardState) -> List[str]:
         else:
             lines.append('')
             lines.append('next step: use the left menu or next/prev to edit the fields used by {0}.'.format(state.workflow))
+        lines.append('')
+        lines.extend(_ds_wizard_inline_guidance_lines(state, current_section))
     elif current_section in ('cmd', 'check', 'run', 'exit'):
         if current_section == 'cmd':
             lines.append('command preview:')
@@ -6091,6 +6227,7 @@ def _ds_wizard_build_pane(state: _DSWizardState) -> List[str]:
             lines.append('- hydrate model <file>     link a model artifact')
             lines.append('- hydrate baseline <file>  attach a retained baseline packet to reports')
             lines.append('- hydrate run <file>       load a prior evaluation run ledger')
+            lines.append('- note                     hydrate latest does not load datasets or models')
         elif current_section == 'check':
             lines.append('validation:')
             issues = _ds_wizard_validation_issues(state)
@@ -6112,6 +6249,10 @@ def _ds_wizard_build_pane(state: _DSWizardState) -> List[str]:
                 lines.append('next step: type execute to run now. A completion summary will print after the run.')
         else:
             lines.append('type exit to leave the wizard')
+        guidance_lines = _ds_wizard_inline_guidance_lines(state, current_section)
+        if guidance_lines:
+            lines.append('')
+            lines.extend(guidance_lines)
     else:
         if current_section == 'report':
             lines.append('report context:')
@@ -6121,6 +6262,10 @@ def _ds_wizard_build_pane(state: _DSWizardState) -> List[str]:
             lines.append('{0}:'.format(current_section))
         for idx, spec in enumerate(_ds_wizard_fields_for_section(state, current_section), start=1):
             lines.append('{0}. {1:<22} {2:<8} {3}'.format(idx, spec.key, _ds_wizard_status_token(state, spec), _ds_wizard_stringify_value(_ds_wizard_field_value(state, spec.key))))
+        guidance_lines = _ds_wizard_inline_guidance_lines(state, current_section)
+        if guidance_lines:
+            lines.append('')
+            lines.extend(guidance_lines)
     return lines
 
 def _ds_wizard_render_transient(state: _DSWizardState, lines: List[str]) -> None:
@@ -6407,6 +6552,15 @@ def _ds_wizard_handle_command(state: _DSWizardState, command: str) -> Tuple[_DSW
         return state, None, False
     if lowered in ('ls', 'list', 'sections'):
         _ds_wizard_set_transient_lines(state, ["hint: available sections are shown on screen. Use 'open <section>' to navigate."])
+        return state, None, False
+    if lowered in ('datasets', 'dataset list', 'list datasets'):
+        _ds_wizard_set_transient_lines(
+            state,
+            [
+                'dataset catalog/listing is not wired into this wizard yet.',
+                'for now, use hydrate dataset <manifest.json> or set dataset_manifest <path>.',
+            ],
+        )
         return state, None, False
     if lowered.startswith('save draft '):
         draft_arg = text[len('save draft '):].strip()
