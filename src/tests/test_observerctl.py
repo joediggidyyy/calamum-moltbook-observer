@@ -339,10 +339,10 @@ def test_ds_wizard_starts_on_sparse_landing_page() -> None:
 
     assert 'path: ds wizard > landing' in rendered
     assert 'home:' in rendered
-    assert '1. workflow' in rendered
-    assert '2. configure' in rendered
-    assert '3. review and run' in rendered
-    assert '4. command and utilities' in rendered
+    assert '1. configure' in rendered
+    assert '2. review and run' in rendered
+    assert '3. command and utilities' in rendered
+    assert '4. exit' in rendered
     assert 'sections: flow, in, out, model, eval, report, cmd, check, run, exit' not in rendered
     assert not any(line.startswith('next:') for line in rendered)
 
@@ -356,27 +356,26 @@ def test_ds_wizard_scope_help_from_landing_shows_top_level_choices() -> None:
     assert should_exit is False
     rendered = observerctl_module._ds_wizard_render(state)
     assert 'help:' in rendered
-    assert 'workflow           choose or change the run type, source, and mode' in rendered
-    assert 'configure          edit workflow-specific inputs, outputs, model settings, and report context' in rendered
-    assert 'review and run     check blockers, preview the command, and execute the current workflow' in rendered
+    assert 'configure          guided workflow and configuration' in rendered
+    assert 'review and run     validation, command preview, and execution' in rendered
     assert 'command and utilities preview the command and use save/load/hydrate helper commands' in rendered
 
 
 def test_ds_wizard_landing_choices_route_to_top_level_pages() -> None:
     state = observerctl_module._ds_wizard_new_state('evaluate')
 
-    state, packet, should_exit = observerctl_module._ds_wizard_handle_command(state, '2')
+    state, packet, should_exit = observerctl_module._ds_wizard_handle_command(state, '1')
     assert packet is None
     assert should_exit is False
-    assert state.active_page == 'configure'
-    assert state.active_section == 'in'
+    assert state.active_page == 'workflow'
+    assert state.active_section == 'flow'
 
     state, packet, should_exit = observerctl_module._ds_wizard_handle_command(state, 'home')
     assert packet is None
     assert should_exit is False
     assert state.active_page == 'landing'
 
-    state, packet, should_exit = observerctl_module._ds_wizard_handle_command(state, '3')
+    state, packet, should_exit = observerctl_module._ds_wizard_handle_command(state, '2')
     assert packet is None
     assert should_exit is False
     assert state.active_page == 'review-run'
@@ -387,11 +386,31 @@ def test_ds_wizard_landing_choices_route_to_top_level_pages() -> None:
     assert should_exit is False
     assert state.active_page == 'landing'
 
-    state, packet, should_exit = observerctl_module._ds_wizard_handle_command(state, '4')
+    state, packet, should_exit = observerctl_module._ds_wizard_handle_command(state, '3')
     assert packet is None
     assert should_exit is False
     assert state.active_page == 'utilities'
     assert state.active_section == 'cmd'
+
+
+def test_ds_wizard_configure_opens_guided_flow_surface_without_preselected_workflow() -> None:
+    state = observerctl_module._ds_wizard_new_state('')
+
+    state, packet, should_exit = observerctl_module._ds_wizard_handle_command(state, 'configure')
+
+    assert packet is None
+    assert should_exit is False
+    assert state.active_page == 'workflow'
+    assert state.active_section == 'flow'
+
+
+def test_ds_wizard_configure_restores_shared_section_rail() -> None:
+    state = observerctl_module._ds_wizard_new_state('run-pipeline')
+
+    state, _, _ = observerctl_module._ds_wizard_handle_command(state, 'configure')
+    assert state.active_page == 'workflow'
+    assert observerctl_module._ds_wizard_page_sections(state) == ['flow', 'in', 'out', 'model', 'eval', 'report', 'cmd', 'check', 'run']
+    assert observerctl_module._ds_wizard_action_line(state) == 'actions: type name | next/prev | validate | cmd | ? | exit'
 
 
 def test_ds_wizard_scope_help_from_section_is_section_scoped() -> None:
@@ -475,6 +494,19 @@ def test_ds_wizard_blank_input_dismisses_transient_help() -> None:
     assert state.transient_view == ''
     rendered = observerctl_module._ds_wizard_render(state)
     assert 'help:' not in rendered
+
+
+def test_ds_wizard_educational_flash_clears_after_interactive_emit(monkeypatch, capsys) -> None:
+    state = observerctl_module._ds_wizard_new_state('')
+    state, _, _ = observerctl_module._ds_wizard_handle_command(state, 'configure')
+    state, _, _ = observerctl_module._ds_wizard_handle_command(state, 'run-pipeline')
+    monkeypatch.setattr(observerctl_module, '_ds_wizard_try_clear_terminal', lambda: False)
+
+    observerctl_module._ds_wizard_emit_interactive_frame(state, redraw_count=0)
+
+    out = capsys.readouterr().out
+    assert 'workflow set: run-pipeline' in out
+    assert state.transient_view == ''
 
 
 def test_ds_wizard_first_interactive_render_does_not_emit_transition_separator(monkeypatch, capsys) -> None:
