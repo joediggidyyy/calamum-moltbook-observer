@@ -46,7 +46,7 @@ This is gitignored by design.
 ## Current migration note
 
 - the supported observer model lane now targets ApexLab-owned estimators for supervised and unsupervised training
-- unsupervised anomaly semantics follow the ApexLab public contract: **higher score = more anomalous**
+- unsupervised anomaly semantics in the DS report lane are: **lower score = more anomalous**
 - old sklearn-oriented wording in historical planning docs should be treated as background context rather than current execution authority
 
 See the ML execution plan:

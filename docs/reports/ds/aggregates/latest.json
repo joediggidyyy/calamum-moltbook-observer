@@ -1,0 +1,140 @@
+{
+  "family_id": "ds_publication",
+  "latest_run": {
+    "context": {
+      "dataset_seed": 123,
+      "max_fpr": 0.01,
+      "model_seed": 42,
+      "output_override": false
+    },
+    "decision": "go",
+    "figure_count": 6,
+    "published_figures": [
+      "docs/reports/ds/runs/2026/2026-03/demo_20260331T221410208505Z/figures/confusion_matrix.png",
+      "docs/reports/ds/runs/2026/2026-03/demo_20260331T221410208505Z/figures/metric_comparison.png",
+      "docs/reports/ds/runs/2026/2026-03/demo_20260331T221410208505Z/figures/score_distribution.png",
+      "docs/reports/ds/runs/2026/2026-03/demo_20260331T221410208505Z/figures/threshold_selection.png",
+      "docs/reports/ds/runs/2026/2026-03/demo_20260331T221410208505Z/figures/threshold_summary.png",
+      "docs/reports/ds/runs/2026/2026-03/demo_20260331T221410208505Z/figures/workflow_summary.png"
+    ],
+    "published_report_paths": {
+      "json": "docs/reports/ds/runs/2026/2026-03/demo_20260331T221410208505Z/report.json",
+      "manifest": "docs/reports/ds/runs/2026/2026-03/demo_20260331T221410208505Z/manifest.json",
+      "markdown": "docs/reports/ds/runs/2026/2026-03/demo_20260331T221410208505Z/report.md"
+    },
+    "published_run_dir": "docs/reports/ds/runs/2026/2026-03/demo_20260331T221410208505Z",
+    "result": {
+      "anomaly_direction": "lower-is-more-anomalous",
+      "counts": {
+        "fn": 0,
+        "fp": 0,
+        "tn": 50,
+        "tp": 10
+      },
+      "max_fpr": 0.01,
+      "metrics": {
+        "f1": 1.0,
+        "fpr": 0.0,
+        "precision": 1.0,
+        "recall": 1.0
+      },
+      "reason_codes": [],
+      "run_mode": "demo",
+      "score_column": "score_anomaly",
+      "thresholding": {
+        "actual_fpr": 0.03333333333333333,
+        "algorithm": "apexlab_lower_tail_threshold",
+        "anomaly_direction": "lower-is-more-anomalous",
+        "decision": "go",
+        "flag_rule": "score <= threshold",
+        "flagged_records": 2,
+        "invalid_rows": 0,
+        "reason_codes": [],
+        "records_scored": 60,
+        "report_json": "C:/Users/joedi/Documents/CodeSentinel-1/projects/calamum-moltbook-observer/local_untracked/analysis/runs/demo/demo_20260331T221410208505Z/scoring/threshold_report.json",
+        "report_md": "C:/Users/joedi/Documents/CodeSentinel-1/projects/calamum-moltbook-observer/local_untracked/analysis/runs/demo/demo_20260331T221410208505Z/scoring/threshold_report.md",
+        "score_column": "score_anomaly",
+        "scores_csv": "C:/Users/joedi/Documents/CodeSentinel-1/projects/calamum-moltbook-observer/local_untracked/analysis/runs/demo/demo_20260331T221410208505Z/scoring/scores.csv",
+        "target_fpr": 0.01,
+        "threshold": 0.41126669732265103
+      },
+      "total_records": 60,
+      "visuals": {
+        "anomaly_direction": "lower-is-more-anomalous",
+        "decision": "go",
+        "figure_count": 6,
+        "figures": [
+          {
+            "caption": "High-level summary of the demo workflow report pack.",
+            "id": "workflow_summary",
+            "kind": "summary",
+            "path": "C:/Users/joedi/Documents/CodeSentinel-1/projects/calamum-moltbook-observer/local_untracked/analysis/runs/demo/demo_20260331T221410208505Z/figures/workflow_summary.png",
+            "title": "Demo workflow summary"
+          },
+          {
+            "caption": "Confusion matrix rendered from evaluation counts.",
+            "id": "confusion_matrix",
+            "kind": "confusion-matrix",
+            "path": "C:/Users/joedi/Documents/CodeSentinel-1/projects/calamum-moltbook-observer/local_untracked/analysis/runs/demo/demo_20260331T221410208505Z/figures/confusion_matrix.png",
+            "title": "Confusion matrix"
+          },
+          {
+            "caption": "Evaluation metric comparison bars derived from the report-pack metrics payload.",
+            "id": "metric_comparison",
+            "kind": "metrics",
+            "path": "C:/Users/joedi/Documents/CodeSentinel-1/projects/calamum-moltbook-observer/local_untracked/analysis/runs/demo/demo_20260331T221410208505Z/figures/metric_comparison.png",
+            "title": "Metric comparison"
+          },
+          {
+            "caption": "Threshold and FPR summary derived from the evaluation or threshold payload.",
+            "id": "threshold_summary",
+            "kind": "summary",
+            "path": "C:/Users/joedi/Documents/CodeSentinel-1/projects/calamum-moltbook-observer/local_untracked/analysis/runs/demo/demo_20260331T221410208505Z/figures/threshold_summary.png",
+            "title": "Threshold summary"
+          },
+          {
+            "caption": "Distribution of anomaly scores. Lower scores indicate more anomalous records.",
+            "id": "score_distribution",
+            "kind": "distribution",
+            "path": "C:/Users/joedi/Documents/CodeSentinel-1/projects/calamum-moltbook-observer/local_untracked/analysis/runs/demo/demo_20260331T221410208505Z/figures/score_distribution.png",
+            "title": "Score distribution"
+          },
+          {
+            "caption": "Lower-tail threshold overlay. Scores at or below the threshold are treated as anomalous.",
+            "id": "threshold_selection",
+            "kind": "threshold",
+            "path": "C:/Users/joedi/Documents/CodeSentinel-1/projects/calamum-moltbook-observer/local_untracked/analysis/runs/demo/demo_20260331T221410208505Z/figures/threshold_selection.png",
+            "title": "Threshold selection"
+          }
+        ],
+        "reason_codes": [],
+        "score_column": "score_anomaly"
+      },
+      "workflow_steps": [
+        "generate",
+        "build",
+        "train-supervised",
+        "train-unsupervised",
+        "evaluate",
+        "score",
+        "threshold",
+        "visualize"
+      ]
+    },
+    "run_id": "demo_20260331T221410208505Z",
+    "source_manifest_path": "local_untracked/analysis/runs/demo/demo_20260331T221410208505Z/report/manifest.json",
+    "source_report_paths": {
+      "json": "local_untracked/analysis/runs/demo/demo_20260331T221410208505Z/report/report.json",
+      "manifest": "local_untracked/analysis/runs/demo/demo_20260331T221410208505Z/report/manifest.json",
+      "markdown": "local_untracked/analysis/runs/demo/demo_20260331T221410208505Z/report/report.md"
+    },
+    "source_run_root": "local_untracked/analysis/runs/demo/demo_20260331T221410208505Z",
+    "summary": "Demo pipeline completed through observerctl ds.",
+    "timestamp_utc": "2026-03-31T22:14:12.248047Z",
+    "workflow": "demo"
+  },
+  "publish_root": "docs/reports/ds",
+  "published_at_utc": "2026-03-31T22:14:12.248047Z",
+  "published_run_count": 3,
+  "schema_version": "1.0"
+}

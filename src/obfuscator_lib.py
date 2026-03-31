@@ -7,6 +7,61 @@ from typing import Dict, Any
 __version__ = "1.1.0"
 
 
+def _canonical_payload_bytes(payload: Dict[str, Any]) -> bytes:
+    return json.dumps(payload, sort_keys=True, separators=(',', ':')).encode('utf-8')
+
+
+def _role_signing_secret(role: str) -> bytes:
+    role_token = str(role or 'default').strip().lower() or 'default'
+    secret = _get_signing_secret()
+    return hmac.new(secret, ('calamum-role:{0}'.format(role_token)).encode('utf-8'), hashlib.sha256).digest()
+
+
+def payload_sha256(payload: Dict[str, Any]) -> str:
+    return hashlib.sha256(_canonical_payload_bytes(payload)).hexdigest()
+
+
+def sign_detached_payload(payload: Dict[str, Any], *, role: str, purpose: str) -> Dict[str, Any]:
+    role_token = str(role or 'default').strip().lower() or 'default'
+    purpose_token = str(purpose or 'payload').strip() or 'payload'
+    payload_bytes = _canonical_payload_bytes(payload)
+    mac_payload = purpose_token.encode('utf-8') + b'\n' + payload_bytes
+    signature = hmac.new(_role_signing_secret(role_token), mac_payload, hashlib.sha256).hexdigest()
+    return {
+        'algorithm': 'hmac-sha256',
+        'role': role_token,
+        'purpose': purpose_token,
+        'payload_sha256': hashlib.sha256(payload_bytes).hexdigest(),
+        'signature': signature,
+    }
+
+
+def verify_detached_payload(
+    payload: Dict[str, Any],
+    detached_signature: Dict[str, Any],
+    *,
+    expected_role: str,
+    expected_purpose: str,
+) -> bool:
+    if not isinstance(detached_signature, dict):
+        return False
+    role_token = str(expected_role or 'default').strip().lower() or 'default'
+    purpose_token = str(expected_purpose or 'payload').strip() or 'payload'
+    if str(detached_signature.get('algorithm', '')).strip().lower() != 'hmac-sha256':
+        return False
+    if str(detached_signature.get('role', '')).strip().lower() != role_token:
+        return False
+    if str(detached_signature.get('purpose', '')).strip() != purpose_token:
+        return False
+    payload_bytes = _canonical_payload_bytes(payload)
+    payload_digest = hashlib.sha256(payload_bytes).hexdigest()
+    if str(detached_signature.get('payload_sha256', '')).strip() != payload_digest:
+        return False
+    mac_payload = purpose_token.encode('utf-8') + b'\n' + payload_bytes
+    expected_signature = hmac.new(_role_signing_secret(role_token), mac_payload, hashlib.sha256).hexdigest()
+    return hmac.compare_digest(expected_signature, str(detached_signature.get('signature', '')).strip())
+
+
 def _bool_env(name: str) -> bool:
     val = (os.getenv(name) or '').strip().lower()
     return val in {'1', 'true', 'yes', 'y', 'on'}

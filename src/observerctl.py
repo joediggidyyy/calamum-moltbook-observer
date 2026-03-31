@@ -21,7 +21,7 @@ import time
 import psutil
 from datetime import datetime, timezone
 from pathlib import Path
-from typing import Any, Dict, List, Optional, Tuple
+from typing import Any, Dict, List, Mapping, Optional, Tuple
 
 from calamum_config import get_calamum_control_dir, get_calamum_data_dir, get_calamum_health_dir
 from observerctl_sandbox_registry import get_definition as sandbox_get_definition
@@ -116,6 +116,10 @@ def _utc_compact_stamp() -> str:
 
 def _project_root() -> Path:
     return Path(__file__).resolve().parent.parent
+
+
+def _project_anchor() -> Path:
+    return _project_root() / 'src' / 'observerctl.py'
 
 
 def _read_env_presence(name: str) -> bool:
@@ -2990,6 +2994,452 @@ def _render_librarian_stores_human(packet: Dict[str, Any]) -> List[str]:
     return lines
 
 
+def _render_human_path_tail(value: Any) -> str:
+    text = str(value or '').strip().replace('\\', '/')
+    if not text:
+        return ''
+    parts = [part for part in text.split('/') if part]
+    if not parts:
+        return text
+    lowered = [part.lower() for part in parts]
+    for anchor in ('dataset_access', 'indexes', 'reports'):
+        if anchor in lowered:
+            return '/'.join(parts[lowered.index(anchor):])
+    if 'local_untracked' in lowered:
+        idx = lowered.index('local_untracked') + 1
+        tail = parts[idx:]
+        if tail:
+            return '/'.join(tail[-4:] if len(tail) > 4 else tail)
+    if len(parts) >= 3:
+        return '/'.join(parts[-3:])
+    if len(parts) >= 2:
+        return '/'.join(parts[-2:])
+    return parts[-1]
+
+
+def _render_human_kv_rows(
+    rows: List[Tuple[str, Any]],
+    min_label_width: int = 12,
+    max_label_width: int = 28,
+    indent: str = '',
+) -> List[str]:
+    cleaned: List[Tuple[str, str]] = []
+    for label, value in rows:
+        label_text = str(label or '').strip()
+        value_text = str(value or '').strip()
+        if not label_text or not value_text:
+            continue
+        cleaned.append((label_text, value_text))
+    if not cleaned:
+        return []
+    label_width = max(min_label_width, min(max_label_width, max(len(label) for label, _ in cleaned)))
+    lines: List[str] = []
+    for label_text, value_text in cleaned:
+        chunks = [chunk.rstrip() for chunk in value_text.splitlines()] or ['']
+        lines.append('{0}{1:<{2}} {3}'.format(indent, label_text + ':', label_width + 1, chunks[0]))
+        continuation_prefix = indent + (' ' * (label_width + 2))
+        for chunk in chunks[1:]:
+            lines.append('{0}{1}'.format(continuation_prefix, chunk))
+    return lines
+
+
+def _append_human_section(lines: List[str], title: str, body_lines: List[str]) -> None:
+    body = [str(line).rstrip() for line in body_lines]
+    while body and not body[0].strip():
+        body.pop(0)
+    while body and not body[-1].strip():
+        body.pop()
+    if not body:
+        return
+    if lines and str(lines[-1]).strip():
+        lines.append('')
+    lines.append(title)
+    lines.extend(body)
+
+
+def _render_librarian_dataset_heading(row: Dict[str, Any], include_index: bool = True) -> str:
+    label = str(row.get('display_name', '') or row.get('entry_id', '') or 'dataset').strip()
+    index_value = int(row.get('index', 0) or 0)
+    if include_index and index_value > 0:
+        return '{0}. {1}'.format(index_value, label)
+    return label
+
+
+def _render_librarian_dataset_metadata_rows(row: Dict[str, Any]) -> List[Tuple[str, str]]:
+    rows: List[Tuple[str, str]] = []
+    selector = str(row.get('run_id', '') or row.get('entry_id', '') or '').strip()
+    if selector:
+        rows.append(('Selector', selector))
+    rows.append(('Access', str(row.get('access_class', 'local'))))
+    rows.append(('Workflow', str(row.get('workflow', 'unknown'))))
+    rows.append(('Records', str(int(row.get('record_count', 0) or 0))))
+    status = str(row.get('status', '') or '').strip()
+    if status and status != 'unknown':
+        rows.append(('Status', status))
+    readiness = str(row.get('readiness', '') or '').strip()
+    if readiness and readiness != 'unknown':
+        rows.append(('Readiness', readiness))
+    source = str(row.get('source', '') or '').strip()
+    if source and source != 'unknown':
+        rows.append(('Source', source))
+    mode = str(row.get('mode', '') or '').strip()
+    if mode and mode != 'unknown':
+        rows.append(('Mode', mode))
+    if bool(row.get('has_labels', False)):
+        rows.append(('Labels', 'yes'))
+    return rows
+
+
+def _render_librarian_dataset_block(row: Dict[str, Any], include_index: bool = True, indent: str = '') -> List[str]:
+    lines = ['{0}{1}'.format(indent, _render_librarian_dataset_heading(row, include_index=include_index))]
+    lines.extend(
+        _render_human_kv_rows(
+            _render_librarian_dataset_metadata_rows(row),
+            min_label_width=12,
+            max_label_width=18,
+            indent=indent + '  ',
+        )
+    )
+    return lines
+
+
+def _render_librarian_dataset_action_guidance_lines(packet: Dict[str, Any]) -> List[str]:
+    action = str(packet.get('action', '') or '').strip().lower()
+    decision = str(packet.get('decision', '') or '').strip().lower()
+    reason_codes = packet.get('reason_codes', []) if isinstance(packet.get('reason_codes', []), list) else []
+    release_mode = str(packet.get('release_mode', '') or '').strip().lower()
+    if decision == 'go':
+        if action == 'librarian-dataset-register':
+            return [
+                'Next: review the approved list with observerctl librarian datasets or release the dataset by selector when needed.',
+            ]
+        if release_mode == 'protected-source':
+            return [
+                'Next: use the released dataset manifest in the next DS step or hydrate the same selector in the wizard.',
+            ]
+        return [
+            'Next: use the resolved dataset manifest in the next DS step or hydrate the same selector in the wizard.',
+        ]
+    if 'critical_check_failed:librarian_dataset_not_found' in reason_codes:
+        return ['Next: review observerctl librarian datasets and retry with a valid selector.']
+    if 'critical_check_failed:librarian_dataset_not_ready' in reason_codes:
+        return ['Next: repair the missing dataset artifacts or choose a ready approved dataset.']
+    if 'critical_check_failed:librarian_dataset_manifest_missing' in reason_codes:
+        return ['Next: provide an existing dataset_manifest.json path and retry the action.']
+    if (
+        'critical_check_failed:librarian_dataset_request_invalid' in reason_codes
+        or 'critical_check_failed:librarian_dataset_attestation_invalid' in reason_codes
+    ):
+        return ['Next: retry the release with a fresh selector request after reviewing the delegated access artifacts.']
+    return ['Next: review the reasons above and retry with a ready approved dataset.']
+
+
+def _render_librarian_dataset_selector_line(row: Dict[str, Any]) -> str:
+    label = str(row.get('display_name', '') or row.get('entry_id', '') or 'dataset').strip()
+    return '{0}. {1} | access={2} | workflow={3} | records={4}'.format(
+        int(row.get('index', 0) or 0),
+        label,
+        str(row.get('access_class', 'local')),
+        str(row.get('workflow', 'unknown')),
+        int(row.get('record_count', 0) or 0),
+    )
+
+
+def _render_librarian_datasets_human(packet: Dict[str, Any]) -> List[str]:
+    lines: List[str] = ['Librarian datasets']
+    ts = str(packet.get('timestamp_utc', '') or '').strip()
+    if ts:
+        lines.append('generated_at_utc: {0}'.format(ts))
+    decision = str(packet.get('decision', '') or '').strip().lower()
+    summary = str(packet.get('summary', '') or '').strip()
+    entries = packet.get('selector_entries', []) if isinstance(packet.get('selector_entries', []), list) else []
+    if decision or summary:
+        if summary:
+            lines.append('decision: {0} - {1}'.format(decision or 'go', summary))
+        else:
+            lines.append('decision: {0}'.format(decision))
+
+    _append_human_section(
+        lines,
+        'Summary',
+        _render_human_kv_rows(
+            [
+                ('Count', str(int(packet.get('count', len(entries)) or 0))),
+                ('Authority', 'librarian-approved dataset snapshot'),
+                ('Availability', 'ready' if entries else 'empty'),
+            ],
+            indent='  ',
+        ),
+    )
+
+    dataset_lines: List[str] = []
+    if entries:
+        for row in entries:
+            if not isinstance(row, dict):
+                continue
+            if dataset_lines:
+                dataset_lines.append('')
+            dataset_lines.extend(_render_librarian_dataset_block(row, include_index=True, indent='  '))
+    else:
+        dataset_lines.append('  No approved datasets are registered yet.')
+    _append_human_section(lines, 'Approved datasets', dataset_lines)
+
+    artifacts = packet.get('artifacts', {}) if isinstance(packet.get('artifacts', {}), dict) else {}
+    evidence_lines: List[str] = []
+    for label, key in (
+        ('Approved snapshot', 'librarian_dataset_manifest_json'),
+        ('Catalog ledger', 'librarian_dataset_catalog_jsonl'),
+    ):
+        value = _render_human_path_tail(artifacts.get(key, ''))
+        if value:
+            evidence_lines.append('  - {0}: {1}'.format(label, value))
+    _append_human_section(lines, 'Evidence', evidence_lines)
+
+    if entries:
+        guidance = [
+            'Next: choose a dataset by index or run_id, then release it here or hydrate the same selector in the wizard.',
+        ]
+    else:
+        guidance = [
+            'Next: register a dataset manifest with observerctl librarian dataset-register <manifest> to seed the approved list.',
+        ]
+    _append_human_section(lines, 'Guidance', ['  {0}'.format(line) for line in guidance])
+    return lines
+
+
+def _render_librarian_dataset_action_human(packet: Dict[str, Any]) -> List[str]:
+    action = str(packet.get('action', '') or '').strip().lower()
+    title = {
+        'librarian-dataset-register': 'Librarian dataset register',
+        'librarian-dataset-release': 'Librarian dataset release',
+    }.get(action, 'Librarian dataset action')
+
+    lines: List[str] = [title]
+    ts = str(packet.get('timestamp_utc', '') or '').strip()
+    if ts:
+        lines.append('generated_at_utc: {0}'.format(ts))
+    decision = str(packet.get('decision', '') or '').strip().lower()
+    summary = str(packet.get('summary', '') or '').strip()
+    if decision or summary:
+        if summary:
+            lines.append('decision: {0} - {1}'.format(decision or 'no-go', summary))
+        else:
+            lines.append('decision: {0}'.format(decision))
+    release_mode = str(packet.get('release_mode', '') or '').strip()
+
+    _append_human_section(
+        lines,
+        'Summary',
+        _render_human_kv_rows(
+            [
+                ('Action', 'dataset register' if action == 'librarian-dataset-register' else 'dataset release'),
+                ('Release mode', release_mode),
+            ],
+            indent='  ',
+        ),
+    )
+
+    dataset = packet.get('dataset', {}) if isinstance(packet.get('dataset', {}), dict) else {}
+    if dataset:
+        _append_human_section(
+            lines,
+            'Dataset',
+            _render_librarian_dataset_block(dataset, include_index=False, indent='  '),
+        )
+
+    manifest_path = str(packet.get('dataset_manifest_path', '') or '').strip()
+    reason_codes = packet.get('reason_codes', []) if isinstance(packet.get('reason_codes', []), list) else []
+
+    artifacts = packet.get('artifacts', {}) if isinstance(packet.get('artifacts', {}), dict) else {}
+    evidence_lines: List[str] = []
+    seen_evidence: set = set()
+    evidence_pairs: List[Tuple[str, str]] = [
+        ('Release receipt', str(artifacts.get('dataset_access_release_receipt_json', '') or '').strip()),
+        ('Dataset manifest', manifest_path or str(artifacts.get('dataset_manifest_path', '') or '').strip()),
+        ('Request packet', str(artifacts.get('dataset_access_request_json', '') or '').strip()),
+        ('Librarian attestation', str(artifacts.get('dataset_access_attestation_json', '') or '').strip()),
+        ('Approved snapshot', str(artifacts.get('librarian_dataset_manifest_json', '') or '').strip()),
+        ('Catalog ledger', str(artifacts.get('librarian_dataset_catalog_jsonl', '') or '').strip()),
+    ]
+    for label, raw_value in evidence_pairs:
+        rendered_value = _render_human_path_tail(raw_value)
+        if not rendered_value:
+            continue
+        marker = (label, rendered_value)
+        if marker in seen_evidence:
+            continue
+        seen_evidence.add(marker)
+        evidence_lines.append('  - {0}: {1}'.format(label, rendered_value))
+    _append_human_section(lines, 'Evidence', evidence_lines)
+
+    if reason_codes:
+        _append_human_section(lines, 'Reasons', ['  - {0}'.format(reason) for reason in reason_codes])
+
+    _append_human_section(
+        lines,
+        'Guidance',
+        ['  {0}'.format(line) for line in _render_librarian_dataset_action_guidance_lines(packet)],
+    )
+    return lines
+
+
+def _render_ds_retained_heading(row: Dict[str, Any], include_index: bool = True) -> str:
+    label = str(row.get('display_name', '') or row.get('entry_id', '') or 'retained item').strip()
+    index_value = int(row.get('index', 0) or 0)
+    if include_index and index_value > 0:
+        return '{0}. {1}'.format(index_value, label)
+    return label
+
+
+def _render_ds_retained_metadata_rows(row: Dict[str, Any]) -> List[Tuple[str, str]]:
+    rows: List[Tuple[str, str]] = []
+    selector_token = str(row.get('selector_token', '') or row.get('entry_id', '') or '').strip()
+    if selector_token:
+        rows.append(('Selector', selector_token))
+    workflow = str(row.get('workflow', '') or '').strip()
+    if workflow:
+        rows.append(('Workflow', workflow))
+    model_type = str(row.get('model_type', '') or '').strip()
+    if model_type:
+        rows.append(('Model', model_type))
+    max_fpr = row.get('max_fpr')
+    if max_fpr not in ('', None):
+        rows.append(('Max FPR', str(max_fpr)))
+    baseline_window_id = str(row.get('baseline_window_id', '') or '').strip()
+    if baseline_window_id:
+        rows.append(('Window', baseline_window_id))
+    slot_id = int(row.get('slot_id', 0) or 0)
+    if slot_id > 0:
+        rows.append(('Slot', _ds_wizard_draft_slot_label(slot_id)))
+    run_id = str(row.get('run_id', '') or '').strip()
+    if run_id:
+        rows.append(('Run ID', run_id))
+    source = str(row.get('source', '') or '').strip()
+    if source and source != 'unknown':
+        rows.append(('Source', source))
+    mode = str(row.get('mode', '') or '').strip()
+    if mode and mode != 'unknown':
+        rows.append(('Mode', mode))
+    status = str(row.get('status', '') or '').strip()
+    if status:
+        rows.append(('Status', status))
+    readiness = str(row.get('readiness', '') or '').strip()
+    if readiness:
+        rows.append(('Readiness', readiness))
+    recorded_at_utc = str(row.get('recorded_at_utc', '') or '').strip()
+    if recorded_at_utc:
+        rows.append(('Recorded', recorded_at_utc))
+    counts = row.get('sample_counts', {}) if isinstance(row.get('sample_counts', {}), dict) else {}
+    if counts:
+        rendered_counts = []
+        for key in ('resource_normal', 'resource_baseline', 'total'):
+            if key in counts:
+                rendered_counts.append('{0}={1}'.format(key, counts.get(key)))
+        if rendered_counts:
+            rows.append(('Samples', ', '.join(rendered_counts)))
+    summary = str(row.get('summary', '') or '').strip()
+    if summary:
+        rows.append(('Summary', summary))
+    return rows
+
+
+def _render_ds_retained_block(row: Dict[str, Any], include_index: bool = True, indent: str = '') -> List[str]:
+    lines = ['{0}{1}'.format(indent, _render_ds_retained_heading(row, include_index=include_index))]
+    lines.extend(
+        _render_human_kv_rows(
+            _render_ds_retained_metadata_rows(row),
+            min_label_width=12,
+            max_label_width=18,
+            indent=indent + '  ',
+        )
+    )
+    return lines
+
+
+def _render_ds_retained_guidance_lines(packet: Dict[str, Any]) -> List[str]:
+    action = str(packet.get('action', '') or '').strip().lower()
+    if action == 'ds-retained-trains':
+        return ['Next: hydrate train <index|run_id|selector> in the wizard, or use a train_manifest path directly only when intentionally bypassing selector discovery.']
+    if action == 'ds-retained-runs':
+        return ['Next: hydrate run <index|run_id|selector> in the wizard, or use a run.json path directly only when intentionally bypassing selector discovery.']
+    if action == 'ds-retained-baselines':
+        return ['Next: hydrate baseline <index|window_id|selector> in the wizard, or use a baseline packet path directly only when intentionally bypassing selector discovery.']
+    if action == 'ds-retained-drafts':
+        return ['Next: load draft <slot> in the wizard, or save draft with no argument to use the next canonical slot automatically.']
+    return ['Next: choose a retained selector by index or stable selector token.']
+
+
+def _render_ds_retained_selectors_human(packet: Dict[str, Any]) -> List[str]:
+    action = str(packet.get('action', '') or '').strip().lower()
+    title = {
+        'ds-retained-trains': 'Retained train selectors',
+        'ds-retained-runs': 'Retained run selectors',
+        'ds-retained-baselines': 'Retained baseline selectors',
+        'ds-retained-drafts': 'Retained draft slots',
+    }.get(action, 'Retained DS selectors')
+
+    lines: List[str] = [title]
+    ts = str(packet.get('timestamp_utc', '') or '').strip()
+    if ts:
+        lines.append('generated_at_utc: {0}'.format(ts))
+    decision = str(packet.get('decision', '') or '').strip().lower()
+    summary = str(packet.get('summary', '') or '').strip()
+    if decision or summary:
+        if summary:
+            lines.append('decision: {0} - {1}'.format(decision or 'go', summary))
+        else:
+            lines.append('decision: {0}'.format(decision))
+
+    entries = packet.get('selector_entries', []) if isinstance(packet.get('selector_entries', []), list) else []
+    authority = 'canonical DS run/report spine'
+    if action == 'ds-retained-baselines':
+        authority = 'source/mode baseline-analysis evidence index'
+    elif action == 'ds-retained-drafts':
+        authority = 'canonical wizard draft slot root'
+
+    scope_text = ''
+    if action == 'ds-retained-baselines':
+        scope_text = '{0} / {1}'.format(str(packet.get('source', 'sim') or 'sim'), str(packet.get('mode', 'watch') or 'watch'))
+
+    summary_rows: List[Tuple[str, str]] = [
+        ('Count', str(int(packet.get('count', len(entries)) or 0))),
+        ('Authority', authority),
+        ('Availability', 'ready' if entries else 'empty'),
+    ]
+    if scope_text:
+        summary_rows.append(('Scope', scope_text))
+    _append_human_section(lines, 'Summary', _render_human_kv_rows(summary_rows, indent='  '))
+
+    entry_lines: List[str] = []
+    if entries:
+        for row in entries:
+            if not isinstance(row, dict):
+                continue
+            if entry_lines:
+                entry_lines.append('')
+            entry_lines.extend(_render_ds_retained_block(row, include_index=True, indent='  '))
+    else:
+        entry_lines.append('  No retained selectors are available yet.')
+    _append_human_section(lines, 'Selectors', entry_lines)
+
+    artifacts = packet.get('artifacts', {}) if isinstance(packet.get('artifacts', {}), dict) else {}
+    evidence_lines: List[str] = []
+    evidence_labels = {
+        'ds_run_index_jsonl': 'Run ledger',
+        'ds_latest_json': 'Latest pointer',
+        'evidence_index_jsonl': 'Evidence index',
+        'draft_root': 'Draft root',
+    }
+    for key in ('ds_run_index_jsonl', 'ds_latest_json', 'evidence_index_jsonl', 'draft_root'):
+        value = _render_human_path_tail(artifacts.get(key, ''))
+        if value:
+            evidence_lines.append('  - {0}: {1}'.format(evidence_labels.get(key, key), value))
+    _append_human_section(lines, 'Evidence', evidence_lines)
+
+    _append_human_section(lines, 'Guidance', ['  {0}'.format(line) for line in _render_ds_retained_guidance_lines(packet)])
+    return lines
+
+
 def _render_ds_generalized_location(value: Any) -> str:
     text = str(value or '').strip().replace('\\', '/')
     if not text:
@@ -3103,8 +3553,15 @@ def _render_ds_human(packet: Dict[str, Any]) -> List[str]:
 def _render_human_known_packet(packet: Dict[str, Any]) -> Optional[List[str]]:
     if not isinstance(packet, dict):
         return None
+    action = str(packet.get('action', '') or '').strip().lower()
+    if action.startswith('ds-retained-'):
+        return _render_ds_retained_selectors_human(packet)
     if str(packet.get('command_family', '')).strip().lower() == 'ds':
         return _render_ds_human(packet)
+    if action == 'librarian-datasets':
+        return _render_librarian_datasets_human(packet)
+    if action in ('librarian-dataset-register', 'librarian-dataset-release'):
+        return _render_librarian_dataset_action_human(packet)
     sandbox_lines = render_sandbox_human_packet(packet)
     if isinstance(sandbox_lines, list) and len(sandbox_lines) > 0:
         return sandbox_lines
@@ -4801,6 +5258,536 @@ def _librarian_stores() -> Dict[str, Any]:
     return {'timestamp_utc': _utc_now(), 'runtime_cli_surface': 'observerctl', 'stores': stores}
 
 
+def _librarian_datasets() -> Dict[str, Any]:
+    from calamum_librarian import list_librarian_datasets_packet
+
+    return list_librarian_datasets_packet(_project_anchor())
+
+
+def _librarian_dataset_register(dataset_manifest: str, access_class: str, display_name: str, run_id: str) -> Dict[str, Any]:
+    from calamum_librarian import register_librarian_dataset_packet
+
+    return register_librarian_dataset_packet(
+        _project_anchor(),
+        Path(str(dataset_manifest or '').strip()),
+        access_class=str(access_class or '').strip(),
+        display_name=str(display_name or '').strip(),
+        run_id=str(run_id or '').strip(),
+    )
+
+
+def _librarian_dataset_release(dataset: str, requester_id: str, requested_action: str) -> Dict[str, Any]:
+    from calamum_librarian import release_librarian_dataset_packet
+
+    return release_librarian_dataset_packet(
+        _project_anchor(),
+        str(dataset or '').strip(),
+        requester_id=str(requester_id or 'observerctl').strip() or 'observerctl',
+        requested_action=str(requested_action or 'hydrate-dataset').strip() or 'hydrate-dataset',
+    )
+
+
+def _ds_retained_manifest_records() -> List[Dict[str, Any]]:
+    from analysis.report_aggregate import load_ds_run_manifest_records
+
+    return load_ds_run_manifest_records(project_anchor=_project_anchor())
+
+
+def _ds_selector_sort_entries(entries: List[Dict[str, Any]], reverse: bool = True) -> List[Dict[str, Any]]:
+    return sorted(
+        [entry for entry in entries if isinstance(entry, dict)],
+        key=lambda entry: (
+            str(entry.get('recorded_at_utc', '')),
+            str(entry.get('selector_token', '') or entry.get('entry_id', '')),
+        ),
+        reverse=bool(reverse),
+    )
+
+
+def _ds_assign_selector_indexes(entries: List[Dict[str, Any]], preserve_existing: bool = False) -> List[Dict[str, Any]]:
+    assigned: List[Dict[str, Any]] = []
+    next_index = 1
+    for entry in entries:
+        if not isinstance(entry, dict):
+            continue
+        row = dict(entry)
+        existing_index = int(row.get('index', 0) or 0)
+        if preserve_existing and existing_index > 0:
+            row['index'] = existing_index
+        else:
+            row['index'] = next_index
+        assigned.append(row)
+        next_index += 1
+    return assigned
+
+
+def _ds_selector_entry_view(entry: Dict[str, Any]) -> Dict[str, Any]:
+    return {str(key): value for key, value in entry.items() if str(key) != 'resolver'}
+
+
+def _ds_resolve_selector_entry(entries: List[Dict[str, Any]], selector: str) -> Dict[str, Any]:
+    token = str(selector or '').strip()
+    if not token:
+        return {'status': 'missing'}
+
+    if token.isdigit():
+        idx = int(token)
+        matches = [entry for entry in entries if int(entry.get('index', 0) or 0) == idx]
+        if len(matches) == 1:
+            return {'status': 'ok', 'entry': dict(matches[0])}
+        return {'status': 'missing'}
+
+    lowered = token.lower()
+    matches: List[Dict[str, Any]] = []
+    for entry in entries:
+        candidates = {
+            str(entry.get('entry_id', '') or '').strip().lower(),
+            str(entry.get('selector_token', '') or '').strip().lower(),
+            str(entry.get('display_name', '') or '').strip().lower(),
+            str(entry.get('run_id', '') or '').strip().lower(),
+        }
+        candidates = {candidate for candidate in candidates if candidate}
+        if lowered in candidates:
+            matches.append(dict(entry))
+
+    if len(matches) == 1:
+        return {'status': 'ok', 'entry': matches[0]}
+    if len(matches) > 1:
+        return {
+            'status': 'ambiguous',
+            'matches': [_ds_selector_entry_view(entry) for entry in matches],
+        }
+    return {'status': 'missing'}
+
+
+def _ds_retained_summary_fallback(workflow: str, run_id: str, summary: str) -> str:
+    text = str(summary or '').strip()
+    if text:
+        return text
+    if str(run_id or '').strip():
+        return str(run_id or '').strip()
+    if str(workflow or '').strip():
+        return str(workflow or '').strip()
+    return 'retained-selector'
+
+
+def _ds_model_variant_token(run_id: str, variant: str, fallback: str) -> str:
+    base = str(run_id or '').strip()
+    suffix = str(variant or '').strip().lower()
+    if base and suffix:
+        return '{0}:{1}'.format(base, suffix)
+    if base:
+        return base
+    return str(fallback or '').strip()
+
+
+def _ds_retained_train_entries() -> List[Dict[str, Any]]:
+    from analysis._util import sanitize_run_id
+
+    entries: List[Dict[str, Any]] = []
+    for record in _ds_retained_manifest_records():
+        manifest = dict(record.get('manifest_payload', {}) or {}) if isinstance(record.get('manifest_payload', {}), dict) else {}
+        if not manifest:
+            continue
+
+        artifacts = dict(manifest.get('artifacts', {}) or {}) if isinstance(manifest.get('artifacts', {}), dict) else {}
+        result = dict(manifest.get('result', {}) or {}) if isinstance(manifest.get('result', {}), dict) else {}
+        lineage = dict(manifest.get('lineage', {}) or {}) if isinstance(manifest.get('lineage', {}), dict) else {}
+        context = dict(manifest.get('context', {}) or {}) if isinstance(manifest.get('context', {}), dict) else {}
+
+        workflow = str(manifest.get('workflow', '') or '').strip() or str(((record.get('entry', {}) if isinstance(record.get('entry', {}), dict) else {}).get('workflow', '')) or '').strip()
+        run_id = str(manifest.get('run_id', '') or '').strip() or str(((record.get('entry', {}) if isinstance(record.get('entry', {}), dict) else {}).get('run_id', '')) or '').strip()
+        recorded_at_utc = str(manifest.get('timestamp_utc', '') or '').strip() or str(((record.get('entry', {}) if isinstance(record.get('entry', {}), dict) else {}).get('timestamp_utc', '')) or '').strip()
+        summary = _ds_retained_summary_fallback(workflow, run_id, str(manifest.get('summary', '') or ''))
+        report_manifest_path = str(record.get('manifest_path', '') or '').strip()
+
+        variants: List[Tuple[str, str, str, str]] = [
+            ('', 'train_manifest', 'model_path', str(result.get('model_type', '') or '').strip()),
+            ('supervised', 'supervised_train_manifest', 'supervised_model_path', 'supervised'),
+            ('unsupervised', 'unsupervised_train_manifest', 'unsupervised_model_path', 'unsupervised'),
+        ]
+
+        for variant_key, train_key, model_key, model_hint in variants:
+            train_ref = str(artifacts.get(train_key, '') or '').strip()
+            model_ref = str(artifacts.get(model_key, '') or '').strip()
+            if not train_ref and not model_ref:
+                continue
+
+            train_path = _resolve_existing_project_path(train_ref) if train_ref else None
+            model_path = _resolve_existing_project_path(model_ref) if model_ref else None
+            train_manifest_payload = _load_json_file(train_path, {}) if train_path is not None else {}
+
+            dataset_manifest_ref = str(
+                train_manifest_payload.get('dataset_manifest_path', '')
+                or lineage.get('dataset_manifest', '')
+                or artifacts.get('dataset_manifest', '')
+                or ''
+            ).strip()
+            model_type = str(train_manifest_payload.get('model_type', '') or model_hint or '').strip() or 'trained'
+
+            readiness_issues: List[str] = []
+            if train_path is None:
+                readiness_issues.append('missing_train_manifest')
+            if model_path is None:
+                readiness_issues.append('missing_model_artifact')
+
+            selector_token = _ds_model_variant_token(run_id, variant_key, summary)
+            display_base = _ds_retained_summary_fallback(workflow, run_id, summary)
+            display_name = '{0} ({1})'.format(display_base, model_type) if str(variant_key or '').strip() else display_base
+            entry_id = 'retained-train-{0}'.format(sanitize_run_id(selector_token or display_name or workflow) or 'train')
+            source = str(context.get('source', '') or '').strip()
+            mode = str(context.get('mode', '') or '').strip()
+
+            entries.append(
+                {
+                    'family': 'train-model',
+                    'entry_id': entry_id,
+                    'selector_token': selector_token,
+                    'display_name': display_name,
+                    'recorded_at_utc': recorded_at_utc,
+                    'workflow': workflow,
+                    'run_id': run_id,
+                    'model_type': model_type,
+                    'status': 'approved' if len(readiness_issues) == 0 else 'held',
+                    'readiness': 'ready' if len(readiness_issues) == 0 else 'artifact-missing',
+                    'summary': summary,
+                    'source': source,
+                    'mode': mode,
+                    'resolver': {
+                        'report_manifest_path': report_manifest_path,
+                        'train_manifest_path': train_ref,
+                        'model_path': model_ref,
+                        'dataset_manifest_path': dataset_manifest_ref,
+                    },
+                }
+            )
+
+    return _ds_assign_selector_indexes(_ds_selector_sort_entries(entries))
+
+
+def _ds_retained_run_entries() -> List[Dict[str, Any]]:
+    from analysis._util import sanitize_run_id
+
+    entries: List[Dict[str, Any]] = []
+    for record in _ds_retained_manifest_records():
+        manifest = dict(record.get('manifest_payload', {}) or {}) if isinstance(record.get('manifest_payload', {}), dict) else {}
+        if not manifest:
+            continue
+
+        artifacts = dict(manifest.get('artifacts', {}) or {}) if isinstance(manifest.get('artifacts', {}), dict) else {}
+        context = dict(manifest.get('context', {}) or {}) if isinstance(manifest.get('context', {}), dict) else {}
+        workflow = str(manifest.get('workflow', '') or '').strip() or str(((record.get('entry', {}) if isinstance(record.get('entry', {}), dict) else {}).get('workflow', '')) or '').strip()
+        run_id = str(manifest.get('run_id', '') or '').strip() or str(((record.get('entry', {}) if isinstance(record.get('entry', {}), dict) else {}).get('run_id', '')) or '').strip()
+        recorded_at_utc = str(manifest.get('timestamp_utc', '') or '').strip() or str(((record.get('entry', {}) if isinstance(record.get('entry', {}), dict) else {}).get('timestamp_utc', '')) or '').strip()
+        summary = _ds_retained_summary_fallback(workflow, run_id, str(manifest.get('summary', '') or ''))
+        run_json_ref = str(artifacts.get('run_json', '') or artifacts.get('evaluation_run_json', '') or '').strip()
+        if not run_json_ref:
+            continue
+
+        run_json_path = _resolve_existing_project_path(run_json_ref)
+        run_payload = _load_json_file(run_json_path, {}) if run_json_path is not None else {}
+        identity = dict(run_payload.get('identity', {}) or {}) if isinstance(run_payload.get('identity', {}), dict) else {}
+        constraints = dict(((run_payload.get('context', {}) if isinstance(run_payload.get('context', {}), dict) else {}).get('constraints', {})) or {})
+        selector_token = str(run_id or identity.get('run_id', '') or summary).strip()
+        entry_id = 'retained-run-{0}'.format(sanitize_run_id(selector_token or workflow) or 'run')
+        max_fpr_value = constraints.get('max_fpr', context.get('max_fpr', ''))
+        baseline_window_id = str(context.get('baseline_window_id', '') or '').strip()
+
+        entries.append(
+            {
+                'family': 'run-context',
+                'entry_id': entry_id,
+                'selector_token': selector_token,
+                'display_name': _ds_retained_summary_fallback(workflow, selector_token, summary),
+                'recorded_at_utc': recorded_at_utc,
+                'workflow': workflow,
+                'run_id': selector_token,
+                'status': 'approved' if run_json_path is not None else 'held',
+                'readiness': 'ready' if run_json_path is not None else 'artifact-missing',
+                'summary': summary,
+                'max_fpr': max_fpr_value,
+                'baseline_window_id': baseline_window_id,
+                'resolver': {
+                    'report_manifest_path': str(record.get('manifest_path', '') or '').strip(),
+                    'run_json_path': run_json_ref,
+                },
+            }
+        )
+
+    return _ds_assign_selector_indexes(_ds_selector_sort_entries(entries))
+
+
+def _ds_retained_baseline_entries(source: str, mode: str) -> List[Dict[str, Any]]:
+    from analysis._util import sanitize_run_id
+
+    src = _normalize_source(source)
+    m = str(mode or 'watch').strip().lower()
+    if m not in MODES:
+        m = 'watch'
+
+    index_path = _evidence_index_path(src, m)
+    if not index_path.exists():
+        return []
+
+    seen: set = set()
+    entries: List[Dict[str, Any]] = []
+    for line in reversed(index_path.read_text(encoding='utf-8').splitlines()):
+        text = str(line or '').strip()
+        if not text:
+            continue
+        try:
+            row = json.loads(text)
+        except Exception:
+            continue
+        if not isinstance(row, dict):
+            continue
+        if str(row.get('event', '') or '').strip().lower() != 'baseline_analysis':
+            continue
+
+        packet_ref = str(row.get('packet_path', '') or '').strip()
+        packet_path = _resolve_existing_project_path(packet_ref) if packet_ref else None
+        packet = _load_json_file(packet_path, {}) if packet_path is not None else {}
+        recorded_at_utc = str(packet.get('timestamp_utc', '') or '').strip() or str(row.get('timestamp_utc', '') or '').strip()
+        baseline_window_id = str(packet.get('baseline_window_id', '') or row.get('baseline_window_id', '') or '').strip()
+        selector_token = baseline_window_id or 'baseline-{0}'.format(_utc_compact_stamp())
+        entry_id = 'retained-baseline-{0}'.format(sanitize_run_id(selector_token or recorded_at_utc) or 'baseline')
+        if entry_id in seen:
+            continue
+        seen.add(entry_id)
+
+        decision = str(packet.get('decision', row.get('decision', 'no-go')) or 'no-go').strip().lower()
+        readiness = 'ready' if packet_path is not None and decision == 'go' else 'artifact-missing'
+        counts = dict(packet.get('sample_counts', {}) or {}) if isinstance(packet.get('sample_counts', {}), dict) else {}
+        entries.append(
+            {
+                'family': 'baseline-context',
+                'entry_id': entry_id,
+                'selector_token': selector_token,
+                'display_name': baseline_window_id or str(packet.get('summary', '') or selector_token or 'baseline-analysis').strip(),
+                'recorded_at_utc': recorded_at_utc,
+                'workflow': 'baseline-analysis',
+                'run_id': '',
+                'status': 'approved' if readiness == 'ready' else 'held',
+                'readiness': readiness,
+                'summary': str(packet.get('summary', '') or 'Retained baseline analysis packet.').strip(),
+                'source': src,
+                'mode': m,
+                'decision_state': decision,
+                'baseline_window_id': baseline_window_id,
+                'sample_counts': counts,
+                'resolver': {
+                    'baseline_analysis_packet': packet_ref,
+                    'evidence_index_path': str(index_path).replace('\\', '/'),
+                },
+            }
+        )
+
+    return _ds_assign_selector_indexes(_ds_selector_sort_entries(entries))
+
+
+def _ds_wizard_draft_root() -> Path:
+    from analysis._util import ds_drafts_dir
+
+    root = ds_drafts_dir(Path(__file__)) / 'wizard'
+    root.mkdir(parents=True, exist_ok=True)
+    return root
+
+
+def _ds_wizard_draft_slot_id(path: Path) -> int:
+    stem = str(path.stem or '').strip().lower()
+    if stem.startswith('slot-') and stem[5:].isdigit():
+        return int(stem[5:])
+    return 0
+
+
+def _ds_wizard_draft_slot_label(slot_id: int) -> str:
+    return 'slot-{0:03d}'.format(max(1, int(slot_id or 1)))
+
+
+def _ds_wizard_draft_slot_path(slot_id: int) -> Path:
+    return _ds_wizard_draft_root() / '{0}.json'.format(_ds_wizard_draft_slot_label(slot_id))
+
+
+def _ds_wizard_parse_slot_token(token: str) -> int:
+    text = str(token or '').strip().lower()
+    if text.isdigit():
+        return int(text)
+    if text.startswith('slot-') and text[5:].isdigit():
+        return int(text[5:])
+    return 0
+
+
+def _ds_wizard_draft_entries() -> List[Dict[str, Any]]:
+    root = _ds_wizard_draft_root()
+    paths = sorted(root.glob('slot-*.json'), key=_ds_wizard_draft_slot_id)
+    entries: List[Dict[str, Any]] = []
+    for path in paths:
+        slot_id = _ds_wizard_draft_slot_id(path)
+        payload = _load_json_file(path, {})
+        workflow = str(payload.get('workflow', '') or '').strip()
+        source = _normalize_source(str(payload.get('source', 'sim') or 'sim'))
+        mode = str(payload.get('mode', 'watch') or 'watch').strip().lower()
+        if mode not in MODES:
+            mode = 'watch'
+        run_id = ''
+        readiness = 'invalid'
+        status = 'held'
+        try:
+            state = _ds_wizard_load_draft(path)
+            readiness = _ds_wizard_decision_state(state)
+            status = 'saved'
+            run_id = str(state.values.get('run_id', '') or '').strip()
+        except Exception:
+            values = payload.get('values', {}) if isinstance(payload.get('values', {}), dict) else {}
+            run_id = str(values.get('run_id', '') or '').strip()
+
+        entries.append(
+            {
+                'family': 'wizard-draft',
+                'index': int(slot_id or 0),
+                'slot_id': int(slot_id or 0),
+                'entry_id': _ds_wizard_draft_slot_label(slot_id),
+                'selector_token': _ds_wizard_draft_slot_label(slot_id),
+                'display_name': _ds_wizard_draft_slot_label(slot_id),
+                'recorded_at_utc': str(payload.get('saved_at_utc', '') or '').strip(),
+                'workflow': workflow or 'unset',
+                'run_id': run_id,
+                'status': status,
+                'readiness': readiness,
+                'source': source,
+                'mode': mode,
+                'summary': 'Wizard draft slot',
+                'resolver': {
+                    'draft_path': str(path).replace('\\', '/'),
+                },
+            }
+        )
+    return _ds_assign_selector_indexes(entries, preserve_existing=True)
+
+
+def _ds_wizard_next_draft_slot_id(entries: Optional[List[Dict[str, Any]]] = None) -> int:
+    current = entries if isinstance(entries, list) else _ds_wizard_draft_entries()
+    used = {int(entry.get('slot_id', 0) or 0) for entry in current if int(entry.get('slot_id', 0) or 0) > 0}
+    slot_id = 1
+    while slot_id in used:
+        slot_id += 1
+    return slot_id
+
+
+def _ds_wizard_current_draft_slot_id(state: _DSWizardState) -> int:
+    draft_path = str(state.draft_path or '').strip()
+    if not draft_path:
+        return 0
+    path = Path(draft_path)
+    try:
+        resolved = path.resolve()
+    except Exception:
+        resolved = path
+    root = _ds_wizard_draft_root()
+    try:
+        resolved.relative_to(root)
+    except Exception:
+        return 0
+    return _ds_wizard_draft_slot_id(resolved)
+
+
+def _ds_train_selectors() -> Dict[str, Any]:
+    from analysis._util import ds_indexes_dir, normalize_repo_or_absolute_path
+
+    entries = _ds_retained_train_entries()
+    project_root = _project_root()
+    indexes_dir = ds_indexes_dir(Path(__file__))
+    return {
+        'timestamp_utc': _utc_now(),
+        'runtime_cli_surface': 'observerctl',
+        'decision': 'go',
+        'action': 'ds-retained-trains',
+        'command_family': 'ds',
+        'command_path': 'observerctl ds retained trains',
+        'family': 'train-model',
+        'summary': 'Retained train/model selector surface ready.' if entries else 'No retained train/model selectors are available yet.',
+        'count': int(len(entries)),
+        'selector_entries': [_ds_selector_entry_view(entry) for entry in entries],
+        'artifacts': {
+            'ds_run_index_jsonl': normalize_repo_or_absolute_path(indexes_dir / 'ds_run_index.jsonl', project_root),
+            'ds_latest_json': normalize_repo_or_absolute_path(indexes_dir / 'ds_latest.json', project_root),
+        },
+        'reason_codes': [],
+    }
+
+
+def _ds_run_selectors() -> Dict[str, Any]:
+    from analysis._util import ds_indexes_dir, normalize_repo_or_absolute_path
+
+    entries = _ds_retained_run_entries()
+    project_root = _project_root()
+    indexes_dir = ds_indexes_dir(Path(__file__))
+    return {
+        'timestamp_utc': _utc_now(),
+        'runtime_cli_surface': 'observerctl',
+        'decision': 'go',
+        'action': 'ds-retained-runs',
+        'command_family': 'ds',
+        'command_path': 'observerctl ds retained runs',
+        'family': 'run-context',
+        'summary': 'Retained run-context selector surface ready.' if entries else 'No retained run-context selectors are available yet.',
+        'count': int(len(entries)),
+        'selector_entries': [_ds_selector_entry_view(entry) for entry in entries],
+        'artifacts': {
+            'ds_run_index_jsonl': normalize_repo_or_absolute_path(indexes_dir / 'ds_run_index.jsonl', project_root),
+            'ds_latest_json': normalize_repo_or_absolute_path(indexes_dir / 'ds_latest.json', project_root),
+        },
+        'reason_codes': [],
+    }
+
+
+def _ds_baseline_selectors(source: str, mode: str) -> Dict[str, Any]:
+    entries = _ds_retained_baseline_entries(source, mode)
+    src = _normalize_source(source)
+    m = str(mode or 'watch').strip().lower()
+    if m not in MODES:
+        m = 'watch'
+    return {
+        'timestamp_utc': _utc_now(),
+        'runtime_cli_surface': 'observerctl',
+        'decision': 'go',
+        'action': 'ds-retained-baselines',
+        'command_family': 'ds',
+        'command_path': 'observerctl ds retained baselines',
+        'family': 'baseline-context',
+        'source': src,
+        'mode': m,
+        'summary': 'Retained baseline-context selector surface ready.' if entries else 'No retained baseline-context selectors are available for the current source/mode.',
+        'count': int(len(entries)),
+        'selector_entries': [_ds_selector_entry_view(entry) for entry in entries],
+        'artifacts': {
+            'evidence_index_jsonl': str(_evidence_index_path(src, m)).replace('\\', '/'),
+        },
+        'reason_codes': [],
+    }
+
+
+def _ds_draft_slots() -> Dict[str, Any]:
+    entries = _ds_wizard_draft_entries()
+    root = _ds_wizard_draft_root()
+    return {
+        'timestamp_utc': _utc_now(),
+        'runtime_cli_surface': 'observerctl',
+        'decision': 'go',
+        'action': 'ds-retained-drafts',
+        'command_family': 'ds',
+        'command_path': 'observerctl ds retained drafts',
+        'family': 'wizard-draft',
+        'summary': 'Canonical wizard draft slots ready.' if entries else 'No canonical wizard draft slots are available yet.',
+        'count': int(len(entries)),
+        'selector_entries': [_ds_selector_entry_view(entry) for entry in entries],
+        'artifacts': {
+            'draft_root': str(root).replace('\\', '/'),
+        },
+        'reason_codes': [],
+    }
+
+
 def _librarian_action(action: str, mode: str) -> Dict[str, Any]:
     if mode not in MODES:
         return {'timestamp_utc': _utc_now(), 'runtime_cli_surface': 'observerctl', 'decision': 'no-go', 'reason_codes': ['policy_denied:target_mode_unsupported']}
@@ -5097,6 +6084,8 @@ _DS_RUNTIME_STATE_WIZARD = 'wizard-available'
 _DS_RUNTIME_STATE_COMMAND = 'command-available'
 _DS_RUNTIME_STATE_AUTOMATION = 'automation-available'
 _DS_RUNTIME_STATE_PLANNED = 'surface-planned'
+_DS_WIZARD_POWER_ONLY_KEYS = ('out_dir', 'scores_out')
+_DS_WIZARD_AUTO_DRAFT_TOKEN = '__auto-slot__'
 
 
 _DS_WIZARD_FIELD_SPECS: Tuple[_DSWizardFieldSpec, ...] = (
@@ -5107,8 +6096,8 @@ _DS_WIZARD_FIELD_SPECS: Tuple[_DSWizardFieldSpec, ...] = (
     _DSWizardFieldSpec('dataset_manifest', 'in', ('train', 'score', 'evaluate', 'run-pipeline', 'build'), required_in=('train', 'score'), flag='--dataset', value_kind='path', path_kind='file', description='Dataset manifest path', artifact_source='dataset_manifest'),
     _DSWizardFieldSpec('features_csv', 'in', ('evaluate',), required_in=('evaluate',), flag='--features-csv', value_kind='path', path_kind='file', description='Features CSV path', artifact_source='dataset_manifest'),
     _DSWizardFieldSpec('labels_csv', 'in', ('evaluate',), flag='--labels-csv', value_kind='path', path_kind='file', description='Labels CSV path', artifact_source='dataset_manifest'),
-    _DSWizardFieldSpec('out_dir', 'out', ('build', 'train', 'evaluate', 'run-demo', 'run-pipeline'), required_in=('train',), flag='--out-dir', value_kind='path', path_kind='dir', description='Artifact output directory'),
-    _DSWizardFieldSpec('scores_out', 'out', ('score',), required_in=('score',), flag='--out-file', value_kind='path', path_kind='file-write', description='Scores CSV output path'),
+    _DSWizardFieldSpec('out_dir', 'out', ('build', 'train', 'evaluate', 'run-demo', 'run-pipeline'), flag='--out-dir', value_kind='path', path_kind='dir', description='Artifact output directory'),
+    _DSWizardFieldSpec('scores_out', 'out', ('score',), flag='--out-file', value_kind='path', path_kind='file-write', description='Scores CSV output path'),
     _DSWizardFieldSpec('model_type', 'model', ('train', 'run-pipeline'), flag='--model-type', default='supervised', choices=('supervised', 'unsupervised'), description='Model family', artifact_source='train_manifest'),
     _DSWizardFieldSpec('seed', 'model', ('build', 'train', 'run-pipeline'), flag='--seed', default=42, value_kind='int', description='Deterministic seed'),
     _DSWizardFieldSpec('dataset_seed', 'model', ('run-demo',), flag='--dataset-seed', default=123, value_kind='int', description='Demo dataset seed'),
@@ -5128,7 +6117,7 @@ _DS_WIZARD_FIELD_SPECS: Tuple[_DSWizardFieldSpec, ...] = (
 _DS_WIZARD_SECTION_HELP: Dict[str, Dict[str, str]] = {
     'flow': {'label': 'workflow and run type', 'detail': 'Choose the DS workflow and inspect current source/mode context.'},
     'in': {'label': 'inputs and sources', 'detail': 'Review dataset, telemetry, and feature/label input surfaces.'},
-    'out': {'label': 'outputs and artifact paths', 'detail': 'Review output directories and score/export targets.'},
+    'out': {'label': 'canonical output preview', 'detail': 'Review the canonical output defaults for the current workflow. Raw output paths remain power/CLI overrides only.'},
     'model': {'label': 'model family and training', 'detail': 'Review model family, seeds, splits, and imported model artifacts.'},
     'eval': {'label': 'labels, fpr, threshold, reports', 'detail': 'Review evaluation thresholds and report-facing controls.'},
     'report': {'label': 'report context and handoff inputs', 'detail': 'Attach optional context to the reports that will be written. Use hydrate baseline or hydrate run to import retained context; this page does not browse history on its own.'},
@@ -5289,6 +6278,8 @@ def _ds_wizard_section_display_label(section: str) -> str:
 def _ds_wizard_action_line(state: _DSWizardState) -> str:
     if state.active_page == 'landing':
         return 'actions: type number/name | validate | ? | exit'
+    if _ds_wizard_current_section(state) in ('in', 'cmd'):
+        return 'actions: type name | next/prev | datasets | validate | ? | exit'
     return 'actions: type name | next/prev | validate | cmd | ? | exit'
 
 
@@ -5518,24 +6509,40 @@ def _ds_wizard_scope_help_lines(state: _DSWizardState) -> List[str]:
         lines.append('  clear <field>            remove the current value')
         lines.append('  ? <field>                explain a field and show the current value')
     if current_section == 'in':
-        lines.append('  hydrate dataset <dataset_manifest.json>')
+        lines.append('  datasets                 review approved dataset selectors and access class')
+        lines.append('  hydrate dataset <selector|dataset_manifest.json>')
+        lines.append('                           import dataset_manifest, features_csv, and labels_csv')
+    elif current_section == 'out':
+        lines.append('  set out_dir <folder>     power override for canonical run-root/artifact placement')
+        lines.append('  set scores_out <file>    power override for canonical score CSV placement')
+        lines.append('note: clear these fields to restore canonical output routing.')
     elif current_section == 'model':
-        lines.append('  hydrate train <train_manifest.json>')
+        lines.append('  trains                   review retained train/model selectors')
+        lines.append('  hydrate train <selector|train_manifest.json>')
         lines.append('  hydrate model <model.pkl>')
     elif current_section == 'eval':
         lines.append('  set max_fpr 0.02')
     elif current_section == 'report':
-        lines.append('  hydrate baseline <packet.json>')
-        lines.append('  hydrate run <run.json>')
+        lines.append('  baselines                review retained baseline selectors for the current source/mode')
+        lines.append('  runs                     review retained run selectors')
+        lines.append('  hydrate baseline <selector|packet.json>')
+        lines.append('  hydrate run <selector|run.json>')
     elif current_section == 'cmd':
         lines.append('commands:')
-        lines.append('  save draft <file>        persist the current wizard state')
-        lines.append('  load draft <file>        restore a saved wizard state')
+        lines.append('  save draft               persist to the next canonical draft slot')
+        lines.append('  save draft <slot|file>   persist to a canonical slot or explicit path')
+        lines.append('  load draft <slot|file>   restore a saved wizard state')
         lines.append('  hydrate latest           load source/mode plus latest retained baseline only')
-        lines.append('  hydrate dataset <file>   import dataset, feature, and label paths')
-        lines.append('  hydrate train <file>     import dataset/model context from a train manifest')
-        lines.append('  hydrate run <file>       import a prior evaluation run ledger')
-        lines.append('note: dataset catalog/listing is not wired into the wizard yet.')
+        lines.append('  trains                   review retained train/model selectors')
+        lines.append('  runs                     review retained run selectors')
+        lines.append('  baselines                review retained baseline selectors for the current source/mode')
+        lines.append('  drafts                   review canonical draft slots')
+        lines.append('  datasets                 review approved dataset selectors and guidance')
+        lines.append('  hydrate dataset <selector|file>   import dataset, feature, and label paths')
+        lines.append('  hydrate train <selector|file>     import dataset/model context from a train manifest')
+        lines.append('  hydrate baseline <selector|file>  attach retained baseline context')
+        lines.append('  hydrate run <selector|file>       import a prior evaluation run ledger')
+        lines.append('note: approved datasets can be resolved by selector number, run_id, or display name.')
     elif current_section == 'check':
         lines.append('commands:')
         lines.append('  validate                 recompute blockers for the current workflow')
@@ -5568,6 +6575,156 @@ def _ds_wizard_short_path(path_text: str) -> str:
     if len(parts) >= 2:
         return '/'.join(parts[-2:])
     return parts[-1] if parts else text
+
+
+def _resolve_existing_project_path(path_text: str) -> Optional[Path]:
+    token = str(path_text or '').strip()
+    if not token:
+        return None
+    raw_path = Path(token)
+    candidates = [raw_path]
+    if not raw_path.is_absolute():
+        candidates.append(_project_root() / raw_path)
+
+    seen: set = set()
+    for candidate in candidates:
+        try:
+            resolved = candidate.resolve()
+        except Exception:
+            resolved = candidate
+        key = str(resolved)
+        if key in seen:
+            continue
+        seen.add(key)
+        try:
+            if resolved.exists() and resolved.is_file():
+                return resolved
+        except Exception:
+            continue
+    return None
+
+
+def _resolve_existing_reference_path(path_text: str, base_dir: Optional[Path] = None) -> Optional[Path]:
+    token = str(path_text or '').strip()
+    if not token:
+        return None
+    raw_path = Path(token)
+    candidates: List[Path] = []
+    if base_dir is not None and not raw_path.is_absolute():
+        candidates.append(Path(base_dir) / raw_path)
+    candidates.append(raw_path)
+    if not raw_path.is_absolute():
+        candidates.append(_project_root() / raw_path)
+
+    seen: set = set()
+    for candidate in candidates:
+        try:
+            resolved = candidate.resolve()
+        except Exception:
+            resolved = candidate
+        key = str(resolved)
+        if key in seen:
+            continue
+        seen.add(key)
+        try:
+            if resolved.exists() and resolved.is_file():
+                return resolved
+        except Exception:
+            continue
+    return None
+
+
+def _ds_wizard_retained_selector_lines(packet: Dict[str, Any], limit: int = 6) -> List[str]:
+    action = str(packet.get('action', '') or '').strip().lower()
+    title = {
+        'ds-retained-trains': 'retained trains:',
+        'ds-retained-runs': 'retained runs:',
+        'ds-retained-baselines': 'retained baselines:',
+        'ds-retained-drafts': 'retained draft slots:',
+    }.get(action, 'retained selectors:')
+
+    entries = packet.get('selector_entries', []) if isinstance(packet.get('selector_entries', []), list) else []
+    lines = [title]
+    scope_bits: List[str] = []
+    if action == 'ds-retained-baselines':
+        source = str(packet.get('source', '') or '').strip()
+        mode = str(packet.get('mode', '') or '').strip()
+        if source or mode:
+            scope_bits.append('{0} / {1}'.format(source or 'sim', mode or 'watch'))
+    if scope_bits:
+        lines.append('- scope: {0}'.format(', '.join(scope_bits)))
+
+    if not entries:
+        lines.append('- none available yet')
+    else:
+        for row in entries[: max(1, int(limit or 6))]:
+            if not isinstance(row, dict):
+                continue
+            if len(lines) > 1:
+                lines.append('')
+            lines.extend(_render_ds_retained_block(row, include_index=True, indent='  '))
+        if len(entries) > max(1, int(limit or 6)):
+            lines.append('')
+            lines.append('... and {0} more retained selectors'.format(len(entries) - max(1, int(limit or 6))))
+
+    guidance = _render_ds_retained_guidance_lines(packet)
+    if guidance:
+        lines.append('')
+        lines.append('guidance:')
+        for line in guidance:
+            text = str(line or '').strip()
+            if text:
+                lines.append('- {0}'.format(text))
+    return lines
+
+
+def _ds_wizard_train_selector_lines(limit: int = 6) -> List[str]:
+    return _ds_wizard_retained_selector_lines(_ds_train_selectors(), limit=limit)
+
+
+def _ds_wizard_run_selector_lines(limit: int = 6) -> List[str]:
+    return _ds_wizard_retained_selector_lines(_ds_run_selectors(), limit=limit)
+
+
+def _ds_wizard_baseline_selector_lines(state: _DSWizardState, limit: int = 6) -> List[str]:
+    return _ds_wizard_retained_selector_lines(_ds_baseline_selectors(state.source, state.mode), limit=limit)
+
+
+def _ds_wizard_draft_slot_lines(limit: int = 6) -> List[str]:
+    return _ds_wizard_retained_selector_lines(_ds_draft_slots(), limit=limit)
+
+
+def _ds_wizard_dataset_selector_lines(limit: int = 8) -> List[str]:
+    packet = _librarian_datasets()
+    if str(packet.get('decision', 'go')).strip().lower() != 'go':
+        lines = ['approved datasets: unavailable']
+        for reason in packet.get('reason_codes', []) if isinstance(packet.get('reason_codes', []), list) else []:
+            lines.append('- {0}'.format(reason))
+        lines.append('next: retry after the librarian dataset catalog is available.')
+        return lines
+
+    entries = packet.get('selector_entries', []) if isinstance(packet.get('selector_entries', []), list) else []
+    if not entries:
+        return [
+            'approved datasets: none registered yet',
+            'next: use observerctl librarian dataset-register <manifest> to seed the approved selector surface.',
+        ]
+
+    lines = ['approved datasets:']
+    for row in entries[: max(1, int(limit or 8))]:
+        if not isinstance(row, dict):
+            continue
+        if len(lines) > 1:
+            lines.append('')
+        lines.extend(_render_librarian_dataset_block(row, include_index=True, indent='  '))
+    if len(entries) > max(1, int(limit or 8)):
+        lines.append('')
+        lines.append('... and {0} more approved datasets'.format(len(entries) - max(1, int(limit or 8))))
+    lines.append('')
+    lines.append('guidance:')
+    lines.append('- hydrate dataset <index|run_id|display_name|manifest.json>')
+    lines.append('- selectors can be resolved by index, run_id, display name, or direct manifest path')
+    return lines
 
 
 def _ds_wizard_choice_is_active(state: _DSWizardState, choice_key: str) -> bool:
@@ -5665,17 +6822,20 @@ def _ds_wizard_inline_guidance_lines(state: _DSWizardState, section: str) -> Lis
     if current_section == 'in':
         return [
             'guide: type a field number to edit it, or use set <field> <value>.',
-            'guide: hydrate dataset <manifest.json> imports dataset, feature, and label paths.',
+            'guide: use datasets to review approved selectors before hydrating retained dataset context.',
+            'guide: hydrate dataset <selector|manifest.json> imports dataset_manifest, features_csv, and labels_csv.',
+            'guide: direct manifest paths still work when you already know the exact dataset file.',
         ]
     if current_section == 'out':
         return [
-            'guide: type a field number to edit it, or use set <field> <value>.',
-            'guide: set out_dir <folder> or set scores_out <file> to control output locations.',
+            'guide: review the canonical run root, report bundle, and artifact targets before executing.',
+            'guide: edit a numbered override field only when intentionally bypassing the canonical DS run/report spine.',
         ]
     if current_section == 'model':
         return [
             'guide: type a field number to edit it, or use set <field> <value>.',
-            'guide: hydrate train <train_manifest.json> or hydrate model <model.pkl> imports retained model context.',
+            'guide: use trains to review retained train/model selectors before hydrating retained model context.',
+            'guide: hydrate train <selector|train_manifest.json> or hydrate model <model.pkl> imports retained model context.',
         ]
     if current_section == 'eval':
         return [
@@ -5685,12 +6845,15 @@ def _ds_wizard_inline_guidance_lines(state: _DSWizardState, section: str) -> Lis
     if current_section == 'report':
         return [
             'guide: these fields annotate generated reports; they do not browse history on their own.',
-            'guide: hydrate baseline <packet.json> or hydrate run <run.json> attaches retained context.',
+            'guide: use baselines or runs to review retained selector authority before hydrating report context.',
+            'guide: hydrate baseline <selector|packet.json> or hydrate run <selector|run.json> attaches retained context.',
         ]
     if current_section == 'cmd':
         return [
             'guide: use save/load/hydrate helpers from this page.',
-            'guide: hydrate latest refreshes source/mode and baseline only; dataset discovery is not wired yet.',
+            'guide: hydrate latest refreshes source/mode and baseline only; it does not choose a dataset or model for you.',
+            'guide: datasets, trains, runs, baselines, and drafts expose the retained selector surfaces available to the wizard.',
+            'guide: save draft with no argument uses the next canonical slot; direct file paths remain the power path when needed.',
         ]
     if current_section == 'check':
         return [
@@ -5725,16 +6888,71 @@ def _ds_wizard_clear_transient_view(state: _DSWizardState) -> _DSWizardState:
     return state
 
 
+def _ds_wizard_hydrate_dataset_reference(state: _DSWizardState, dataset_ref: str) -> _DSWizardState:
+    token = str(dataset_ref or '').strip()
+    if not token:
+        raise ValueError('dataset reference is required')
+
+    direct_path = _resolve_existing_project_path(token)
+    if direct_path is not None:
+        return _ds_wizard_hydrate_dataset_manifest(state, direct_path)
+
+    packet = _librarian_dataset_release(
+        token,
+        requester_id='observerctl-ds-wizard',
+        requested_action='hydrate-dataset',
+    )
+    if str(packet.get('decision', 'no-go')).strip().lower() != 'go':
+        summary = str(packet.get('summary', '') or '').strip()
+        raise FileNotFoundError(summary or 'approved dataset selector could not be resolved')
+
+    manifest_path = _resolve_existing_project_path(str(packet.get('dataset_manifest_path', '') or '').strip())
+    if manifest_path is None:
+        raise FileNotFoundError('resolved dataset manifest path is missing')
+
+    state = _ds_wizard_hydrate_dataset_manifest(state, manifest_path)
+    for key in ('dataset_manifest', 'features_csv', 'labels_csv'):
+        if key in state.hydrated_from:
+            state.hydrated_from[key] = 'librarian_dataset'
+
+    dataset_meta = packet.get('dataset', {}) if isinstance(packet.get('dataset', {}), dict) else {}
+    dataset_label = str(dataset_meta.get('display_name', '') or dataset_meta.get('entry_id', '') or token).strip()
+    access_class = str(packet.get('release_mode', dataset_meta.get('access_class', 'local')) or 'local').strip()
+    lines = [
+        'approved dataset ready: {0}'.format(dataset_label),
+        '- selector: {0}'.format(str(dataset_meta.get('run_id', '') or dataset_meta.get('entry_id', '') or token).strip()),
+        '- access: {0}'.format(access_class),
+        '- manifest: {0}'.format(_ds_wizard_short_path(str(manifest_path))),
+        '- fields: dataset_manifest, features_csv, labels_csv',
+    ]
+    if access_class == 'protected-source':
+        lines.append('- delegated release receipts were recorded for this hydration')
+        receipt_path = str(((packet.get('artifacts', {}) if isinstance(packet.get('artifacts', {}), dict) else {}).get('dataset_access_release_receipt_json', '')) or '').strip()
+        if receipt_path:
+            lines.append('- release receipt: {0}'.format(_ds_wizard_short_path(receipt_path)))
+    else:
+        lines.append('- delegated release not required for this approved local dataset')
+    lines.append('next: validate now or continue filling the remaining wizard fields.')
+
+    state.last_action = 'hydrate:librarian_dataset'
+    _ds_wizard_set_transient_lines(state, lines)
+    return state
+
+
 def _ds_wizard_hydrate_dataset_manifest(state: _DSWizardState, manifest_path: Path) -> _DSWizardState:
     payload = json.loads(manifest_path.read_text(encoding='utf-8'))
     if not isinstance(payload, dict):
         raise ValueError('dataset manifest is not a JSON object')
     state.values['dataset_manifest'] = str(manifest_path)
-    if str(payload.get('features_csv', '')).strip():
-        state.values['features_csv'] = str(payload.get('features_csv')).strip()
+    features_ref = str(payload.get('features_csv', '') or '').strip()
+    if features_ref:
+        features_path = _resolve_existing_reference_path(features_ref, manifest_path.parent)
+        state.values['features_csv'] = str(features_path or features_ref).strip()
         state.hydrated_from['features_csv'] = 'dataset_manifest'
-    if str(payload.get('labels_csv', '')).strip():
-        state.values['labels_csv'] = str(payload.get('labels_csv')).strip()
+    labels_ref = str(payload.get('labels_csv', '') or '').strip()
+    if labels_ref:
+        labels_path = _resolve_existing_reference_path(labels_ref, manifest_path.parent)
+        state.values['labels_csv'] = str(labels_path or labels_ref).strip()
         state.hydrated_from['labels_csv'] = 'dataset_manifest'
     state.hydrated_from['dataset_manifest'] = 'dataset_manifest'
     state.last_action = 'hydrate:dataset_manifest'
@@ -5754,11 +6972,15 @@ def _ds_wizard_hydrate_train_manifest(state: _DSWizardState, manifest_path: Path
         raise ValueError('train manifest is not a JSON object')
     state.values['train_manifest'] = str(manifest_path)
     state.hydrated_from['train_manifest'] = 'train_manifest'
-    if str(payload.get('dataset_manifest_path', '')).strip():
-        state.values['dataset_manifest'] = str(payload.get('dataset_manifest_path')).strip()
+    dataset_manifest_ref = str(payload.get('dataset_manifest_path', '') or '').strip()
+    if dataset_manifest_ref:
+        dataset_manifest_path = _resolve_existing_reference_path(dataset_manifest_ref, manifest_path.parent)
+        state.values['dataset_manifest'] = str(dataset_manifest_path or dataset_manifest_ref).strip()
         state.hydrated_from['dataset_manifest'] = 'train_manifest'
-    if str(payload.get('model_path', '')).strip():
-        state.values['model_path'] = str(payload.get('model_path')).strip()
+    model_path_ref = str(payload.get('model_path', '') or '').strip()
+    if model_path_ref:
+        model_path = _resolve_existing_reference_path(model_path_ref, manifest_path.parent)
+        state.values['model_path'] = str(model_path or model_path_ref).strip()
         state.hydrated_from['model_path'] = 'train_manifest'
     if str(payload.get('model_type', '')).strip():
         state.values['model_type'] = str(payload.get('model_type')).strip()
@@ -5827,10 +7049,10 @@ def _ds_wizard_hydrate_run_ledger(state: _DSWizardState, ledger_path: Path) -> _
 
     dataset_manifest_text = str(data.get('dataset_manifest', '') or '').strip()
     if dataset_manifest_text:
-        state.values['dataset_manifest'] = dataset_manifest_text
+        dataset_manifest_path = _resolve_existing_reference_path(dataset_manifest_text, ledger_path.parent)
+        state.values['dataset_manifest'] = str(dataset_manifest_path or dataset_manifest_text)
         state.hydrated_from['dataset_manifest'] = 'run_ledger'
-        dataset_manifest_path = Path(dataset_manifest_text)
-        if dataset_manifest_path.exists():
+        if dataset_manifest_path is not None:
             try:
                 _ds_wizard_hydrate_dataset_manifest(state, dataset_manifest_path)
             except Exception:
@@ -5838,17 +7060,20 @@ def _ds_wizard_hydrate_run_ledger(state: _DSWizardState, ledger_path: Path) -> _
 
     features_csv_text = str(data.get('features_csv', '') or '').strip()
     if features_csv_text:
-        state.values['features_csv'] = features_csv_text
+        features_csv_path = _resolve_existing_reference_path(features_csv_text, ledger_path.parent)
+        state.values['features_csv'] = str(features_csv_path or features_csv_text)
         state.hydrated_from['features_csv'] = 'run_ledger'
 
     labels_csv_text = str(data.get('labels_csv', '') or '').strip()
     if labels_csv_text:
-        state.values['labels_csv'] = labels_csv_text
+        labels_csv_path = _resolve_existing_reference_path(labels_csv_text, ledger_path.parent)
+        state.values['labels_csv'] = str(labels_csv_path or labels_csv_text)
         state.hydrated_from['labels_csv'] = 'run_ledger'
 
     model_source_text = str(model.get('source', '') or '').strip()
     if model_source_text:
-        state.values['model_path'] = model_source_text
+        model_source_path = _resolve_existing_reference_path(model_source_text, ledger_path.parent)
+        state.values['model_path'] = str(model_source_path or model_source_text)
         state.hydrated_from['model_path'] = 'run_ledger'
 
     state.last_action = 'hydrate:run_ledger'
@@ -5879,11 +7104,195 @@ def _ds_wizard_draft_payload(state: _DSWizardState) -> Dict[str, Any]:
     }
 
 
+def _ds_wizard_draft_ref_display(draft_path: Path) -> str:
+    slot_id = _ds_wizard_draft_slot_id(draft_path)
+    display = _ds_wizard_short_path(str(draft_path))
+    try:
+        resolved = draft_path.resolve()
+        root = _ds_wizard_draft_root().resolve()
+        if slot_id > 0 and resolved.parent == root:
+            return '{0} ({1})'.format(_ds_wizard_draft_slot_label(slot_id), display)
+    except Exception:
+        pass
+    return display
+
+
+def _ds_wizard_matches_preview(matches: List[Dict[str, Any]]) -> str:
+    labels: List[str] = []
+    for row in matches[:4]:
+        if not isinstance(row, dict):
+            continue
+        label = str(row.get('display_name', '') or row.get('selector_token', '') or row.get('entry_id', '')).strip()
+        idx = int(row.get('index', 0) or 0)
+        if idx > 0:
+            label = '{0}:{1}'.format(idx, label or row.get('entry_id', ''))
+        if label:
+            labels.append(label)
+    return ', '.join(labels)
+
+
+def _ds_wizard_resolve_retained_entry(entries: List[Dict[str, Any]], selector: str, label: str) -> Dict[str, Any]:
+    resolved = _ds_resolve_selector_entry(entries, selector)
+    status = str(resolved.get('status', 'missing') or 'missing').strip().lower()
+    if status == 'ok':
+        return dict(resolved.get('entry', {}) or {})
+    if status == 'ambiguous':
+        matches = resolved.get('matches', []) if isinstance(resolved.get('matches', []), list) else []
+        preview = _ds_wizard_matches_preview(matches)
+        if preview:
+            raise ValueError('{0} selector is ambiguous: {1}'.format(label, preview))
+        raise ValueError('{0} selector is ambiguous'.format(label))
+    raise FileNotFoundError('retained {0} selector could not be resolved'.format(label))
+
+
+def _ds_wizard_hydrate_train_reference(state: _DSWizardState, train_ref: str) -> _DSWizardState:
+    token = str(train_ref or '').strip()
+    if not token:
+        raise ValueError('train reference is required')
+
+    direct_path = _resolve_existing_project_path(token)
+    if direct_path is not None:
+        return _ds_wizard_hydrate_train_manifest(state, direct_path)
+
+    entry = _ds_wizard_resolve_retained_entry(_ds_retained_train_entries(), token, 'train')
+    resolver = entry.get('resolver', {}) if isinstance(entry.get('resolver', {}), dict) else {}
+    train_manifest_path = _resolve_existing_project_path(str(resolver.get('train_manifest_path', '') or '').strip())
+    if train_manifest_path is None:
+        raise FileNotFoundError('resolved train manifest path is missing')
+
+    state = _ds_wizard_hydrate_train_manifest(state, train_manifest_path)
+    for key in ('train_manifest', 'dataset_manifest', 'model_path', 'model_type'):
+        if key in state.hydrated_from:
+            state.hydrated_from[key] = 'retained_train'
+    dataset_manifest_ref = str(resolver.get('dataset_manifest_path', '') or state.values.get('dataset_manifest', '') or '').strip()
+    model_path_ref = str(resolver.get('model_path', '') or state.values.get('model_path', '') or '').strip()
+    lines = [
+        'retained train ready: {0}'.format(str(entry.get('display_name', '') or entry.get('selector_token', '') or token).strip()),
+        '- selector: {0}'.format(str(entry.get('selector_token', '') or entry.get('run_id', '') or token).strip()),
+        '- train manifest: {0}'.format(_ds_wizard_short_path(str(train_manifest_path))),
+    ]
+    if dataset_manifest_ref:
+        lines.append('- dataset manifest: {0}'.format(_ds_wizard_short_path(dataset_manifest_ref)))
+    if model_path_ref:
+        lines.append('- model artifact: {0}'.format(_ds_wizard_short_path(model_path_ref)))
+    lines.append('next: validate now or continue filling the remaining wizard fields.')
+    state.last_action = 'hydrate:retained_train'
+    _ds_wizard_set_transient_lines(state, lines)
+    return state
+
+
+def _ds_wizard_hydrate_baseline_reference(state: _DSWizardState, baseline_ref: str) -> _DSWizardState:
+    token = str(baseline_ref or '').strip()
+    if not token:
+        raise ValueError('baseline reference is required')
+
+    direct_path = _resolve_existing_project_path(token)
+    if direct_path is not None:
+        return _ds_wizard_hydrate_baseline_analysis(state, direct_path)
+
+    entry = _ds_wizard_resolve_retained_entry(_ds_retained_baseline_entries(state.source, state.mode), token, 'baseline')
+    resolver = entry.get('resolver', {}) if isinstance(entry.get('resolver', {}), dict) else {}
+    baseline_path = _resolve_existing_project_path(str(resolver.get('baseline_analysis_packet', '') or '').strip())
+    if baseline_path is None:
+        raise FileNotFoundError('resolved baseline packet path is missing')
+
+    state = _ds_wizard_hydrate_baseline_analysis(state, baseline_path)
+    for key in ('baseline_analysis_packet', 'baseline_window_id'):
+        if key in state.hydrated_from:
+            state.hydrated_from[key] = 'retained_baseline'
+    lines = [
+        'retained baseline ready: {0}'.format(str(entry.get('display_name', '') or entry.get('selector_token', '') or token).strip()),
+        '- selector: {0}'.format(str(entry.get('selector_token', '') or token).strip()),
+        '- source/mode: {0}/{1}'.format(str(entry.get('source', state.source) or state.source), str(entry.get('mode', state.mode) or state.mode)),
+        '- packet: {0}'.format(_ds_wizard_short_path(str(baseline_path))),
+    ]
+    baseline_window_id = str(state.values.get('baseline_window_id', '') or '').strip()
+    if baseline_window_id:
+        lines.append('- baseline window: {0}'.format(baseline_window_id))
+    lines.append('next: validate now or continue filling the remaining wizard fields.')
+    state.last_action = 'hydrate:retained_baseline'
+    _ds_wizard_set_transient_lines(state, lines)
+    return state
+
+
+def _ds_wizard_hydrate_run_reference(state: _DSWizardState, run_ref: str) -> _DSWizardState:
+    token = str(run_ref or '').strip()
+    if not token:
+        raise ValueError('run reference is required')
+
+    direct_path = _resolve_existing_project_path(token)
+    if direct_path is not None:
+        return _ds_wizard_hydrate_run_ledger(state, direct_path)
+
+    entry = _ds_wizard_resolve_retained_entry(_ds_retained_run_entries(), token, 'run')
+    resolver = entry.get('resolver', {}) if isinstance(entry.get('resolver', {}), dict) else {}
+    run_json_path = _resolve_existing_project_path(str(resolver.get('run_json_path', '') or '').strip())
+    if run_json_path is None:
+        raise FileNotFoundError('resolved run ledger path is missing')
+
+    state = _ds_wizard_hydrate_run_ledger(state, run_json_path)
+    for key in ('run_id', 'max_fpr', 'dataset_manifest', 'features_csv', 'labels_csv', 'model_path'):
+        if key in state.hydrated_from:
+            state.hydrated_from[key] = 'retained_run'
+    lines = [
+        'retained run ready: {0}'.format(str(entry.get('display_name', '') or entry.get('selector_token', '') or token).strip()),
+        '- selector: {0}'.format(str(entry.get('selector_token', '') or entry.get('run_id', '') or token).strip()),
+        '- run ledger: {0}'.format(_ds_wizard_short_path(str(run_json_path))),
+        '- fields: run_id, max_fpr, dataset_manifest, features_csv, labels_csv, model_path',
+        'next: validate now or continue filling the remaining wizard fields.',
+    ]
+    state.last_action = 'hydrate:retained_run'
+    _ds_wizard_set_transient_lines(state, lines)
+    return state
+
+
+def _ds_wizard_resolve_draft_path(draft_ref: str, *, for_save: bool, state: Optional[_DSWizardState] = None) -> Path:
+    token = str(draft_ref or '').strip()
+    if for_save and token in ('', _DS_WIZARD_AUTO_DRAFT_TOKEN, 'auto', 'next', 'slot-next'):
+        current_slot_id = _ds_wizard_current_draft_slot_id(state) if state is not None else 0
+        if current_slot_id > 0:
+            return _ds_wizard_draft_slot_path(current_slot_id)
+        return _ds_wizard_draft_slot_path(_ds_wizard_next_draft_slot_id())
+    if not for_save and not token:
+        current_slot_id = _ds_wizard_current_draft_slot_id(state) if state is not None else 0
+        if current_slot_id > 0:
+            draft_path = _ds_wizard_draft_slot_path(current_slot_id)
+            if draft_path.exists():
+                return draft_path
+        raise FileNotFoundError('draft reference is required')
+
+    slot_id = _ds_wizard_parse_slot_token(token)
+    if slot_id > 0:
+        draft_path = _ds_wizard_draft_slot_path(slot_id)
+        if not for_save and not draft_path.exists():
+            raise FileNotFoundError('canonical draft slot is empty: {0}'.format(_ds_wizard_draft_slot_label(slot_id)))
+        return draft_path
+
+    if for_save:
+        raw_path = Path(token)
+        return raw_path if raw_path.is_absolute() else (_project_root() / raw_path)
+
+    draft_path = _resolve_existing_project_path(token)
+    if draft_path is not None:
+        return draft_path
+    raise FileNotFoundError('draft reference could not be resolved')
+
+
+def _ds_wizard_save_draft_reference(state: _DSWizardState, draft_ref: str) -> _DSWizardState:
+    draft_path = _ds_wizard_resolve_draft_path(draft_ref, for_save=True, state=state)
+    return _ds_wizard_save_draft(state, draft_path)
+
+
+def _ds_wizard_load_draft_reference(draft_ref: str, state: Optional[_DSWizardState] = None) -> _DSWizardState:
+    draft_path = _ds_wizard_resolve_draft_path(draft_ref, for_save=False, state=state)
+    return _ds_wizard_load_draft(draft_path)
+
+
 def _ds_wizard_save_draft(state: _DSWizardState, draft_path: Path) -> _DSWizardState:
     _write_json_file(draft_path, _ds_wizard_draft_payload(state))
     state.draft_path = str(draft_path)
     state.last_action = 'draft:save'
-    _ds_wizard_set_transient_lines(state, ['draft saved: {0}'.format(_ds_wizard_short_path(str(draft_path)))])
+    _ds_wizard_set_transient_lines(state, ['draft saved: {0}'.format(_ds_wizard_draft_ref_display(draft_path))])
     return state
 
 
@@ -5937,7 +7346,7 @@ def _ds_wizard_load_draft(draft_path: Path) -> _DSWizardState:
         state.active_group = payload_group
 
     state.last_action = 'draft:load'
-    _ds_wizard_set_transient_lines(state, ['draft loaded: {0}'.format(_ds_wizard_short_path(str(draft_path)))])
+    _ds_wizard_set_transient_lines(state, ['draft loaded: {0}'.format(_ds_wizard_draft_ref_display(draft_path))])
     return state
 
 
@@ -5977,8 +7386,9 @@ def _ds_wizard_hydrate_latest_context(state: _DSWizardState) -> _DSWizardState:
         state,
         [
             'latest context loaded: source={0}, mode={1}'.format(state.source, state.mode),
-            'Latest retained baseline context was attached automatically.' if latest_baseline is not None else 'No retained baseline packet was found for the current source/mode.',
-            'note: hydrate latest does not discover or load datasets/models; use hydrate dataset, hydrate train, or hydrate run for DS artifacts.',
+            'baseline attached: {0}'.format(_ds_wizard_short_path(str(latest_baseline))) if latest_baseline is not None else 'baseline attached: none for the current source/mode',
+            'dataset note: hydrate latest does not choose a dataset; use datasets or hydrate dataset <selector>.',
+            'artifact note: use hydrate train or hydrate run for retained DS artifacts beyond baseline context.',
         ],
     )
     return state
@@ -6022,6 +7432,142 @@ def _ds_wizard_decision_state(state: _DSWizardState) -> str:
     return 'ready' if len(_ds_wizard_validation_issues(state)) == 0 else 'needs-input'
 
 
+def _ds_wizard_preview_run_id(state: _DSWizardState) -> str:
+    from analysis._util import sanitize_run_id
+
+    token = sanitize_run_id(str(state.values.get('run_id', '') or '').strip())
+    return token or 'auto-run-id'
+
+
+def _ds_wizard_output_preview(state: _DSWizardState) -> Dict[str, Any]:
+    from analysis._util import canonical_ds_workflow_name, default_analysis_dir, normalize_repo_or_absolute_path
+
+    workflow = canonical_ds_workflow_name(str(state.workflow or '').strip())
+    if not workflow or workflow == 'run':
+        return {}
+
+    project_root = _project_root()
+    run_id = _ds_wizard_preview_run_id(state)
+    analysis_root = default_analysis_dir(Path(__file__))
+    canonical_run_root = analysis_root / 'runs' / workflow / run_id
+    preview: Dict[str, Any] = {
+        'workflow': workflow,
+        'run_id': run_id,
+        'canonical_run_root': normalize_repo_or_absolute_path(canonical_run_root, project_root),
+        'effective_policy': 'canonical-default',
+        'override_value': '',
+        'effective_run_root': normalize_repo_or_absolute_path(canonical_run_root, project_root),
+        'report_json': normalize_repo_or_absolute_path(canonical_run_root / 'report' / 'report.json', project_root),
+        'report_md': normalize_repo_or_absolute_path(canonical_run_root / 'report' / 'report.md', project_root),
+        'artifact_targets': [],
+    }
+
+    def _render_path(path: Path) -> str:
+        return normalize_repo_or_absolute_path(path, project_root)
+
+    if workflow == 'build':
+        bundle, dataset_dir = _ds_prepare_bundle_for_artifact('build', str(state.values.get('out_dir', '')), 'dataset', ['datasets'], run_id=run_id)
+        preview['override_value'] = str(state.values.get('out_dir', '') or '').strip()
+        preview['effective_policy'] = 'power-override' if bundle.run_root_policy == 'explicit-override' else 'canonical-default'
+        preview['effective_run_root'] = _render_path(bundle.run_root)
+        preview['report_json'] = _render_path(bundle.run_root / 'report' / 'report.json')
+        preview['report_md'] = _render_path(bundle.run_root / 'report' / 'report.md')
+        preview['artifact_targets'] = [
+            ('dataset dir', _render_path(dataset_dir)),
+            ('dataset manifest', _render_path(dataset_dir / 'dataset_manifest.json')),
+            ('features csv', _render_path(dataset_dir / 'features.csv')),
+        ]
+        return preview
+    if workflow == 'train':
+        bundle, model_dir = _ds_prepare_bundle_for_artifact('train', str(state.values.get('out_dir', '')), 'model', ['models'], run_id=run_id)
+        preview['override_value'] = str(state.values.get('out_dir', '') or '').strip()
+        preview['effective_policy'] = 'power-override' if bundle.run_root_policy == 'explicit-override' else 'canonical-default'
+        preview['effective_run_root'] = _render_path(bundle.run_root)
+        preview['report_json'] = _render_path(bundle.run_root / 'report' / 'report.json')
+        preview['report_md'] = _render_path(bundle.run_root / 'report' / 'report.md')
+        preview['artifact_targets'] = [
+            ('model dir', _render_path(model_dir)),
+            ('train manifest', _render_path(model_dir / 'train_manifest.json')),
+            ('metrics path', _render_path(model_dir / 'metrics.json')),
+        ]
+        return preview
+    if workflow == 'evaluate':
+        bundle, evaluation_dir = _ds_prepare_bundle_for_artifact('evaluate', str(state.values.get('out_dir', '')), 'evaluation', ['eval'], run_id=run_id)
+        preview['override_value'] = str(state.values.get('out_dir', '') or '').strip()
+        preview['effective_policy'] = 'power-override' if bundle.run_root_policy == 'explicit-override' else 'canonical-default'
+        preview['effective_run_root'] = _render_path(bundle.run_root)
+        preview['report_json'] = _render_path(bundle.run_root / 'report' / 'report.json')
+        preview['report_md'] = _render_path(bundle.run_root / 'report' / 'report.md')
+        preview['artifact_targets'] = [
+            ('evaluation dir', _render_path(evaluation_dir)),
+            ('run json', _render_path(evaluation_dir / 'run.json')),
+            ('run md', _render_path(evaluation_dir / 'run.md')),
+        ]
+        return preview
+    if workflow == 'score':
+        override_value = str(state.values.get('scores_out', '') or '').strip()
+        target_out_file = Path(override_value) if override_value else (canonical_run_root / 'scoring' / 'scores.csv')
+        if override_value:
+            parent_name = target_out_file.parent.name.strip().lower()
+            effective_run_root = target_out_file.parent.parent if parent_name in ('score', 'scores', 'scoring') else target_out_file.parent
+            scoring_dir = target_out_file.parent
+            preview['effective_policy'] = 'power-override'
+        else:
+            effective_run_root = canonical_run_root
+            scoring_dir = effective_run_root / 'scoring'
+        preview['override_value'] = override_value
+        preview['effective_run_root'] = _render_path(effective_run_root)
+        preview['report_json'] = _render_path(effective_run_root / 'report' / 'report.json')
+        preview['report_md'] = _render_path(effective_run_root / 'report' / 'report.md')
+        preview['artifact_targets'] = [
+            ('scoring dir', _render_path(scoring_dir)),
+            ('scores csv', _render_path(target_out_file)),
+        ]
+        return preview
+    if workflow in ('demo', 'pipeline'):
+        override_value = str(state.values.get('out_dir', '') or '').strip()
+        effective_run_root = Path(override_value) if override_value else canonical_run_root
+        preview['override_value'] = override_value
+        preview['effective_policy'] = 'power-override' if override_value else 'canonical-default'
+        preview['effective_run_root'] = _render_path(effective_run_root)
+        preview['report_json'] = _render_path(effective_run_root / 'report' / 'report.json')
+        preview['report_md'] = _render_path(effective_run_root / 'report' / 'report.md')
+        artifact_targets: List[Tuple[str, str]] = [
+            ('dataset dir', _render_path(effective_run_root / 'dataset')),
+            ('models dir', _render_path(effective_run_root / 'models')),
+            ('evaluation dir', _render_path(effective_run_root / 'evaluation')),
+        ]
+        if workflow == 'pipeline':
+            artifact_targets.append(('scoring dir', _render_path(effective_run_root / 'scoring')))
+        preview['artifact_targets'] = artifact_targets
+        return preview
+    return preview
+
+
+def _ds_wizard_output_preview_lines(state: _DSWizardState) -> List[str]:
+    preview = _ds_wizard_output_preview(state)
+    if not preview:
+        return ['choose a workflow first to preview the canonical DS output layout.']
+
+    lines = [
+        'output policy: {0}'.format('power override' if preview.get('effective_policy') == 'power-override' else 'canonical default'),
+        'canonical run root: {0}'.format(str(preview.get('canonical_run_root', ''))),
+        'effective run root: {0}'.format(str(preview.get('effective_run_root', ''))),
+        'report json: {0}'.format(str(preview.get('report_json', ''))),
+        'report md: {0}'.format(str(preview.get('report_md', ''))),
+    ]
+    override_value = str(preview.get('override_value', '') or '').strip()
+    if override_value:
+        lines.append('active override: {0}'.format(override_value))
+    for label, value in preview.get('artifact_targets', []) if isinstance(preview.get('artifact_targets', []), list) else []:
+        lines.append('{0}: {1}'.format(label, value))
+    if override_value:
+        lines.append('override note: clear the override field to return to the canonical DS run/report spine.')
+    else:
+        lines.append('override note: set out_dir <folder> or set scores_out <file> only when intentionally bypassing canonical outputs.')
+    return lines
+
+
 def _ds_wizard_command_preview(state: _DSWizardState) -> str:
     workflow = str(state.workflow or '').strip()
     if workflow == 'build':
@@ -6033,12 +7579,11 @@ def _ds_wizard_command_preview(state: _DSWizardState) -> str:
         parts.extend(['--seed', str(state.values.get('seed', 42))])
         return ' '.join(parts)
     if workflow == 'train':
-        return 'observerctl ds train --dataset {0} --out-dir {1} --model-type {2} --seed {3}'.format(
-            str(state.values.get('dataset_manifest', '')),
-            str(state.values.get('out_dir', '')),
-            str(state.values.get('model_type', 'supervised')),
-            str(state.values.get('seed', 42)),
-        )
+        parts = ['observerctl', 'ds', 'train', '--dataset', str(state.values.get('dataset_manifest', ''))]
+        if _ds_wizard_has_value(state.values.get('out_dir')):
+            parts.extend(['--out-dir', str(state.values.get('out_dir'))])
+        parts.extend(['--model-type', str(state.values.get('model_type', 'supervised')), '--seed', str(state.values.get('seed', 42))])
+        return ' '.join(parts)
     if workflow == 'evaluate':
         parts = ['observerctl', 'ds', 'evaluate', '--features-csv', str(state.values.get('features_csv', ''))]
         if _ds_wizard_has_value(state.values.get('labels_csv')):
@@ -6054,11 +7599,16 @@ def _ds_wizard_command_preview(state: _DSWizardState) -> str:
         parts.extend(['--max-fpr', str(state.values.get('max_fpr', 0.01))])
         return ' '.join(parts)
     if workflow == 'score':
-        return 'observerctl ds score --dataset {0} --model {1} --out-file {2}'.format(
-            str(state.values.get('dataset_manifest', '')),
-            str(state.values.get('train_manifest') or state.values.get('model_path', '')),
-            str(state.values.get('scores_out', '')),
-        )
+        parts = [
+            'observerctl',
+            'ds',
+            'score',
+            '--dataset', str(state.values.get('dataset_manifest', '')),
+            '--model', str(state.values.get('train_manifest') or state.values.get('model_path', '')),
+        ]
+        if _ds_wizard_has_value(state.values.get('scores_out')):
+            parts.extend(['--out-file', str(state.values.get('scores_out'))])
+        return ' '.join(parts)
     if workflow == 'run-demo':
         parts = ['observerctl', 'ds', 'run', 'demo']
         if _ds_wizard_has_value(state.values.get('out_dir')):
@@ -6090,18 +7640,34 @@ def _ds_wizard_summary_rows(state: _DSWizardState) -> List[str]:
     ]
     if state.source != 'sim' or state.mode != 'watch':
         rows.append('context: {0} / {1}'.format(str(state.source or 'sim'), str(state.mode or 'watch')))
-        
+
     if state.workflow:
-        for key in ('input_paths', 'dataset_manifest', 'out_dir', 'model_type', 'model_path', 'max_fpr', 'run_id', 'baseline_window_id'):
+        summary_fields: List[Tuple[str, str, bool]] = [
+            ('inputs', 'input_paths', False),
+            ('dataset', 'dataset_manifest', True),
+            ('features', 'features_csv', True),
+            ('labels', 'labels_csv', True),
+            ('output', 'out_dir', True),
+            ('model_type', 'model_type', False),
+            ('model', 'model_path', True),
+            ('max_fpr', 'max_fpr', False),
+            ('run_id', 'run_id', False),
+            ('baseline_window', 'baseline_window_id', False),
+        ]
+        for label, key, shorten in summary_fields:
             value = state.values.get(key)
             if not _ds_wizard_has_value(value):
                 continue
-            rows.append('{0}: {1}'.format(key, _ds_wizard_stringify_value(value)))
-            
+            if isinstance(value, list):
+                rendered = _ds_wizard_stringify_value([_ds_wizard_short_path(str(item)) if shorten else str(item) for item in value])
+            else:
+                rendered = _ds_wizard_short_path(str(value)) if shorten else _ds_wizard_stringify_value(value)
+            rows.append('{0}: {1}'.format(label, rendered))
+
     if str(state.run_ledger_path or '').strip():
-        rows.append('run_ledger: {0}'.format(str(state.run_ledger_path)))
+        rows.append('run_ledger: {0}'.format(_ds_wizard_short_path(str(state.run_ledger_path))))
     if str(state.draft_path or '').strip():
-        rows.append('draft: {0}'.format(str(state.draft_path)))
+        rows.append('draft: {0}'.format(_ds_wizard_short_path(str(state.draft_path))))
     return rows
 
 
@@ -6219,15 +7785,25 @@ def _ds_wizard_build_pane(state: _DSWizardState) -> List[str]:
             lines.append('')
             lines.append('utilities:')
             lines.append('- validate                 refresh readiness and blockers')
-            lines.append('- save draft <file>        save the current wizard state')
-            lines.append('- load draft <file>        restore a saved wizard state')
+            lines.append('- save draft               save to the next canonical draft slot')
+            lines.append('- save draft <slot|file>   save to a canonical slot or explicit path')
+            lines.append('- load draft <slot|file>   restore a saved wizard state')
+            lines.append('')
+            lines.append('retained context:')
             lines.append('- hydrate latest           load source/mode and latest retained baseline context')
-            lines.append('- hydrate dataset <file>   load dataset manifest context')
-            lines.append('- hydrate train <file>     load train manifest context')
+            lines.append('- trains                   review retained train/model selectors')
+            lines.append('- runs                     review retained evaluation run selectors')
+            lines.append('- baselines                review retained baseline selectors for the current source/mode')
+            lines.append('- drafts                   review canonical wizard draft slots')
+            lines.append('- hydrate train <selector|file>     load train manifest context')
             lines.append('- hydrate model <file>     link a model artifact')
-            lines.append('- hydrate baseline <file>  attach a retained baseline packet to reports')
-            lines.append('- hydrate run <file>       load a prior evaluation run ledger')
-            lines.append('- note                     hydrate latest does not load datasets or models')
+            lines.append('- hydrate baseline <selector|file>  attach a retained baseline packet to reports')
+            lines.append('- hydrate run <selector|file>       load a prior evaluation run ledger')
+            lines.append('')
+            lines.append('approved datasets:')
+            lines.append('- datasets                 review approved dataset selectors')
+            lines.append('- hydrate dataset <selector|file>   load dataset manifest context')
+            lines.append('- note                     hydrate latest does not load datasets or models by itself')
         elif current_section == 'check':
             lines.append('validation:')
             issues = _ds_wizard_validation_issues(state)
@@ -6257,11 +7833,22 @@ def _ds_wizard_build_pane(state: _DSWizardState) -> List[str]:
         if current_section == 'report':
             lines.append('report context:')
             lines.append('These optional fields annotate the outputs that will be written after the run.')
-            lines.append("Use 'hydrate baseline <packet.json>' or 'hydrate run <run.json>' to import retained context.")
+            lines.append("Use 'baselines' or 'runs' to review retained selector surfaces before hydrating report context.")
+        elif current_section == 'out':
+            lines.append('canonical outputs:')
+            for line in _ds_wizard_output_preview_lines(state):
+                lines.append('- {0}'.format(line))
+            power_fields = _ds_wizard_fields_for_section(state, current_section)
+            if power_fields:
+                lines.append('')
+                lines.append('power overrides:')
+                for idx, spec in enumerate(power_fields, start=1):
+                    lines.append('{0}. {1:<22} {2:<8} {3}'.format(idx, spec.key, _ds_wizard_status_token(state, spec), _ds_wizard_stringify_value(_ds_wizard_field_value(state, spec.key))))
         else:
             lines.append('{0}:'.format(current_section))
-        for idx, spec in enumerate(_ds_wizard_fields_for_section(state, current_section), start=1):
-            lines.append('{0}. {1:<22} {2:<8} {3}'.format(idx, spec.key, _ds_wizard_status_token(state, spec), _ds_wizard_stringify_value(_ds_wizard_field_value(state, spec.key))))
+        if current_section != 'out':
+            for idx, spec in enumerate(_ds_wizard_fields_for_section(state, current_section), start=1):
+                lines.append('{0}. {1:<22} {2:<8} {3}'.format(idx, spec.key, _ds_wizard_status_token(state, spec), _ds_wizard_stringify_value(_ds_wizard_field_value(state, spec.key))))
         guidance_lines = _ds_wizard_inline_guidance_lines(state, current_section)
         if guidance_lines:
             lines.append('')
@@ -6487,26 +8074,26 @@ def _ds_wizard_packet(state: _DSWizardState, interactive: bool = False) -> Dict[
 def _ds_wizard_apply_cli_seed(state: _DSWizardState, args: argparse.Namespace) -> _DSWizardState:
     load_draft_path = str(getattr(args, 'load_draft', '') or '').strip()
     if load_draft_path:
-        state = _ds_wizard_load_draft(Path(load_draft_path))
+        state = _ds_wizard_load_draft_reference(load_draft_path, state=state)
     if str(getattr(args, 'workflow', '') or '').strip():
         _ds_wizard_set_value(state, 'workflow', getattr(args, 'workflow'))
     if bool(getattr(args, 'hydrate_latest_context', False)):
         _ds_wizard_hydrate_latest_context(state)
     dataset_path = str(getattr(args, 'hydrate_dataset', '') or '').strip()
     if dataset_path:
-        _ds_wizard_hydrate_dataset_manifest(state, Path(dataset_path))
+        _ds_wizard_hydrate_dataset_reference(state, dataset_path)
     train_path = str(getattr(args, 'hydrate_train', '') or '').strip()
     if train_path:
-        _ds_wizard_hydrate_train_manifest(state, Path(train_path))
+        _ds_wizard_hydrate_train_reference(state, train_path)
     model_path = str(getattr(args, 'hydrate_model', '') or '').strip()
     if model_path:
         _ds_wizard_hydrate_model_path(state, Path(model_path))
     baseline_path = str(getattr(args, 'hydrate_baseline_analysis', '') or '').strip()
     if baseline_path:
-        _ds_wizard_hydrate_baseline_analysis(state, Path(baseline_path))
+        _ds_wizard_hydrate_baseline_reference(state, baseline_path)
     run_path = str(getattr(args, 'hydrate_run', '') or '').strip()
     if run_path:
-        _ds_wizard_hydrate_run_ledger(state, Path(run_path))
+        _ds_wizard_hydrate_run_reference(state, run_path)
     for item in list(getattr(args, 'set_items', []) or []):
         text = str(item or '').strip()
         if '=' not in text:
@@ -6554,22 +8141,36 @@ def _ds_wizard_handle_command(state: _DSWizardState, command: str) -> Tuple[_DSW
         _ds_wizard_set_transient_lines(state, ["hint: available sections are shown on screen. Use 'open <section>' to navigate."])
         return state, None, False
     if lowered in ('datasets', 'dataset list', 'list datasets'):
-        _ds_wizard_set_transient_lines(
-            state,
-            [
-                'dataset catalog/listing is not wired into this wizard yet.',
-                'for now, use hydrate dataset <manifest.json> or set dataset_manifest <path>.',
-            ],
-        )
+        _ds_wizard_set_transient_lines(state, _ds_wizard_dataset_selector_lines())
         return state, None, False
+    if lowered in ('trains', 'train list', 'list trains'):
+        _ds_wizard_set_transient_lines(state, _ds_wizard_train_selector_lines())
+        return state, None, False
+    if lowered in ('runs', 'run list', 'list runs'):
+        _ds_wizard_set_transient_lines(state, _ds_wizard_run_selector_lines())
+        return state, None, False
+    if lowered in ('baselines', 'baseline list', 'list baselines'):
+        _ds_wizard_set_transient_lines(state, _ds_wizard_baseline_selector_lines(state))
+        return state, None, False
+    if lowered in ('drafts', 'draft list', 'list drafts'):
+        _ds_wizard_set_transient_lines(state, _ds_wizard_draft_slot_lines())
+        return state, None, False
+    if lowered == 'save draft':
+        return _ds_wizard_save_draft_reference(state, ''), None, False
     if lowered.startswith('save draft '):
         draft_arg = text[len('save draft '):].strip()
         if draft_arg:
-            return _ds_wizard_save_draft(state, Path(draft_arg)), None, False
+            return _ds_wizard_save_draft_reference(state, draft_arg), None, False
+    if lowered == 'load draft':
+        try:
+            return _ds_wizard_load_draft_reference('', state=state), None, False
+        except Exception:
+            _ds_wizard_set_transient_lines(state, ['load draft needs a slot or file path. Use drafts to review canonical slots.'])
+            return state, None, False
     if lowered.startswith('load draft '):
         draft_arg = text[len('load draft '):].strip()
         if draft_arg:
-            return _ds_wizard_load_draft(Path(draft_arg)), None, False
+            return _ds_wizard_load_draft_reference(draft_arg, state=state), None, False
     if lowered == 'cmd':
         return _ds_wizard_open_section(state, 'cmd'), None, False
     if lowered == 'execute':
@@ -6607,17 +8208,37 @@ def _ds_wizard_handle_command(state: _DSWizardState, command: str) -> Tuple[_DSW
             target = payload[1]
             arg = payload[2] if len(payload) > 2 else ''
             if target == 'dataset' and arg:
-                return _ds_wizard_hydrate_dataset_manifest(state, Path(arg)), None, False
+                try:
+                    return _ds_wizard_hydrate_dataset_reference(state, arg), None, False
+                except Exception as exc:
+                    _ds_wizard_set_transient_lines(state, ['hydrate dataset failed: {0}'.format(str(exc) or arg)])
+                    return state, None, False
             if target == 'train' and arg:
-                return _ds_wizard_hydrate_train_manifest(state, Path(arg)), None, False
+                try:
+                    return _ds_wizard_hydrate_train_reference(state, arg), None, False
+                except Exception as exc:
+                    _ds_wizard_set_transient_lines(state, ['hydrate train failed: {0}'.format(str(exc) or arg)])
+                    return state, None, False
             if target == 'model' and arg:
-                return _ds_wizard_hydrate_model_path(state, Path(arg)), None, False
+                try:
+                    return _ds_wizard_hydrate_model_path(state, Path(arg)), None, False
+                except Exception as exc:
+                    _ds_wizard_set_transient_lines(state, ['hydrate model failed: {0}'.format(str(exc) or arg)])
+                    return state, None, False
             if target == 'baseline' and arg:
-                return _ds_wizard_hydrate_baseline_analysis(state, Path(arg)), None, False
+                try:
+                    return _ds_wizard_hydrate_baseline_reference(state, arg), None, False
+                except Exception as exc:
+                    _ds_wizard_set_transient_lines(state, ['hydrate baseline failed: {0}'.format(str(exc) or arg)])
+                    return state, None, False
             if target == 'latest':
                 return _ds_wizard_hydrate_latest_context(state), None, False
             if target == 'run' and arg:
-                return _ds_wizard_hydrate_run_ledger(state, Path(arg)), None, False
+                try:
+                    return _ds_wizard_hydrate_run_reference(state, arg), None, False
+                except Exception as exc:
+                    _ds_wizard_set_transient_lines(state, ['hydrate run failed: {0}'.format(str(exc) or arg)])
+                    return state, None, False
     if text.isdigit():
         idx = int(text)
         if state.active_page == 'landing' and 1 <= idx <= len(_DS_WIZARD_LANDING_CHOICES):
@@ -6650,7 +8271,7 @@ def _ds_wizard(args: argparse.Namespace) -> Dict[str, Any]:
     state = _ds_wizard_apply_cli_seed(state, args)
     save_draft_path = str(getattr(args, 'save_draft', '') or '').strip()
     if save_draft_path:
-        _ds_wizard_save_draft(state, Path(save_draft_path))
+        _ds_wizard_save_draft_reference(state, save_draft_path)
     if bool(getattr(args, 'execute', False)):
         return _ds_wizard_attempt_execute(state)
     interactive = bool(sys.stdin.isatty() and not bool(getattr(args, 'json', False)))
@@ -6676,6 +8297,197 @@ def _ds_default_analysis_dir() -> Path:
     return default_analysis_dir(Path(__file__))
 
 
+def _ds_artifact_strings(artifact_paths: Mapping[str, Optional[Path]]) -> Dict[str, str]:
+    rendered: Dict[str, str] = {}
+    for key, value in artifact_paths.items():
+        rendered[str(key)] = str(value).replace('\\', '/') if value is not None else ''
+    return rendered
+
+
+def _ds_visual_artifact_paths(visual_state: Mapping[str, Any]) -> Dict[str, Path]:
+    artifact_paths: Dict[str, Path] = {}
+    if not isinstance(visual_state, Mapping):
+        return artifact_paths
+    for figure in list(visual_state.get('figures', []) or []):
+        if not isinstance(figure, Mapping):
+            continue
+        figure_id = str(figure.get('id', '') or '').strip()
+        figure_path = figure.get('path')
+        if not figure_id or figure_path in ('', None):
+            continue
+        artifact_paths['{0}_png'.format(figure_id)] = Path(str(figure_path))
+    return artifact_paths
+
+
+def _ds_positive_prediction_count(counts: Any) -> int:
+    if not isinstance(counts, Mapping):
+        return 0
+    if 'flagged' in counts:
+        try:
+            return int(float(counts.get('flagged', 0) or 0))
+        except (TypeError, ValueError):
+            return 0
+    total = 0
+    for key in ('tp', 'fp'):
+        try:
+            total += int(float(counts.get(key, 0) or 0))
+        except (TypeError, ValueError):
+            continue
+    return int(total)
+
+
+def _ds_total_prediction_count(counts: Any) -> int:
+    if not isinstance(counts, Mapping):
+        return 0
+    if 'total' in counts:
+        try:
+            return int(float(counts.get('total', 0) or 0))
+        except (TypeError, ValueError):
+            return 0
+    total = 0
+    for key in ('tp', 'fp', 'tn', 'fn'):
+        try:
+            total += int(float(counts.get(key, 0) or 0))
+        except (TypeError, ValueError):
+            continue
+    return int(total)
+
+
+def _ds_optional_float(value: Any) -> Optional[float]:
+    if value in ('', None):
+        return None
+    try:
+        return float(value)
+    except (TypeError, ValueError):
+        return None
+
+
+def _ds_prepare_bundle_for_artifact(
+    workflow: str,
+    out_dir: str,
+    artifact_dir_name: str,
+    aliases: List[str],
+    run_id: str = '',
+):
+    from analysis._util import resolve_run_root_and_artifact_dir
+    from analysis.report_pack import prepare_report_bundle
+
+    explicit_path = Path(str(out_dir).strip()) if str(out_dir).strip() else None
+    explicit_run_root, explicit_artifact_dir = resolve_run_root_and_artifact_dir(explicit_path, artifact_dir_name, aliases)
+    bundle = prepare_report_bundle(
+        Path(__file__),
+        workflow,
+        explicit_run_root=explicit_run_root,
+        run_id=str(run_id or '').strip(),
+    )
+    target_dir = explicit_artifact_dir if explicit_artifact_dir is not None else bundle.artifact_dirs.get(artifact_dir_name, bundle.run_root / artifact_dir_name)
+    bundle.artifact_dirs[artifact_dir_name] = target_dir
+    return bundle, target_dir
+
+
+def _ds_prepare_bundle_for_score(out_file: str):
+    from analysis.report_pack import prepare_report_bundle
+
+    explicit_out_file = Path(str(out_file).strip()) if str(out_file).strip() else None
+    explicit_run_root = None
+    target_out_file = None
+    target_scoring_dir = None
+    if explicit_out_file is not None:
+        parent_name = explicit_out_file.parent.name.strip().lower()
+        explicit_run_root = explicit_out_file.parent.parent if parent_name in ('score', 'scores', 'scoring') else explicit_out_file.parent
+        target_out_file = explicit_out_file
+        target_scoring_dir = explicit_out_file.parent
+    bundle = prepare_report_bundle(Path(__file__), 'score', explicit_run_root=explicit_run_root)
+    if target_out_file is None:
+        target_scoring_dir = bundle.artifact_dirs.get('scoring', bundle.run_root / 'scoring')
+        target_out_file = target_scoring_dir / 'scores.csv'
+    if target_scoring_dir is None:
+        target_scoring_dir = bundle.run_root / 'scoring'
+    bundle.artifact_dirs['scoring'] = target_scoring_dir
+    return bundle, target_out_file
+
+
+def _ds_finalize_run_packet(
+    packet: Dict[str, Any],
+    *,
+    bundle,
+    artifact_paths: Mapping[str, Optional[Path]],
+    context: Optional[Dict[str, Any]] = None,
+    lineage: Optional[Dict[str, Any]] = None,
+) -> Dict[str, Any]:
+    from calamum_librarian import refresh_librarian_dataset_catalog_from_run_manifest
+    from analysis.report_aggregate import append_ds_run_index, publication_eligibility_reasons, refresh_tracked_ds_publication
+    from analysis.report_pack import write_report_bundle
+
+    final_packet = dict(packet)
+    final_packet['run_id'] = str(bundle.run_id)
+    final_packet['artifacts'] = dict(final_packet.get('artifacts', {}))
+
+    report_bundle = write_report_bundle(
+        project_anchor=Path(__file__),
+        bundle=bundle,
+        packet=final_packet,
+        artifact_paths=artifact_paths,
+        context=context or {},
+        lineage=lineage or {},
+    )
+    aggregate_state = append_ds_run_index(
+        project_anchor=Path(__file__),
+        manifest_payload=report_bundle['manifest'],
+    )
+    dataset_refresh = refresh_librarian_dataset_catalog_from_run_manifest(
+        project_anchor=_project_anchor(),
+        manifest_payload=report_bundle['manifest'],
+    )
+    publication_state = {
+        'decision': 'skipped',
+        'reason_codes': publication_eligibility_reasons(
+            project_anchor=Path(__file__),
+            manifest_payload=report_bundle['manifest'],
+        ),
+    }
+    if len(list(publication_state.get('reason_codes', []))) == 0:
+        publication_state = refresh_tracked_ds_publication(
+            project_anchor=Path(__file__),
+            current_manifest_payload=report_bundle['manifest'],
+        )
+
+    final_packet['artifacts'].update({
+        'run_root': report_bundle['paths']['run_root'],
+        'report_json': report_bundle['paths']['report_json'],
+        'report_md': report_bundle['paths']['report_md'],
+        'report_manifest_json': report_bundle['paths']['manifest_json'],
+        'ds_run_index_jsonl': aggregate_state['ledger_path'],
+        'ds_latest_json': aggregate_state['latest_index_path'],
+    })
+    if isinstance(dataset_refresh, dict) and bool(dataset_refresh.get('catalog_updated')):
+        final_packet['artifacts'].update({
+            'librarian_dataset_manifest_json': str(dataset_refresh.get('snapshot_path', '') or ''),
+            'librarian_dataset_catalog_jsonl': str(dataset_refresh.get('catalog_path', '') or ''),
+        })
+    if str(publication_state.get('decision', '') or '').strip().lower() == 'go':
+        aggregate_paths = publication_state.get('aggregate_paths', {}) if isinstance(publication_state.get('aggregate_paths', {}), dict) else {}
+        current_publication = publication_state.get('current_run', {}) if isinstance(publication_state.get('current_run', {}), dict) else {}
+        final_packet['artifacts'].update({
+            'tracked_ds_index_md': str(aggregate_paths.get('index_md', '') or ''),
+            'tracked_ds_latest_json': str(aggregate_paths.get('latest_json', '') or ''),
+            'tracked_ds_latest_md': str(aggregate_paths.get('latest_md', '') or ''),
+            'tracked_ds_by_workflow_json': str(aggregate_paths.get('by_workflow_json', '') or ''),
+            'tracked_ds_by_workflow_md': str(aggregate_paths.get('by_workflow_md', '') or ''),
+            'tracked_ds_thresholds_json': str(aggregate_paths.get('thresholds_json', '') or ''),
+            'tracked_ds_thresholds_md': str(aggregate_paths.get('thresholds_md', '') or ''),
+        })
+        published_report_paths = current_publication.get('published_report_paths', {}) if isinstance(current_publication.get('published_report_paths', {}), dict) else {}
+        final_packet['artifacts'].update({
+            'published_run_dir': str(current_publication.get('published_run_dir', '') or ''),
+            'published_report_json': str(published_report_paths.get('json', '') or ''),
+            'published_report_md': str(published_report_paths.get('markdown', '') or ''),
+            'published_report_manifest_json': str(published_report_paths.get('manifest', '') or ''),
+        })
+    final_packet['publication'] = publication_state
+    return final_packet
+
+
 def _ds_build(
     input_paths: List[Path],
     out_dir: str,
@@ -6689,7 +8501,7 @@ def _ds_build(
 
     from analysis.dataset_builder import build_dataset
 
-    target_out_dir = Path(str(out_dir).strip()) if str(out_dir).strip() else (_ds_default_analysis_dir() / 'datasets' / 'dataset_{0}'.format(_utc_compact_stamp()))
+    bundle, target_out_dir = _ds_prepare_bundle_for_artifact('build', out_dir, 'dataset', ['datasets'])
     manifest = build_dataset(
         input_paths,
         out_dir=target_out_dir,
@@ -6702,7 +8514,14 @@ def _ds_build(
         max_lines_per_file=max_lines_per_file,
     )
     manifest_dict = asdict(manifest)
-    return {
+    artifact_paths = {
+        'dataset_manifest': target_out_dir / 'dataset_manifest.json',
+        'features_csv': target_out_dir / 'features.csv',
+        'labels_csv': (target_out_dir / 'labels.csv') if bool(manifest_dict.get('has_labels', False)) else None,
+        'splits_csv': target_out_dir / 'splits.csv',
+        'split_manifest_json': target_out_dir / 'split_manifest.json',
+    }
+    packet = {
         'timestamp_utc': _utc_now(),
         'runtime_cli_surface': 'observerctl',
         'decision': 'go',
@@ -6712,19 +8531,25 @@ def _ds_build(
         'implementation_state': _DS_RUNTIME_STATE_COMMAND,
         'underlying_surface': 'analysis.dataset_builder',
         'summary': 'Dataset built through observerctl ds.',
+        'run_id': bundle.run_id,
         'seed': int(seed),
         'split': dict(manifest_dict.get('split', {})),
         'total_records': int(manifest_dict.get('total_records', 0)),
         'has_labels': bool(manifest_dict.get('has_labels', False)),
-        'artifacts': {
-            'dataset_manifest': str(target_out_dir / 'dataset_manifest.json').replace('\\', '/'),
-            'features_csv': str(manifest_dict.get('features_csv', '')).replace('\\', '/'),
-            'labels_csv': str(manifest_dict.get('labels_csv', '') or '').replace('\\', '/'),
-            'splits_csv': str(manifest_dict.get('splits_csv', '')).replace('\\', '/'),
-            'split_manifest_json': str(manifest_dict.get('split_manifest_json', '')).replace('\\', '/'),
-        },
+        'artifacts': _ds_artifact_strings(artifact_paths),
         'reason_codes': [],
     }
+    return _ds_finalize_run_packet(
+        packet,
+        bundle=bundle,
+        artifact_paths=artifact_paths,
+        context={
+            'output_override': bool(str(out_dir).strip()),
+        },
+        lineage={
+            'input_paths': list(input_paths),
+        },
+    )
 
 
 def _ds_train(dataset: str, out_dir: str, model_type: str, seed: int) -> Dict[str, Any]:
@@ -6732,14 +8557,20 @@ def _ds_train(dataset: str, out_dir: str, model_type: str, seed: int) -> Dict[st
 
     from analysis.train_model import train_model
 
+    bundle, target_model_dir = _ds_prepare_bundle_for_artifact('train', out_dir, 'model', ['models'])
     manifest = train_model(
         Path(dataset),
-        out_dir=Path(out_dir),
+        out_dir=target_model_dir,
         model_type=str(model_type),
         seed=int(seed),
     )
     manifest_dict = asdict(manifest)
-    return {
+    artifact_paths = {
+        'train_manifest': target_model_dir / 'train_manifest.json',
+        'model_path': Path(str(manifest_dict.get('model_path', ''))),
+        'metrics_path': Path(str(manifest_dict.get('metrics_path', ''))),
+    }
+    packet = {
         'timestamp_utc': _utc_now(),
         'runtime_cli_surface': 'observerctl',
         'decision': 'go',
@@ -6749,25 +8580,34 @@ def _ds_train(dataset: str, out_dir: str, model_type: str, seed: int) -> Dict[st
         'implementation_state': _DS_RUNTIME_STATE_COMMAND,
         'underlying_surface': 'analysis.train_model',
         'summary': 'Model training completed through observerctl ds.',
+        'run_id': bundle.run_id,
         'model_type': str(model_type),
-        'artifacts': {
-            'train_manifest': str(Path(out_dir) / 'train_manifest.json').replace('\\', '/'),
-            'model_path': str(manifest_dict.get('model_path', '')).replace('\\', '/'),
-            'metrics_path': str(manifest_dict.get('metrics_path', '')).replace('\\', '/'),
-        },
+        'artifacts': _ds_artifact_strings(artifact_paths),
         'metrics': manifest_dict.get('metrics', {}),
         'reason_codes': [],
     }
+    return _ds_finalize_run_packet(
+        packet,
+        bundle=bundle,
+        artifact_paths=artifact_paths,
+        context={
+            'output_override': bool(str(out_dir).strip()),
+            'seed': int(seed),
+        },
+        lineage={
+            'dataset_manifest': Path(dataset),
+        },
+    )
 
 
 def _ds_evaluate(features_csv: str, labels_csv: str, dataset_manifest: str, max_fpr: float, out_dir: str, run_id: str, model_path: str) -> Dict[str, Any]:
     from dataclasses import asdict
 
-    from analysis._util import utc_now_iso
+    from analysis.report_visuals import generate_evaluation_visuals
     from analysis.evaluation_harness import evaluate, write_run_artifacts
 
-    target_out_dir = Path(str(out_dir).strip()) if str(out_dir).strip() else (_ds_default_analysis_dir() / 'runs' / 'run_{0}'.format(utc_now_iso().replace(':', '').replace('-', '')))
-    resolved_run_id = str(run_id).strip() or target_out_dir.name
+    bundle, target_out_dir = _ds_prepare_bundle_for_artifact('evaluate', out_dir, 'evaluation', ['eval'], run_id=run_id)
+    resolved_run_id = str(bundle.run_id)
     result = evaluate(
         Path(features_csv),
         labels_csv=Path(labels_csv) if str(labels_csv).strip() else None,
@@ -6790,7 +8630,27 @@ def _ds_evaluate(features_csv: str, labels_csv: str, dataset_manifest: str, max_
         model_meta=model_meta,
     )
     result_dict = asdict(result)
-    return {
+    artifact_paths = {
+        'run_json': target_out_dir / 'run.json',
+        'run_md': target_out_dir / 'run.md',
+    }
+    threshold_summary = {
+        'threshold': float(result_dict.get('threshold', 0.0)),
+        'target_fpr': float(max_fpr),
+        'actual_fpr': (result_dict.get('metrics', {}) if isinstance(result_dict.get('metrics', {}), dict) else {}).get('fpr', ''),
+        'flagged_records': _ds_positive_prediction_count(result_dict.get('counts', {})),
+        'records_scored': _ds_total_prediction_count(result_dict.get('counts', {})),
+    }
+    visual_state = generate_evaluation_visuals(
+        figures_dir=bundle.run_root / 'figures',
+        metrics=result_dict.get('metrics', {}) if isinstance(result_dict.get('metrics', {}), dict) else {},
+        counts=result_dict.get('counts', {}) if isinstance(result_dict.get('counts', {}), dict) else {},
+        threshold=float(result_dict.get('threshold', 0.0)),
+        max_fpr=float(max_fpr),
+        threshold_summary=threshold_summary,
+    )
+    artifact_paths.update(_ds_visual_artifact_paths(visual_state))
+    packet = {
         'timestamp_utc': _utc_now(),
         'runtime_cli_surface': 'observerctl',
         'decision': 'go',
@@ -6805,19 +8665,43 @@ def _ds_evaluate(features_csv: str, labels_csv: str, dataset_manifest: str, max_
         'threshold': float(result_dict.get('threshold', 0.0)),
         'metrics': result_dict.get('metrics', {}),
         'counts': result_dict.get('counts', {}),
-        'artifacts': {
-            'run_json': str(target_out_dir / 'run.json').replace('\\', '/'),
-            'run_md': str(target_out_dir / 'run.md').replace('\\', '/'),
-        },
+        'visuals': visual_state,
+        'artifacts': _ds_artifact_strings(artifact_paths),
         'reason_codes': [],
     }
+    return _ds_finalize_run_packet(
+        packet,
+        bundle=bundle,
+        artifact_paths=artifact_paths,
+        context={
+            'max_fpr': float(max_fpr),
+            'output_override': bool(str(out_dir).strip()),
+        },
+        lineage={
+            'features_csv': Path(features_csv),
+            'labels_csv': Path(labels_csv) if str(labels_csv).strip() else None,
+            'dataset_manifest': Path(dataset_manifest) if str(dataset_manifest).strip() else None,
+            'model_path': Path(model_path) if str(model_path).strip() else None,
+        },
+    )
 
 
 def _ds_score(dataset: str, model: str, out_file: str) -> Dict[str, Any]:
+    from analysis.report_visuals import ANOMALY_DIRECTION, generate_score_visuals
     from analysis.score_unsupervised import score_dataset
 
-    summary = score_dataset(Path(dataset), Path(model), Path(out_file))
-    return {
+    bundle, target_out_file = _ds_prepare_bundle_for_score(out_file)
+    summary = score_dataset(Path(dataset), Path(model), target_out_file)
+    artifact_paths = {
+        'scores_csv': Path(str(summary.get('out_file', ''))),
+        'resolved_model_path': Path(str(summary.get('resolved_model_path', ''))),
+    }
+    visual_state = generate_score_visuals(
+        scores_csv=artifact_paths['scores_csv'],
+        figures_dir=bundle.run_root / 'figures',
+    )
+    artifact_paths.update(_ds_visual_artifact_paths(visual_state))
+    packet = {
         'timestamp_utc': _utc_now(),
         'runtime_cli_surface': 'observerctl',
         'decision': 'go',
@@ -6827,20 +8711,37 @@ def _ds_score(dataset: str, model: str, out_file: str) -> Dict[str, Any]:
         'implementation_state': _DS_RUNTIME_STATE_COMMAND,
         'underlying_surface': 'analysis.score_unsupervised',
         'summary': 'Unsupervised scoring completed through observerctl ds.',
+        'run_id': bundle.run_id,
         'records_scored': int(summary.get('records_scored', 0)),
-        'artifacts': {
-            'scores_csv': str(summary.get('out_file', '')).replace('\\', '/'),
-            'resolved_model_path': str(summary.get('resolved_model_path', '')).replace('\\', '/'),
-        },
+        'anomaly_direction': ANOMALY_DIRECTION,
+        'visuals': visual_state,
+        'artifacts': _ds_artifact_strings(artifact_paths),
         'score_column': str(summary.get('score_column', 'score_anomaly')),
         'reason_codes': [],
     }
+    return _ds_finalize_run_packet(
+        packet,
+        bundle=bundle,
+        artifact_paths=artifact_paths,
+        context={
+            'output_override': bool(str(out_file).strip()),
+        },
+        lineage={
+            'dataset_manifest': Path(dataset),
+            'model_reference': Path(model),
+        },
+    )
 
 
 def _ds_run_demo(out_dir: str, dataset_seed: int, model_seed: int, max_fpr: float) -> Dict[str, Any]:
+    from analysis.report_visuals import ANOMALY_DIRECTION, generate_evaluation_visuals, generate_score_visuals, generate_summary_card_visual, merge_visual_states
     from analysis.run_demo import run_demo
 
-    target_out_dir = Path(str(out_dir).strip()) if str(out_dir).strip() else (_ds_default_analysis_dir() / 'demo' / 'demo_{0}'.format(_utc_compact_stamp()))
+    from analysis.report_pack import prepare_report_bundle
+
+    explicit_root = Path(str(out_dir).strip()) if str(out_dir).strip() else None
+    bundle = prepare_report_bundle(Path(__file__), 'demo', explicit_run_root=explicit_root)
+    target_out_dir = explicit_root if explicit_root is not None else bundle.run_root
     summary = run_demo(
         root_dir=target_out_dir,
         dataset_seed=int(dataset_seed),
@@ -6848,8 +8749,52 @@ def _ds_run_demo(out_dir: str, dataset_seed: int, model_seed: int, max_fpr: floa
         max_fpr=float(max_fpr),
     )
     run_payload = summary.get('run_payload', {}) if isinstance(summary.get('run_payload', {}), dict) else {}
-    evaluation_metrics = ((run_payload.get('evaluation', {}) or {}).get('metrics', {})) if isinstance(run_payload.get('evaluation', {}), dict) else {}
-    return {
+    evaluation_payload = run_payload.get('evaluation', {}) if isinstance(run_payload.get('evaluation', {}), dict) else {}
+    evaluation_metrics = (evaluation_payload.get('metrics', {})) if isinstance(evaluation_payload.get('metrics', {}), dict) else {}
+    evaluation_counts = (evaluation_payload.get('counts', {})) if isinstance(evaluation_payload.get('counts', {}), dict) else {}
+    threshold_value = (((run_payload.get('model', {}) or {}).get('hyperparameters', {})) if isinstance((run_payload.get('model', {}) or {}).get('hyperparameters', {}), dict) else {}).get('threshold')
+    artifact_paths = {
+        'root_dir': Path(str(summary.get('root_dir', ''))),
+        'dataset_manifest': Path(str(summary.get('dataset_manifest', ''))),
+        'features_csv': Path(str(summary.get('features_csv', ''))),
+        'labels_csv': Path(str(summary.get('labels_csv', ''))),
+        'supervised_model_path': Path(str(summary.get('supervised_model_path', ''))),
+        'supervised_train_manifest': Path(str(summary.get('supervised_train_manifest', ''))),
+        'unsupervised_model_path': Path(str(summary.get('unsupervised_model_path', ''))),
+        'unsupervised_train_manifest': Path(str(summary.get('unsupervised_train_manifest', ''))),
+        'scores_csv': Path(str(summary.get('scores_csv', ''))),
+        'threshold_report_json': Path(str(summary.get('threshold_report_json', ''))),
+        'threshold_report_md': Path(str(summary.get('threshold_report_md', ''))),
+        'evaluation_run_json': Path(str(summary.get('evaluation_run_json', ''))),
+        'evaluation_run_md': Path(str(summary.get('evaluation_run_md', ''))),
+    }
+    workflow_visuals = generate_summary_card_visual(
+        figures_dir=bundle.run_root / 'figures',
+        figure_id='workflow_summary',
+        title='Demo workflow summary',
+        filename='workflow_summary.png',
+        caption='High-level summary of the demo workflow report pack.',
+        rows={
+            'Records': int(summary.get('record_count', 0) or 0),
+            'Max FPR': float(summary.get('max_fpr', max_fpr) or max_fpr),
+            'Workflow steps': 'generate, build, train-supervised, train-unsupervised, evaluate, score, threshold',
+        },
+    )
+    evaluation_visuals = generate_evaluation_visuals(
+        figures_dir=bundle.run_root / 'figures',
+        metrics=evaluation_metrics,
+        counts=evaluation_counts,
+        threshold=_ds_optional_float(threshold_value),
+        max_fpr=float(summary.get('max_fpr', max_fpr) or max_fpr),
+    )
+    score_visuals = generate_score_visuals(
+        scores_csv=artifact_paths['scores_csv'],
+        figures_dir=bundle.run_root / 'figures',
+        threshold_summary=summary.get('threshold_summary', {}) if isinstance(summary.get('threshold_summary', {}), dict) else None,
+    )
+    visual_state = merge_visual_states(workflow_visuals, evaluation_visuals, score_visuals)
+    artifact_paths.update(_ds_visual_artifact_paths(visual_state))
+    packet = {
         'timestamp_utc': _utc_now(),
         'runtime_cli_surface': 'observerctl',
         'decision': 'go',
@@ -6860,82 +8805,39 @@ def _ds_run_demo(out_dir: str, dataset_seed: int, model_seed: int, max_fpr: floa
         'underlying_surface': 'analysis.run_demo',
         'run_mode': 'demo',
         'summary': 'Demo pipeline completed through observerctl ds.',
+        'run_id': bundle.run_id,
         'total_records': int(summary.get('record_count', 0)),
         'max_fpr': float(summary.get('max_fpr', max_fpr)),
-        'workflow_steps': ['generate', 'build', 'train-supervised', 'train-unsupervised', 'evaluate'],
+        'workflow_steps': ['generate', 'build', 'train-supervised', 'train-unsupervised', 'evaluate', 'score', 'threshold', 'visualize'],
         'metrics': evaluation_metrics,
-        'artifacts': {
-            'root_dir': str(summary.get('root_dir', '')).replace('\\', '/'),
-            'dataset_manifest': str(summary.get('dataset_manifest', '')).replace('\\', '/'),
-            'features_csv': str(summary.get('features_csv', '')).replace('\\', '/'),
-            'labels_csv': str(summary.get('labels_csv', '')).replace('\\', '/'),
-            'supervised_model_path': str(summary.get('supervised_model_path', '')).replace('\\', '/'),
-            'supervised_train_manifest': str(summary.get('supervised_train_manifest', '')).replace('\\', '/'),
-            'unsupervised_model_path': str(summary.get('unsupervised_model_path', '')).replace('\\', '/'),
-            'unsupervised_train_manifest': str(summary.get('unsupervised_train_manifest', '')).replace('\\', '/'),
-            'evaluation_run_json': str(summary.get('evaluation_run_json', '')).replace('\\', '/'),
-            'evaluation_run_md': str(summary.get('evaluation_run_md', '')).replace('\\', '/'),
-        },
+        'counts': evaluation_counts,
+        'thresholding': summary.get('threshold_summary', {}) if isinstance(summary.get('threshold_summary', {}), dict) else {},
+        'score_column': str(summary.get('score_column', 'score_anomaly')),
+        'anomaly_direction': ANOMALY_DIRECTION,
+        'visuals': visual_state,
+        'artifacts': _ds_artifact_strings(artifact_paths),
         'reason_codes': [],
     }
+    return _ds_finalize_run_packet(
+        packet,
+        bundle=bundle,
+        artifact_paths=artifact_paths,
+        context={
+            'dataset_seed': int(dataset_seed),
+            'model_seed': int(model_seed),
+            'max_fpr': float(max_fpr),
+            'output_override': bool(str(out_dir).strip()),
+        },
+    )
 
 
 def _ds_write_threshold_artifacts(scores_csv: Path, out_dir: Path, max_fpr: float) -> Dict[str, Any]:
-    import csv
+    from analysis.report_visuals import summarize_threshold_scores_csv, write_threshold_report
 
-    from apexlab.evaluation.thresholds import select_lower_tail_threshold
-
-    scores: List[float] = []
-    with scores_csv.open('r', encoding='utf-8', newline='') as f:
-        reader = csv.DictReader(f)
-        for row in reader:
-            raw_score = row.get('score_anomaly', row.get('score_raw'))
-            if raw_score is None:
-                continue
-            try:
-                scores.append(float(raw_score))
-            except (TypeError, ValueError):
-                continue
-
-    if scores:
-        threshold = float(-select_lower_tail_threshold([-float(score) for score in scores], target_fpr=float(max_fpr)))
-        flagged = sum(1 for score in scores if score >= threshold)
-        actual_fpr = float(flagged) / float(len(scores))
-    else:
-        threshold = 0.0
-        flagged = 0
-        actual_fpr = 0.0
-
-    out_dir.mkdir(parents=True, exist_ok=True)
-    report_json = out_dir / 'threshold_report.json'
-    report_md = out_dir / 'threshold_report.md'
-    payload = {
-        'threshold': float(threshold),
-        'target_fpr': float(max_fpr),
-        'actual_fpr': float(actual_fpr),
-        'flagged_records': int(flagged),
-        'records_scored': int(len(scores)),
-        'scores_csv': str(scores_csv).replace('\\', '/'),
-        'algorithm': 'apexlab_iforest_higher_is_anomaly',
-    }
-    report_json.write_text(json.dumps(payload, indent=2, sort_keys=True), encoding='utf-8')
-    report_md.write_text(
-        '\n'.join([
-            '# Threshold Selection Report',
-            '',
-            '- Target FPR: {0}'.format(float(max_fpr)),
-            '- Threshold: {0}'.format(float(threshold)),
-            '- Flagged Records: {0}'.format(int(flagged)),
-            '- Records Scored: {0}'.format(int(len(scores))),
-            '- Actual FPR: {0}'.format(float(actual_fpr)),
-            '- Scores CSV: {0}'.format(str(scores_csv).replace('\\', '/')),
-            '',
-        ]),
-        encoding='utf-8',
+    return write_threshold_report(
+        summarize_threshold_scores_csv(scores_csv, float(max_fpr)),
+        out_dir,
     )
-    payload['report_json'] = str(report_json).replace('\\', '/')
-    payload['report_md'] = str(report_md).replace('\\', '/')
-    return payload
 
 
 def _ds_run_pipeline(
@@ -6956,11 +8858,15 @@ def _ds_run_pipeline(
         joblib = None
 
     from analysis.dataset_builder import build_dataset
-    from analysis.evaluation_harness import evaluate, make_model_scorer, write_run_artifacts
+    from analysis.evaluation_harness import evaluate, infer_model_score_direction, make_model_scorer, write_run_artifacts
+    from analysis.report_pack import prepare_report_bundle
+    from analysis.report_visuals import ANOMALY_DIRECTION, generate_evaluation_visuals, generate_score_visuals, generate_summary_card_visual, merge_visual_states
     from analysis.score_unsupervised import score_dataset
     from analysis.train_model import train_model
 
-    target_root = Path(str(out_dir).strip()) if str(out_dir).strip() else (_ds_default_analysis_dir() / 'pipelines' / 'pipeline_{0}'.format(_utc_compact_stamp()))
+    explicit_root = Path(str(out_dir).strip()) if str(out_dir).strip() else None
+    bundle = prepare_report_bundle(Path(__file__), 'pipeline', explicit_run_root=explicit_root)
+    target_root = explicit_root if explicit_root is not None else bundle.run_root
     dataset_dir = target_root / 'dataset'
     model_dir = target_root / 'models' / str(model_type)
     evaluation_dir = target_root / 'evaluation'
@@ -6976,9 +8882,17 @@ def _ds_run_pipeline(
             'test': float(split_test),
         },
     )
+    bundle.artifact_dirs['dataset'] = dataset_dir
+    bundle.artifact_dirs['models'] = target_root / 'models'
+    bundle.artifact_dirs['evaluation'] = evaluation_dir
+    bundle.artifact_dirs['scoring'] = scoring_dir
     manifest_path = dataset_dir / 'dataset_manifest.json'
     if str(model_type) == 'supervised' and not bool(manifest.has_labels):
-        return {
+        artifact_paths = {
+            'root_dir': target_root,
+            'dataset_manifest': manifest_path,
+        }
+        packet = {
             'timestamp_utc': _utc_now(),
             'runtime_cli_surface': 'observerctl',
             'decision': 'no-go',
@@ -6989,13 +8903,24 @@ def _ds_run_pipeline(
             'underlying_surface': 'observerctl ds pipeline orchestration',
             'run_mode': 'pipeline',
             'summary': 'Supervised pipeline requires labeled telemetry records.',
+            'run_id': bundle.run_id,
             'model_type': str(model_type),
-            'artifacts': {
-                'root_dir': str(target_root).replace('\\', '/'),
-                'dataset_manifest': str(manifest_path).replace('\\', '/'),
-            },
+            'artifacts': _ds_artifact_strings(artifact_paths),
             'reason_codes': ['critical_check_failed:labels_required_for_supervised_pipeline'],
         }
+        return _ds_finalize_run_packet(
+            packet,
+            bundle=bundle,
+            artifact_paths=artifact_paths,
+            context={
+                'seed': int(seed),
+                'max_fpr': float(max_fpr),
+                'output_override': bool(str(out_dir).strip()),
+            },
+            lineage={
+                'input_paths': list(input_paths),
+            },
+        )
 
     train_manifest = train_model(
         manifest_path,
@@ -7016,11 +8941,13 @@ def _ds_run_pipeline(
     features_csv = Path(manifest.features_csv)
     labels_csv = Path(manifest.labels_csv) if manifest.labels_csv else None
     scorer = make_model_scorer(model)
+    score_direction = infer_model_score_direction(model)
     evaluation = evaluate(
         features_csv,
         labels_csv=labels_csv if labels_csv is not None and labels_csv.exists() else None,
         max_fpr=float(max_fpr),
         scorer=scorer,
+        score_direction=score_direction,
     )
     run_id = 'pipeline_{0}'.format(_utc_compact_stamp())
     write_run_artifacts(
@@ -7051,16 +8978,64 @@ def _ds_run_pipeline(
         'run_md': str(evaluation_dir / 'run.md').replace('\\', '/'),
     }
     threshold_summary: Dict[str, Any] = {}
+    score_visuals: Dict[str, Any] = {'decision': 'skipped', 'reason_codes': ['visualization_skipped:no_score_visuals_applicable'], 'figure_count': 0, 'figures': []}
     if str(model_type) == 'unsupervised':
         scores_csv = scoring_dir / 'scores.csv'
         score_summary = score_dataset(manifest_path, model_dir / 'train_manifest.json', scores_csv)
         threshold_summary = _ds_write_threshold_artifacts(scores_csv, scoring_dir, float(max_fpr))
+        score_visuals = generate_score_visuals(
+            scores_csv=scores_csv,
+            figures_dir=bundle.run_root / 'figures',
+            threshold_summary=threshold_summary,
+        )
         workflow_steps.extend(['score', 'threshold'])
         artifacts['scores_csv'] = str(score_summary.get('out_file', '')).replace('\\', '/')
         artifacts['threshold_report_json'] = str(threshold_summary.get('report_json', '')).replace('\\', '/')
         artifacts['threshold_report_md'] = str(threshold_summary.get('report_md', '')).replace('\\', '/')
 
-    return {
+    evaluation_visuals = generate_evaluation_visuals(
+        figures_dir=bundle.run_root / 'figures',
+        metrics=dict(evaluation.metrics),
+        counts=dict(evaluation.counts),
+        threshold=float(evaluation.threshold),
+        max_fpr=float(max_fpr),
+        threshold_summary=threshold_summary if threshold_summary else None,
+    )
+    workflow_visuals = generate_summary_card_visual(
+        figures_dir=bundle.run_root / 'figures',
+        figure_id='workflow_summary',
+        title='Pipeline workflow summary',
+        filename='workflow_summary.png',
+        caption='High-level summary of the pipeline run.',
+        rows={
+            'Model type': str(model_type),
+            'Records': int(manifest.total_records),
+            'Max FPR': float(max_fpr),
+            'Workflow steps': ', '.join(workflow_steps),
+        },
+    )
+    visual_state = merge_visual_states(workflow_visuals, evaluation_visuals, score_visuals)
+    visual_artifact_paths = _ds_visual_artifact_paths(visual_state)
+    artifacts.update(_ds_artifact_strings(visual_artifact_paths))
+
+    artifact_paths = {
+        'root_dir': target_root,
+        'dataset_manifest': manifest_path,
+        'features_csv': features_csv,
+        'labels_csv': labels_csv if labels_csv is not None else None,
+        'train_manifest': model_dir / 'train_manifest.json',
+        'model_path': model_path,
+        'metrics_path': Path(train_manifest.metrics_path),
+        'run_json': evaluation_dir / 'run.json',
+        'run_md': evaluation_dir / 'run.md',
+        'scores_csv': scoring_dir / 'scores.csv' if str(model_type) == 'unsupervised' else None,
+        'threshold_report_json': scoring_dir / 'threshold_report.json' if str(model_type) == 'unsupervised' else None,
+        'threshold_report_md': scoring_dir / 'threshold_report.md' if str(model_type) == 'unsupervised' else None,
+    }
+    artifact_paths.update(visual_artifact_paths)
+    if str(model_type) == 'unsupervised' and str(visual_state.get('decision', '') or '').strip().lower() == 'go':
+        workflow_steps.append('visualize')
+    packet = {
         'timestamp_utc': _utc_now(),
         'runtime_cli_surface': 'observerctl',
         'decision': 'go',
@@ -7071,6 +9046,7 @@ def _ds_run_pipeline(
         'underlying_surface': 'observerctl ds pipeline orchestration',
         'run_mode': 'pipeline',
         'summary': 'Pipeline completed through observerctl ds.',
+        'run_id': bundle.run_id,
         'model_type': str(model_type),
         'seed': int(seed),
         'split': {
@@ -7078,6 +9054,7 @@ def _ds_run_pipeline(
             'val': float(split_val),
             'test': float(split_test),
         },
+        'anomaly_direction': ANOMALY_DIRECTION if str(model_type) == 'unsupervised' else '',
         'max_fpr': float(max_fpr),
         'has_labels': bool(manifest.has_labels),
         'total_records': int(manifest.total_records),
@@ -7085,9 +9062,22 @@ def _ds_run_pipeline(
         'metrics': dict(evaluation.metrics),
         'counts': dict(evaluation.counts),
         'thresholding': threshold_summary,
-        'artifacts': artifacts,
+        'visuals': visual_state,
+        'artifacts': dict(artifacts),
         'reason_codes': [],
     }
+    return _ds_finalize_run_packet(
+        packet,
+        bundle=bundle,
+        artifact_paths=artifact_paths,
+        context={
+            'max_fpr': float(max_fpr),
+            'output_override': bool(str(out_dir).strip()),
+        },
+        lineage={
+            'input_paths': list(input_paths),
+        },
+    )
 
 
 def _ds_spine_packet(ds_cmd: str, command_path: str, underlying_surface: str, run_mode: str = '') -> Dict[str, Any]:
@@ -7289,6 +9279,12 @@ def _dispatch(args: argparse.Namespace) -> Dict[str, Any]:
             return _librarian_stats()
         if args.lib_cmd == 'stores':
             return _librarian_stores()
+        if args.lib_cmd == 'datasets':
+            return _librarian_datasets()
+        if args.lib_cmd == 'dataset-register':
+            return _librarian_dataset_register(args.dataset_manifest, args.access_class, args.display_name, args.run_id)
+        if args.lib_cmd == 'dataset-release':
+            return _librarian_dataset_release(args.dataset, args.requester_id, args.requested_action)
         if args.lib_cmd == 'rotate':
             return _librarian_action('rotate', args.mode)
         if args.lib_cmd == 'compact':
@@ -7354,6 +9350,14 @@ def _dispatch(args: argparse.Namespace) -> Dict[str, Any]:
                 model=args.model,
                 out_file=args.out_file,
             )
+        if args.ds_cmd == 'retained-trains':
+            return _ds_train_selectors()
+        if args.ds_cmd == 'retained-runs':
+            return _ds_run_selectors()
+        if args.ds_cmd == 'retained-baselines':
+            return _ds_baseline_selectors(args.source, args.mode)
+        if args.ds_cmd == 'retained-drafts':
+            return _ds_draft_slots()
         if args.ds_cmd == 'wizard':
             return _ds_wizard(args)
         if args.ds_cmd == 'run-demo':
@@ -7544,6 +9548,16 @@ def _build_parser() -> argparse.ArgumentParser:
     lib_restart.add_argument('--startup-probe-sec', type=float, default=6.0, help='Seconds to probe for librarian heartbeat after restart')
     librarian_sub.add_parser('stats')
     librarian_sub.add_parser('stores')
+    librarian_sub.add_parser('datasets')
+    lib_dataset_register = librarian_sub.add_parser('dataset-register')
+    lib_dataset_register.add_argument('dataset_manifest', help='Path to dataset manifest.json')
+    lib_dataset_register.add_argument('--access-class', choices=['local', 'protected-source'], default='local')
+    lib_dataset_register.add_argument('--display-name', default='', help='Optional operator-facing dataset label')
+    lib_dataset_register.add_argument('--run-id', default='', help='Optional run identifier to bind into selector resolution')
+    lib_dataset_release = librarian_sub.add_parser('dataset-release')
+    lib_dataset_release.add_argument('dataset', help='Approved dataset selector (index, run_id, display name, or entry_id)')
+    lib_dataset_release.add_argument('--requester-id', default='observerctl', help='Requester id recorded in delegated access packets')
+    lib_dataset_release.add_argument('--requested-action', default='hydrate-dataset', help='Action label recorded in delegated access packets')
     lib_rot = librarian_sub.add_parser('rotate')
     lib_rot.add_argument('--mode', choices=list(MODES), required=True)
     lib_compact = librarian_sub.add_parser('compact')
@@ -7584,7 +9598,7 @@ def _build_parser() -> argparse.ArgumentParser:
 
     ds_train = ds_sub.add_parser('train', help='Train a model from a dataset manifest')
     ds_train.add_argument('--dataset', required=True, help='Path to dataset manifest.json')
-    ds_train.add_argument('--out-dir', required=True, help='Output directory for model artifacts')
+    ds_train.add_argument('--out-dir', default='', help='Optional run root or model artifact directory')
     ds_train.add_argument('--model-type', choices=['supervised', 'unsupervised'], default='supervised')
     ds_train.add_argument('--seed', type=int, default=42)
 
@@ -7600,7 +9614,19 @@ def _build_parser() -> argparse.ArgumentParser:
     ds_score = ds_sub.add_parser('score', help='Score a dataset with an unsupervised model')
     ds_score.add_argument('--dataset', required=True, help='Path to dataset manifest.json')
     ds_score.add_argument('--model', required=True, help='Path to model artifact or train_manifest.json')
-    ds_score.add_argument('--out-file', required=True, help='Output path for scores CSV')
+    ds_score.add_argument('--out-file', default='', help='Optional output path for scores CSV')
+
+    def _add_ds_retained_baseline_args(parser_obj: argparse.ArgumentParser) -> None:
+        parser_obj.add_argument('--source', choices=['sim', 'real'], default=_state_default_source())
+        parser_obj.add_argument('--mode', choices=list(MODES), default=_state_default_mode())
+
+    ds_retained = ds_sub.add_parser('retained', help='Inspect retained selector catalogs and draft slots')
+    ds_retained_sub = ds_retained.add_subparsers(dest='ds_retained_cmd', required=True)
+    ds_retained_sub.add_parser('trains', help='List retained train/model selectors')
+    ds_retained_sub.add_parser('runs', help='List retained evaluation run selectors')
+    ds_retained_baselines = ds_retained_sub.add_parser('baselines', help='List retained baseline selectors for a source/mode scope')
+    _add_ds_retained_baseline_args(ds_retained_baselines)
+    ds_retained_sub.add_parser('drafts', help='List canonical wizard draft slots')
 
     ds_run = ds_sub.add_parser('run', help='Run opinionated end-to-end DS flows')
     ds_run_sub = ds_run.add_subparsers(dest='ds_run_cmd', required=True)
@@ -7622,14 +9648,14 @@ def _build_parser() -> argparse.ArgumentParser:
     ds_wizard = ds_sub.add_parser('wizard', help='Launch the guided DS command wizard')
     ds_wizard.add_argument('--workflow', choices=list(_DS_WIZARD_WORKFLOWS), default='')
     ds_wizard.add_argument('--section', choices=list(_DS_WIZARD_SECTION_ORDER), default='')
-    ds_wizard.add_argument('--hydrate-dataset', default='', help='Seed wizard state from dataset manifest.json')
+    ds_wizard.add_argument('--hydrate-dataset', default='', help='Seed wizard state from an approved dataset selector or dataset manifest.json')
     ds_wizard.add_argument('--hydrate-train', default='', help='Seed wizard state from train_manifest.json')
     ds_wizard.add_argument('--hydrate-model', default='', help='Seed wizard state from a model artifact path')
     ds_wizard.add_argument('--hydrate-baseline-analysis', default='', help='Seed wizard state from a baseline analysis packet')
     ds_wizard.add_argument('--hydrate-run', default='', help='Seed wizard state from an evaluation run.json ledger')
     ds_wizard.add_argument('--hydrate-latest-context', action='store_true', help='Seed wizard state from SSOT source/mode and latest retained baseline-analysis packet when available')
-    ds_wizard.add_argument('--load-draft', default='', help='Load wizard state from a saved draft JSON file')
-    ds_wizard.add_argument('--save-draft', default='', help='Persist the current wizard state to a draft JSON file after seeding')
+    ds_wizard.add_argument('--load-draft', default='', help='Load wizard state from a canonical draft slot token or saved draft JSON file')
+    ds_wizard.add_argument('--save-draft', nargs='?', const=_DS_WIZARD_AUTO_DRAFT_TOKEN, default='', help='Persist the current wizard state to the next canonical slot or an explicit draft JSON path after seeding')
     ds_wizard.add_argument('--set', dest='set_items', action='append', default=[], help='Preload a wizard field using key=value syntax')
     ds_wizard.add_argument('--execute', action='store_true', help='Attempt wizard execute handoff after seeding state')
 
@@ -7675,6 +9701,15 @@ def _normalize_nested_aliases(args: argparse.Namespace) -> argparse.Namespace:
             args.ds_cmd = 'run-demo'
         elif args.ds_run_cmd == 'pipeline':
             args.ds_cmd = 'run-pipeline'
+    if args.command == 'ds' and args.ds_cmd == 'retained':
+        if args.ds_retained_cmd == 'trains':
+            args.ds_cmd = 'retained-trains'
+        elif args.ds_retained_cmd == 'runs':
+            args.ds_cmd = 'retained-runs'
+        elif args.ds_retained_cmd == 'baselines':
+            args.ds_cmd = 'retained-baselines'
+        elif args.ds_retained_cmd == 'drafts':
+            args.ds_cmd = 'retained-drafts'
     return args
 
 

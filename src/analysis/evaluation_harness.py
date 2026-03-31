@@ -14,7 +14,7 @@ try:
 except ImportError:
     joblib = None
 
-from apexlab.evaluation.thresholds import binary_metrics, choose_threshold, confusion_counts, select_lower_tail_threshold
+from apexlab.evaluation.thresholds import binary_metrics, confusion_counts, select_lower_tail_threshold
 
 from ._util import default_analysis_dir, sha256_path, try_get_git_sha, utc_now_iso
 
@@ -48,6 +48,12 @@ FEATURE_COLUMNS: List[str] = [
     'type_mention',
     'type_unknown',
 ]
+
+
+def infer_model_score_direction(model: Any) -> str:
+    if hasattr(model, 'score_samples') or hasattr(model, 'decision_function'):
+        return 'lower'
+    return 'higher'
 
 
 def make_model_scorer(model: Any) -> ScorerFunc:
@@ -140,12 +146,33 @@ def baseline_score(row: Dict[str, Any]) -> float:
     return float(tox) + 0.5 * float(has_link) + 0.2 * float(has_code) + 0.2 * code_density + 0.1 * complexity
 
 
+def _predict_labels(scores: List[float], threshold: float, score_direction: str) -> List[int]:
+    if str(score_direction).strip().lower() == 'lower':
+        return [1 if score <= threshold else 0 for score in scores]
+    return [1 if score >= threshold else 0 for score in scores]
+
+
+def _choose_threshold_for_fpr(scores: List[float], y_true: List[int], max_fpr: float, score_direction: str) -> float:
+    candidates = sorted(set(scores))
+    best_thr = float(candidates[0]) if candidates else 0.0
+    best_f1 = -1.0
+
+    for threshold in candidates:
+        y_pred = _predict_labels(scores, float(threshold), score_direction)
+        metrics = binary_metrics(confusion_counts(y_true, y_pred))
+        if metrics['fpr'] <= max_fpr and metrics['f1'] >= best_f1:
+            best_f1 = metrics['f1']
+            best_thr = float(threshold)
+    return float(best_thr)
+
+
 def evaluate(
     features_csv: Path,
     *,
     labels_csv: Optional[Path] = None,
     max_fpr: float = 0.01,
     scorer: ScorerFunc = baseline_score,
+    score_direction: str = 'higher',
 ) -> EvalResult:
     rows = _read_features(features_csv)
     labels: Dict[str, str] = {}
@@ -165,19 +192,23 @@ def evaluate(
             y_true.append(1 if tv == 'TV-3' else 0)
 
     # Select threshold
+    resolved_score_direction = 'lower' if str(score_direction).strip().lower() == 'lower' else 'higher'
+
     if has_labels and y_true:
-        thr = choose_threshold(scores, y_true, max_fpr=max_fpr)
-        y_pred = [1 if s >= thr else 0 for s in scores]
+        thr = _choose_threshold_for_fpr(scores, y_true, max_fpr=max_fpr, score_direction=resolved_score_direction)
+        y_pred = _predict_labels(scores, thr, resolved_score_direction)
         conf = confusion_counts(y_true, y_pred)
         metrics = binary_metrics(conf)
         counts = conf
     else:
-        # Unlabeled ApexLab path: higher scores are more anomalous, so we select the upper tail.
         if not scores:
             thr = 0.0
         else:
-            thr = float(-select_lower_tail_threshold([-float(score) for score in scores], target_fpr=max_fpr))
-        flagged = sum(1 for s in scores if s >= thr)
+            if resolved_score_direction == 'lower':
+                thr = float(select_lower_tail_threshold(scores, target_fpr=max_fpr))
+            else:
+                thr = float(-select_lower_tail_threshold([-float(score) for score in scores], target_fpr=max_fpr))
+        flagged = sum(1 for s in scores if (s <= thr if resolved_score_direction == 'lower' else s >= thr))
         counts = {'flagged': int(flagged), 'total': int(len(scores))}
         metrics = {
             'flag_rate': (float(flagged) / float(len(scores))) if scores else 0.0,
@@ -307,6 +338,7 @@ def main(argv: Optional[List[str]] = None) -> int:
 
     scorer = baseline_score
     model_meta = None
+    score_direction = 'higher'
 
     if args.model_path:
         print(f"Loading model from {args.model_path}...")
@@ -324,6 +356,7 @@ def main(argv: Optional[List[str]] = None) -> int:
                 return 1
         try:
             scorer = make_model_scorer(model)
+            score_direction = infer_model_score_direction(model)
             model_meta = {
                 'family': 'trained_apexlab',
                 'name': args.model_path.name,
@@ -339,6 +372,7 @@ def main(argv: Optional[List[str]] = None) -> int:
         labels_csv=args.labels_csv,
         max_fpr=float(args.max_fpr),
         scorer=scorer,
+        score_direction=score_direction,
     )
 
     out_dir = args.out_dir

@@ -77,7 +77,7 @@ def score_dataset(dataset_manifest_path: Path, model_reference: Path, out_file: 
     if hasattr(model, 'score_samples'):
         scores = [float(score) for score in model.score_samples(X)]
     elif hasattr(model, 'decision_function'):
-        scores = [float(-score) for score in model.decision_function(X)]
+        scores = [float(score) for score in model.decision_function(X)]
     else:
         raise RuntimeError('model does not expose a supported anomaly scoring surface')
 
@@ -95,6 +95,7 @@ def score_dataset(dataset_manifest_path: Path, model_reference: Path, out_file: 
         'out_file': str(out_file),
         'records_scored': int(len(record_ids)),
         'score_column': 'score_anomaly',
+        'anomaly_direction': 'lower-is-more-anomalous',
     }
 
 

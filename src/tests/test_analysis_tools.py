@@ -165,3 +165,78 @@ def test_evaluation_run_ledger_emits_fields_needed_for_ds_wizard_import(tmp_path
     assert run_json['data']['labels_csv'] == str(labels_csv)
     assert run_json['data']['dataset_manifest'] == str(dataset_manifest)
     assert run_json['model']['source'] == str(model_path)
+
+
+def test_evaluate_supports_lower_tail_anomaly_direction(tmp_path: Path) -> None:
+    features_csv = tmp_path / 'features.csv'
+    labels_csv = tmp_path / 'labels.csv'
+    features_csv.write_text(
+        'record_id,feature\nlow-1,0.0\nlow-2,0.0\nhigh-1,0.0\nhigh-2,0.0\n',
+        encoding='utf-8',
+    )
+    labels_csv.write_text(
+        'record_id,tv_id\nlow-1,TV-3\nlow-2,TV-3\nhigh-1,TV-0\nhigh-2,TV-0\n',
+        encoding='utf-8',
+    )
+    score_map = {
+        'low-1': 0.1,
+        'low-2': 0.2,
+        'high-1': 0.8,
+        'high-2': 0.9,
+    }
+
+    result = evaluate(
+        features_csv,
+        labels_csv=labels_csv,
+        max_fpr=0.5,
+        scorer=lambda row: score_map[str(row.get('record_id', ''))],
+        score_direction='lower',
+    )
+
+    assert result.threshold == pytest.approx(0.2)
+    assert result.counts == {'tp': 2, 'fp': 0, 'tn': 2, 'fn': 0}
+    assert result.metrics['f1'] == pytest.approx(1.0)
+
+
+def test_report_visuals_emit_threshold_report_and_score_figures(tmp_path: Path) -> None:
+    from analysis.report_visuals import generate_score_visuals, summarize_threshold_scores_csv, write_threshold_report
+
+    scores_csv = tmp_path / 'scores.csv'
+    scores_csv.write_text('record_id,score_anomaly\na,0.1\nb,0.2\nc,0.8\nd,0.9\n', encoding='utf-8')
+
+    summary = summarize_threshold_scores_csv(scores_csv, 0.25)
+    summary = write_threshold_report(summary, tmp_path)
+    visuals = generate_score_visuals(
+        scores_csv=scores_csv,
+        figures_dir=tmp_path / 'figures',
+        threshold_summary=summary,
+    )
+
+    assert summary['anomaly_direction'] == 'lower-is-more-anomalous'
+    assert summary['threshold'] == pytest.approx(0.2)
+    assert summary['flag_rule'] == 'score <= threshold'
+    assert (tmp_path / 'threshold_report.json').exists()
+    assert 'score <= threshold' in (tmp_path / 'threshold_report.md').read_text(encoding='utf-8')
+    assert visuals['decision'] == 'go'
+    assert visuals['figure_count'] == 2
+    assert {figure['id'] for figure in visuals['figures']} == {'score_distribution', 'threshold_selection'}
+    for figure in visuals['figures']:
+        assert Path(figure['path']).exists()
+
+
+def test_report_visuals_emit_evaluation_figures(tmp_path: Path) -> None:
+    from analysis.report_visuals import generate_evaluation_visuals
+
+    visuals = generate_evaluation_visuals(
+        figures_dir=tmp_path / 'figures',
+        metrics={'precision': 1.0, 'recall': 0.5, 'f1': 0.6667, 'fpr': 0.0},
+        counts={'tp': 1, 'fp': 0, 'tn': 2, 'fn': 1},
+        threshold=0.2,
+        max_fpr=0.01,
+    )
+
+    assert visuals['decision'] == 'go'
+    assert visuals['figure_count'] >= 3
+    assert {'confusion_matrix', 'metric_comparison', 'threshold_summary'}.issubset({figure['id'] for figure in visuals['figures']})
+    for figure in visuals['figures']:
+        assert Path(figure['path']).exists()

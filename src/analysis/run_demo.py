@@ -22,6 +22,8 @@ from obfuscator_lib import Obfuscator
 
 from analysis.dataset_builder import main as dataset_main
 from analysis.evaluation_harness import main as eval_main
+from analysis.report_visuals import summarize_threshold_scores_csv, write_threshold_report
+from analysis.score_unsupervised import score_dataset
 from analysis.train_model import main as train_main
 
 
@@ -125,6 +127,14 @@ def run_demo(
         '--run-id', 'demo_run_001',
     ], eval_main)
 
+    scoring_dir = target_root / 'scoring'
+    scores_csv = scoring_dir / 'scores.csv'
+    score_summary = score_dataset(manifest_path, model_unsup_dir / 'train_manifest.json', scores_csv)
+    threshold_summary = write_threshold_report(
+        summarize_threshold_scores_csv(scores_csv, float(max_fpr)),
+        scoring_dir,
+    )
+
     run_json_path = eval_dir / 'run.json'
     run_payload: Dict[str, Any] = {}
     if run_json_path.exists():
@@ -141,6 +151,11 @@ def run_demo(
         'supervised_train_manifest': str(model_sup_dir / 'train_manifest.json'),
         'unsupervised_model_path': str(model_unsup_dir / 'model.pkl'),
         'unsupervised_train_manifest': str(model_unsup_dir / 'train_manifest.json'),
+        'scores_csv': str(scores_csv),
+        'score_column': str(score_summary.get('score_column', 'score_anomaly')),
+        'threshold_report_json': str(threshold_summary.get('report_json', '')),
+        'threshold_report_md': str(threshold_summary.get('report_md', '')),
+        'threshold_summary': threshold_summary,
         'evaluation_run_json': str(run_json_path),
         'evaluation_run_md': str(eval_dir / 'run.md'),
         'max_fpr': float(max_fpr),

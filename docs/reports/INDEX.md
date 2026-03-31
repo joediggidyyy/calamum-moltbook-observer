@@ -20,6 +20,7 @@ Reports are distinct from manuals:
 
 | Report | Topic | Status | Relation to manuals |
 |---|---|---|---|
+| [`ds/INDEX.md`](ds/INDEX.md) | Curated dataset-science report packs and aggregate rollups derived from the canonical DS run spine | Tracked | Gives readers one DS-specific route into published per-run report packs and aggregate summaries without replacing the broader report catalog. |
 | [`GENERATED_REPORT_SURFACES.md`](GENERATED_REPORT_SURFACES.md) | Generated report families explained in terms of when they run, why they exist, and how they are produced | Tracked | Explains the generated report families that sit beside the manuals and public reports without replacing either surface. |
 | [`PUBLIC_RUN_LEDGER.md`](PUBLIC_RUN_LEDGER.md) | Starter public ledger foregrounding current runtime evidence and lane census before audit/report-family census data | Tracked | Provides the runtime-first public snapshot that later cross-run synthesis can cite without publishing routine runtime payloads. |
 | [`AGGREGATE_REPORT.md`](AGGREGATE_REPORT.md) | Starter aggregate report foregrounding runtime evidence aggregates before audit/report-family synthesis, with a compact threshold-calibration subsection | Tracked | Provides a public synthesis surface that leads with active runtime posture and includes the current threshold-calibration snapshot. |

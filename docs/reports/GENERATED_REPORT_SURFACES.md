@@ -20,10 +20,11 @@ It is the public-facing contract for:
 - how each family is produced and retained
 - how untracked runtime ledgers should be structured
 
-The generated report artifacts themselves remain untracked runtime outputs. This document describes them without turning routine run artifacts into tracked repository content.
+Most generated report artifacts remain untracked runtime outputs. The DS lane also publishes a curated tracked reader subtree under `docs/reports/ds/` derived from the canonical untracked DS run spine.
 
 Use the companion report references alongside this document:
 
+- [`ds/INDEX.md`](ds/INDEX.md) for curated DS report packs and DS aggregate rollups derived from the canonical DS run spine
 - [`PUBLIC_RUN_LEDGER.md`](PUBLIC_RUN_LEDGER.md) for the public register of run families and authoritative evidence surfaces
 - [`AGGREGATE_REPORT_SCHEMA.md`](AGGREGATE_REPORT_SCHEMA.md) for the schema governing future public aggregate reports
 
@@ -36,8 +37,21 @@ Calamum uses three distinct report surfaces:
 | Surface | Role | Retention model |
 |---|---|---|
 | Tracked public reports | Publishable, reader-facing reference artifacts | Committed under `docs/reports/` |
+| Tracked DS publication packs | Curated per-run DS report packs plus DS aggregate rollups derived from the canonical DS run spine | Committed under `docs/reports/ds/` |
 | Untracked generated reports | Per-run operational, audit, and probe outputs | Written under `local_untracked/` or `report_tmp/` |
 | Runtime ledgers | Append-only run history for generated report families | Written as JSONL under the family output root |
+
+## DS publication lane
+
+The DS reporting lane now uses a dual-surface publication model:
+
+| DS surface | Role | Authority |
+|---|---|---|
+| Canonical untracked DS run bundle | Per-run operational source of truth for report payloads, manifests, and runtime artifacts | `local_untracked/analysis/runs/<workflow>/<run_id>/` |
+| DS run ledger and latest pointer | Append-only history plus convenience latest surface for DS runs | `local_untracked/analysis/indexes/ds_run_index.jsonl` and `local_untracked/analysis/indexes/ds_latest.json` |
+| Curated tracked DS report packs | Reader-facing per-run report packs and aggregate rollups | `docs/reports/ds/` derived from the canonical DS run spine |
+
+Tracked DS publication stays reader-facing and derived. It does not replace the canonical untracked DS run bundle or the append-only DS run ledger.
 
 ## Runtime evidence aggregate sources
 
@@ -200,6 +214,7 @@ Example shape:
 ## Related surfaces
 
 - [`INDEX.md`](INDEX.md)
+- [`ds/INDEX.md`](ds/INDEX.md)
 - [`PUBLIC_RUN_LEDGER.md`](PUBLIC_RUN_LEDGER.md)
 - [`AGGREGATE_REPORT_SCHEMA.md`](AGGREGATE_REPORT_SCHEMA.md)
 - [`../manuals/INDEX.md`](../manuals/INDEX.md)

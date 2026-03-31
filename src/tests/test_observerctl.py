@@ -32,6 +32,13 @@ def _touch(path: Path) -> None:
     path.write_text('{"status":"ok"}\n', encoding='utf-8')
 
 
+def _resolve_reported_path(path_text: str) -> Path:
+    path = Path(path_text)
+    if path.is_absolute():
+        return path
+    return observerctl_module._project_root() / path
+
+
 def _read_jsonl_rows(path: Path) -> list[dict]:
     rows = []
     if not path.exists():
@@ -93,6 +100,69 @@ def _write_signed_jsonl(path: Path, records: list[dict]) -> None:
             f.write(json.dumps(Obfuscator.sign_record(record)) + '\n')
 
 
+def _make_temp_observer_project(tmp_path: Path) -> tuple[Path, Path]:
+    project_root = tmp_path / 'observer_project'
+    anchor = project_root / 'src' / 'observerctl.py'
+    anchor.parent.mkdir(parents=True, exist_ok=True)
+    anchor.write_text('# observerctl anchor\n', encoding='utf-8')
+    (project_root / 'PROJECT_MANIFEST.json').write_text('{}\n', encoding='utf-8')
+    return project_root, anchor
+
+
+def _bind_temp_observer_project(monkeypatch: pytest.MonkeyPatch, project_root: Path, anchor: Path) -> None:
+    monkeypatch.setattr(observerctl_module, '_project_root', lambda: project_root)
+    monkeypatch.setattr(observerctl_module, '_project_anchor', lambda: anchor)
+    monkeypatch.setattr(observerctl_module, '__file__', str(anchor))
+
+
+def _append_retained_ds_manifest(
+    anchor: Path,
+    workflow: str,
+    run_id: str,
+    *,
+    timestamp_utc: str,
+    artifact_paths: dict[str, Path],
+    context: dict | None = None,
+    summary: str = '',
+) -> None:
+    from analysis.report_aggregate import append_ds_run_index
+    from analysis.report_pack import prepare_report_bundle, write_report_bundle
+
+    workflow_name = str(workflow).strip().lower()
+    command_name = 'run demo' if workflow_name == 'demo' else workflow_name
+    action_name = {
+        'build': 'ds-build',
+        'train': 'ds-train',
+        'evaluate': 'ds-evaluate',
+        'score': 'ds-score',
+        'demo': 'ds-run',
+        'pipeline': 'ds-run',
+    }.get(workflow_name, 'ds-{0}'.format(workflow_name))
+    bundle = prepare_report_bundle(anchor, workflow_name, run_id=run_id)
+    report_bundle = write_report_bundle(
+        project_anchor=anchor,
+        bundle=bundle,
+        packet={
+            'timestamp_utc': timestamp_utc,
+            'runtime_cli_surface': 'observerctl',
+            'decision': 'go',
+            'action': action_name,
+            'command_family': 'ds',
+            'command_path': 'observerctl ds {0}'.format(command_name),
+            'implementation_state': 'command-available',
+            'underlying_surface': 'tests.retained-fixtures',
+            'summary': summary or 'Retained DS artifact fixture.',
+            'run_id': run_id,
+            'artifacts': {},
+            'reason_codes': [],
+        },
+        artifact_paths=artifact_paths,
+        context=context or {},
+        lineage={},
+    )
+    append_ds_run_index(project_anchor=anchor, manifest_payload=report_bundle['manifest'])
+
+
 def _make_ds_records() -> list[dict]:
     records = []
     for i in range(8):
@@ -152,8 +222,28 @@ def test_observerctl_ds_help_exposes_frame1_command_family(capsys) -> None:
     assert 'train' in out
     assert 'evaluate' in out
     assert 'score' in out
+    assert 'retained' in out
     assert 'run' in out
     assert 'wizard' in out
+    assert '==SUPPRESS==' not in out
+    assert 'trains' not in out
+    assert 'runs' not in out
+    assert 'baselines' not in out
+    assert 'drafts' not in out
+
+
+def test_observerctl_ds_retained_help_exposes_selector_families(capsys) -> None:
+    parser = observerctl_module._build_parser()
+
+    with pytest.raises(SystemExit) as exc:
+        parser.parse_args(['ds', 'retained', '-h'])
+
+    assert exc.value.code == 0
+    out = capsys.readouterr().out
+    assert 'trains' in out
+    assert 'runs' in out
+    assert 'baselines' in out
+    assert 'drafts' in out
 
 
 def test_ds_wizard_emits_frame4_shell_packet_with_workflow_filtering(capsys) -> None:
@@ -460,7 +550,8 @@ def test_ds_wizard_hydrate_latest_explains_dataset_limit(monkeypatch, tmp_path: 
 
     lines = observerctl_module._ds_wizard_transient_lines(state)
     assert 'latest context loaded: source=real, mode=canary' in lines
-    assert any('hydrate latest does not discover or load datasets/models' in line for line in lines)
+    assert 'baseline attached: none for the current source/mode' in lines
+    assert 'dataset note: hydrate latest does not choose a dataset; use datasets or hydrate dataset <selector>.' in lines
 
 
 def test_ds_wizard_execute_runs_workflow_and_surfaces_reports(monkeypatch) -> None:
@@ -582,16 +673,250 @@ def test_ds_wizard_interactive_redraw_skips_separator_when_clear_succeeds(monkey
     assert 'next frame: ds wizard > configure > eval' not in out
 
 
-def test_ds_wizard_datasets_command_explains_current_limit() -> None:
-    state = observerctl_module._ds_wizard_new_state('evaluate')
+def test_ds_wizard_datasets_command_lists_approved_selectors(monkeypatch, tmp_path: Path) -> None:
+    from calamum_librarian import register_librarian_dataset_packet
 
+    project_root, anchor = _make_temp_observer_project(tmp_path)
+    dataset_dir = project_root / 'datasets' / 'approved_alpha'
+    dataset_dir.mkdir(parents=True, exist_ok=True)
+    manifest_path = dataset_dir / 'dataset_manifest.json'
+    features_csv = dataset_dir / 'features.csv'
+    labels_csv = dataset_dir / 'labels.csv'
+    features_csv.write_text('record_id,feature\n', encoding='utf-8')
+    labels_csv.write_text('record_id,label\n', encoding='utf-8')
+    manifest_path.write_text(json.dumps({
+        'features_csv': str(features_csv),
+        'labels_csv': str(labels_csv),
+        'total_records': 12,
+        'has_labels': True,
+    }), encoding='utf-8')
+
+    register_librarian_dataset_packet(
+        anchor,
+        manifest_path,
+        access_class='local',
+        display_name='Approved Alpha',
+        run_id='alpha-run',
+    )
+    monkeypatch.setattr(observerctl_module, '_project_root', lambda: project_root)
+    monkeypatch.setattr(observerctl_module, '_project_anchor', lambda: anchor)
+
+    state = observerctl_module._ds_wizard_new_state('evaluate')
     state, packet, should_exit = observerctl_module._ds_wizard_handle_command(state, 'datasets')
 
     assert packet is None
     assert should_exit is False
     rendered = observerctl_module._ds_wizard_render(state)
-    assert 'dataset catalog/listing is not wired into this wizard yet.' in rendered
-    assert 'for now, use hydrate dataset <manifest.json> or set dataset_manifest <path>.' in rendered
+    assert 'approved datasets:' in rendered
+    assert '1. Approved Alpha' in rendered
+    assert any('Selector:' in line and 'alpha-run' in line for line in rendered)
+    assert any('Access:' in line and 'local' in line for line in rendered)
+    assert any('Workflow:' in line and 'manual-register' in line for line in rendered)
+    assert any('Records:' in line and '12' in line for line in rendered)
+    assert 'guidance:' in rendered
+    assert '- hydrate dataset <index|run_id|display_name|manifest.json>' in rendered
+
+
+def test_ds_wizard_hydrate_dataset_selector_releases_protected_dataset(monkeypatch, tmp_path: Path) -> None:
+    from calamum_librarian import register_librarian_dataset_packet
+
+    project_root, anchor = _make_temp_observer_project(tmp_path)
+    dataset_dir = project_root / 'datasets' / 'protected_alpha'
+    dataset_dir.mkdir(parents=True, exist_ok=True)
+    manifest_path = dataset_dir / 'dataset_manifest.json'
+    features_csv = dataset_dir / 'features.csv'
+    labels_csv = dataset_dir / 'labels.csv'
+    features_csv.write_text('record_id,feature\n1,0.1\n', encoding='utf-8')
+    labels_csv.write_text('record_id,label\n1,1\n', encoding='utf-8')
+    manifest_path.write_text(json.dumps({
+        'features_csv': str(features_csv),
+        'labels_csv': str(labels_csv),
+        'total_records': 1,
+        'has_labels': True,
+    }), encoding='utf-8')
+
+    register_librarian_dataset_packet(
+        anchor,
+        manifest_path,
+        access_class='protected-source',
+        display_name='Protected Alpha',
+        run_id='protected-alpha-run',
+    )
+    monkeypatch.setattr(observerctl_module, '_project_root', lambda: project_root)
+    monkeypatch.setattr(observerctl_module, '_project_anchor', lambda: anchor)
+    monkeypatch.setenv('CALAMUM_DATA_SIGNING_KEY', 'unit-test-signing-key')
+
+    state = observerctl_module._ds_wizard_new_state('evaluate')
+    state, packet, should_exit = observerctl_module._ds_wizard_handle_command(state, 'hydrate dataset 1')
+
+    assert packet is None
+    assert should_exit is False
+    assert state.values['dataset_manifest'] == str(manifest_path)
+    assert state.values['features_csv'] == str(features_csv)
+    assert state.values['labels_csv'] == str(labels_csv)
+    assert state.hydrated_from['dataset_manifest'] == 'librarian_dataset'
+    lines = observerctl_module._ds_wizard_transient_lines(state)
+    assert 'approved dataset ready: Protected Alpha' in lines
+    assert '- access: protected-source' in lines
+    assert '- fields: dataset_manifest, features_csv, labels_csv' in lines
+    assert any('delegated release receipts were recorded' in line for line in lines)
+    access_receipts = sorted((project_root / 'local_untracked' / 'analysis' / 'indexes' / 'dataset_access').rglob('release_receipt.json'))
+    assert access_receipts
+
+
+def test_librarian_dataset_cli_register_list_and_release(monkeypatch, tmp_path: Path, capsys) -> None:
+    project_root, anchor = _make_temp_observer_project(tmp_path)
+    dataset_dir = project_root / 'datasets' / 'cli_alpha'
+    dataset_dir.mkdir(parents=True, exist_ok=True)
+    manifest_path = dataset_dir / 'dataset_manifest.json'
+    features_csv = dataset_dir / 'features.csv'
+    labels_csv = dataset_dir / 'labels.csv'
+    features_csv.write_text('record_id,feature\n', encoding='utf-8')
+    labels_csv.write_text('record_id,label\n', encoding='utf-8')
+    manifest_path.write_text(json.dumps({
+        'features_csv': str(features_csv),
+        'labels_csv': str(labels_csv),
+        'total_records': 3,
+        'has_labels': True,
+    }), encoding='utf-8')
+
+    monkeypatch.setattr(observerctl_module, '_project_root', lambda: project_root)
+    monkeypatch.setattr(observerctl_module, '_project_anchor', lambda: anchor)
+    monkeypatch.setenv('CALAMUM_DATA_SIGNING_KEY', 'unit-test-signing-key')
+
+    rc = main([
+        'librarian',
+        'dataset-register',
+        str(manifest_path),
+        '--access-class', 'protected-source',
+        '--display-name', 'CLI Protected Alpha',
+        '--run-id', 'cli-alpha-run',
+        '--json',
+    ])
+    assert rc == 0
+    payload = json.loads(capsys.readouterr().out)
+    assert payload['action'] == 'librarian-dataset-register'
+    assert payload['dataset']['display_name'] == 'CLI Protected Alpha'
+
+    rc = main(['librarian', 'datasets', '--json'])
+    assert rc == 0
+    payload = json.loads(capsys.readouterr().out)
+    assert payload['action'] == 'librarian-datasets'
+    assert payload['count'] == 1
+    assert payload['selector_entries'][0]['run_id'] == 'cli-alpha-run'
+
+    rc = main(['librarian', 'dataset-release', '1', '--requester-id', 'test-suite', '--json'])
+    assert rc == 0
+    payload = json.loads(capsys.readouterr().out)
+    assert payload['action'] == 'librarian-dataset-release'
+    assert payload['release_mode'] == 'protected-source'
+    assert payload['dataset_manifest_path'].endswith('dataset_manifest.json')
+    assert payload['artifacts']['dataset_access_request_json'].endswith('request.json')
+    assert payload['artifacts']['dataset_access_attestation_json'].endswith('attestation.json')
+    assert payload['artifacts']['dataset_access_release_receipt_json'].endswith('release_receipt.json')
+
+
+def test_librarian_dataset_human_list_surfaces_sectioned_output(monkeypatch, tmp_path: Path, capsys) -> None:
+    from calamum_librarian import register_librarian_dataset_packet
+
+    project_root, anchor = _make_temp_observer_project(tmp_path)
+    dataset_dir = project_root / 'datasets' / 'human_alpha'
+    dataset_dir.mkdir(parents=True, exist_ok=True)
+    manifest_path = dataset_dir / 'dataset_manifest.json'
+    features_csv = dataset_dir / 'features.csv'
+    labels_csv = dataset_dir / 'labels.csv'
+    features_csv.write_text('record_id,feature\n', encoding='utf-8')
+    labels_csv.write_text('record_id,label\n', encoding='utf-8')
+    manifest_path.write_text(json.dumps({
+        'features_csv': str(features_csv),
+        'labels_csv': str(labels_csv),
+        'total_records': 7,
+        'has_labels': True,
+    }), encoding='utf-8')
+
+    register_librarian_dataset_packet(
+        anchor,
+        manifest_path,
+        access_class='local',
+        display_name='Human Alpha',
+        run_id='human-alpha-run',
+    )
+    monkeypatch.setattr(observerctl_module, '_project_root', lambda: project_root)
+    monkeypatch.setattr(observerctl_module, '_project_anchor', lambda: anchor)
+
+    rc = main(['librarian', 'datasets'])
+
+    assert rc == 0
+    rendered = capsys.readouterr().out.splitlines()
+    assert rendered[0] == 'Librarian datasets'
+    assert 'Summary' in rendered
+    assert 'Approved datasets' in rendered
+    assert any('1. Human Alpha' in line for line in rendered)
+    assert any('Selector:' in line and 'human-alpha-run' in line for line in rendered)
+    assert any('Access:' in line and 'local' in line for line in rendered)
+    assert any('Records:' in line and '7' in line for line in rendered)
+    assert 'Evidence' in rendered
+    assert 'Guidance' in rendered
+
+
+def test_librarian_dataset_release_human_surfaces_evidence_and_guidance(monkeypatch, tmp_path: Path, capsys) -> None:
+    from calamum_librarian import register_librarian_dataset_packet
+
+    project_root, anchor = _make_temp_observer_project(tmp_path)
+    dataset_dir = project_root / 'datasets' / 'human_protected_alpha'
+    dataset_dir.mkdir(parents=True, exist_ok=True)
+    manifest_path = dataset_dir / 'dataset_manifest.json'
+    features_csv = dataset_dir / 'features.csv'
+    labels_csv = dataset_dir / 'labels.csv'
+    features_csv.write_text('record_id,feature\n', encoding='utf-8')
+    labels_csv.write_text('record_id,label\n', encoding='utf-8')
+    manifest_path.write_text(json.dumps({
+        'features_csv': str(features_csv),
+        'labels_csv': str(labels_csv),
+        'total_records': 5,
+        'has_labels': True,
+    }), encoding='utf-8')
+
+    register_librarian_dataset_packet(
+        anchor,
+        manifest_path,
+        access_class='protected-source',
+        display_name='Human Protected Alpha',
+        run_id='human-protected-alpha-run',
+    )
+    monkeypatch.setattr(observerctl_module, '_project_root', lambda: project_root)
+    monkeypatch.setattr(observerctl_module, '_project_anchor', lambda: anchor)
+    monkeypatch.setenv('CALAMUM_DATA_SIGNING_KEY', 'unit-test-signing-key')
+
+    rc = main(['librarian', 'dataset-release', '1', '--requester-id', 'human-suite'])
+
+    assert rc == 0
+    rendered = capsys.readouterr().out.splitlines()
+    assert rendered[0] == 'Librarian dataset release'
+    assert 'Summary' in rendered
+    assert 'Dataset' in rendered
+    assert any('Human Protected Alpha' in line for line in rendered)
+    assert any('Release mode:' in line and 'protected-source' in line for line in rendered)
+    assert 'Evidence' in rendered
+    assert any('Release receipt:' in line for line in rendered)
+    assert any('Dataset manifest:' in line for line in rendered)
+    assert 'Guidance' in rendered
+
+
+def test_librarian_dataset_release_human_denial_surfaces_reasons_and_guidance(monkeypatch, tmp_path: Path, capsys) -> None:
+    project_root, anchor = _make_temp_observer_project(tmp_path)
+    monkeypatch.setattr(observerctl_module, '_project_root', lambda: project_root)
+    monkeypatch.setattr(observerctl_module, '_project_anchor', lambda: anchor)
+
+    rc = main(['librarian', 'dataset-release', 'missing-selector', '--requester-id', 'human-suite'])
+
+    assert rc == 2
+    rendered = capsys.readouterr().out.splitlines()
+    assert rendered[0] == 'Librarian dataset release'
+    assert 'Reasons' in rendered
+    assert any('critical_check_failed:librarian_dataset_not_found' in line for line in rendered)
+    assert 'Guidance' in rendered
+    assert any('review observerctl librarian datasets' in line for line in rendered)
 
 
 def test_ds_wizard_command_surface_supports_run_hydration_and_draft_round_trip(tmp_path: Path) -> None:
@@ -640,6 +965,223 @@ def test_ds_wizard_command_surface_supports_run_hydration_and_draft_round_trip(t
     assert restored.draft_path == str(draft_path)
 
 
+def test_ds_retained_selector_commands_and_wizard_hydration(monkeypatch, tmp_path: Path, capsys) -> None:
+    project_root, anchor = _make_temp_observer_project(tmp_path)
+    _bind_temp_observer_project(monkeypatch, project_root, anchor)
+
+    log_dir = tmp_path / 'logs'
+    (log_dir / 'health').mkdir(parents=True, exist_ok=True)
+    (log_dir / 'data' / 'calamum').mkdir(parents=True, exist_ok=True)
+    (log_dir / 'control' / 'calamum').mkdir(parents=True, exist_ok=True)
+    monkeypatch.setenv('CALAMUM_LOG_DIR', str(log_dir))
+
+    dataset_dir = project_root / 'retained' / 'dataset'
+    dataset_dir.mkdir(parents=True, exist_ok=True)
+    dataset_manifest = dataset_dir / 'dataset_manifest.json'
+    features_csv = dataset_dir / 'features.csv'
+    labels_csv = dataset_dir / 'labels.csv'
+    features_csv.write_text('record_id,feature\n1,0.1\n', encoding='utf-8')
+    labels_csv.write_text('record_id,label\n1,1\n', encoding='utf-8')
+    dataset_manifest.write_text(json.dumps({
+        'features_csv': str(features_csv),
+        'labels_csv': str(labels_csv),
+        'total_records': 1,
+        'has_labels': True,
+    }), encoding='utf-8')
+
+    model_dir = project_root / 'retained' / 'model'
+    model_dir.mkdir(parents=True, exist_ok=True)
+    model_path = model_dir / 'model.pkl'
+    train_manifest = model_dir / 'train_manifest.json'
+    model_path.write_bytes(b'model')
+    train_manifest.write_text(json.dumps({
+        'dataset_manifest_path': str(dataset_manifest),
+        'model_path': str(model_path),
+        'model_type': 'unsupervised',
+    }), encoding='utf-8')
+    _append_retained_ds_manifest(
+        anchor,
+        'train',
+        'selector-train-001',
+        timestamp_utc='2026-03-31T12:00:00Z',
+        artifact_paths={
+            'train_manifest': train_manifest,
+            'model_path': model_path,
+            'dataset_manifest': dataset_manifest,
+        },
+        context={'source': 'real', 'mode': 'canary'},
+        summary='Retained train selector fixture.',
+    )
+
+    evaluation_dir = project_root / 'retained' / 'evaluation'
+    evaluation_dir.mkdir(parents=True, exist_ok=True)
+    run_json = evaluation_dir / 'run.json'
+    run_md = evaluation_dir / 'run.md'
+    run_json.write_text(json.dumps({
+        'identity': {'run_id': 'selector-eval-001'},
+        'context': {'constraints': {'max_fpr': 0.02}},
+        'data': {
+            'dataset_manifest': str(dataset_manifest),
+            'features_csv': str(features_csv),
+            'labels_csv': str(labels_csv),
+        },
+        'model': {'source': str(model_path)},
+    }), encoding='utf-8')
+    run_md.write_text('# retained run\n', encoding='utf-8')
+    _append_retained_ds_manifest(
+        anchor,
+        'evaluate',
+        'selector-eval-001',
+        timestamp_utc='2026-03-31T12:05:00Z',
+        artifact_paths={
+            'run_json': run_json,
+            'run_md': run_md,
+        },
+        context={
+            'source': 'real',
+            'mode': 'canary',
+            'baseline_window_id': 'canary-window-001',
+            'max_fpr': 0.02,
+        },
+        summary='Retained run selector fixture.',
+    )
+
+    evidence_dir = log_dir / 'data' / 'calamum' / 'observer_derived' / 'real' / 'canary' / 'evidence'
+    evidence_dir.mkdir(parents=True, exist_ok=True)
+    baseline_packet = evidence_dir / 'observerctl_baseline-analysis_retained.json'
+    baseline_packet.write_text(json.dumps({
+        'timestamp_utc': '2026-03-31T12:10:00Z',
+        'decision': 'go',
+        'summary': 'Retained baseline selector fixture.',
+        'baseline_window_id': 'canary-window-001',
+        'sample_counts': {'resource_normal': 5, 'resource_baseline': 5},
+    }), encoding='utf-8')
+    (evidence_dir / 'index.jsonl').write_text(json.dumps({
+        'timestamp_utc': '2026-03-31T12:10:00Z',
+        'event': 'baseline_analysis',
+        'packet_path': str(baseline_packet).replace('\\', '/'),
+        'baseline_window_id': 'canary-window-001',
+    }) + '\n', encoding='utf-8')
+
+    rc = main(['ds', 'retained', 'trains', '--json'])
+    assert rc == 0
+    payload = json.loads(capsys.readouterr().out)
+    assert payload['action'] == 'ds-retained-trains'
+    assert payload['command_path'] == 'observerctl ds retained trains'
+    assert payload['count'] == 1
+    assert payload['selector_entries'][0]['run_id'] == 'selector-train-001'
+
+    rc = main(['ds', 'retained', 'runs', '--json'])
+    assert rc == 0
+    payload = json.loads(capsys.readouterr().out)
+    assert payload['action'] == 'ds-retained-runs'
+    assert payload['command_path'] == 'observerctl ds retained runs'
+    assert payload['count'] == 1
+    assert payload['selector_entries'][0]['run_id'] == 'selector-eval-001'
+
+    rc = main(['ds', 'retained', 'baselines', '--source', 'real', '--mode', 'canary', '--json'])
+    assert rc == 0
+    payload = json.loads(capsys.readouterr().out)
+    assert payload['action'] == 'ds-retained-baselines'
+    assert payload['command_path'] == 'observerctl ds retained baselines'
+    assert payload['count'] == 1
+    assert payload['selector_entries'][0]['baseline_window_id'] == 'canary-window-001'
+
+    train_state = observerctl_module._ds_wizard_new_state('score')
+    train_state, packet, should_exit = observerctl_module._ds_wizard_handle_command(train_state, 'trains')
+    assert packet is None
+    assert should_exit is False
+    assert 'retained trains:' in observerctl_module._ds_wizard_render(train_state)
+
+    train_state, packet, should_exit = observerctl_module._ds_wizard_handle_command(train_state, 'hydrate train 1')
+    assert packet is None
+    assert should_exit is False
+    assert train_state.values['train_manifest'] == str(train_manifest)
+    assert train_state.values['dataset_manifest'] == str(dataset_manifest)
+    assert train_state.values['model_path'] == str(model_path)
+    assert train_state.hydrated_from['train_manifest'] == 'retained_train'
+
+    run_state = observerctl_module._ds_wizard_new_state('evaluate')
+    observerctl_module._ds_wizard_set_value(run_state, 'source', 'real')
+    observerctl_module._ds_wizard_set_value(run_state, 'mode', 'canary')
+
+    run_state, packet, should_exit = observerctl_module._ds_wizard_handle_command(run_state, 'runs')
+    assert packet is None
+    assert should_exit is False
+    assert 'retained runs:' in observerctl_module._ds_wizard_render(run_state)
+
+    run_state, packet, should_exit = observerctl_module._ds_wizard_handle_command(run_state, 'hydrate run 1')
+    assert packet is None
+    assert should_exit is False
+    assert run_state.values['run_id'] == 'selector-eval-001'
+    assert run_state.values['max_fpr'] == 0.02
+    assert run_state.hydrated_from['run_id'] == 'retained_run'
+
+    run_state, packet, should_exit = observerctl_module._ds_wizard_handle_command(run_state, 'baselines')
+    assert packet is None
+    assert should_exit is False
+    assert 'retained baselines:' in observerctl_module._ds_wizard_render(run_state)
+
+    run_state, packet, should_exit = observerctl_module._ds_wizard_handle_command(run_state, 'hydrate baseline 1')
+    assert packet is None
+    assert should_exit is False
+    assert run_state.values['baseline_window_id'] == 'canary-window-001'
+    assert run_state.hydrated_from['baseline_window_id'] == 'retained_baseline'
+
+
+def test_ds_wizard_canonical_draft_slots_and_output_preview(monkeypatch, tmp_path: Path, capsys) -> None:
+    project_root, anchor = _make_temp_observer_project(tmp_path)
+    _bind_temp_observer_project(monkeypatch, project_root, anchor)
+
+    state = observerctl_module._ds_wizard_new_state('evaluate')
+    observerctl_module._ds_wizard_set_value(state, 'run_id', 'slot-draft-001')
+
+    state, packet, should_exit = observerctl_module._ds_wizard_handle_command(state, 'save draft')
+    assert packet is None
+    assert should_exit is False
+    assert Path(state.draft_path).name == 'slot-001.json'
+    assert Path(state.draft_path).exists()
+
+    rc = main(['ds', 'retained', 'drafts', '--json'])
+    assert rc == 0
+    payload = json.loads(capsys.readouterr().out)
+    assert payload['action'] == 'ds-retained-drafts'
+    assert payload['command_path'] == 'observerctl ds retained drafts'
+    assert payload['count'] == 1
+    assert payload['selector_entries'][0]['slot_id'] == 1
+
+    restored = observerctl_module._ds_wizard_new_state('evaluate')
+    restored, packet, should_exit = observerctl_module._ds_wizard_handle_command(restored, 'load draft 1')
+    assert packet is None
+    assert should_exit is False
+    assert restored.values['run_id'] == 'slot-draft-001'
+    assert Path(restored.draft_path).name == 'slot-001.json'
+
+    list_state = observerctl_module._ds_wizard_new_state('evaluate')
+    list_state, packet, should_exit = observerctl_module._ds_wizard_handle_command(list_state, 'drafts')
+    assert packet is None
+    assert should_exit is False
+    rendered = observerctl_module._ds_wizard_render(list_state)
+    assert 'retained draft slots:' in rendered
+    assert any('slot-001' in line for line in rendered)
+
+    out_state = observerctl_module._ds_wizard_new_state('train')
+    observerctl_module._ds_wizard_open_section(out_state, 'out')
+    rendered = observerctl_module._ds_wizard_render(out_state)
+    assert 'canonical outputs:' in rendered
+    assert any('canonical run root:' in line and 'local_untracked/analysis/runs/train/auto-run-id' in line.replace('\\', '/') for line in rendered)
+    assert any('override note:' in line for line in rendered)
+    assert '--out-dir' not in observerctl_module._ds_wizard_command_preview(out_state)
+
+    observerctl_module._ds_wizard_set_value(out_state, 'out_dir', str(tmp_path / 'override-root'))
+    rendered = observerctl_module._ds_wizard_render(out_state)
+    assert any('output policy: power override' in line for line in rendered)
+    assert any('active override:' in line for line in rendered)
+
+    score_state = observerctl_module._ds_wizard_new_state('score')
+    assert '--out-file' not in observerctl_module._ds_wizard_command_preview(score_state)
+
+
 def test_ds_run_demo_executes_wrapper_and_emits_artifact_summary(tmp_path: Path, capsys) -> None:
     try:
         import apexlab  # noqa: F401
@@ -662,6 +1204,11 @@ def test_ds_run_demo_executes_wrapper_and_emits_artifact_summary(tmp_path: Path,
     assert Path(payload['artifacts']['unsupervised_model_path']).exists()
     assert Path(payload['artifacts']['evaluation_run_json']).exists()
     assert Path(payload['artifacts']['evaluation_run_md']).exists()
+    assert _resolve_reported_path(payload['artifacts']['report_json']).exists()
+    assert _resolve_reported_path(payload['artifacts']['report_md']).exists()
+    assert _resolve_reported_path(payload['artifacts']['report_manifest_json']).exists()
+    assert _resolve_reported_path(payload['artifacts']['ds_run_index_jsonl']).exists()
+    assert _resolve_reported_path(payload['artifacts']['ds_latest_json']).exists()
 
 
 def test_ds_run_pipeline_executes_supervised_flow_and_emits_artifact_summary(tmp_path: Path, monkeypatch, capsys) -> None:
@@ -705,6 +1252,11 @@ def test_ds_run_pipeline_executes_supervised_flow_and_emits_artifact_summary(tmp
     assert Path(payload['artifacts']['model_path']).exists()
     assert Path(payload['artifacts']['run_json']).exists()
     assert Path(payload['artifacts']['run_md']).exists()
+    assert _resolve_reported_path(payload['artifacts']['report_json']).exists()
+    assert _resolve_reported_path(payload['artifacts']['report_md']).exists()
+    assert _resolve_reported_path(payload['artifacts']['report_manifest_json']).exists()
+    assert _resolve_reported_path(payload['artifacts']['ds_run_index_jsonl']).exists()
+    assert _resolve_reported_path(payload['artifacts']['ds_latest_json']).exists()
 
 
 def test_ds_build_executes_wrapper_and_emits_artifact_summary(tmp_path: Path, monkeypatch, capsys) -> None:
@@ -731,6 +1283,11 @@ def test_ds_build_executes_wrapper_and_emits_artifact_summary(tmp_path: Path, mo
     assert Path(payload['artifacts']['features_csv']).exists()
     assert payload['has_labels'] is True
     assert int(payload['total_records']) == 12
+    assert _resolve_reported_path(payload['artifacts']['report_json']).exists()
+    assert _resolve_reported_path(payload['artifacts']['report_md']).exists()
+    assert _resolve_reported_path(payload['artifacts']['report_manifest_json']).exists()
+    assert _resolve_reported_path(payload['artifacts']['ds_run_index_jsonl']).exists()
+    assert _resolve_reported_path(payload['artifacts']['ds_latest_json']).exists()
 
 
 def test_ds_train_executes_wrapper_and_emits_expected_artifacts(tmp_path: Path, monkeypatch, capsys) -> None:
@@ -765,6 +1322,11 @@ def test_ds_train_executes_wrapper_and_emits_expected_artifacts(tmp_path: Path, 
     assert Path(payload['artifacts']['train_manifest']).exists()
     assert Path(payload['artifacts']['model_path']).exists()
     assert Path(payload['artifacts']['metrics_path']).exists()
+    assert _resolve_reported_path(payload['artifacts']['report_json']).exists()
+    assert _resolve_reported_path(payload['artifacts']['report_md']).exists()
+    assert _resolve_reported_path(payload['artifacts']['report_manifest_json']).exists()
+    assert _resolve_reported_path(payload['artifacts']['ds_run_index_jsonl']).exists()
+    assert _resolve_reported_path(payload['artifacts']['ds_latest_json']).exists()
 
 
 def test_ds_evaluate_executes_wrapper_and_emits_run_artifacts(tmp_path: Path, monkeypatch, capsys) -> None:
@@ -801,6 +1363,11 @@ def test_ds_evaluate_executes_wrapper_and_emits_run_artifacts(tmp_path: Path, mo
     assert Path(payload['artifacts']['run_json']).exists()
     assert Path(payload['artifacts']['run_md']).exists()
     assert payload['has_labels'] is True
+    assert _resolve_reported_path(payload['artifacts']['report_json']).exists()
+    assert _resolve_reported_path(payload['artifacts']['report_md']).exists()
+    assert _resolve_reported_path(payload['artifacts']['report_manifest_json']).exists()
+    assert _resolve_reported_path(payload['artifacts']['ds_run_index_jsonl']).exists()
+    assert _resolve_reported_path(payload['artifacts']['ds_latest_json']).exists()
 
 
 def test_ds_score_executes_wrapper_and_emits_score_artifact_summary(tmp_path: Path, monkeypatch, capsys) -> None:
@@ -842,7 +1409,442 @@ def test_ds_score_executes_wrapper_and_emits_score_artifact_summary(tmp_path: Pa
     assert payload['action'] == 'ds-score'
     assert payload['records_scored'] == 12
     assert payload['score_column'] == 'score_anomaly'
+    assert payload['anomaly_direction'] == 'lower-is-more-anomalous'
+    assert payload['visuals']['decision'] == 'go'
     assert Path(payload['artifacts']['scores_csv']).exists()
+    assert _resolve_reported_path(payload['artifacts']['score_distribution_png']).exists()
+    assert _resolve_reported_path(payload['artifacts']['report_json']).exists()
+    assert _resolve_reported_path(payload['artifacts']['report_md']).exists()
+    assert _resolve_reported_path(payload['artifacts']['report_manifest_json']).exists()
+    assert _resolve_reported_path(payload['artifacts']['ds_run_index_jsonl']).exists()
+    assert _resolve_reported_path(payload['artifacts']['ds_latest_json']).exists()
+
+
+def test_ds_finalize_run_packet_refreshes_librarian_dataset_catalog(tmp_path: Path, monkeypatch) -> None:
+    from analysis.report_pack import prepare_report_bundle
+
+    project_root, anchor = _make_temp_observer_project(tmp_path)
+    monkeypatch.setattr(observerctl_module, '_project_root', lambda: project_root)
+    monkeypatch.setattr(observerctl_module, '_project_anchor', lambda: anchor)
+    monkeypatch.setattr(observerctl_module, '__file__', str(anchor))
+
+    bundle = prepare_report_bundle(anchor, 'build', run_id='framec-build-refresh')
+    dataset_dir = bundle.artifact_dirs['dataset']
+    dataset_dir.mkdir(parents=True, exist_ok=True)
+    manifest_path = dataset_dir / 'dataset_manifest.json'
+    features_csv = dataset_dir / 'features.csv'
+    labels_csv = dataset_dir / 'labels.csv'
+    features_csv.write_text('record_id,feature\n1,0.1\n', encoding='utf-8')
+    labels_csv.write_text('record_id,label\n1,1\n', encoding='utf-8')
+    manifest_path.write_text(json.dumps({
+        'features_csv': str(features_csv),
+        'labels_csv': str(labels_csv),
+        'total_records': 1,
+        'has_labels': True,
+    }), encoding='utf-8')
+
+    final_packet = observerctl_module._ds_finalize_run_packet(
+        {
+            'timestamp_utc': '2026-03-31T12:00:00Z',
+            'runtime_cli_surface': 'observerctl',
+            'decision': 'go',
+            'action': 'ds-build',
+            'command_family': 'ds',
+            'command_path': 'observerctl ds build',
+            'implementation_state': 'command-available',
+            'underlying_surface': 'analysis.dataset_builder',
+            'summary': 'Dataset built through observerctl ds.',
+            'run_id': bundle.run_id,
+            'total_records': 1,
+            'has_labels': True,
+            'artifacts': {},
+            'reason_codes': [],
+        },
+        bundle=bundle,
+        artifact_paths={
+            'dataset_manifest': manifest_path,
+            'features_csv': features_csv,
+            'labels_csv': labels_csv,
+        },
+        context={'output_override': False},
+        lineage={'input_paths': [project_root / 'input.jsonl']},
+    )
+
+    snapshot_path = project_root / final_packet['artifacts']['librarian_dataset_manifest_json']
+    catalog_path = project_root / final_packet['artifacts']['librarian_dataset_catalog_jsonl']
+    snapshot = json.loads(snapshot_path.read_text(encoding='utf-8'))
+
+    assert snapshot_path.exists()
+    assert catalog_path.exists()
+    assert snapshot['entries'][0]['run_id'] == 'framec-build-refresh'
+    assert snapshot['entries'][0]['status'] == 'approved'
+    assert snapshot['entries'][0]['workflow'] == 'build'
+
+
+def test_ds_report_pack_defaults_to_canonical_run_root_and_repo_relative_index_paths(tmp_path: Path) -> None:
+    from analysis.report_aggregate import append_ds_run_index
+    from analysis.report_pack import prepare_report_bundle, write_report_bundle
+
+    project_root = tmp_path / 'observer_project'
+    anchor = project_root / 'src' / 'observerctl_anchor.py'
+    anchor.parent.mkdir(parents=True, exist_ok=True)
+    anchor.write_text('# anchor\n', encoding='utf-8')
+    (project_root / 'PROJECT_MANIFEST.json').write_text('{}\n', encoding='utf-8')
+
+    bundle = prepare_report_bundle(anchor, 'build')
+    dataset_dir = bundle.artifact_dirs['dataset']
+    dataset_dir.mkdir(parents=True, exist_ok=True)
+    (dataset_dir / 'dataset_manifest.json').write_text('{}\n', encoding='utf-8')
+    (dataset_dir / 'features.csv').write_text('record_id\n', encoding='utf-8')
+
+    packet = {
+        'timestamp_utc': '2026-03-31T12:00:00Z',
+        'runtime_cli_surface': 'observerctl',
+        'decision': 'go',
+        'action': 'ds-build',
+        'command_family': 'ds',
+        'command_path': 'observerctl ds build',
+        'implementation_state': 'command-available',
+        'underlying_surface': 'analysis.dataset_builder',
+        'summary': 'Dataset built through observerctl ds.',
+        'run_id': bundle.run_id,
+        'total_records': 1,
+        'has_labels': False,
+        'artifacts': {},
+        'reason_codes': [],
+    }
+    report_bundle = write_report_bundle(
+        project_anchor=anchor,
+        bundle=bundle,
+        packet=packet,
+        artifact_paths={
+            'dataset_manifest': dataset_dir / 'dataset_manifest.json',
+            'features_csv': dataset_dir / 'features.csv',
+        },
+        context={'output_override': False},
+        lineage={'input_paths': [project_root / 'input.jsonl']},
+    )
+    aggregate = append_ds_run_index(project_anchor=anchor, manifest_payload=report_bundle['manifest'])
+
+    assert report_bundle['paths']['run_root'].startswith('local_untracked/analysis/runs/build/')
+    assert report_bundle['paths']['report_json'].startswith('local_untracked/analysis/runs/build/')
+    assert aggregate['ledger_path'] == 'local_untracked/analysis/indexes/ds_run_index.jsonl'
+    assert aggregate['latest_index_path'] == 'local_untracked/analysis/indexes/ds_latest.json'
+    assert (project_root / report_bundle['paths']['report_json']).exists()
+    assert (project_root / report_bundle['paths']['manifest_json']).exists()
+    assert (project_root / aggregate['ledger_path']).exists()
+    assert (project_root / aggregate['latest_index_path']).exists()
+
+
+def test_ds_report_aggregate_appends_history_and_refreshes_latest_by_workflow(tmp_path: Path) -> None:
+    from analysis.report_aggregate import append_ds_run_index
+    from analysis.report_pack import prepare_report_bundle, write_report_bundle
+
+    project_root = tmp_path / 'observer_project'
+    anchor = project_root / 'src' / 'observerctl_anchor.py'
+    anchor.parent.mkdir(parents=True, exist_ok=True)
+    anchor.write_text('# anchor\n', encoding='utf-8')
+    (project_root / 'PROJECT_MANIFEST.json').write_text('{}\n', encoding='utf-8')
+
+    for run_id in ['eval-one', 'eval-two']:
+        bundle = prepare_report_bundle(anchor, 'evaluate', run_id=run_id)
+        evaluation_dir = bundle.artifact_dirs['evaluation']
+        evaluation_dir.mkdir(parents=True, exist_ok=True)
+        (evaluation_dir / 'run.json').write_text('{"run_id":"%s"}\n' % run_id, encoding='utf-8')
+        (evaluation_dir / 'run.md').write_text('# run\n', encoding='utf-8')
+        report_bundle = write_report_bundle(
+            project_anchor=anchor,
+            bundle=bundle,
+            packet={
+                'timestamp_utc': '2026-03-31T12:00:00Z' if run_id == 'eval-one' else '2026-03-31T12:05:00Z',
+                'runtime_cli_surface': 'observerctl',
+                'decision': 'go',
+                'action': 'ds-evaluate',
+                'command_family': 'ds',
+                'command_path': 'observerctl ds evaluate',
+                'implementation_state': 'command-available',
+                'underlying_surface': 'analysis.evaluation_harness',
+                'summary': 'Evaluation completed through observerctl ds.',
+                'run_id': bundle.run_id,
+                'threshold': 0.5,
+                'artifacts': {},
+                'reason_codes': [],
+            },
+            artifact_paths={
+                'run_json': evaluation_dir / 'run.json',
+                'run_md': evaluation_dir / 'run.md',
+            },
+            context={'max_fpr': 0.01},
+        )
+        append_ds_run_index(project_anchor=anchor, manifest_payload=report_bundle['manifest'])
+
+    ledger_path = project_root / 'local_untracked' / 'analysis' / 'indexes' / 'ds_run_index.jsonl'
+    latest_path = project_root / 'local_untracked' / 'analysis' / 'indexes' / 'ds_latest.json'
+    rows = _read_jsonl_rows(ledger_path)
+    latest = json.loads(latest_path.read_text(encoding='utf-8'))
+
+    assert [row['run_id'] for row in rows] == ['eval-one', 'eval-two']
+    assert latest['latest_run']['run_id'] == 'eval-two'
+    assert latest['by_workflow']['evaluate']['run_id'] == 'eval-two'
+
+
+def test_ds_report_publication_requires_canonical_run_root(tmp_path: Path) -> None:
+    from analysis.report_aggregate import publication_eligibility_reasons
+    from analysis.report_pack import prepare_report_bundle, write_report_bundle
+
+    project_root = tmp_path / 'observer_project'
+    anchor = project_root / 'src' / 'observerctl_anchor.py'
+    anchor.parent.mkdir(parents=True, exist_ok=True)
+    anchor.write_text('# anchor\n', encoding='utf-8')
+    (project_root / 'PROJECT_MANIFEST.json').write_text('{}\n', encoding='utf-8')
+
+    explicit_run_root = project_root / 'custom_output' / 'build-run'
+    bundle = prepare_report_bundle(anchor, 'build', explicit_run_root=explicit_run_root, run_id='explicit-build')
+    dataset_dir = bundle.artifact_dirs['dataset']
+    dataset_dir.mkdir(parents=True, exist_ok=True)
+    (dataset_dir / 'dataset_manifest.json').write_text('{}\n', encoding='utf-8')
+    (dataset_dir / 'features.csv').write_text('record_id\n', encoding='utf-8')
+
+    report_bundle = write_report_bundle(
+        project_anchor=anchor,
+        bundle=bundle,
+        packet={
+            'timestamp_utc': '2026-03-31T12:00:00Z',
+            'runtime_cli_surface': 'observerctl',
+            'decision': 'go',
+            'action': 'ds-build',
+            'command_family': 'ds',
+            'command_path': 'observerctl ds build',
+            'implementation_state': 'command-available',
+            'underlying_surface': 'analysis.dataset_builder',
+            'summary': 'Dataset built through observerctl ds.',
+            'run_id': bundle.run_id,
+            'artifacts': {},
+            'reason_codes': [],
+        },
+        artifact_paths={
+            'dataset_manifest': dataset_dir / 'dataset_manifest.json',
+            'features_csv': dataset_dir / 'features.csv',
+        },
+        context={'output_override': True},
+    )
+
+    reasons = publication_eligibility_reasons(project_anchor=anchor, manifest_payload=report_bundle['manifest'])
+
+    assert 'publication_skipped:noncanonical_run_root' in reasons
+
+
+def test_ds_report_publication_refresh_builds_tracked_surfaces_from_canonical_runs(tmp_path: Path) -> None:
+    from analysis.report_aggregate import append_ds_run_index, refresh_tracked_ds_publication
+    from analysis.report_pack import prepare_report_bundle, write_report_bundle
+
+    project_root = tmp_path / 'observer_project'
+    anchor = project_root / 'src' / 'observerctl_anchor.py'
+    anchor.parent.mkdir(parents=True, exist_ok=True)
+    anchor.write_text('# anchor\n', encoding='utf-8')
+    (project_root / 'PROJECT_MANIFEST.json').write_text('{}\n', encoding='utf-8')
+
+    evaluate_bundle = prepare_report_bundle(anchor, 'evaluate', run_id='eval-canonical')
+    evaluation_dir = evaluate_bundle.artifact_dirs['evaluation']
+    evaluation_dir.mkdir(parents=True, exist_ok=True)
+    (evaluation_dir / 'run.json').write_text('{"run_id":"eval-canonical"}\n', encoding='utf-8')
+    (evaluation_dir / 'run.md').write_text('# eval run\n', encoding='utf-8')
+    evaluate_report_bundle = write_report_bundle(
+        project_anchor=anchor,
+        bundle=evaluate_bundle,
+        packet={
+            'timestamp_utc': '2026-03-31T12:00:00Z',
+            'runtime_cli_surface': 'observerctl',
+            'decision': 'go',
+            'action': 'ds-evaluate',
+            'command_family': 'ds',
+            'command_path': 'observerctl ds evaluate',
+            'implementation_state': 'command-available',
+            'underlying_surface': 'analysis.evaluation_harness',
+            'summary': 'Evaluation completed through observerctl ds.',
+            'run_id': evaluate_bundle.run_id,
+            'threshold': 0.42,
+            'artifacts': {},
+            'reason_codes': [],
+        },
+        artifact_paths={
+            'run_json': evaluation_dir / 'run.json',
+            'run_md': evaluation_dir / 'run.md',
+        },
+        context={'max_fpr': 0.01},
+    )
+    append_ds_run_index(project_anchor=anchor, manifest_payload=evaluate_report_bundle['manifest'])
+
+    score_bundle = prepare_report_bundle(anchor, 'score', run_id='score-canonical')
+    scoring_dir = score_bundle.artifact_dirs['scoring']
+    scoring_dir.mkdir(parents=True, exist_ok=True)
+    (scoring_dir / 'scores.csv').write_text('record_id,score_anomaly\n1,0.9\n', encoding='utf-8')
+    score_report_bundle = write_report_bundle(
+        project_anchor=anchor,
+        bundle=score_bundle,
+        packet={
+            'timestamp_utc': '2026-03-31T12:05:00Z',
+            'runtime_cli_surface': 'observerctl',
+            'decision': 'go',
+            'action': 'ds-score',
+            'command_family': 'ds',
+            'command_path': 'observerctl ds score',
+            'implementation_state': 'command-available',
+            'underlying_surface': 'analysis.score_unsupervised',
+            'summary': 'Unsupervised scoring completed through observerctl ds.',
+            'run_id': score_bundle.run_id,
+            'records_scored': 1,
+            'artifacts': {},
+            'reason_codes': [],
+        },
+        artifact_paths={
+            'scores_csv': scoring_dir / 'scores.csv',
+        },
+        context={'output_override': False},
+    )
+    append_ds_run_index(project_anchor=anchor, manifest_payload=score_report_bundle['manifest'])
+
+    publication = refresh_tracked_ds_publication(project_anchor=anchor, current_manifest_payload=score_report_bundle['manifest'])
+
+    assert publication['decision'] == 'go'
+    assert publication['published_run_count'] == 2
+    assert publication['current_run']['run_id'] == 'score-canonical'
+    assert (project_root / publication['aggregate_paths']['index_md']).exists()
+    assert (project_root / publication['aggregate_paths']['latest_json']).exists()
+    assert (project_root / publication['aggregate_paths']['thresholds_json']).exists()
+    assert (project_root / publication['current_run']['published_report_paths']['markdown']).exists()
+
+    thresholds_payload = json.loads((project_root / publication['aggregate_paths']['thresholds_json']).read_text(encoding='utf-8'))
+    by_workflow_payload = json.loads((project_root / publication['aggregate_paths']['by_workflow_json']).read_text(encoding='utf-8'))
+    latest_payload = json.loads((project_root / publication['aggregate_paths']['latest_json']).read_text(encoding='utf-8'))
+
+    assert thresholds_payload['threshold_run_count'] == 1
+    assert thresholds_payload['threshold_rows'][0]['run_id'] == 'eval-canonical'
+    assert by_workflow_payload['workflows']['evaluate']['latest_run']['run_id'] == 'eval-canonical'
+    assert by_workflow_payload['workflows']['score']['latest_run']['run_id'] == 'score-canonical'
+    assert latest_payload['latest_run']['run_id'] == 'score-canonical'
+
+
+def test_ds_report_publication_refresh_copies_visual_figures_and_rewrites_links(tmp_path: Path) -> None:
+    from analysis.report_aggregate import append_ds_run_index, refresh_tracked_ds_publication
+    from analysis.report_pack import prepare_report_bundle, write_report_bundle
+
+    project_root = tmp_path / 'observer_project'
+    anchor = project_root / 'src' / 'observerctl_anchor.py'
+    anchor.parent.mkdir(parents=True, exist_ok=True)
+    anchor.write_text('# anchor\n', encoding='utf-8')
+    (project_root / 'PROJECT_MANIFEST.json').write_text('{}\n', encoding='utf-8')
+
+    score_bundle = prepare_report_bundle(anchor, 'score', run_id='score-visual')
+    scoring_dir = score_bundle.artifact_dirs['scoring']
+    scoring_dir.mkdir(parents=True, exist_ok=True)
+    (scoring_dir / 'scores.csv').write_text('record_id,score_anomaly\na,0.1\nb,0.9\n', encoding='utf-8')
+    figures_dir = score_bundle.run_root / 'figures'
+    figures_dir.mkdir(parents=True, exist_ok=True)
+    figure_path = figures_dir / 'score_distribution.png'
+    figure_path.write_bytes(b'not-a-real-png-but-good-enough-for-copy')
+
+    score_report_bundle = write_report_bundle(
+        project_anchor=anchor,
+        bundle=score_bundle,
+        packet={
+            'timestamp_utc': '2026-03-31T12:05:00Z',
+            'runtime_cli_surface': 'observerctl',
+            'decision': 'go',
+            'action': 'ds-score',
+            'command_family': 'ds',
+            'command_path': 'observerctl ds score',
+            'implementation_state': 'command-available',
+            'underlying_surface': 'analysis.score_unsupervised',
+            'summary': 'Unsupervised scoring completed through observerctl ds.',
+            'run_id': score_bundle.run_id,
+            'anomaly_direction': 'lower-is-more-anomalous',
+            'visuals': {
+                'decision': 'go',
+                'figure_count': 1,
+                'anomaly_direction': 'lower-is-more-anomalous',
+                'score_column': 'score_anomaly',
+                'figures': [
+                    {
+                        'id': 'score_distribution',
+                        'title': 'Score distribution',
+                        'caption': 'Distribution of anomaly scores.',
+                        'path': figure_path,
+                        'kind': 'distribution',
+                    }
+                ],
+            },
+            'artifacts': {},
+            'reason_codes': [],
+        },
+        artifact_paths={
+            'scores_csv': scoring_dir / 'scores.csv',
+            'score_distribution_png': figure_path,
+        },
+        context={'output_override': False},
+    )
+    append_ds_run_index(project_anchor=anchor, manifest_payload=score_report_bundle['manifest'])
+
+    publication = refresh_tracked_ds_publication(project_anchor=anchor, current_manifest_payload=score_report_bundle['manifest'])
+
+    published_report_md = project_root / publication['current_run']['published_report_paths']['markdown']
+    assert publication['decision'] == 'go'
+    assert publication['current_run']['figure_count'] == 1
+    assert (project_root / publication['current_run']['published_figures'][0]).exists()
+    assert '](figures/score_distribution.png)' in published_report_md.read_text(encoding='utf-8')
+    assert '../figures/' not in published_report_md.read_text(encoding='utf-8')
+
+
+def test_ds_run_pipeline_unsupervised_emits_visual_figures(monkeypatch, tmp_path: Path) -> None:
+    project_root, anchor = _make_temp_observer_project(tmp_path)
+    _bind_temp_observer_project(monkeypatch, project_root, anchor)
+    monkeypatch.setenv('CALAMUM_DATA_SIGNING_KEY', 'unit-test-signing-key')
+
+    input_path = tmp_path / 'input.jsonl'
+    _write_signed_jsonl(input_path, _make_ds_records())
+
+    payload = observerctl_module._ds_run_pipeline(
+        [input_path],
+        '',
+        'unsupervised',
+        123,
+        0.7,
+        0.15,
+        0.15,
+        0.01,
+    )
+
+    assert payload['decision'] == 'go'
+    assert payload['anomaly_direction'] == 'lower-is-more-anomalous'
+    assert payload['visuals']['decision'] == 'go'
+    assert payload['thresholding']['anomaly_direction'] == 'lower-is-more-anomalous'
+    assert (project_root / payload['artifacts']['score_distribution_png']).exists()
+    assert (project_root / payload['artifacts']['threshold_selection_png']).exists()
+    assert (project_root / payload['artifacts']['metric_comparison_png']).exists()
+    assert (project_root / payload['artifacts']['workflow_summary_png']).exists()
+    assert payload['publication']['decision'] == 'go'
+    assert payload['publication']['current_run']['figure_count'] >= 1
+
+
+def test_ds_build_with_canonical_run_root_publishes_tracked_ds_surfaces(monkeypatch, tmp_path: Path, capsys) -> None:
+    project_root, anchor = _make_temp_observer_project(tmp_path)
+    _bind_temp_observer_project(monkeypatch, project_root, anchor)
+    monkeypatch.setenv('CALAMUM_DATA_SIGNING_KEY', 'unit-test-signing-key')
+
+    input_path = tmp_path / 'input.jsonl'
+    _write_signed_jsonl(input_path, _make_ds_records())
+
+    rc = main(['ds', 'build', '--input', str(input_path), '--seed', '123', '--json'])
+    assert rc == 0
+
+    payload = json.loads(capsys.readouterr().out)
+    assert payload['publication']['decision'] == 'go'
+    assert payload['publication']['published_run_count'] == 1
+    assert (project_root / payload['artifacts']['tracked_ds_index_md']).exists()
+    assert (project_root / payload['artifacts']['tracked_ds_latest_json']).exists()
+    assert (project_root / payload['artifacts']['tracked_ds_by_workflow_json']).exists()
+    assert (project_root / payload['artifacts']['published_report_md']).exists()
+    assert (project_root / payload['artifacts']['published_report_manifest_json']).exists()
 
 
 def test_sandbox_list_emits_definition_catalog_json(monkeypatch, capsys) -> None:

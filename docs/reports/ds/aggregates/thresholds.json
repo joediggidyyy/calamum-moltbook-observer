@@ -1,0 +1,44 @@
+{
+  "family_id": "ds_publication",
+  "publish_root": "docs/reports/ds",
+  "schema_version": "1.0",
+  "threshold_rows": [
+    {
+      "actual_fpr": null,
+      "flagged_records": null,
+      "published_report_md": "docs/reports/ds/runs/2026/2026-03/demo_20260331T212901782257Z/report.md",
+      "records_scored": null,
+      "run_id": "demo_20260331T212901782257Z",
+      "source_run_root": "local_untracked/analysis/runs/demo/demo_20260331T212901782257Z",
+      "target_fpr": 0.01,
+      "threshold": null,
+      "timestamp_utc": "2026-03-31T21:29:02.286858Z",
+      "workflow": "demo"
+    },
+    {
+      "actual_fpr": 0.03333333333333333,
+      "flagged_records": 2,
+      "published_report_md": "docs/reports/ds/runs/2026/2026-03/demo_20260331T221217647010Z/report.md",
+      "records_scored": 60,
+      "run_id": "demo_20260331T221217647010Z",
+      "source_run_root": "local_untracked/analysis/runs/demo/demo_20260331T221217647010Z",
+      "target_fpr": 0.01,
+      "threshold": 0.41126669732265103,
+      "timestamp_utc": "2026-03-31T22:12:20.857168Z",
+      "workflow": "demo"
+    },
+    {
+      "actual_fpr": 0.03333333333333333,
+      "flagged_records": 2,
+      "published_report_md": "docs/reports/ds/runs/2026/2026-03/demo_20260331T221410208505Z/report.md",
+      "records_scored": 60,
+      "run_id": "demo_20260331T221410208505Z",
+      "source_run_root": "local_untracked/analysis/runs/demo/demo_20260331T221410208505Z",
+      "target_fpr": 0.01,
+      "threshold": 0.41126669732265103,
+      "timestamp_utc": "2026-03-31T22:14:12.248047Z",
+      "workflow": "demo"
+    }
+  ],
+  "threshold_run_count": 3
+}
