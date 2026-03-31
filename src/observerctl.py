@@ -2997,7 +2997,9 @@ def _render_ds_human(packet: Dict[str, Any]) -> List[str]:
     lines: List[str] = []
     lines.append('ObserverCTL DS')
     lines.append('action: {0}'.format(str(packet.get('action', '') or 'ds')))
-    lines.append('state: {0}'.format(str(packet.get('implementation_state', '') or 'unknown')))
+    state_text = str(packet.get('state', '') or '').strip()
+    if state_text:
+        lines.append('state: {0}'.format(state_text))
     summary = str(packet.get('summary', '') or '').strip()
     if summary:
         lines.append('summary: {0}'.format(summary))
@@ -5006,6 +5008,10 @@ class _DSWizardState:
 
 
 _DS_WIZARD_DRAFT_VERSION = 1
+_DS_RUNTIME_STATE_WIZARD = 'wizard-available'
+_DS_RUNTIME_STATE_COMMAND = 'command-available'
+_DS_RUNTIME_STATE_AUTOMATION = 'automation-available'
+_DS_RUNTIME_STATE_PLANNED = 'surface-planned'
 
 
 _DS_WIZARD_FIELD_SPECS: Tuple[_DSWizardFieldSpec, ...] = (
@@ -5799,6 +5805,38 @@ def _ds_wizard_path_label(state: _DSWizardState) -> str:
     return 'ds wizard > {0}'.format(state.active_section)
 
 
+def _ds_wizard_clear_disabled() -> bool:
+    value = str(os.getenv('OBSERVERCTL_DS_WIZARD_NO_CLEAR', '') or '').strip().lower()
+    return value in ('1', 'true', 'yes', 'on')
+
+
+def _ds_wizard_try_clear_terminal() -> bool:
+    if _ds_wizard_clear_disabled():
+        return False
+    if not sys.stdin.isatty() or not sys.stdout.isatty():
+        return False
+    command = 'cls' if os.name == 'nt' else 'clear'
+    try:
+        return os.system(command) == 0
+    except Exception:
+        return False
+
+
+def _ds_wizard_frame_separator_lines(state: _DSWizardState) -> List[str]:
+    title = 'next frame: {0}'.format(_ds_wizard_path_label(state))
+    width = max(72, len(title) + 4)
+    bar = '=' * width
+    return [bar, title, bar]
+
+
+def _ds_wizard_emit_interactive_frame(state: _DSWizardState, redraw_count: int) -> None:
+    if int(redraw_count) > 0 and not _ds_wizard_try_clear_terminal():
+        for line in _ds_wizard_frame_separator_lines(state):
+            print(line)
+    for line in _ds_wizard_render(state):
+        print(line)
+
+
 def _ds_wizard_render(state: _DSWizardState) -> List[str]:
     visible_sections = _ds_wizard_visible_sections(state)
     current_section = state.active_section if state.active_section in visible_sections else 'flow'
@@ -5869,8 +5907,7 @@ def _ds_wizard_attempt_execute(state: _DSWizardState) -> Dict[str, Any]:
             'action': 'ds-wizard-execute',
             'command_family': 'ds',
             'command_path': 'observerctl ds wizard',
-            'implementation_state': 'frame-6-durable-wizard-ready',
-            'delivery_frame': 'frame-6',
+            'implementation_state': _DS_RUNTIME_STATE_WIZARD,
             'summary': 'Wizard execution remains blocked until validation passes.',
             'reason_codes': ['critical_check_failed:wizard_validation_blocked'],
             'validation_issues': issues,
@@ -5883,8 +5920,7 @@ def _ds_wizard_attempt_execute(state: _DSWizardState) -> Dict[str, Any]:
         'action': 'ds-wizard-execute',
         'command_family': 'ds',
         'command_path': 'observerctl ds wizard',
-        'implementation_state': 'frame-6-durable-wizard-ready',
-        'delivery_frame': 'frame-6',
+        'implementation_state': _DS_RUNTIME_STATE_WIZARD,
         'summary': 'Wizard state is ready for non-interactive command handoff.',
         'reason_codes': [],
         'command_preview': _ds_wizard_command_preview(state),
@@ -5900,8 +5936,7 @@ def _ds_wizard_packet(state: _DSWizardState, interactive: bool = False) -> Dict[
         'action': 'ds-wizard',
         'command_family': 'ds',
         'command_path': 'observerctl ds wizard',
-        'implementation_state': 'frame-6-durable-wizard-ready',
-        'delivery_frame': 'frame-6',
+        'implementation_state': _DS_RUNTIME_STATE_WIZARD,
         'summary': 'DS wizard is available with workflow-aware navigation, retained-artifact hydration, prior-run import, and draft persistence.',
         'workflow': str(state.workflow or ''),
         'current_page': str(state.active_page or 'landing'),
@@ -6074,14 +6109,14 @@ def _ds_wizard(args: argparse.Namespace) -> Dict[str, Any]:
     interactive = bool(sys.stdin.isatty() and not bool(getattr(args, 'json', False)))
     if not interactive:
         return _ds_wizard_packet(state, interactive=False)
+    redraw_count = 0
     while True:
-        for line in _ds_wizard_render(state):
-            print(line)
+        _ds_wizard_emit_interactive_frame(state, redraw_count)
+        redraw_count += 1
         command = input('wizard> ')
         state, packet, should_exit = _ds_wizard_handle_command(state, command)
         if should_exit:
             return packet if isinstance(packet, dict) else _ds_wizard_packet(state, interactive=True)
-        print('')
 
 
 def _ds_default_analysis_dir() -> Path:
@@ -6123,8 +6158,7 @@ def _ds_build(
         'action': 'ds-build',
         'command_family': 'ds',
         'command_path': 'observerctl ds build',
-        'implementation_state': 'frame-2-wrapper-ready',
-        'delivery_frame': 'frame-2',
+        'implementation_state': _DS_RUNTIME_STATE_COMMAND,
         'underlying_surface': 'analysis.dataset_builder',
         'summary': 'Dataset built through observerctl ds.',
         'seed': int(seed),
@@ -6161,8 +6195,7 @@ def _ds_train(dataset: str, out_dir: str, model_type: str, seed: int) -> Dict[st
         'action': 'ds-train',
         'command_family': 'ds',
         'command_path': 'observerctl ds train',
-        'implementation_state': 'frame-2-wrapper-ready',
-        'delivery_frame': 'frame-2',
+        'implementation_state': _DS_RUNTIME_STATE_COMMAND,
         'underlying_surface': 'analysis.train_model',
         'summary': 'Model training completed through observerctl ds.',
         'model_type': str(model_type),
@@ -6213,8 +6246,7 @@ def _ds_evaluate(features_csv: str, labels_csv: str, dataset_manifest: str, max_
         'action': 'ds-evaluate',
         'command_family': 'ds',
         'command_path': 'observerctl ds evaluate',
-        'implementation_state': 'frame-2-wrapper-ready',
-        'delivery_frame': 'frame-2',
+        'implementation_state': _DS_RUNTIME_STATE_COMMAND,
         'underlying_surface': 'analysis.evaluation_harness',
         'summary': 'Evaluation completed through observerctl ds.',
         'run_id': resolved_run_id,
@@ -6241,8 +6273,7 @@ def _ds_score(dataset: str, model: str, out_file: str) -> Dict[str, Any]:
         'action': 'ds-score',
         'command_family': 'ds',
         'command_path': 'observerctl ds score',
-        'implementation_state': 'frame-2-wrapper-ready',
-        'delivery_frame': 'frame-2',
+        'implementation_state': _DS_RUNTIME_STATE_COMMAND,
         'underlying_surface': 'analysis.score_unsupervised',
         'summary': 'Unsupervised scoring completed through observerctl ds.',
         'records_scored': int(summary.get('records_scored', 0)),
@@ -6274,8 +6305,7 @@ def _ds_run_demo(out_dir: str, dataset_seed: int, model_seed: int, max_fpr: floa
         'action': 'ds-run',
         'command_family': 'ds',
         'command_path': 'observerctl ds run demo',
-        'implementation_state': 'frame-3-automation-ready',
-        'delivery_frame': 'frame-3',
+        'implementation_state': _DS_RUNTIME_STATE_AUTOMATION,
         'underlying_surface': 'analysis.run_demo',
         'run_mode': 'demo',
         'summary': 'Demo pipeline completed through observerctl ds.',
@@ -6404,8 +6434,7 @@ def _ds_run_pipeline(
             'action': 'ds-run',
             'command_family': 'ds',
             'command_path': 'observerctl ds run pipeline',
-            'implementation_state': 'frame-3-automation-ready',
-            'delivery_frame': 'frame-3',
+            'implementation_state': _DS_RUNTIME_STATE_AUTOMATION,
             'underlying_surface': 'observerctl ds pipeline orchestration',
             'run_mode': 'pipeline',
             'summary': 'Supervised pipeline requires labeled telemetry records.',
@@ -6487,8 +6516,7 @@ def _ds_run_pipeline(
         'action': 'ds-run',
         'command_family': 'ds',
         'command_path': 'observerctl ds run pipeline',
-        'implementation_state': 'frame-3-automation-ready',
-        'delivery_frame': 'frame-3',
+        'implementation_state': _DS_RUNTIME_STATE_AUTOMATION,
         'underlying_surface': 'observerctl ds pipeline orchestration',
         'run_mode': 'pipeline',
         'summary': 'Pipeline completed through observerctl ds.',
@@ -6519,13 +6547,11 @@ def _ds_spine_packet(ds_cmd: str, command_path: str, underlying_surface: str, ru
         'action': 'ds-{0}'.format(ds_cmd),
         'command_family': 'ds',
         'command_path': command_path,
-        'implementation_state': 'command-spine-ready',
-        'delivery_frame': 'frame-1',
-        'next_frame': 'frame-2-non-interactive-wrappers',
+        'implementation_state': _DS_RUNTIME_STATE_PLANNED,
         'underlying_surface': underlying_surface,
         'reason_codes': [],
         'status': 'planned',
-        'summary': 'DS command spine is available; execution wiring lands in later frames.',
+        'summary': 'DS command spine is available as a planning surface without execution behavior in this packet.',
     }
     if run_mode:
         packet['run_mode'] = run_mode

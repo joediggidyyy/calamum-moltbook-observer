@@ -165,8 +165,8 @@ def test_ds_wizard_emits_frame4_shell_packet_with_workflow_filtering(capsys) -> 
     assert payload['action'] == 'ds-wizard'
     assert payload['command_family'] == 'ds'
     assert payload['command_path'] == 'observerctl ds wizard'
-    assert payload['implementation_state'] == 'frame-6-durable-wizard-ready'
-    assert payload['delivery_frame'] == 'frame-6'
+    assert payload['implementation_state'] == 'wizard-available'
+    assert 'delivery_frame' not in payload
     assert payload['workflow'] == 'run-pipeline'
     assert payload['current_page'] == 'landing'
     assert 'flow' in payload['visible_sections']
@@ -438,6 +438,44 @@ def test_ds_wizard_blank_input_dismisses_transient_help() -> None:
     assert 'help:' not in rendered
 
 
+def test_ds_wizard_first_interactive_render_does_not_emit_transition_separator(monkeypatch, capsys) -> None:
+    state = observerctl_module._ds_wizard_new_state('evaluate')
+    observerctl_module._ds_wizard_open_section(state, 'eval')
+    monkeypatch.setattr(observerctl_module, '_ds_wizard_try_clear_terminal', lambda: False)
+
+    observerctl_module._ds_wizard_emit_interactive_frame(state, redraw_count=0)
+
+    out = capsys.readouterr().out.splitlines()
+    assert out[0] == 'ObserverCTL DS Wizard'
+    assert 'next frame: ds wizard > configure > eval' not in out
+
+
+def test_ds_wizard_interactive_redraw_uses_separator_when_clear_is_unavailable(monkeypatch, capsys) -> None:
+    state = observerctl_module._ds_wizard_new_state('evaluate')
+    observerctl_module._ds_wizard_open_section(state, 'eval')
+    monkeypatch.setattr(observerctl_module, '_ds_wizard_try_clear_terminal', lambda: False)
+
+    observerctl_module._ds_wizard_emit_interactive_frame(state, redraw_count=1)
+
+    out = capsys.readouterr().out.splitlines()
+    assert out[0].startswith('=')
+    assert out[1] == 'next frame: ds wizard > configure > eval'
+    assert out[2].startswith('=')
+    assert 'ObserverCTL DS Wizard' in out
+
+
+def test_ds_wizard_interactive_redraw_skips_separator_when_clear_succeeds(monkeypatch, capsys) -> None:
+    state = observerctl_module._ds_wizard_new_state('evaluate')
+    observerctl_module._ds_wizard_open_section(state, 'eval')
+    monkeypatch.setattr(observerctl_module, '_ds_wizard_try_clear_terminal', lambda: True)
+
+    observerctl_module._ds_wizard_emit_interactive_frame(state, redraw_count=1)
+
+    out = capsys.readouterr().out.splitlines()
+    assert out[0] == 'ObserverCTL DS Wizard'
+    assert 'next frame: ds wizard > configure > eval' not in out
+
+
 def test_ds_wizard_command_surface_supports_run_hydration_and_draft_round_trip(tmp_path: Path) -> None:
     features_csv = tmp_path / 'features.csv'
     labels_csv = tmp_path / 'labels.csv'
@@ -497,8 +535,8 @@ def test_ds_run_demo_executes_wrapper_and_emits_artifact_summary(tmp_path: Path,
     payload = json.loads(capsys.readouterr().out)
     assert payload['action'] == 'ds-run'
     assert payload['run_mode'] == 'demo'
-    assert payload['implementation_state'] == 'frame-3-automation-ready'
-    assert payload['delivery_frame'] == 'frame-3'
+    assert payload['implementation_state'] == 'automation-available'
+    assert 'delivery_frame' not in payload
     assert payload['total_records'] == 60
     assert Path(payload['artifacts']['root_dir']).exists()
     assert Path(payload['artifacts']['dataset_manifest']).exists()
@@ -539,8 +577,8 @@ def test_ds_run_pipeline_executes_supervised_flow_and_emits_artifact_summary(tmp
     payload = json.loads(capsys.readouterr().out)
     assert payload['action'] == 'ds-run'
     assert payload['run_mode'] == 'pipeline'
-    assert payload['implementation_state'] == 'frame-3-automation-ready'
-    assert payload['delivery_frame'] == 'frame-3'
+    assert payload['implementation_state'] == 'automation-available'
+    assert 'delivery_frame' not in payload
     assert payload['model_type'] == 'supervised'
     assert payload['has_labels'] is True
     assert payload['workflow_steps'] == ['build', 'train', 'evaluate']
@@ -569,7 +607,8 @@ def test_ds_build_executes_wrapper_and_emits_artifact_summary(tmp_path: Path, mo
 
     payload = json.loads(capsys.readouterr().out)
     assert payload['action'] == 'ds-build'
-    assert payload['implementation_state'] == 'frame-2-wrapper-ready'
+    assert payload['implementation_state'] == 'command-available'
+    assert 'delivery_frame' not in payload
     assert Path(payload['artifacts']['dataset_manifest']).exists()
     assert Path(payload['artifacts']['features_csv']).exists()
     assert payload['has_labels'] is True
