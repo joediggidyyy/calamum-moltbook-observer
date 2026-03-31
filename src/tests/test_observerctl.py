@@ -342,7 +342,7 @@ def test_ds_wizard_starts_on_sparse_landing_page() -> None:
     assert '1. workflow' in rendered
     assert '2. configure' in rendered
     assert '3. review and run' in rendered
-    assert '4. help and utilities' in rendered
+    assert '4. command and utilities' in rendered
     assert 'sections: flow, in, out, model, eval, report, cmd, check, run, exit' not in rendered
     assert not any(line.startswith('next:') for line in rendered)
 
@@ -356,9 +356,10 @@ def test_ds_wizard_scope_help_from_landing_shows_top_level_choices() -> None:
     assert should_exit is False
     rendered = observerctl_module._ds_wizard_render(state)
     assert 'help:' in rendered
-    assert 'workflow           workflow and run type' in rendered
-    assert 'configure          inputs, artifacts, model, and evaluation' in rendered
-    assert 'review and run     validation, command preview, and execution' in rendered
+    assert 'workflow           choose or change the run type, source, and mode' in rendered
+    assert 'configure          edit workflow-specific inputs, outputs, model settings, and report context' in rendered
+    assert 'review and run     check blockers, preview the command, and execute the current workflow' in rendered
+    assert 'command and utilities preview the command and use save/load/hydrate helper commands' in rendered
 
 
 def test_ds_wizard_landing_choices_route_to_top_level_pages() -> None:
@@ -370,7 +371,7 @@ def test_ds_wizard_landing_choices_route_to_top_level_pages() -> None:
     assert state.active_page == 'configure'
     assert state.active_section == 'in'
 
-    state, packet, should_exit = observerctl_module._ds_wizard_handle_command(state, 'back')
+    state, packet, should_exit = observerctl_module._ds_wizard_handle_command(state, 'home')
     assert packet is None
     assert should_exit is False
     assert state.active_page == 'landing'
@@ -381,7 +382,7 @@ def test_ds_wizard_landing_choices_route_to_top_level_pages() -> None:
     assert state.active_page == 'review-run'
     assert state.active_section == 'check'
 
-    state, packet, should_exit = observerctl_module._ds_wizard_handle_command(state, 'back')
+    state, packet, should_exit = observerctl_module._ds_wizard_handle_command(state, 'home')
     assert packet is None
     assert should_exit is False
     assert state.active_page == 'landing'
@@ -404,7 +405,45 @@ def test_ds_wizard_scope_help_from_section_is_section_scoped() -> None:
     rendered = observerctl_module._ds_wizard_render(state)
     assert 'help: eval' in rendered
     assert 'Review evaluation thresholds and report-facing controls.' in rendered
-    assert 'fields: max_fpr' in rendered
+    assert 'fields:' in rendered
+    assert '  max_fpr          Maximum false-positive rate' in rendered
+
+
+def test_ds_wizard_execute_runs_workflow_and_surfaces_reports(monkeypatch) -> None:
+    state = observerctl_module._ds_wizard_new_state('run-demo')
+
+    def fake_run_demo(*, out_dir: str, dataset_seed: int, model_seed: int, max_fpr: float):
+        assert out_dir == ''
+        assert dataset_seed == 123
+        assert model_seed == 42
+        assert max_fpr == 0.01
+        return {
+            'timestamp_utc': '2026-03-31T00:00:00Z',
+            'runtime_cli_surface': 'observerctl',
+            'decision': 'go',
+            'action': 'ds-run',
+            'command_family': 'ds',
+            'command_path': 'observerctl ds run demo',
+            'implementation_state': 'automation-available',
+            'summary': 'Demo pipeline completed through observerctl ds.',
+            'workflow_steps': ['generate', 'build', 'train-supervised', 'train-unsupervised', 'evaluate'],
+            'artifacts': {
+                'evaluation_run_json': 'C:/temp/demo/evaluation/run.json',
+                'evaluation_run_md': 'C:/temp/demo/evaluation/run.md',
+            },
+            'reason_codes': [],
+        }
+
+    monkeypatch.setattr(observerctl_module, '_ds_run_demo', fake_run_demo)
+
+    packet = observerctl_module._ds_wizard_attempt_execute(state)
+
+    assert packet['decision'] == 'go'
+    assert packet['action'] == 'ds-run'
+    assert packet['wizard_workflow'] == 'run-demo'
+    assert packet['command_preview'] == 'observerctl ds run demo --dataset-seed 123 --model-seed 42 --max-fpr 0.01'
+    assert packet['artifacts']['evaluation_run_json'].endswith('run.json')
+    assert packet['artifacts']['evaluation_run_md'].endswith('run.md')
 
 
 def test_ds_wizard_item_peek_does_not_change_state() -> None:
