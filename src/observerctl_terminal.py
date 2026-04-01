@@ -64,3 +64,9 @@ def ljust_ansi(text: str, width: int) -> str:
     content = str(text or '')
     padding = max(0, int(width) - visible_len(content))
     return '{0}{1}'.format(content, ' ' * padding)
+
+
+def rjust_ansi(text: str, width: int) -> str:
+    content = str(text or '')
+    padding = max(0, int(width) - visible_len(content))
+    return '{0}{1}'.format(' ' * padding, content)

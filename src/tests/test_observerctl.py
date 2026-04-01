@@ -261,9 +261,11 @@ def test_ds_wizard_emits_frame4_shell_packet_with_workflow_filtering(capsys) -> 
     assert 'flow' in payload['visible_sections']
     assert 'in' in payload['visible_sections']
     assert 'eval' in payload['visible_sections']
+    assert 'report' in payload['visible_sections']
+    assert 'out' not in payload['visible_sections']
     assert payload['execution_state'] == 'blocked'
     assert 'home:' in payload['wizard_view']
-    assert 'sections: flow, in, out, model, eval, report, cmd, check, run, exit' not in payload['wizard_view']
+    assert 'sections: flow, in, model, eval, report, cmd, check, run, exit' not in payload['wizard_view']
 
 
 def test_ds_wizard_state_persists_across_section_navigation() -> None:
@@ -288,9 +290,42 @@ def test_ds_wizard_filters_sections_by_workflow() -> None:
     demo_sections = observerctl_module._ds_wizard_visible_sections(demo_state)
 
     assert 'eval' not in build_sections
-    assert 'report' not in build_sections
-    assert 'in' not in demo_sections
+    assert 'report' in build_sections
+    assert 'in' in demo_sections
     assert 'model' in demo_sections
+
+
+def test_ds_wizard_workflow_sections_structural_constraints() -> None:
+    train_sections = observerctl_module._ds_wizard_visible_sections(
+        observerctl_module._ds_wizard_new_state('train'))
+    build_sections = observerctl_module._ds_wizard_visible_sections(
+        observerctl_module._ds_wizard_new_state('build'))
+    eval_sections = observerctl_module._ds_wizard_visible_sections(
+        observerctl_module._ds_wizard_new_state('evaluate'))
+    score_sections = observerctl_module._ds_wizard_visible_sections(
+        observerctl_module._ds_wizard_new_state('score'))
+    demo_sections = observerctl_module._ds_wizard_visible_sections(
+        observerctl_module._ds_wizard_new_state('run-demo'))
+    pipeline_sections = observerctl_module._ds_wizard_visible_sections(
+        observerctl_module._ds_wizard_new_state('run-pipeline'))
+
+    # eval present only in evaluate, run-demo, run-pipeline
+    for sections in (eval_sections, demo_sections, pipeline_sections):
+        assert 'eval' in sections
+    for sections in (build_sections, train_sections, score_sections):
+        assert 'eval' not in sections
+
+    # report present in all workflows; out has been retired from visible navigation
+    for sections in (build_sections, train_sections, eval_sections,
+                     score_sections, demo_sections, pipeline_sections):
+        assert 'report' in sections
+        assert 'out' not in sections
+
+    # in now stays only where raw telemetry or monolithic run lanes still need it
+    for sections in (build_sections, demo_sections, pipeline_sections):
+        assert 'in' in sections
+    for sections in (train_sections, eval_sections, score_sections):
+        assert 'in' not in sections
 
 
 def test_ds_wizard_hydrates_saved_artifacts(tmp_path: Path) -> None:
@@ -432,7 +467,7 @@ def test_ds_wizard_starts_on_sparse_landing_page() -> None:
     assert '2. review and run' in rendered
     assert '3. command and utilities' in rendered
     assert '4. exit' in rendered
-    assert 'sections: flow, in, out, model, eval, report, cmd, check, run, exit' not in rendered
+    assert 'sections: flow, in, model, eval, report, cmd, check, run, exit' not in rendered
     assert not any(line.startswith('actions:') for line in rendered)
     assert not any(line.startswith('next:') for line in rendered)
 
@@ -507,7 +542,7 @@ def test_ds_wizard_configure_restores_shared_section_rail() -> None:
 
     state, _, _ = observerctl_module._ds_wizard_handle_command(state, 'configure')
     assert state.active_page == 'configure'
-    assert observerctl_module._ds_wizard_page_sections(state) == ['flow', 'in', 'out', 'model', 'report', 'cmd', 'check', 'run']
+    assert observerctl_module._ds_wizard_page_sections(state) == ['flow', 'in', 'model', 'eval', 'report', 'cmd', 'check', 'run']
     assert observerctl_module._ds_wizard_action_line(state) == 'actions: prev | ? | next | exit'
 
 
@@ -532,10 +567,10 @@ def test_ds_wizard_scope_help_from_section_is_section_scoped() -> None:
     assert should_exit is False
     rendered = observerctl_module._ds_wizard_render(state)
     assert 'help: eval' in rendered
-    assert 'Review evaluation thresholds and report-facing controls.' in rendered
+    assert 'Review evaluation thresholds and execution guards before report generation.' in rendered
     assert 'fields:' in rendered
-    assert '  max_fpr          Maximum false-positive rate' in rendered
-    assert '  set max_fpr 0.02' in rendered
+    assert any('max FPR' in line and 'Maximum false-positive rate' in line for line in rendered)
+    assert any('set max_fpr 0.02' in line for line in rendered)
 
 
 def test_ds_wizard_eval_page_surfaces_edit_guidance() -> None:
@@ -612,6 +647,8 @@ def test_ds_wizard_flow_advanced_menu_gates_source_context_override(monkeypatch)
     assert any('context overrides are high-risk' in line for line in rendered)
     assert '1. source context         current: sim' in rendered
     assert '2. mode context           current: watch' in rendered
+    assert any('manual identifiers:' in line for line in rendered)
+    assert any('run ID override' in line for line in rendered)
 
     state, packet, should_exit = observerctl_module._ds_wizard_handle_command(state, '1')
 
@@ -630,6 +667,72 @@ def test_ds_wizard_flow_advanced_menu_gates_source_context_override(monkeypatch)
     assert state.source == 'real'
     assert state.values['source'] == 'real'
     assert 'updated context: source = real' in observerctl_module._ds_wizard_transient_lines(state)
+
+
+def test_ds_wizard_run_id_override_requires_advanced_lane() -> None:
+    state = observerctl_module._ds_wizard_new_state('evaluate')
+    observerctl_module._ds_wizard_open_section(state, 'model')
+
+    state, packet, should_exit = observerctl_module._ds_wizard_handle_command(state, 'set run_id custom-eval-001')
+
+    assert packet is None
+    assert should_exit is False
+    assert state.values['run_id'] == ''
+    rendered = observerctl_module._ds_wizard_render(state)
+    assert any('run ID is locked behind advanced.' in line for line in rendered)
+    assert '--run-id' not in observerctl_module._ds_wizard_command_preview(state)
+
+    state, packet, should_exit = observerctl_module._ds_wizard_handle_command(state, 'open flow')
+    assert packet is None
+    assert should_exit is False
+    state, packet, should_exit = observerctl_module._ds_wizard_handle_command(state, '7')
+    assert packet is None
+    assert should_exit is False
+    state, packet, should_exit = observerctl_module._ds_wizard_handle_command(state, '3')
+
+    assert packet is None
+    assert should_exit is False
+    assert state.transient_view == 'advanced-edit'
+    rendered = observerctl_module._ds_wizard_render(state)
+    assert 'advanced override:' in rendered
+    assert 'run ID override:' in rendered
+
+    state, packet, should_exit = observerctl_module._ds_wizard_handle_command(state, 'set run_id custom-eval-001')
+
+    assert packet is None
+    assert should_exit is False
+    assert state.values['run_id'] == 'custom-eval-001'
+    assert '--run-id custom-eval-001' in observerctl_module._ds_wizard_command_preview(state)
+
+
+def test_ds_wizard_out_dir_override_requires_advanced_lane(tmp_path: Path) -> None:
+    state = observerctl_module._ds_wizard_new_state('train')
+
+    state, packet, should_exit = observerctl_module._ds_wizard_handle_command(state, 'set out_dir {0}'.format(tmp_path / 'override-root'))
+
+    assert packet is None
+    assert should_exit is False
+    assert state.values['out_dir'] == ''
+    rendered = observerctl_module._ds_wizard_render(state)
+    assert any('output is locked behind advanced.' in line for line in rendered)
+
+    state, packet, should_exit = observerctl_module._ds_wizard_handle_command(state, 'configure')
+    assert packet is None
+    assert should_exit is False
+    state, packet, should_exit = observerctl_module._ds_wizard_handle_command(state, '7')
+    assert packet is None
+    assert should_exit is False
+    state, packet, should_exit = observerctl_module._ds_wizard_handle_command(state, '4')
+
+    assert packet is None
+    assert should_exit is False
+    assert state.transient_view == 'advanced-edit'
+
+    state, packet, should_exit = observerctl_module._ds_wizard_handle_command(state, 'set out_dir {0}'.format(tmp_path / 'override-root'))
+
+    assert packet is None
+    assert should_exit is False
+    assert str(state.values['out_dir']).endswith('override-root')
 
 
 def test_ds_wizard_hydrate_latest_explains_dataset_limit(monkeypatch, tmp_path: Path) -> None:
@@ -838,9 +941,9 @@ def test_ds_wizard_dataset_picker_supports_numbered_open_and_apply(monkeypatch, 
     monkeypatch.setattr(observerctl_module, '_project_anchor', lambda: anchor)
 
     state = observerctl_module._ds_wizard_new_state('evaluate')
-    observerctl_module._ds_wizard_open_section(state, 'in')
+    observerctl_module._ds_wizard_open_section(state, 'model')
 
-    state, packet, should_exit = observerctl_module._ds_wizard_handle_command(state, '1')
+    state, packet, should_exit = observerctl_module._ds_wizard_handle_command(state, '4')
 
     assert packet is None
     assert should_exit is False
@@ -1222,6 +1325,47 @@ def test_ds_wizard_wide_render_keeps_workflow_items_aligned_with_color(monkeypat
     assert build_col == pipeline_col == advanced_col
 
 
+def test_ds_wizard_wide_render_separates_left_rail_and_right_pane_blocks(monkeypatch) -> None:
+    from observerctl_terminal import strip_ansi
+
+    monkeypatch.setenv('NO_COLOR', '1')
+    monkeypatch.setattr(observerctl_module, '_ds_wizard_get_terminal_width', lambda: 120)
+
+    state = observerctl_module._ds_wizard_new_state('build')
+    observerctl_module._ds_wizard_set_value(state, 'max_fpr', 0.05)
+    state, _, _ = observerctl_module._ds_wizard_handle_command(state, 'configure')
+    rendered = observerctl_module._ds_wizard_render(state)
+    plain = [strip_ansi(line) for line in rendered]
+
+    left_rail_width = 25
+    left_col_texts = []
+    right_col_texts = []
+    for line in plain:
+        left_part = line[:left_rail_width].strip()
+        right_part = line[left_rail_width:].strip() if len(line) > left_rail_width else ''
+        if left_part:
+            left_col_texts.append(left_part)
+        if right_part:
+            right_col_texts.append(right_part)
+
+    left_joined = ' '.join(left_col_texts)
+    right_joined = ' '.join(right_col_texts)
+
+    assert 'workflow:' in left_joined
+    assert 'status:' in left_joined
+    assert 'family:' in left_joined
+    assert 'Menu' in left_joined
+
+    assert 'path:' in right_joined
+    assert 'dataset:' in right_joined
+    assert 'state:' in right_joined
+    assert 'mode:' in right_joined
+    assert 'FPR:' in right_joined
+
+    assert 'dataset:' not in left_joined
+    assert 'FPR:' not in left_joined
+
+
 def test_ds_wizard_forced_color_styles_only_breadcrumb_tail(monkeypatch) -> None:
     from observerctl_terminal import strip_ansi, style_heading
 
@@ -1416,8 +1560,8 @@ def test_ds_saved_selector_commands_and_wizard_hydration(monkeypatch, tmp_path: 
     report_picker_state = observerctl_module._ds_wizard_new_state('evaluate')
     observerctl_module._ds_wizard_set_value(report_picker_state, 'source', 'real')
     observerctl_module._ds_wizard_set_value(report_picker_state, 'mode', 'canary')
-    observerctl_module._ds_wizard_open_section(report_picker_state, 'report')
-    report_picker_state, packet, should_exit = observerctl_module._ds_wizard_handle_command(report_picker_state, '2')
+    observerctl_module._ds_wizard_open_section(report_picker_state, 'model')
+    report_picker_state, packet, should_exit = observerctl_module._ds_wizard_handle_command(report_picker_state, '1')
     assert packet is None
     assert should_exit is False
     assert report_picker_state.transient_view == 'picker'
@@ -1476,21 +1620,63 @@ def test_ds_wizard_canonical_draft_slots_and_output_preview(monkeypatch, tmp_pat
     assert 'saved draft slots:' in rendered
     assert any('slot-001' in line for line in rendered)
 
-    out_state = observerctl_module._ds_wizard_new_state('train')
-    observerctl_module._ds_wizard_open_section(out_state, 'out')
-    rendered = observerctl_module._ds_wizard_render(out_state)
-    assert 'canonical outputs:' in rendered
+    report_state = observerctl_module._ds_wizard_new_state('train')
+    observerctl_module._ds_wizard_open_section(report_state, 'report')
+    rendered = observerctl_module._ds_wizard_render(report_state)
+    assert 'report:' in rendered
     assert any('Canonical run root:' in line and 'local_untracked/analysis/runs/train/auto-run-id' in line.replace('\\', '/') for line in rendered)
+    assert any('Dataset status:' in line and 'choose approved dataset before execute.' in line for line in rendered)
     assert any('Override note:' in line for line in rendered)
-    assert '--out-dir' not in observerctl_module._ds_wizard_command_preview(out_state)
+    assert '--out-dir' not in observerctl_module._ds_wizard_command_preview(report_state)
 
-    observerctl_module._ds_wizard_set_value(out_state, 'out_dir', str(tmp_path / 'override-root'))
-    rendered = observerctl_module._ds_wizard_render(out_state)
-    assert any('Output policy:' in line and 'power override' in line for line in rendered)
+    build_report_state = observerctl_module._ds_wizard_new_state('build')
+    observerctl_module._ds_wizard_open_section(build_report_state, 'report')
+    build_rendered = observerctl_module._ds_wizard_render(build_report_state)
+    assert any('Canonical run root:' in line and 'local_untracked/analysis/runs/build/auto-run-id' in line.replace('\\', '/') for line in build_rendered)
+    assert any('Input status:' in line and 'choose telemetry inputs before execute.' in line for line in build_rendered)
+
+    observerctl_module._ds_wizard_set_value(report_state, 'out_dir', str(tmp_path / 'override-root'))
+    rendered = observerctl_module._ds_wizard_render(report_state)
+    assert any('Run root mode:' in line and 'power override' in line for line in rendered)
     assert any('Active override:' in line for line in rendered)
 
     score_state = observerctl_module._ds_wizard_new_state('score')
     assert '--out-file' not in observerctl_module._ds_wizard_command_preview(score_state)
+
+
+def test_ds_wizard_partition_headers_render_on_frame3_surfaces() -> None:
+    build_state = observerctl_module._ds_wizard_new_state('build')
+    observerctl_module._ds_wizard_open_section(build_state, 'in')
+    build_rendered = observerctl_module._ds_wizard_render(build_state)
+
+    assert 'load configs:' in build_rendered
+    assert any('load saved draft' in line for line in build_rendered)
+    assert not any(line.strip().startswith('2.') and 'telemetry inputs' in line for line in build_rendered)
+    assert not any('cli-only' in line for line in build_rendered)
+
+    eval_state = observerctl_module._ds_wizard_new_state('evaluate')
+    observerctl_module._ds_wizard_open_section(eval_state, 'model')
+    eval_rendered = observerctl_module._ds_wizard_render(eval_state)
+
+    assert 'load configs:' in eval_rendered
+    assert 'load data:' in eval_rendered
+    assert any('load saved baseline' in line for line in eval_rendered)
+    assert any('load previous' in line for line in eval_rendered)
+    assert any('model artifact' in line for line in eval_rendered)
+    assert any('dataset artifact' in line for line in eval_rendered)
+
+
+def test_ds_wizard_cmd_surface_explains_execution_map() -> None:
+    state = observerctl_module._ds_wizard_new_state('evaluate')
+    observerctl_module._ds_wizard_set_value(state, 'max_fpr', '0.03')
+    observerctl_module._ds_wizard_open_section(state, 'cmd')
+
+    rendered = observerctl_module._ds_wizard_render(state)
+
+    assert 'execution map:' in rendered
+    assert any('workflow lane: evaluate' in line for line in rendered)
+    assert any('evaluation guard: max_fpr = 0.03' in line for line in rendered)
+    assert any('report lane:' in line for line in rendered)
 
 
 def test_ds_run_demo_executes_wrapper_and_emits_artifact_summary(tmp_path: Path, capsys) -> None:
