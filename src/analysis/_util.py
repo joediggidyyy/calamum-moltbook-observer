@@ -71,6 +71,30 @@ def ds_indexes_dir(start: Path) -> Path:
     return default_analysis_dir(start) / 'indexes'
 
 
+def librarian_vault_root(start: Path) -> Path:
+    return default_analysis_dir(start) / 'vaults' / 'librarian'
+
+
+def librarian_vault_authority_dir(start: Path) -> Path:
+    return librarian_vault_root(start) / 'authority'
+
+
+def librarian_vault_history_dir(start: Path) -> Path:
+    return librarian_vault_root(start) / 'history'
+
+
+def librarian_vault_access_dir(start: Path) -> Path:
+    return librarian_vault_root(start) / 'delegated_access'
+
+
+def librarian_vault_integrity_dir(start: Path) -> Path:
+    return librarian_vault_root(start) / 'integrity'
+
+
+def librarian_vault_quarantine_dir(start: Path) -> Path:
+    return librarian_vault_root(start) / 'quarantine'
+
+
 def ds_drafts_dir(start: Path) -> Path:
     return default_analysis_dir(start) / 'drafts'
 
@@ -106,6 +130,26 @@ def librarian_dataset_catalog_path(start: Path) -> Path:
 
 def dataset_access_dir(start: Path) -> Path:
     return ds_indexes_dir(start) / 'dataset_access'
+
+
+def librarian_vault_dataset_manifest_path(start: Path) -> Path:
+    return librarian_vault_authority_dir(start) / 'librarian_dataset_manifest.json'
+
+
+def librarian_vault_dataset_catalog_path(start: Path) -> Path:
+    return librarian_vault_history_dir(start) / 'librarian_dataset_catalog.jsonl'
+
+
+def librarian_vault_baseline_path(start: Path) -> Path:
+    return librarian_vault_integrity_dir(start) / 'vault_checksum.json'
+
+
+def librarian_vault_audit_log_path(start: Path) -> Path:
+    return librarian_vault_integrity_dir(start) / 'vault_audit.jsonl'
+
+
+def librarian_vault_control_state_path(start: Path) -> Path:
+    return librarian_vault_integrity_dir(start) / 'vault_control_state.json'
 
 
 def default_run_root(start: Path, workflow: str, run_id: str) -> Path:

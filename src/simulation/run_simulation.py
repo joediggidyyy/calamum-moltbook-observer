@@ -32,6 +32,7 @@ if str(SRC_DIR) not in sys.path:
 
 from calamum_librarian import Librarian
 from calamum_observer_agent import append_record
+from obfuscator_lib import verify_detached_payload
 import observerctl as observerctl_module
 
 
@@ -43,6 +44,8 @@ FRAME5_LINEAGE_PROBE_DIR = REPO_ROOT / 'report_tmp' / 'frame5_validation_cycle_l
 FRAME6_DS_WIZARD_DURABILITY_PROBE_DIR = REPO_ROOT / 'report_tmp' / 'frame6_ds_wizard_durability_probe'
 FRAME6_RESTART_PROBE_DIR = REPO_ROOT / 'report_tmp' / 'frame6_restart_continuity_probe'
 FRAME6_RECOVERY_PROBE_DIR = REPO_ROOT / 'report_tmp' / 'frame6_state_recovery_probe'
+LIBRARIAN_ACCESS_EXCHANGE_PROBE_DIR = REPO_ROOT / 'report_tmp' / 'librarian_access_exchange_probe'
+LIBRARIAN_VAULT_CONTROLS_PROBE_DIR = REPO_ROOT / 'report_tmp' / 'librarian_vault_controls_probe'
 
 
 def _utc_stamp() -> str:
@@ -185,6 +188,38 @@ def _restore_probe_environment(original_env: Dict[str, Optional[str]], original_
         else:
             os.environ[key] = value
     observerctl_module._project_root = original_project_root
+
+
+def _override_env_vars(original_env: Dict[str, Optional[str]], updates: Dict[str, Optional[str]]) -> None:
+    for key, value in updates.items():
+        if key not in original_env:
+            original_env[key] = os.environ.get(key)
+        if value is None:
+            os.environ.pop(key, None)
+        else:
+            os.environ[key] = value
+
+
+def _seed_probe_project_root(project_root: Path) -> Path:
+    src_dir = project_root / 'src'
+    src_dir.mkdir(parents=True, exist_ok=True)
+    anchor = src_dir / 'observerctl.py'
+    if not anchor.exists():
+        anchor.write_text('# sandbox observerctl anchor\n', encoding='utf-8')
+    manifest = project_root / 'PROJECT_MANIFEST.json'
+    if not manifest.exists():
+        manifest.write_text('{}\n', encoding='utf-8')
+    return anchor
+
+
+def _resolve_probe_artifact_path(project_root: Path, reported_path: str) -> Path:
+    raw = str(reported_path or '').strip()
+    if not raw:
+        return Path()
+    path = Path(raw.replace('/', os.sep))
+    if path.is_absolute():
+        return path
+    return project_root / path
 
 
 def _touch(path: Path, content: str = '{"status":"ok"}\n') -> None:
@@ -1056,6 +1091,334 @@ def _report_path_map(paths: Dict[str, Path]) -> Dict[str, str]:
     return {key: _rel_to_repo(value) if str(value) else '' for key, value in paths.items()}
 
 
+def run_librarian_access_exchange_probe() -> int:
+    run_id = 'librarian-access-exchange-{0}'.format(_utc_stamp())
+    run_dir = LIBRARIAN_ACCESS_EXCHANGE_PROBE_DIR / 'runs' / run_id
+    run_index_jsonl = LIBRARIAN_ACCESS_EXCHANGE_PROBE_DIR / 'run_index.jsonl'
+    run_dir.mkdir(parents=True, exist_ok=True)
+
+    original_env: Dict[str, Optional[str]] = {}
+    original_project_root = None
+    try:
+        sandbox_root, _sandbox_log_dir, original_env, original_project_root = _seed_probe_environment(
+            run_dir=run_dir,
+            signing_key='unused-shared-signing-root',
+            security_report_title='# Librarian access exchange probe security report\n',
+        )
+        _seed_probe_project_root(sandbox_root)
+        _override_env_vars(
+            original_env,
+            {
+                'CALAMUM_DATA_SIGNING_KEY': None,
+                'CALAMUM_REQUESTER_SIGNING_KEY': 'probe-requester-key',
+                'CALAMUM_LIBRARIAN_ATTESTATION_KEY': 'probe-librarian-key',
+                'CALAMUM_SOURCE_RELEASE_KEY': 'probe-source-key',
+                'CALAMUM_LIBRARIAN_VAULT_KEY': 'probe-vault-key',
+            },
+        )
+
+        artifacts_dir = run_dir / 'artifacts'
+        dataset_dir = artifacts_dir / 'datasets' / 'protected_exchange'
+        dataset_dir.mkdir(parents=True, exist_ok=True)
+        manifest_path = dataset_dir / 'dataset_manifest.json'
+        features_csv = dataset_dir / 'features.csv'
+        labels_csv = dataset_dir / 'labels.csv'
+        features_csv.write_text('record_id,feature\n1,0.1\n', encoding='utf-8')
+        labels_csv.write_text('record_id,label\n1,1\n', encoding='utf-8')
+        _write_json(
+            manifest_path,
+            {
+                'features_csv': str(features_csv),
+                'labels_csv': str(labels_csv),
+                'total_records': 1,
+                'has_labels': True,
+            },
+        )
+
+        command_runs = {
+            'register_protected_dataset': _run_observerctl_cli([
+                'librarian',
+                'dataset',
+                'register',
+                str(manifest_path),
+                '--access-class',
+                'protected-source',
+                '--display-name',
+                'Probe Protected Dataset',
+                '--run-id',
+                'probe-protected-dataset',
+                '--json',
+            ]),
+            'release_protected_dataset': _run_observerctl_cli([
+                'librarian',
+                'dataset',
+                'release',
+                '1',
+                '--requester-id',
+                'sandbox-probe',
+                '--json',
+            ]),
+        }
+
+        register_packet = command_runs['register_protected_dataset'].get('stdout_json', {}) if isinstance(command_runs['register_protected_dataset'].get('stdout_json', {}), dict) else {}
+        release_packet = command_runs['release_protected_dataset'].get('stdout_json', {}) if isinstance(command_runs['release_protected_dataset'].get('stdout_json', {}), dict) else {}
+        release_artifacts = dict(release_packet.get('artifacts', {}) or {}) if isinstance(release_packet.get('artifacts', {}), dict) else {}
+
+        request_path = _resolve_probe_artifact_path(sandbox_root, str(release_artifacts.get('dataset_access_request_json', '') or ''))
+        attestation_path = _resolve_probe_artifact_path(sandbox_root, str(release_artifacts.get('dataset_access_attestation_json', '') or ''))
+        release_receipt_path = _resolve_probe_artifact_path(sandbox_root, str(release_artifacts.get('dataset_access_release_receipt_json', '') or ''))
+        baseline_path = _resolve_probe_artifact_path(sandbox_root, str(release_artifacts.get('librarian_vault_baseline_json', '') or ''))
+        audit_path = _resolve_probe_artifact_path(sandbox_root, str(release_artifacts.get('librarian_vault_audit_jsonl', '') or ''))
+
+        request_doc = _read_json(request_path) if request_path.exists() else {}
+        attestation_doc = _read_json(attestation_path) if attestation_path.exists() else {}
+        release_receipt_doc = _read_json(release_receipt_path) if release_receipt_path.exists() else {}
+
+        request_payload = dict(request_doc.get('packet', {}) or {}) if isinstance(request_doc.get('packet', {}), dict) else {}
+        attestation_payload = dict(attestation_doc.get('packet', {}) or {}) if isinstance(attestation_doc.get('packet', {}), dict) else {}
+        release_receipt_payload = dict(release_receipt_doc.get('packet', {}) or {}) if isinstance(release_receipt_doc.get('packet', {}), dict) else {}
+
+        result_matrix = {
+            'protected_dataset_registered': int(command_runs['register_protected_dataset'].get('returncode', 1)) == 0 and str(register_packet.get('action', '')).strip() == 'librarian-dataset-register',
+            'protected_dataset_released': int(command_runs['release_protected_dataset'].get('returncode', 1)) == 0 and str(release_packet.get('release_mode', '')).strip() == 'protected-source',
+            'shared_signing_root_not_required': not bool(str(os.environ.get('CALAMUM_DATA_SIGNING_KEY', '') or '').strip()),
+            'request_signature_verified': verify_detached_payload(
+                request_payload,
+                dict(request_doc.get('detached_signature', {}) or {}),
+                expected_role='requester',
+                expected_purpose='dataset_access_request',
+            ),
+            'attestation_signature_verified': verify_detached_payload(
+                attestation_payload,
+                dict(attestation_doc.get('detached_signature', {}) or {}),
+                expected_role='librarian',
+                expected_purpose='dataset_access_attestation',
+            ),
+            'release_receipt_signature_verified': verify_detached_payload(
+                release_receipt_payload,
+                dict(release_receipt_doc.get('detached_signature', {}) or {}),
+                expected_role='source',
+                expected_purpose='dataset_access_release',
+            ),
+            'delegated_access_projection_written': all(path.exists() for path in [request_path, attestation_path, release_receipt_path]),
+            'vault_baseline_written': baseline_path.exists(),
+            'vault_audit_written': audit_path.exists(),
+        }
+
+        report = {
+            'run_id': run_id,
+            'run_dir': _rel_to_repo(run_dir),
+            'probe_dir': _rel_to_repo(LIBRARIAN_ACCESS_EXCHANGE_PROBE_DIR),
+            'script': _rel_to_repo(Path(__file__)),
+            'next_bite_result': _probe_result(result_matrix),
+            'command_runs': command_runs,
+            'artifact_paths': _report_path_map(
+                {
+                    'dataset_manifest': manifest_path,
+                    'request_packet': request_path,
+                    'attestation_packet': attestation_path,
+                    'release_receipt': release_receipt_path,
+                    'vault_baseline': baseline_path,
+                    'vault_audit': audit_path,
+                }
+            ),
+            'artifact_snapshots': {
+                'register_packet': register_packet,
+                'release_packet': release_packet,
+                'request_document': request_doc,
+                'attestation_document': attestation_doc,
+                'release_receipt_document': release_receipt_doc,
+            },
+            'result_matrix': result_matrix,
+            'findings': {
+                'requester_id': str(request_payload.get('requester_id', '') or ''),
+                'request_role': str((request_doc.get('detached_signature', {}) or {}).get('role', '') or ''),
+                'attestation_role': str((attestation_doc.get('detached_signature', {}) or {}).get('role', '') or ''),
+                'release_role': str((release_receipt_doc.get('detached_signature', {}) or {}).get('role', '') or ''),
+            },
+        }
+
+        report_json = run_dir / 'librarian_access_exchange_probe.json'
+        report_md = run_dir / 'librarian_access_exchange_probe.md'
+        _write_json(report_json, report)
+        report_md.write_text(_render_result_matrix_markdown('Librarian Access Exchange Probe', report), encoding='utf-8')
+
+        _append_jsonl(
+            run_index_jsonl,
+            {
+                'run_id': run_id,
+                'timestamp_utc': _utc_stamp(),
+                'run_dir': _rel_to_repo(run_dir),
+                'report_json': _rel_to_repo(report_json),
+                'report_md': _rel_to_repo(report_md),
+                'next_bite_result': report['next_bite_result'],
+                'requester_id': str(request_payload.get('requester_id', '') or ''),
+            },
+        )
+
+        print('run_id={0}'.format(run_id))
+        print('report_json={0}'.format(_rel_to_repo(report_json)))
+        print('report_md={0}'.format(_rel_to_repo(report_md)))
+        print('run_index={0}'.format(_rel_to_repo(run_index_jsonl)))
+        print('next_bite_result={0}'.format(report['next_bite_result']))
+        return 0
+    finally:
+        if original_project_root is not None:
+            _restore_probe_environment(original_env, original_project_root)
+
+
+def run_librarian_vault_controls_probe() -> int:
+    run_id = 'librarian-vault-controls-{0}'.format(_utc_stamp())
+    run_dir = LIBRARIAN_VAULT_CONTROLS_PROBE_DIR / 'runs' / run_id
+    run_index_jsonl = LIBRARIAN_VAULT_CONTROLS_PROBE_DIR / 'run_index.jsonl'
+    run_dir.mkdir(parents=True, exist_ok=True)
+
+    original_env: Dict[str, Optional[str]] = {}
+    original_project_root = None
+    try:
+        sandbox_root, _sandbox_log_dir, original_env, original_project_root = _seed_probe_environment(
+            run_dir=run_dir,
+            signing_key='librarian-vault-controls-signing-key',
+            security_report_title='# Librarian vault controls probe security report\n',
+        )
+        _seed_probe_project_root(sandbox_root)
+        _override_env_vars(original_env, {'CALAMUM_LIBRARIAN_VAULT_KEY': 'probe-vault-key'})
+
+        artifacts_dir = run_dir / 'artifacts'
+        first_dataset_dir = artifacts_dir / 'datasets' / 'vault_primary'
+        second_dataset_dir = artifacts_dir / 'datasets' / 'vault_secondary'
+        first_dataset_dir.mkdir(parents=True, exist_ok=True)
+        second_dataset_dir.mkdir(parents=True, exist_ok=True)
+
+        first_manifest_path = first_dataset_dir / 'dataset_manifest.json'
+        second_manifest_path = second_dataset_dir / 'dataset_manifest.json'
+        first_features_csv = first_dataset_dir / 'features.csv'
+        second_features_csv = second_dataset_dir / 'features.csv'
+        first_features_csv.write_text('record_id,feature\n1,0.1\n', encoding='utf-8')
+        second_features_csv.write_text('record_id,feature\n2,0.2\n', encoding='utf-8')
+        _write_json(first_manifest_path, {'features_csv': str(first_features_csv), 'total_records': 1, 'has_labels': False})
+        _write_json(second_manifest_path, {'features_csv': str(second_features_csv), 'total_records': 1, 'has_labels': False})
+
+        command_runs = {
+            'register_seed_dataset': _run_observerctl_cli([
+                'librarian',
+                'dataset',
+                'register',
+                str(first_manifest_path),
+                '--display-name',
+                'Vault Primary Dataset',
+                '--run-id',
+                'vault-primary',
+                '--json',
+            ]),
+            'vault_status': _run_observerctl_cli(['librarian', 'vault', 'status', '--json']),
+            'vault_lock': _run_observerctl_cli(['librarian', 'vault', 'lock', '--reason', 'sandbox-maintenance', '--json']),
+            'register_while_locked': _run_observerctl_cli([
+                'librarian',
+                'dataset',
+                'register',
+                str(second_manifest_path),
+                '--display-name',
+                'Vault Secondary Dataset',
+                '--run-id',
+                'vault-secondary',
+                '--json',
+            ]),
+            'vault_unlock': _run_observerctl_cli(['librarian', 'vault', 'unlock', '--reason', 'sandbox-complete', '--json']),
+            'vault_rebaseline': _run_observerctl_cli(['librarian', 'vault', 'rebaseline', '--reason', 'sandbox-refresh', '--json']),
+            'vault_verify': _run_observerctl_cli(['librarian', 'vault', 'verify', '--json']),
+        }
+
+        status_packet = command_runs['vault_status'].get('stdout_json', {}) if isinstance(command_runs['vault_status'].get('stdout_json', {}), dict) else {}
+        lock_packet = command_runs['vault_lock'].get('stdout_json', {}) if isinstance(command_runs['vault_lock'].get('stdout_json', {}), dict) else {}
+        locked_register_packet = command_runs['register_while_locked'].get('stdout_json', {}) if isinstance(command_runs['register_while_locked'].get('stdout_json', {}), dict) else {}
+        unlock_packet = command_runs['vault_unlock'].get('stdout_json', {}) if isinstance(command_runs['vault_unlock'].get('stdout_json', {}), dict) else {}
+        rebaseline_packet = command_runs['vault_rebaseline'].get('stdout_json', {}) if isinstance(command_runs['vault_rebaseline'].get('stdout_json', {}), dict) else {}
+        verify_packet = command_runs['vault_verify'].get('stdout_json', {}) if isinstance(command_runs['vault_verify'].get('stdout_json', {}), dict) else {}
+
+        status_artifacts = dict(status_packet.get('artifacts', {}) or {}) if isinstance(status_packet.get('artifacts', {}), dict) else {}
+        audit_path = _resolve_probe_artifact_path(sandbox_root, str(status_artifacts.get('librarian_vault_audit_jsonl', '') or ''))
+        baseline_path = _resolve_probe_artifact_path(sandbox_root, str(status_artifacts.get('librarian_vault_baseline_json', '') or ''))
+        control_state_path = _resolve_probe_artifact_path(sandbox_root, str(status_artifacts.get('librarian_vault_control_state_json', '') or ''))
+        control_state = _read_json(control_state_path) if control_state_path.exists() else {}
+        audit_rows = _read_jsonl(audit_path)
+        audit_actions = [str(row.get('action', '') or '') for row in audit_rows]
+
+        result_matrix = {
+            'seed_dataset_registered': int(command_runs['register_seed_dataset'].get('returncode', 1)) == 0,
+            'vault_status_reported': int(command_runs['vault_status'].get('returncode', 1)) == 0 and str(status_packet.get('action', '')).strip() == 'librarian-vault-status',
+            'vault_lock_succeeded': int(command_runs['vault_lock'].get('returncode', 1)) == 0 and bool(lock_packet.get('locked', False)) is True,
+            'locked_register_denied': int(command_runs['register_while_locked'].get('returncode', 0)) != 0 and 'critical_check_failed:librarian_vault_locked' in list(locked_register_packet.get('reason_codes', []) or []),
+            'vault_unlock_succeeded': int(command_runs['vault_unlock'].get('returncode', 1)) == 0 and bool(unlock_packet.get('locked', True)) is False,
+            'vault_rebaseline_succeeded': int(command_runs['vault_rebaseline'].get('returncode', 1)) == 0 and str(rebaseline_packet.get('action', '')).strip() == 'librarian-vault-rebaseline',
+            'vault_verify_succeeded': int(command_runs['vault_verify'].get('returncode', 1)) == 0 and str(verify_packet.get('decision', '')).strip() == 'go',
+            'vault_control_state_written': control_state_path.exists() and bool(control_state) and bool(control_state.get('locked', True)) is False,
+            'vault_audit_records_control_actions': all(action in audit_actions for action in ['librarian-vault-lock', 'librarian-vault-unlock', 'librarian-vault-rebaseline']) and baseline_path.exists(),
+        }
+
+        report = {
+            'run_id': run_id,
+            'run_dir': _rel_to_repo(run_dir),
+            'probe_dir': _rel_to_repo(LIBRARIAN_VAULT_CONTROLS_PROBE_DIR),
+            'script': _rel_to_repo(Path(__file__)),
+            'next_bite_result': _probe_result(result_matrix),
+            'command_runs': command_runs,
+            'artifact_paths': _report_path_map(
+                {
+                    'seed_manifest': first_manifest_path,
+                    'locked_manifest': second_manifest_path,
+                    'vault_audit': audit_path,
+                    'vault_baseline': baseline_path,
+                    'vault_control_state': control_state_path,
+                }
+            ),
+            'artifact_snapshots': {
+                'vault_status_packet': status_packet,
+                'vault_lock_packet': lock_packet,
+                'locked_register_packet': locked_register_packet,
+                'vault_unlock_packet': unlock_packet,
+                'vault_rebaseline_packet': rebaseline_packet,
+                'vault_verify_packet': verify_packet,
+                'vault_control_state': control_state,
+                'vault_audit_rows': audit_rows,
+            },
+            'result_matrix': result_matrix,
+            'findings': {
+                'audit_actions': audit_actions,
+                'verify_integrity_status': str(verify_packet.get('integrity_status', '') or ''),
+                'locked_reason_codes': list(locked_register_packet.get('reason_codes', []) or []),
+            },
+        }
+
+        report_json = run_dir / 'librarian_vault_controls_probe.json'
+        report_md = run_dir / 'librarian_vault_controls_probe.md'
+        _write_json(report_json, report)
+        report_md.write_text(_render_result_matrix_markdown('Librarian Vault Controls Probe', report), encoding='utf-8')
+
+        _append_jsonl(
+            run_index_jsonl,
+            {
+                'run_id': run_id,
+                'timestamp_utc': _utc_stamp(),
+                'run_dir': _rel_to_repo(run_dir),
+                'report_json': _rel_to_repo(report_json),
+                'report_md': _rel_to_repo(report_md),
+                'next_bite_result': report['next_bite_result'],
+                'integrity_status': str(verify_packet.get('integrity_status', '') or ''),
+            },
+        )
+
+        print('run_id={0}'.format(run_id))
+        print('report_json={0}'.format(_rel_to_repo(report_json)))
+        print('report_md={0}'.format(_rel_to_repo(report_md)))
+        print('run_index={0}'.format(_rel_to_repo(run_index_jsonl)))
+        print('next_bite_result={0}'.format(report['next_bite_result']))
+        return 0
+    finally:
+        if original_project_root is not None:
+            _restore_probe_environment(original_env, original_project_root)
+
+
 def run_baseline_monitor_runtime_probe() -> int:
     run_id = 'job0022-baseline-monitor-runtime-{0}'.format(_utc_stamp())
     run_dir = JOB0022_PROBE_DIR / 'runs' / run_id
@@ -1586,6 +1949,8 @@ def _definition_registry() -> Dict[str, Callable[[], int]]:
         'validation-cycle-lineage': run_validation_cycle_lineage_probe,
         'baseline-monitor-restart-continuity': run_baseline_monitor_restart_continuity_probe,
         'baseline-monitor-state-recovery': run_baseline_monitor_state_recovery_probe,
+        'librarian-access-exchange': run_librarian_access_exchange_probe,
+        'librarian-vault-controls': run_librarian_vault_controls_probe,
     }
 
 
@@ -1595,7 +1960,7 @@ def build_parser() -> argparse.ArgumentParser:
         'definition',
         nargs='?',
         default='feedback-loop',
-        help='Definition to run: feedback-loop, metadata-contract, metadata-contract-regression, ds-wizard-hydration, ds-wizard-durability, baseline-monitor-runtime, validation-cycle-lineage, baseline-monitor-restart-continuity, baseline-monitor-state-recovery',
+        help='Definition to run: feedback-loop, metadata-contract, metadata-contract-regression, ds-wizard-hydration, ds-wizard-durability, baseline-monitor-runtime, validation-cycle-lineage, baseline-monitor-restart-continuity, baseline-monitor-state-recovery, librarian-access-exchange, librarian-vault-controls',
     )
     parser.add_argument(
         '--list-definitions',
@@ -1621,6 +1986,8 @@ def main(argv: Optional[List[str]] = None) -> int:
             'validation-cycle-lineage',
             'baseline-monitor-restart-continuity',
             'baseline-monitor-state-recovery',
+            'librarian-access-exchange',
+            'librarian-vault-controls',
         ]:
             print(name)
         return 0

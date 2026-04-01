@@ -27,6 +27,17 @@ def test_simulation_runner_lists_available_definitions(capsys) -> None:
     assert 'validation-cycle-lineage' in out
     assert 'baseline-monitor-restart-continuity' in out
     assert 'baseline-monitor-state-recovery' in out
+    assert 'librarian-access-exchange' in out
+    assert 'librarian-vault-controls' in out
+
+
+def test_simulation_runner_lists_librarian_sandbox_definitions(capsys) -> None:
+    rc = simulation_runner.main(['--list-definitions'])
+    out = capsys.readouterr().out
+
+    assert rc == 0
+    assert 'librarian-access-exchange' in out
+    assert 'librarian-vault-controls' in out
 
 
 def test_simulation_runner_dispatches_metadata_contract_definition(monkeypatch) -> None:
@@ -149,6 +160,36 @@ def test_simulation_runner_dispatches_state_recovery_definition(monkeypatch) -> 
     assert called['recovery'] is True
 
 
+def test_simulation_runner_dispatches_librarian_access_exchange_definition(monkeypatch) -> None:
+    called = {'access_exchange': False}
+
+    def fake_runner() -> int:
+        called['access_exchange'] = True
+        return 0
+
+    monkeypatch.setattr(simulation_runner, 'run_librarian_access_exchange_probe', fake_runner)
+
+    rc = simulation_runner.main(['librarian-access-exchange'])
+
+    assert rc == 0
+    assert called['access_exchange'] is True
+
+
+def test_simulation_runner_dispatches_librarian_vault_controls_definition(monkeypatch) -> None:
+    called = {'vault_controls': False}
+
+    def fake_runner() -> int:
+        called['vault_controls'] = True
+        return 0
+
+    monkeypatch.setattr(simulation_runner, 'run_librarian_vault_controls_probe', fake_runner)
+
+    rc = simulation_runner.main(['librarian-vault-controls'])
+
+    assert rc == 0
+    assert called['vault_controls'] is True
+
+
 def _configure_probe_roots(monkeypatch, tmp_path: Path) -> None:
     monkeypatch.setattr(simulation_runner, 'REPO_ROOT', tmp_path)
     monkeypatch.setattr(simulation_runner, 'FRAME4_PROBE_DIR', tmp_path / 'report_tmp' / 'frame4_metadata_contract_probe')
@@ -159,6 +200,8 @@ def _configure_probe_roots(monkeypatch, tmp_path: Path) -> None:
     monkeypatch.setattr(simulation_runner, 'FRAME6_DS_WIZARD_DURABILITY_PROBE_DIR', tmp_path / 'report_tmp' / 'frame6_ds_wizard_durability_probe')
     monkeypatch.setattr(simulation_runner, 'FRAME6_RESTART_PROBE_DIR', tmp_path / 'report_tmp' / 'frame6_restart_continuity_probe')
     monkeypatch.setattr(simulation_runner, 'FRAME6_RECOVERY_PROBE_DIR', tmp_path / 'report_tmp' / 'frame6_state_recovery_probe')
+    monkeypatch.setattr(simulation_runner, 'LIBRARIAN_ACCESS_EXCHANGE_PROBE_DIR', tmp_path / 'report_tmp' / 'librarian_access_exchange_probe')
+    monkeypatch.setattr(simulation_runner, 'LIBRARIAN_VAULT_CONTROLS_PROBE_DIR', tmp_path / 'report_tmp' / 'librarian_vault_controls_probe')
 
 
 def test_new_probe_definitions_emit_retained_reports(tmp_path: Path, monkeypatch) -> None:
@@ -212,3 +255,45 @@ def test_new_probe_definitions_emit_retained_reports(tmp_path: Path, monkeypatch
         payload = json.loads(report_json.read_text(encoding='utf-8'))
         assert payload['next_bite_result'] == 'pass'
         assert all(bool(value) for value in payload['result_matrix'].values())
+
+
+def test_librarian_access_exchange_probe_writes_retained_report_artifacts(tmp_path: Path, monkeypatch) -> None:
+    _configure_probe_roots(monkeypatch, tmp_path)
+
+    rc = simulation_runner.run_librarian_access_exchange_probe()
+
+    assert rc == 0
+    run_index_path = tmp_path / 'report_tmp' / 'librarian_access_exchange_probe' / 'run_index.jsonl'
+    assert run_index_path.exists()
+
+    rows = [json.loads(line) for line in run_index_path.read_text(encoding='utf-8').splitlines() if line.strip()]
+    assert rows
+    latest = rows[-1]
+    report_json = tmp_path / str(latest['report_json']).replace('/', '\\')
+    assert report_json.name == 'librarian_access_exchange_probe.json'
+    assert report_json.exists()
+
+    payload = json.loads(report_json.read_text(encoding='utf-8'))
+    assert payload['next_bite_result'] == 'pass'
+    assert all(bool(value) for value in payload['result_matrix'].values())
+
+
+def test_librarian_vault_controls_probe_writes_retained_report_artifacts(tmp_path: Path, monkeypatch) -> None:
+    _configure_probe_roots(monkeypatch, tmp_path)
+
+    rc = simulation_runner.run_librarian_vault_controls_probe()
+
+    assert rc == 0
+    run_index_path = tmp_path / 'report_tmp' / 'librarian_vault_controls_probe' / 'run_index.jsonl'
+    assert run_index_path.exists()
+
+    rows = [json.loads(line) for line in run_index_path.read_text(encoding='utf-8').splitlines() if line.strip()]
+    assert rows
+    latest = rows[-1]
+    report_json = tmp_path / str(latest['report_json']).replace('/', '\\')
+    assert report_json.name == 'librarian_vault_controls_probe.json'
+    assert report_json.exists()
+
+    payload = json.loads(report_json.read_text(encoding='utf-8'))
+    assert payload['next_bite_result'] == 'pass'
+    assert all(bool(value) for value in payload['result_matrix'].values())

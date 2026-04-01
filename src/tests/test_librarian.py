@@ -18,7 +18,21 @@ src_dir = current_dir.parent
 if str(src_dir) not in sys.path:
     sys.path.append(str(src_dir))
 
-from calamum_librarian import Librarian
+from calamum_librarian import (
+    Librarian,
+    librarian_vault_lock_packet,
+    librarian_vault_verify_packet,
+    register_librarian_dataset_packet,
+)
+
+
+def _make_temp_project(tmp_path: Path) -> tuple[Path, Path]:
+    project_root = tmp_path / 'observer_project'
+    anchor = project_root / 'src' / 'observerctl.py'
+    anchor.parent.mkdir(parents=True, exist_ok=True)
+    anchor.write_text('# observerctl anchor\n', encoding='utf-8')
+    (project_root / 'PROJECT_MANIFEST.json').write_text('{}\n', encoding='utf-8')
+    return project_root, anchor
 
 @pytest.fixture
 def librarian_env():
@@ -144,4 +158,66 @@ def test_manifest_corruption_recovery(librarian_env):
     assert librarian_env.manifest_path.exists()
     manifest = json.loads(librarian_env.manifest_path.read_text())
     assert "recovery.jsonl" in manifest
+
+
+def test_register_dataset_bootstraps_vault_and_projection_surfaces(tmp_path: Path) -> None:
+    project_root, anchor = _make_temp_project(tmp_path)
+    dataset_dir = project_root / 'datasets' / 'vault_alpha'
+    dataset_dir.mkdir(parents=True, exist_ok=True)
+    features_csv = dataset_dir / 'features.csv'
+    labels_csv = dataset_dir / 'labels.csv'
+    manifest_path = dataset_dir / 'dataset_manifest.json'
+    features_csv.write_text('record_id,feature\n', encoding='utf-8')
+    labels_csv.write_text('record_id,label\n', encoding='utf-8')
+    manifest_path.write_text(json.dumps({
+        'features_csv': str(features_csv),
+        'labels_csv': str(labels_csv),
+        'total_records': 4,
+        'has_labels': True,
+    }), encoding='utf-8')
+
+    packet = register_librarian_dataset_packet(
+        anchor,
+        manifest_path,
+        access_class='protected-source',
+        display_name='Vault Alpha',
+        run_id='vault-alpha',
+    )
+
+    assert packet['decision'] == 'go'
+
+    vault_root = project_root / 'local_untracked' / 'analysis' / 'vaults' / 'librarian'
+    assert (vault_root / 'authority' / 'librarian_dataset_manifest.json').exists()
+    assert (vault_root / 'history' / 'librarian_dataset_catalog.jsonl').exists()
+    assert (vault_root / 'integrity' / 'vault_checksum.json').exists()
+    assert (vault_root / 'integrity' / 'vault_audit.jsonl').exists()
+
+    assert (project_root / 'local_untracked' / 'analysis' / 'indexes' / 'librarian_dataset_manifest.json').exists()
+    assert (project_root / 'local_untracked' / 'analysis' / 'indexes' / 'librarian_dataset_catalog.jsonl').exists()
+
+    verify_packet = librarian_vault_verify_packet(anchor)
+    assert verify_packet['decision'] == 'go'
+    assert verify_packet['artifacts']['librarian_vault_baseline_json'].endswith('vault_checksum.json')
+
+
+def test_vault_lock_denies_ordinary_dataset_registration(tmp_path: Path) -> None:
+    project_root, anchor = _make_temp_project(tmp_path)
+    dataset_dir = project_root / 'datasets' / 'locked_alpha'
+    dataset_dir.mkdir(parents=True, exist_ok=True)
+    features_csv = dataset_dir / 'features.csv'
+    manifest_path = dataset_dir / 'dataset_manifest.json'
+    features_csv.write_text('record_id,feature\n', encoding='utf-8')
+    manifest_path.write_text(json.dumps({
+        'features_csv': str(features_csv),
+        'total_records': 1,
+        'has_labels': False,
+    }), encoding='utf-8')
+
+    lock_packet = librarian_vault_lock_packet(anchor, reason='unit-test-lock')
+    assert lock_packet['decision'] == 'go'
+
+    packet = register_librarian_dataset_packet(anchor, manifest_path)
+
+    assert packet['decision'] == 'no-go'
+    assert 'critical_check_failed:librarian_vault_locked' in packet['reason_codes']
 

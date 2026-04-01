@@ -49,6 +49,14 @@ def _baseline_monitor_state_recovery_run_index() -> Path:
     return _REPORT_TMP / 'frame6_state_recovery_probe' / 'run_index.jsonl'
 
 
+def _librarian_access_exchange_run_index() -> Path:
+    return _REPORT_TMP / 'librarian_access_exchange_probe' / 'run_index.jsonl'
+
+
+def _librarian_vault_controls_run_index() -> Path:
+    return _REPORT_TMP / 'librarian_vault_controls_probe' / 'run_index.jsonl'
+
+
 def _load_simulation_runner() -> Any:
     return importlib.import_module('simulation.run_simulation')
 
@@ -87,6 +95,14 @@ def _run_baseline_monitor_restart_continuity() -> int:
 
 def _run_baseline_monitor_state_recovery() -> int:
     return int(_load_simulation_runner().run_baseline_monitor_state_recovery_probe())
+
+
+def _run_librarian_access_exchange() -> int:
+    return int(_load_simulation_runner().run_librarian_access_exchange_probe())
+
+
+def _run_librarian_vault_controls() -> int:
+    return int(_load_simulation_runner().run_librarian_vault_controls_probe())
 
 
 def get_definitions() -> List[DefinitionRecord]:
@@ -216,6 +232,34 @@ def get_definitions() -> List[DefinitionRecord]:
             'command': 'observerctl sandbox run baseline-monitor-state-recovery',
             'run_index_path': str(_baseline_monitor_state_recovery_run_index()).replace('\\', '/'),
             'runner': _run_baseline_monitor_state_recovery,
+        },
+        {
+            'id': 'librarian-access-exchange',
+            'title': 'Librarian access exchange probe',
+            'summary': 'Validate requester, librarian, and source delegated-access packets through the sandbox CLI lane.',
+            'status': 'stable',
+            'category': 'librarian-probe',
+            'aliases': [],
+            'selector_policy': 'exact-name-only',
+            'writes_to': 'report_tmp/librarian_access_exchange_probe',
+            'purpose': 'Prove protected-source dataset release writes and verifies delegated request, attestation, and release receipts without relying on the shared signing root.',
+            'command': 'observerctl sandbox run librarian-access-exchange',
+            'run_index_path': str(_librarian_access_exchange_run_index()).replace('\\', '/'),
+            'runner': _run_librarian_access_exchange,
+        },
+        {
+            'id': 'librarian-vault-controls',
+            'title': 'Librarian vault controls probe',
+            'summary': 'Validate librarian vault status, lock, unlock, rebaseline, and verify behavior through the sandbox CLI lane.',
+            'status': 'stable',
+            'category': 'librarian-probe',
+            'aliases': [],
+            'selector_policy': 'exact-name-only',
+            'writes_to': 'report_tmp/librarian_vault_controls_probe',
+            'purpose': 'Prove the protected librarian vault control plane fails closed for ordinary mutation while retaining stable verify and audit behavior.',
+            'command': 'observerctl sandbox run librarian-vault-controls',
+            'run_index_path': str(_librarian_vault_controls_run_index()).replace('\\', '/'),
+            'runner': _run_librarian_vault_controls,
         },
     ]
 

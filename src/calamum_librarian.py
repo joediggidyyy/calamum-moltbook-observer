@@ -30,6 +30,15 @@ from analysis._util import (
     find_project_root,
     librarian_dataset_catalog_path,
     librarian_dataset_manifest_path,
+    librarian_vault_access_dir,
+    librarian_vault_audit_log_path,
+    librarian_vault_baseline_path,
+    librarian_vault_control_state_path,
+    librarian_vault_dataset_catalog_path,
+    librarian_vault_dataset_manifest_path,
+    librarian_vault_integrity_dir,
+    librarian_vault_quarantine_dir,
+    librarian_vault_root,
     normalize_repo_or_absolute_path,
     sanitize_run_id,
     sha256_path,
@@ -53,6 +62,10 @@ DATASET_SELECTOR_SCHEMA_VERSION = '1.0'
 DATASET_ACCESS_REQUEST_TTL_SEC = 300
 DATASET_ACCESS_CLASS_LOCAL = 'local'
 DATASET_ACCESS_CLASS_PROTECTED = 'protected-source'
+VAULT_SCHEMA_VERSION = '1.0'
+VAULT_BASELINE_KIND = 'librarian_vault_checksum'
+VAULT_CONTROL_KIND = 'librarian_vault_control_state'
+VAULT_AUDIT_KIND = 'librarian_vault_audit'
 
 
 def _utc_now_iso() -> str:
@@ -301,11 +314,29 @@ def _dataset_catalog_paths(project_anchor: Path) -> Dict[str, Path]:
     snapshot_path = librarian_dataset_manifest_path(project_anchor)
     catalog_path = librarian_dataset_catalog_path(project_anchor)
     access_root = dataset_access_dir(project_anchor)
+    vault_root = librarian_vault_root(project_anchor)
+    authority_snapshot_path = librarian_vault_dataset_manifest_path(project_anchor)
+    authority_catalog_path = librarian_vault_dataset_catalog_path(project_anchor)
+    authority_access_root = librarian_vault_access_dir(project_anchor)
+    integrity_root = librarian_vault_integrity_dir(project_anchor)
+    baseline_path = librarian_vault_baseline_path(project_anchor)
+    audit_path = librarian_vault_audit_log_path(project_anchor)
+    control_state_path = librarian_vault_control_state_path(project_anchor)
+    quarantine_root = librarian_vault_quarantine_dir(project_anchor)
     return {
         'project_root': project_root,
+        'vault_root': vault_root,
         'snapshot_path': snapshot_path,
         'catalog_path': catalog_path,
         'access_root': access_root,
+        'authority_snapshot_path': authority_snapshot_path,
+        'authority_catalog_path': authority_catalog_path,
+        'authority_access_root': authority_access_root,
+        'integrity_root': integrity_root,
+        'baseline_path': baseline_path,
+        'audit_path': audit_path,
+        'control_state_path': control_state_path,
+        'quarantine_root': quarantine_root,
     }
 
 
@@ -332,6 +363,248 @@ def _append_jsonl_record(path: Path, payload: Dict[str, Any]) -> None:
     path.parent.mkdir(parents=True, exist_ok=True)
     with path.open('a', encoding='utf-8') as handle:
         handle.write(json.dumps(payload, sort_keys=True) + '\n')
+
+
+def _copy_text_projection(source: Path, target: Path) -> None:
+    if not source.exists():
+        return
+    target.parent.mkdir(parents=True, exist_ok=True)
+    target.write_text(source.read_text(encoding='utf-8'), encoding='utf-8')
+
+
+def _copy_tree_projection(source_root: Path, target_root: Path) -> None:
+    if not source_root.exists():
+        return
+    for candidate in sorted(source_root.rglob('*')):
+        if not candidate.is_file():
+            continue
+        destination = target_root / candidate.relative_to(source_root)
+        destination.parent.mkdir(parents=True, exist_ok=True)
+        shutil.copy2(candidate, destination)
+
+
+def _directory_has_files(path: Path) -> bool:
+    if not path.exists():
+        return False
+    for candidate in path.rglob('*'):
+        if candidate.is_file():
+            return True
+    return False
+
+
+def _vault_default_control_state() -> Dict[str, Any]:
+    return {
+        'schema_version': VAULT_SCHEMA_VERSION,
+        'kind': VAULT_CONTROL_KIND,
+        'locked': False,
+        'lock_reason': '',
+        'locked_at_utc': '',
+        'unlocked_at_utc': '',
+        'updated_at_utc': utc_now_iso(),
+    }
+
+
+def _load_vault_control_state(paths: Dict[str, Path]) -> Dict[str, Any]:
+    payload = _read_json_dict(paths['control_state_path'], default=_vault_default_control_state())
+    state = _vault_default_control_state()
+    if isinstance(payload, dict):
+        state.update(payload)
+    state['locked'] = bool(state.get('locked', False))
+    state['lock_reason'] = str(state.get('lock_reason', '') or '').strip()
+    state['locked_at_utc'] = str(state.get('locked_at_utc', '') or '').strip()
+    state['unlocked_at_utc'] = str(state.get('unlocked_at_utc', '') or '').strip()
+    return state
+
+
+def _save_vault_control_state(paths: Dict[str, Path], payload: Dict[str, Any]) -> Dict[str, Any]:
+    state = _vault_default_control_state()
+    if isinstance(payload, dict):
+        state.update(payload)
+    state['locked'] = bool(state.get('locked', False))
+    state['lock_reason'] = str(state.get('lock_reason', '') or '').strip()
+    state['locked_at_utc'] = str(state.get('locked_at_utc', '') or '').strip()
+    state['unlocked_at_utc'] = str(state.get('unlocked_at_utc', '') or '').strip()
+    state['updated_at_utc'] = utc_now_iso()
+    _write_json_atomic(paths['control_state_path'], state)
+    return state
+
+
+def _vault_integrity_files(paths: Dict[str, Path]) -> List[Path]:
+    tracked: List[Path] = []
+    for key in ('authority_snapshot_path', 'authority_catalog_path'):
+        candidate = paths[key]
+        if candidate.exists():
+            tracked.append(candidate)
+    if paths['authority_access_root'].exists():
+        for candidate in sorted(paths['authority_access_root'].rglob('*')):
+            if candidate.is_file():
+                tracked.append(candidate)
+    return tracked
+
+
+def _vault_fingerprint_rows(paths: Dict[str, Path]) -> List[Dict[str, Any]]:
+    rows: List[Dict[str, Any]] = []
+    for candidate in _vault_integrity_files(paths):
+        rows.append(
+            {
+                'path': normalize_repo_or_absolute_path(candidate, paths['vault_root']),
+                'sha256': sha256_path(candidate),
+                'size_bytes': int(candidate.stat().st_size),
+            }
+        )
+    return rows
+
+
+def _vault_checksum_payload(paths: Dict[str, Path]) -> Dict[str, Any]:
+    tracked_files = _vault_fingerprint_rows(paths)
+    checksum = hashlib.sha256(
+        json.dumps(tracked_files, sort_keys=True, separators=(',', ':')).encode('utf-8')
+    ).hexdigest()
+    return {
+        'schema_version': VAULT_SCHEMA_VERSION,
+        'kind': VAULT_BASELINE_KIND,
+        'updated_at_utc': utc_now_iso(),
+        'vault_root': normalize_repo_or_absolute_path(paths['vault_root'], paths['project_root']),
+        'tracked_file_count': int(len(tracked_files)),
+        'checksum_sha256': checksum,
+        'tracked_files': tracked_files,
+    }
+
+
+def _write_vault_baseline(paths: Dict[str, Path], *, reason: str) -> Dict[str, Any]:
+    payload = _vault_checksum_payload(paths)
+    payload['reason'] = str(reason or '').strip() or 'unspecified'
+    _write_json_atomic(paths['baseline_path'], payload)
+    return payload
+
+
+def _append_vault_audit_record(
+    paths: Dict[str, Path],
+    *,
+    action: str,
+    status: str,
+    ordinary_mutation: bool,
+    reason: str = '',
+    reason_codes: Optional[List[str]] = None,
+    details: Optional[Dict[str, Any]] = None,
+) -> None:
+    checksum_payload = _vault_checksum_payload(paths)
+    control_state = _load_vault_control_state(paths)
+    _append_jsonl_record(
+        paths['audit_path'],
+        {
+            'schema_version': VAULT_SCHEMA_VERSION,
+            'kind': VAULT_AUDIT_KIND,
+            'timestamp_utc': utc_now_iso(),
+            'action': str(action or '').strip(),
+            'status': str(status or '').strip() or 'ok',
+            'ordinary_mutation': bool(ordinary_mutation),
+            'reason': str(reason or '').strip(),
+            'reason_codes': list(reason_codes or []),
+            'locked': bool(control_state.get('locked', False)),
+            'checksum_sha256': str(checksum_payload.get('checksum_sha256', '') or '').strip(),
+            'details': dict(details or {}),
+        },
+    )
+
+
+def _vault_artifact_refs(paths: Dict[str, Path]) -> Dict[str, str]:
+    return {
+        'librarian_vault_root': normalize_repo_or_absolute_path(paths['vault_root'], paths['project_root']),
+        'librarian_vault_authority_manifest_json': normalize_repo_or_absolute_path(paths['authority_snapshot_path'], paths['project_root']),
+        'librarian_vault_catalog_jsonl': normalize_repo_or_absolute_path(paths['authority_catalog_path'], paths['project_root']),
+        'librarian_vault_access_root': normalize_repo_or_absolute_path(paths['authority_access_root'], paths['project_root']),
+        'librarian_vault_baseline_json': normalize_repo_or_absolute_path(paths['baseline_path'], paths['project_root']),
+        'librarian_vault_audit_jsonl': normalize_repo_or_absolute_path(paths['audit_path'], paths['project_root']),
+        'librarian_vault_control_state_json': normalize_repo_or_absolute_path(paths['control_state_path'], paths['project_root']),
+    }
+
+
+def _sync_vault_projections(paths: Dict[str, Path]) -> None:
+    _copy_text_projection(paths['authority_snapshot_path'], paths['snapshot_path'])
+    _copy_text_projection(paths['authority_catalog_path'], paths['catalog_path'])
+    _copy_tree_projection(paths['authority_access_root'], paths['access_root'])
+
+
+def _bootstrap_librarian_vault(paths: Dict[str, Path]) -> None:
+    for key in ('vault_root', 'authority_access_root', 'integrity_root', 'quarantine_root'):
+        paths[key].mkdir(parents=True, exist_ok=True)
+
+    seeded_from_projection = False
+    if not paths['authority_snapshot_path'].exists() and paths['snapshot_path'].exists():
+        _copy_text_projection(paths['snapshot_path'], paths['authority_snapshot_path'])
+        seeded_from_projection = True
+    if not paths['authority_catalog_path'].exists() and paths['catalog_path'].exists():
+        _copy_text_projection(paths['catalog_path'], paths['authority_catalog_path'])
+        seeded_from_projection = True
+    if not _directory_has_files(paths['authority_access_root']) and _directory_has_files(paths['access_root']):
+        _copy_tree_projection(paths['access_root'], paths['authority_access_root'])
+        seeded_from_projection = True
+
+    if not paths['control_state_path'].exists():
+        _save_vault_control_state(paths, _vault_default_control_state())
+
+    _sync_vault_projections(paths)
+
+    if seeded_from_projection or not paths['baseline_path'].exists():
+        _write_vault_baseline(paths, reason='bootstrap')
+        _append_vault_audit_record(
+            paths,
+            action='librarian-vault-bootstrap',
+            status='ok',
+            ordinary_mutation=False,
+            reason='bootstrap',
+            details={'seeded_from_projection': bool(seeded_from_projection)},
+        )
+
+
+def _build_dataset_snapshot_payload(catalog_path: Path, project_root: Path, entries: List[Dict[str, Any]]) -> Dict[str, Any]:
+    return {
+        'schema_version': DATASET_SELECTOR_SCHEMA_VERSION,
+        'family_id': 'librarian_dataset',
+        'updated_at_utc': utc_now_iso(),
+        'catalog_path': normalize_repo_or_absolute_path(catalog_path, project_root),
+        'entries': _sorted_dataset_entries(entries),
+    }
+
+
+def _vault_integrity_state(paths: Dict[str, Path]) -> Dict[str, Any]:
+    _bootstrap_librarian_vault(paths)
+    baseline = _read_json_dict(paths['baseline_path'], default={})
+    current = _vault_checksum_payload(paths)
+    baseline_checksum = str(baseline.get('checksum_sha256', '') or '').strip()
+    current_checksum = str(current.get('checksum_sha256', '') or '').strip()
+    if not baseline_checksum:
+        status = 'warn'
+        reason_codes = ['critical_check_failed:librarian_vault_baseline_missing']
+    elif baseline_checksum != current_checksum:
+        status = 'err'
+        reason_codes = ['critical_check_failed:librarian_vault_integrity_mismatch']
+    else:
+        status = 'ok'
+        reason_codes = []
+    return {
+        'status': status,
+        'reason_codes': reason_codes,
+        'baseline': baseline,
+        'current': current,
+    }
+
+
+def _vault_locked(paths: Dict[str, Path]) -> bool:
+    return bool(_load_vault_control_state(paths).get('locked', False))
+
+
+def _vault_locked_packet(paths: Dict[str, Path], *, action: str, summary: str) -> Dict[str, Any]:
+    return {
+        'timestamp_utc': utc_now_iso(),
+        'runtime_cli_surface': 'observerctl',
+        'decision': 'no-go',
+        'action': str(action or '').strip(),
+        'summary': str(summary or '').strip(),
+        'reason_codes': ['critical_check_failed:librarian_vault_locked'],
+        'artifacts': _vault_artifact_refs(paths),
+    }
 
 
 def _resolve_catalog_ref(project_root: Path, ref: str) -> Path:
@@ -388,14 +661,15 @@ def _dataset_selector_entry(entry: Dict[str, Any], index: int) -> Dict[str, Any]
 
 
 def _load_dataset_snapshot(paths: Dict[str, Path]) -> List[Dict[str, Any]]:
-    payload = _read_json_dict(paths['snapshot_path'], default={})
+    _bootstrap_librarian_vault(paths)
+    payload = _read_json_dict(paths['authority_snapshot_path'], default={})
     entries = payload.get('entries', []) if isinstance(payload.get('entries', []), list) else []
     if entries:
         return _sorted_dataset_entries([entry for entry in entries if isinstance(entry, dict)])
 
     entries = []
-    if paths['catalog_path'].exists():
-        for line in paths['catalog_path'].read_text(encoding='utf-8').splitlines():
+    if paths['authority_catalog_path'].exists():
+        for line in paths['authority_catalog_path'].read_text(encoding='utf-8').splitlines():
             text = str(line or '').strip()
             if not text:
                 continue
@@ -409,14 +683,16 @@ def _load_dataset_snapshot(paths: Dict[str, Path]) -> List[Dict[str, Any]]:
 
 
 def _save_dataset_snapshot(paths: Dict[str, Path], entries: List[Dict[str, Any]]) -> None:
-    payload = {
-        'schema_version': DATASET_SELECTOR_SCHEMA_VERSION,
-        'family_id': 'librarian_dataset',
-        'updated_at_utc': utc_now_iso(),
-        'catalog_path': normalize_repo_or_absolute_path(paths['catalog_path'], paths['project_root']),
-        'entries': _sorted_dataset_entries(entries),
-    }
-    _write_json_atomic(paths['snapshot_path'], payload)
+    _bootstrap_librarian_vault(paths)
+    ordered_entries = _sorted_dataset_entries(entries)
+    _write_json_atomic(
+        paths['authority_snapshot_path'],
+        _build_dataset_snapshot_payload(paths['authority_catalog_path'], paths['project_root'], ordered_entries),
+    )
+    _write_json_atomic(
+        paths['snapshot_path'],
+        _build_dataset_snapshot_payload(paths['catalog_path'], paths['project_root'], ordered_entries),
+    )
 
 
 def _resolve_dataset_entry(paths: Dict[str, Path], selector: str) -> Optional[Dict[str, Any]]:
@@ -520,16 +796,20 @@ def _build_dataset_entry(
 
 
 def _upsert_dataset_entry(paths: Dict[str, Path], entry: Dict[str, Any]) -> Dict[str, Any]:
+    _bootstrap_librarian_vault(paths)
     existing = _load_dataset_snapshot(paths)
     remaining = [row for row in existing if str(row.get('entry_id', '')).strip() != str(entry.get('entry_id', '')).strip()]
     merged = [entry] + remaining
     merged = _sorted_dataset_entries(merged)
-    _append_jsonl_record(paths['catalog_path'], entry)
+    _append_jsonl_record(paths['authority_catalog_path'], entry)
     _save_dataset_snapshot(paths, merged)
+    _sync_vault_projections(paths)
     return {
         'entry': entry,
         'snapshot_path': normalize_repo_or_absolute_path(paths['snapshot_path'], paths['project_root']),
         'catalog_path': normalize_repo_or_absolute_path(paths['catalog_path'], paths['project_root']),
+        'vault_snapshot_path': normalize_repo_or_absolute_path(paths['authority_snapshot_path'], paths['project_root']),
+        'vault_catalog_path': normalize_repo_or_absolute_path(paths['authority_catalog_path'], paths['project_root']),
     }
 
 
@@ -543,6 +823,7 @@ def refresh_librarian_dataset_catalog_from_run_manifest(project_anchor: Path, ma
         }
 
     paths = _dataset_catalog_paths(project_anchor)
+    _bootstrap_librarian_vault(paths)
     project_root = paths['project_root']
     dataset_manifest_path = _resolve_catalog_ref(project_root, dataset_ref)
     if not dataset_manifest_path.exists():
@@ -552,6 +833,12 @@ def refresh_librarian_dataset_catalog_from_run_manifest(project_anchor: Path, ma
             'reason_codes': ['critical_check_failed:librarian_dataset_manifest_missing'],
             'summary': 'Dataset catalog refresh skipped because the dataset manifest could not be resolved.',
         }
+    if _vault_locked(paths):
+        return _vault_locked_packet(
+            paths,
+            action='librarian-dataset-refresh',
+            summary='Dataset catalog refresh denied because the protected librarian vault is locked.',
+        )
 
     workflow = str(manifest_payload.get('workflow', '') or '').strip() or 'manual-register'
     run_id = str(manifest_payload.get('run_id', '') or '').strip()
@@ -569,6 +856,18 @@ def refresh_librarian_dataset_catalog_from_run_manifest(project_anchor: Path, ma
         source_binding='run-manifest:{0}'.format(run_id or workflow),
     )
     update = _upsert_dataset_entry(paths, entry)
+    baseline = _write_vault_baseline(paths, reason='librarian-dataset-refresh')
+    _append_vault_audit_record(
+        paths,
+        action='librarian-dataset-refresh',
+        status='ok',
+        ordinary_mutation=True,
+        reason='run-manifest-refresh',
+        details={
+            'entry_id': str(entry.get('entry_id', '') or '').strip(),
+            'baseline_checksum': str(baseline.get('checksum_sha256', '') or '').strip(),
+        },
+    )
     selector_entries = [_dataset_selector_entry(entry, idx) for idx, entry in enumerate(_load_dataset_snapshot(paths), start=1)]
     return {
         'timestamp_utc': utc_now_iso(),
@@ -580,6 +879,7 @@ def refresh_librarian_dataset_catalog_from_run_manifest(project_anchor: Path, ma
         'selector_entries': selector_entries,
         'snapshot_path': update['snapshot_path'],
         'catalog_path': update['catalog_path'],
+        'artifacts': dict(_vault_artifact_refs(paths), baseline_checksum=str(baseline.get('checksum_sha256', '') or '').strip()),
     }
 
 
@@ -592,7 +892,14 @@ def register_librarian_dataset_packet(
     run_id: str = '',
 ) -> Dict[str, Any]:
     paths = _dataset_catalog_paths(project_anchor)
+    _bootstrap_librarian_vault(paths)
     project_root = paths['project_root']
+    if _vault_locked(paths):
+        return _vault_locked_packet(
+            paths,
+            action='librarian-dataset-register',
+            summary='Dataset registration denied because the protected librarian vault is locked.',
+        )
     manifest_path = dataset_manifest_path if dataset_manifest_path.is_absolute() else (project_root / dataset_manifest_path)
     manifest_path = manifest_path.resolve()
     if not manifest_path.exists():
@@ -617,6 +924,18 @@ def register_librarian_dataset_packet(
         source_binding='manual-register:{0}'.format(manifest_path.name),
     )
     update = _upsert_dataset_entry(paths, entry)
+    baseline = _write_vault_baseline(paths, reason='librarian-dataset-register')
+    _append_vault_audit_record(
+        paths,
+        action='librarian-dataset-register',
+        status='ok',
+        ordinary_mutation=True,
+        reason='manual-register',
+        details={
+            'entry_id': str(entry.get('entry_id', '') or '').strip(),
+            'baseline_checksum': str(baseline.get('checksum_sha256', '') or '').strip(),
+        },
+    )
     resolved = _resolve_dataset_entry(paths, str(entry.get('entry_id', '')))
     selector_entry = resolved.get('selector_entry', {}) if isinstance(resolved, dict) else {}
     return {
@@ -628,14 +947,17 @@ def register_librarian_dataset_packet(
         'reason_codes': [],
         'dataset': selector_entry,
         'artifacts': {
+            **_vault_artifact_refs(paths),
             'librarian_dataset_manifest_json': update['snapshot_path'],
             'librarian_dataset_catalog_jsonl': update['catalog_path'],
+            'librarian_vault_baseline_checksum': str(baseline.get('checksum_sha256', '') or '').strip(),
         },
     }
 
 
 def list_librarian_datasets_packet(project_anchor: Path) -> Dict[str, Any]:
     paths = _dataset_catalog_paths(project_anchor)
+    _bootstrap_librarian_vault(paths)
     entries = _load_dataset_snapshot(paths)
     selector_entries = [_dataset_selector_entry(entry, idx) for idx, entry in enumerate(entries, start=1)]
     return {
@@ -647,6 +969,7 @@ def list_librarian_datasets_packet(project_anchor: Path) -> Dict[str, Any]:
         'count': int(len(selector_entries)),
         'selector_entries': selector_entries,
         'artifacts': {
+            **_vault_artifact_refs(paths),
             'librarian_dataset_manifest_json': normalize_repo_or_absolute_path(paths['snapshot_path'], paths['project_root']),
             'librarian_dataset_catalog_jsonl': normalize_repo_or_absolute_path(paths['catalog_path'], paths['project_root']),
         },
@@ -672,6 +995,13 @@ def release_librarian_dataset_packet(
     requested_action: str = 'hydrate-dataset',
 ) -> Dict[str, Any]:
     paths = _dataset_catalog_paths(project_anchor)
+    _bootstrap_librarian_vault(paths)
+    if _vault_locked(paths):
+        return _vault_locked_packet(
+            paths,
+            action='librarian-dataset-release',
+            summary='Dataset release denied because the protected librarian vault is locked.',
+        )
     resolved = _resolve_dataset_entry(paths, selector)
     if not isinstance(resolved, dict):
         return {
@@ -690,6 +1020,7 @@ def release_librarian_dataset_packet(
     manifest_ref = str(resolver.get('dataset_manifest_path', '') or '').strip()
     manifest_path = _resolve_catalog_ref(project_root, manifest_ref)
     artifacts = {
+        **_vault_artifact_refs(paths),
         'librarian_dataset_manifest_json': normalize_repo_or_absolute_path(paths['snapshot_path'], project_root),
         'librarian_dataset_catalog_jsonl': normalize_repo_or_absolute_path(paths['catalog_path'], project_root),
     }
@@ -722,11 +1053,16 @@ def release_librarian_dataset_packet(
         }
 
     stamp = datetime.now(timezone.utc).strftime('%Y%m%dT%H%M%SZ')
-    access_dir = paths['access_root'] / sanitize_run_id(str(entry.get('entry_id', 'dataset'))) / stamp
-    access_dir.mkdir(parents=True, exist_ok=True)
-    request_path = access_dir / 'request.json'
-    attestation_path = access_dir / 'attestation.json'
-    release_path = access_dir / 'release_receipt.json'
+    authority_access_dir = paths['authority_access_root'] / sanitize_run_id(str(entry.get('entry_id', 'dataset'))) / stamp
+    projection_access_dir = paths['access_root'] / sanitize_run_id(str(entry.get('entry_id', 'dataset'))) / stamp
+    authority_access_dir.mkdir(parents=True, exist_ok=True)
+    projection_access_dir.mkdir(parents=True, exist_ok=True)
+    request_path = authority_access_dir / 'request.json'
+    attestation_path = authority_access_dir / 'attestation.json'
+    release_path = authority_access_dir / 'release_receipt.json'
+    projection_request_path = projection_access_dir / 'request.json'
+    projection_attestation_path = projection_access_dir / 'attestation.json'
+    projection_release_path = projection_access_dir / 'release_receipt.json'
 
     request_payload = {
         'schema_version': DATASET_SELECTOR_SCHEMA_VERSION,
@@ -747,6 +1083,7 @@ def release_librarian_dataset_packet(
         role='requester',
         purpose='dataset_access_request',
     )
+    _write_json_atomic(projection_request_path, request_doc)
     request_valid = verify_detached_payload(
         request_payload,
         dict(request_doc.get('detached_signature', {}) or {}),
@@ -762,7 +1099,7 @@ def release_librarian_dataset_packet(
             'summary': 'Delegated dataset request verification failed before release.',
             'reason_codes': ['critical_check_failed:librarian_dataset_request_invalid'],
             'dataset': selector_entry,
-            'artifacts': dict(artifacts, dataset_access_request_json=normalize_repo_or_absolute_path(request_path, project_root)),
+            'artifacts': dict(artifacts, dataset_access_request_json=normalize_repo_or_absolute_path(projection_request_path, project_root)),
         }
 
     attestation_payload = {
@@ -786,6 +1123,7 @@ def release_librarian_dataset_packet(
         role='librarian',
         purpose='dataset_access_attestation',
     )
+    _write_json_atomic(projection_attestation_path, attestation_doc)
     attestation_valid = verify_detached_payload(
         attestation_payload,
         dict(attestation_doc.get('detached_signature', {}) or {}),
@@ -803,8 +1141,8 @@ def release_librarian_dataset_packet(
             'dataset': selector_entry,
             'artifacts': dict(
                 artifacts,
-                dataset_access_request_json=normalize_repo_or_absolute_path(request_path, project_root),
-                dataset_access_attestation_json=normalize_repo_or_absolute_path(attestation_path, project_root),
+                dataset_access_request_json=normalize_repo_or_absolute_path(projection_request_path, project_root),
+                dataset_access_attestation_json=normalize_repo_or_absolute_path(projection_attestation_path, project_root),
             ),
         }
 
@@ -825,18 +1163,33 @@ def release_librarian_dataset_packet(
         'verified_request': True,
         'verified_attestation': True,
     }
-    _write_signed_access_packet(
+    release_doc = _write_signed_access_packet(
         release_path,
         release_payload,
         role='source',
         purpose='dataset_access_release',
     )
+    _write_json_atomic(projection_release_path, release_doc)
+    baseline = _write_vault_baseline(paths, reason='librarian-dataset-release')
+    _append_vault_audit_record(
+        paths,
+        action='librarian-dataset-release',
+        status='ok',
+        ordinary_mutation=True,
+        reason='delegated-release',
+        details={
+            'entry_id': str(entry.get('entry_id', '') or '').strip(),
+            'requester_id': str(request_payload.get('requester_id', '') or '').strip(),
+            'baseline_checksum': str(baseline.get('checksum_sha256', '') or '').strip(),
+        },
+    )
 
     artifacts.update({
         'dataset_manifest_path': normalize_repo_or_absolute_path(manifest_path, project_root),
-        'dataset_access_request_json': normalize_repo_or_absolute_path(request_path, project_root),
-        'dataset_access_attestation_json': normalize_repo_or_absolute_path(attestation_path, project_root),
-        'dataset_access_release_receipt_json': normalize_repo_or_absolute_path(release_path, project_root),
+        'dataset_access_request_json': normalize_repo_or_absolute_path(projection_request_path, project_root),
+        'dataset_access_attestation_json': normalize_repo_or_absolute_path(projection_attestation_path, project_root),
+        'dataset_access_release_receipt_json': normalize_repo_or_absolute_path(projection_release_path, project_root),
+        'librarian_vault_baseline_checksum': str(baseline.get('checksum_sha256', '') or '').strip(),
     })
     return {
         'timestamp_utc': utc_now_iso(),
@@ -849,6 +1202,134 @@ def release_librarian_dataset_packet(
         'dataset': selector_entry,
         'dataset_manifest_path': normalize_repo_or_absolute_path(manifest_path, project_root),
         'artifacts': artifacts,
+    }
+
+
+def librarian_vault_status_packet(project_anchor: Path) -> Dict[str, Any]:
+    paths = _dataset_catalog_paths(project_anchor)
+    integrity = _vault_integrity_state(paths)
+    control_state = _load_vault_control_state(paths)
+    current = dict(integrity.get('current', {}) or {})
+    baseline = dict(integrity.get('baseline', {}) or {})
+    return {
+        'timestamp_utc': utc_now_iso(),
+        'runtime_cli_surface': 'observerctl',
+        'decision': 'go',
+        'action': 'librarian-vault-status',
+        'summary': 'Protected librarian vault control plane ready.',
+        'lock_state': 'locked' if bool(control_state.get('locked', False)) else 'unlocked',
+        'integrity_status': str(integrity.get('status', 'warn') or 'warn'),
+        'locked': bool(control_state.get('locked', False)),
+        'reason_codes': list(integrity.get('reason_codes', []) or []),
+        'integrity': {
+            'current_checksum_sha256': str(current.get('checksum_sha256', '') or '').strip(),
+            'baseline_checksum_sha256': str(baseline.get('checksum_sha256', '') or '').strip(),
+            'tracked_file_count': int(current.get('tracked_file_count', 0) or 0),
+        },
+        'artifacts': _vault_artifact_refs(paths),
+    }
+
+
+def librarian_vault_verify_packet(project_anchor: Path) -> Dict[str, Any]:
+    paths = _dataset_catalog_paths(project_anchor)
+    integrity = _vault_integrity_state(paths)
+    current = dict(integrity.get('current', {}) or {})
+    baseline = dict(integrity.get('baseline', {}) or {})
+    status = str(integrity.get('status', 'warn') or 'warn')
+    return {
+        'timestamp_utc': utc_now_iso(),
+        'runtime_cli_surface': 'observerctl',
+        'decision': 'go' if status == 'ok' else 'no-go',
+        'action': 'librarian-vault-verify',
+        'summary': 'Protected librarian vault integrity verified.' if status == 'ok' else 'Protected librarian vault integrity verification failed.',
+        'integrity_status': status,
+        'reason_codes': list(integrity.get('reason_codes', []) or []),
+        'integrity': {
+            'current_checksum_sha256': str(current.get('checksum_sha256', '') or '').strip(),
+            'baseline_checksum_sha256': str(baseline.get('checksum_sha256', '') or '').strip(),
+            'tracked_file_count': int(current.get('tracked_file_count', 0) or 0),
+        },
+        'artifacts': _vault_artifact_refs(paths),
+    }
+
+
+def librarian_vault_lock_packet(project_anchor: Path, *, reason: str = '') -> Dict[str, Any]:
+    paths = _dataset_catalog_paths(project_anchor)
+    _bootstrap_librarian_vault(paths)
+    control_state = _load_vault_control_state(paths)
+    control_state['locked'] = True
+    control_state['lock_reason'] = str(reason or '').strip() or 'operator-requested-lock'
+    control_state['locked_at_utc'] = utc_now_iso()
+    saved_state = _save_vault_control_state(paths, control_state)
+    _append_vault_audit_record(
+        paths,
+        action='librarian-vault-lock',
+        status='ok',
+        ordinary_mutation=False,
+        reason=str(saved_state.get('lock_reason', '') or '').strip(),
+    )
+    return {
+        'timestamp_utc': utc_now_iso(),
+        'runtime_cli_surface': 'observerctl',
+        'decision': 'go',
+        'action': 'librarian-vault-lock',
+        'summary': 'Protected librarian vault locked for non-ordinary maintenance.',
+        'lock_state': 'locked',
+        'locked': True,
+        'reason_codes': [],
+        'artifacts': _vault_artifact_refs(paths),
+    }
+
+
+def librarian_vault_unlock_packet(project_anchor: Path, *, reason: str = '') -> Dict[str, Any]:
+    paths = _dataset_catalog_paths(project_anchor)
+    _bootstrap_librarian_vault(paths)
+    control_state = _load_vault_control_state(paths)
+    control_state['locked'] = False
+    control_state['lock_reason'] = str(reason or '').strip()
+    control_state['unlocked_at_utc'] = utc_now_iso()
+    saved_state = _save_vault_control_state(paths, control_state)
+    _append_vault_audit_record(
+        paths,
+        action='librarian-vault-unlock',
+        status='ok',
+        ordinary_mutation=False,
+        reason=str(saved_state.get('lock_reason', '') or '').strip(),
+    )
+    return {
+        'timestamp_utc': utc_now_iso(),
+        'runtime_cli_surface': 'observerctl',
+        'decision': 'go',
+        'action': 'librarian-vault-unlock',
+        'summary': 'Protected librarian vault unlocked for ordinary signed mutations.',
+        'lock_state': 'unlocked',
+        'locked': False,
+        'reason_codes': [],
+        'artifacts': _vault_artifact_refs(paths),
+    }
+
+
+def librarian_vault_rebaseline_packet(project_anchor: Path, *, reason: str = '') -> Dict[str, Any]:
+    paths = _dataset_catalog_paths(project_anchor)
+    _bootstrap_librarian_vault(paths)
+    baseline = _write_vault_baseline(paths, reason=str(reason or '').strip() or 'operator-requested-rebaseline')
+    _append_vault_audit_record(
+        paths,
+        action='librarian-vault-rebaseline',
+        status='ok',
+        ordinary_mutation=False,
+        reason=str(reason or '').strip() or 'operator-requested-rebaseline',
+        details={'baseline_checksum': str(baseline.get('checksum_sha256', '') or '').strip()},
+    )
+    return {
+        'timestamp_utc': utc_now_iso(),
+        'runtime_cli_surface': 'observerctl',
+        'decision': 'go',
+        'action': 'librarian-vault-rebaseline',
+        'summary': 'Protected librarian vault baseline refreshed.',
+        'integrity_status': 'ok',
+        'reason_codes': [],
+        'artifacts': dict(_vault_artifact_refs(paths), librarian_vault_baseline_checksum=str(baseline.get('checksum_sha256', '') or '').strip()),
     }
 
 if __name__ == "__main__":

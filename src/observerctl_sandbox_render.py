@@ -4,6 +4,8 @@ import textwrap
 
 from typing import Any, Dict, List, Optional
 
+from observerctl_terminal import style_heading, style_text
+
 
 Packet = Dict[str, Any]
 
@@ -53,7 +55,7 @@ def _header(packet: Packet, outcome: str, detail: str) -> List[str]:
 
 
 def _contract_section(packet: Packet) -> List[str]:
-    lines = ['Contract']
+    lines = [style_heading('Contract')]
     lines.extend(_section_lines('Template Class', str(packet.get('template_class', '') or '')))
     lines.extend(_section_lines('Template Variant', str(packet.get('template_variant', '') or '')))
     lines.extend(_section_lines('Runtime Surface', str(packet.get('runtime_cli_surface', '') or '')))
@@ -81,17 +83,17 @@ def _render_list(packet: Packet) -> List[str]:
     lines = _header(packet, 'SANDBOX_DEFINITIONS_LISTED', 'Canonical sandbox definitions are available.')
     lines.extend(_contract_section(packet))
     lines.extend([
-        'Catalog',
+        style_heading('Catalog'),
     ])
     lines.extend(_section_lines('Definition Count', len(definitions)))
     lines.extend([
         '',
-        'Definitions',
+        style_heading('Definitions'),
     ])
     for row in definitions:
         if not isinstance(row, dict):
             continue
-        lines.append('- {0}'.format(str(row.get('id', '') or '')))
+        lines.append(style_text(str(row.get('id', '') or ''), 'structure'))
         lines.extend(_section_lines('Title', str(row.get('title', '') or '')))
         lines.extend(_section_lines('Purpose', str(row.get('summary', '') or '')))
         lines.extend(_section_lines('Class', str(row.get('category', '') or '')))
@@ -109,32 +111,32 @@ def _render_show(packet: Packet) -> List[str]:
         selector_policy = str(definition.get('selector_policy', '') or '').strip()
         alias_text = 'none ({0})'.format(selector_policy) if selector_policy else 'none'
     lines = _header(packet, 'SANDBOX_DEFINITION_READY', 'Definition details are available for review.')
-    lines.append('Identity')
+    lines.append(style_heading('Identity'))
     lines.extend(_section_lines('Definition', str(definition.get('id', '') or '')))
     lines.extend(_section_lines('Title', str(definition.get('title', '') or '')))
     lines.extend(_section_lines('Status', str(definition.get('status', '') or '')))
     lines.extend(_section_lines('Category', str(definition.get('category', '') or '')))
     lines.append('')
-    lines.append('Selection')
+    lines.append(style_heading('Selection'))
     lines.extend(_section_lines('Canonical', str(definition.get('id', '') or '')))
     lines.extend(_section_lines('Aliases', alias_text))
     lines.extend(_section_lines('Command', str(definition.get('command', '') or '')))
     lines.append('')
-    lines.append('Purpose')
+    lines.append(style_heading('Purpose'))
     lines.extend(_section_lines('Summary', str(definition.get('summary', '') or '')))
     lines.extend(_section_lines('Purpose', str(definition.get('purpose', '') or '')))
     lines.append('')
-    lines.append('Execution')
+    lines.append(style_heading('Execution'))
     lines.extend(_section_lines('Writes', str(definition.get('writes_to', '') or '')))
     lines.extend(_section_lines('Run Indexing', 'append-only' if str(definition.get('run_index_path', '') or '').strip() else 'not indexed'))
     lines.append('')
-    lines.append('Outputs')
+    lines.append(style_heading('Outputs'))
     if str(definition.get('run_index_path', '') or '').strip():
         lines.extend(_section_lines('Run Index', str(definition.get('run_index_path', '') or '')))
     else:
         lines.extend(_section_lines('Run Index', 'none'))
     lines.append('')
-    lines.append('Guardrails')
+    lines.append(style_heading('Guardrails'))
     lines.extend(_section_lines('Output Rule', 'names-only terminal output'))
     lines.extend(_section_lines('Secrets', 'no secret printing'))
     lines.extend(_section_lines('Execution Mode', 'script-first execution reminder applies'))
@@ -148,7 +150,7 @@ def _render_run(packet: Packet) -> List[str]:
     lines = _header(packet, 'SANDBOX_RUN_RECORDED', 'Sandbox definition execution completed with result {0}.'.format(result or 'unknown'))
     lines.extend(_contract_section(packet))
     lines.extend([
-        'Execution',
+        style_heading('Execution'),
     ])
     lines.extend(_section_lines('Definition', str(packet.get('definition_id', '') or '')))
     lines.extend(_section_lines('Result', result))
@@ -157,7 +159,7 @@ def _render_run(packet: Packet) -> List[str]:
     if run_id:
         lines.extend(_section_lines('Run ID', run_id))
     lines.append('')
-    lines.append('Artifacts')
+    lines.append(style_heading('Artifacts'))
     for key in ('report_json', 'review_json', 'report_md', 'review_md', 'run_index', 'run_dir'):
         value = str((packet.get('artifacts', {}) or {}).get(key, '') or '').strip() if isinstance(packet.get('artifacts', {}), dict) else ''
         if value:
@@ -165,7 +167,7 @@ def _render_run(packet: Packet) -> List[str]:
     next_review = str(packet.get('next_review_command', '') or '').strip()
     if next_review:
         lines.append('')
-        lines.append('Next')
+        lines.append(style_heading('Next'))
         lines.extend(_section_lines('Review Command', next_review))
     return lines
 
@@ -175,17 +177,17 @@ def _render_runs_list(packet: Packet) -> List[str]:
     lines = _header(packet, 'SANDBOX_RUNS_LISTED', 'Retained sandbox runs are available for review.')
     lines.extend(_contract_section(packet))
     lines.extend([
-        'Catalog',
+        style_heading('Catalog'),
     ])
     lines.extend(_section_lines('Run Count', len(runs)))
     lines.extend([
         '',
-        'Runs',
+        style_heading('Runs'),
     ])
     for row in runs:
         if not isinstance(row, dict):
             continue
-        lines.append('- {0}'.format(str(row.get('run_id', '') or '')))
+        lines.append(style_text(str(row.get('run_id', '') or ''), 'structure'))
         lines.extend(_section_lines('Definition', str(row.get('definition_id', '') or '')))
         lines.extend(_section_lines('Timestamp', str(row.get('timestamp_utc', '') or '')))
         lines.extend(_section_lines('Result', str(row.get('result', '') or '')))
@@ -200,7 +202,7 @@ def _render_runs_show(packet: Packet) -> List[str]:
     lines = _header(packet, 'SANDBOX_RUN_DETAIL_READY', 'Retained sandbox run details are available.')
     lines.extend(_contract_section(packet))
     lines.extend([
-        'Run',
+        style_heading('Run'),
     ])
     lines.extend(_section_lines('Run ID', str(run.get('run_id', '') or '')))
     lines.extend(_section_lines('Definition', str(run.get('definition_id', '') or '')))
@@ -210,7 +212,7 @@ def _render_runs_show(packet: Packet) -> List[str]:
     if str(run.get('index_path', '') or '').strip():
         lines.extend(_section_lines('Index Path', str(run.get('index_path', '') or '')))
     lines.append('')
-    lines.append('Review')
+    lines.append(style_heading('Review'))
     for key in ('next_bite_result', 'all_sample_fields_present', 'all_index_fields_present'):
         if key in report:
             lines.extend(_section_lines(key, report.get(key)))

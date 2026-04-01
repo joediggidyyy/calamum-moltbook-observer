@@ -2,7 +2,7 @@ import hashlib
 import hmac
 import json
 import os
-from typing import Dict, Any
+from typing import Any, Dict, Iterable, List
 
 __version__ = "1.1.0"
 
@@ -11,9 +11,57 @@ def _canonical_payload_bytes(payload: Dict[str, Any]) -> bytes:
     return json.dumps(payload, sort_keys=True, separators=(',', ':')).encode('utf-8')
 
 
+_ROLE_SIGNING_ENV_NAMES = {
+    'requester': 'CALAMUM_REQUESTER_SIGNING_KEY',
+    'operator': 'CALAMUM_REQUESTER_SIGNING_KEY',
+    'librarian': 'CALAMUM_LIBRARIAN_ATTESTATION_KEY',
+    'source': 'CALAMUM_SOURCE_RELEASE_KEY',
+    'vault': 'CALAMUM_LIBRARIAN_VAULT_KEY',
+    'vault-integrity': 'CALAMUM_LIBRARIAN_VAULT_KEY',
+}
+_SHARED_SIGNING_ENV_NAME = 'CALAMUM_DATA_SIGNING_KEY'
+_DEV_SIGNING_ENV_NAME = 'CALAMUM_ALLOW_DEV_SIGNING_KEY'
+
+
+def role_signing_env_name(role: str) -> str:
+    role_token = str(role or 'default').strip().lower() or 'default'
+    return str(_ROLE_SIGNING_ENV_NAMES.get(role_token, '') or '')
+
+
+def signing_env_presence(required_roles: Iterable[str] = ()) -> Dict[str, Any]:
+    names: List[str] = []
+    for role in required_roles:
+        env_name = role_signing_env_name(str(role or ''))
+        if env_name and env_name not in names:
+            names.append(env_name)
+    for env_name in (_SHARED_SIGNING_ENV_NAME, _DEV_SIGNING_ENV_NAME):
+        if env_name not in names:
+            names.append(env_name)
+
+    present = False
+    for env_name in names:
+        if env_name == _DEV_SIGNING_ENV_NAME:
+            if _bool_env(env_name):
+                present = True
+                break
+            continue
+        if str(os.getenv(env_name) or '').strip():
+            present = True
+            break
+
+    return {
+        'names': names,
+        'present': present,
+    }
+
+
 def _role_signing_secret(role: str) -> bytes:
     role_token = str(role or 'default').strip().lower() or 'default'
-    secret = _get_signing_secret()
+    env_name = role_signing_env_name(role_token)
+    role_secret = str(os.getenv(env_name) or '').strip() if env_name else ''
+    if role_secret:
+        return role_secret.encode('utf-8')
+    secret = _get_signing_secret(required_role=role_token)
     return hmac.new(secret, ('calamum-role:{0}'.format(role_token)).encode('utf-8'), hashlib.sha256).digest()
 
 
@@ -67,26 +115,38 @@ def _bool_env(name: str) -> bool:
     return val in {'1', 'true', 'yes', 'y', 'on'}
 
 
-def _get_signing_secret() -> bytes:
+def _get_signing_secret(required_role: str = '') -> bytes:
     """Return the signing secret for telemetry signatures.
 
     Security posture:
-    - In normal operation, CALAMUM_DATA_SIGNING_KEY is required.
+    - In normal operation, CALAMUM_DATA_SIGNING_KEY is required for the shared
+      compatibility root used by telemetry signing.
+    - Detached librarian/requester/source/vault signatures may alternatively use
+      role-specific keys when they are present.
     - For local/dev-only workflows, an insecure fallback may be enabled by
       setting CALAMUM_ALLOW_DEV_SIGNING_KEY=1.
 
     Never log the secret.
     """
-    key = os.getenv('CALAMUM_DATA_SIGNING_KEY')
+    key = os.getenv(_SHARED_SIGNING_ENV_NAME)
     if key:
         return key.encode('utf-8')
 
-    if _bool_env('CALAMUM_ALLOW_DEV_SIGNING_KEY'):
+    if _bool_env(_DEV_SIGNING_ENV_NAME):
         return b'dev-key-do-not-use-in-prod'
 
+    role_env = role_signing_env_name(required_role)
+    required_names = []
+    if role_env:
+        required_names.append(role_env)
+    required_names.append(_SHARED_SIGNING_ENV_NAME)
+
     raise EnvironmentError(
-        'CALAMUM_DATA_SIGNING_KEY is required for signing/verification. '
-        'For local dev only, set CALAMUM_ALLOW_DEV_SIGNING_KEY=1 to use an insecure fallback.'
+        '{0} is required for signing/verification. For local dev only, set {1}=1 '
+        'to use an insecure fallback.'.format(
+            ' or '.join(required_names),
+            _DEV_SIGNING_ENV_NAME,
+        )
     )
 
 

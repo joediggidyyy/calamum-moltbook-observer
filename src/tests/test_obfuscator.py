@@ -9,7 +9,12 @@ src_dir = current_dir.parent
 if str(src_dir) not in sys.path:
     sys.path.append(str(src_dir))
 
-from obfuscator_lib import Obfuscator
+from obfuscator_lib import (
+    Obfuscator,
+    sign_detached_payload,
+    signing_env_presence,
+    verify_detached_payload,
+)
 
 
 @pytest.fixture(autouse=True)
@@ -135,4 +140,30 @@ def test_sign_record_custom_key(monkeypatch: pytest.MonkeyPatch):
     sig2 = Obfuscator.sign_record(record)['signature']
 
     assert sig1 != sig2
+
+
+def test_role_specific_detached_signature_keys_override_shared_root(monkeypatch: pytest.MonkeyPatch) -> None:
+    payload = {'selector': 'dataset-1'}
+
+    monkeypatch.delenv('CALAMUM_DATA_SIGNING_KEY', raising=False)
+    monkeypatch.setenv('CALAMUM_REQUESTER_SIGNING_KEY', 'requester-key')
+    monkeypatch.setenv('CALAMUM_LIBRARIAN_ATTESTATION_KEY', 'librarian-key')
+    monkeypatch.setenv('CALAMUM_SOURCE_RELEASE_KEY', 'source-key')
+    monkeypatch.setenv('CALAMUM_LIBRARIAN_VAULT_KEY', 'vault-key')
+
+    detached = sign_detached_payload(payload, role='requester', purpose='dataset_access_request')
+
+    assert verify_detached_payload(
+        payload,
+        detached,
+        expected_role='requester',
+        expected_purpose='dataset_access_request',
+    ) is True
+
+    presence = signing_env_presence(['requester', 'librarian', 'source', 'vault'])
+    assert presence['present'] is True
+    assert 'CALAMUM_REQUESTER_SIGNING_KEY' in presence['names']
+    assert 'CALAMUM_LIBRARIAN_ATTESTATION_KEY' in presence['names']
+    assert 'CALAMUM_SOURCE_RELEASE_KEY' in presence['names']
+    assert 'CALAMUM_LIBRARIAN_VAULT_KEY' in presence['names']
 

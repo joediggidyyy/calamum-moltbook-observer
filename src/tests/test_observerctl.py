@@ -115,7 +115,7 @@ def _bind_temp_observer_project(monkeypatch: pytest.MonkeyPatch, project_root: P
     monkeypatch.setattr(observerctl_module, '__file__', str(anchor))
 
 
-def _append_retained_ds_manifest(
+def _append_saved_ds_manifest(
     anchor: Path,
     workflow: str,
     run_id: str,
@@ -150,7 +150,7 @@ def _append_retained_ds_manifest(
             'command_family': 'ds',
             'command_path': 'observerctl ds {0}'.format(command_name),
             'implementation_state': 'command-available',
-            'underlying_surface': 'tests.retained-fixtures',
+            'underlying_surface': 'tests.saved-fixtures',
             'summary': summary or 'Retained DS artifact fixture.',
             'run_id': run_id,
             'artifacts': {},
@@ -222,25 +222,24 @@ def test_observerctl_ds_help_exposes_frame1_command_family(capsys) -> None:
     assert 'train' in out
     assert 'evaluate' in out
     assert 'score' in out
-    assert 'retained' in out
+    assert 'saved' in out
     assert 'run' in out
     assert 'wizard' in out
     assert '==SUPPRESS==' not in out
-    assert 'trains' not in out
     assert 'runs' not in out
     assert 'baselines' not in out
     assert 'drafts' not in out
 
 
-def test_observerctl_ds_retained_help_exposes_selector_families(capsys) -> None:
+def test_observerctl_ds_saved_help_exposes_selector_families(capsys) -> None:
     parser = observerctl_module._build_parser()
 
     with pytest.raises(SystemExit) as exc:
-        parser.parse_args(['ds', 'retained', '-h'])
+        parser.parse_args(['ds', 'saved', '-h'])
 
     assert exc.value.code == 0
     out = capsys.readouterr().out
-    assert 'trains' in out
+    assert 'trained' in out
     assert 'runs' in out
     assert 'baselines' in out
     assert 'drafts' in out
@@ -294,7 +293,7 @@ def test_ds_wizard_filters_sections_by_workflow() -> None:
     assert 'model' in demo_sections
 
 
-def test_ds_wizard_hydrates_retained_artifacts(tmp_path: Path) -> None:
+def test_ds_wizard_hydrates_saved_artifacts(tmp_path: Path) -> None:
     dataset_manifest = tmp_path / 'dataset_manifest.json'
     dataset_manifest.write_text(json.dumps({
         'features_csv': str(tmp_path / 'features.csv'),
@@ -434,6 +433,7 @@ def test_ds_wizard_starts_on_sparse_landing_page() -> None:
     assert '3. command and utilities' in rendered
     assert '4. exit' in rendered
     assert 'sections: flow, in, out, model, eval, report, cmd, check, run, exit' not in rendered
+    assert not any(line.startswith('actions:') for line in rendered)
     assert not any(line.startswith('next:') for line in rendered)
 
 
@@ -494,13 +494,32 @@ def test_ds_wizard_configure_opens_guided_flow_surface_without_preselected_workf
     assert state.active_section == 'flow'
 
 
+def test_ds_wizard_defaults_to_build_workflow_when_unset() -> None:
+    state = observerctl_module._ds_wizard_new_state('')
+
+    assert state.workflow == 'build'
+    assert state.values['workflow'] == 'build'
+    assert observerctl_module._ds_wizard_landing_summary_rows(state)[0] == 'workflow: build'
+
+
 def test_ds_wizard_configure_restores_shared_section_rail() -> None:
     state = observerctl_module._ds_wizard_new_state('run-pipeline')
 
     state, _, _ = observerctl_module._ds_wizard_handle_command(state, 'configure')
     assert state.active_page == 'configure'
-    assert observerctl_module._ds_wizard_page_sections(state) == ['flow', 'in', 'out', 'model', 'eval', 'report', 'cmd', 'check', 'run']
-    assert observerctl_module._ds_wizard_action_line(state) == 'actions: type name | next/prev | validate | cmd | ? | exit'
+    assert observerctl_module._ds_wizard_page_sections(state) == ['flow', 'in', 'out', 'model', 'report', 'cmd', 'check', 'run']
+    assert observerctl_module._ds_wizard_action_line(state) == 'actions: prev | ? | next | exit'
+
+
+def test_ds_wizard_non_landing_pages_share_navigation_only_action_bar() -> None:
+    state = observerctl_module._ds_wizard_new_state('run-pipeline')
+
+    for section in ('flow', 'model', 'check', 'run'):
+        observerctl_module._ds_wizard_open_section(state, section)
+        assert observerctl_module._ds_wizard_action_line(state) == 'actions: prev | ? | next | exit'
+
+    state.transient_view = 'picker'
+    assert observerctl_module._ds_wizard_action_line(state) == 'actions: prev | ? | next | exit'
 
 
 def test_ds_wizard_scope_help_from_section_is_section_scoped() -> None:
@@ -525,8 +544,8 @@ def test_ds_wizard_eval_page_surfaces_edit_guidance() -> None:
 
     rendered = observerctl_module._ds_wizard_render(state)
 
-    assert 'guide: type 1 to edit max_fpr, or use set max_fpr <value>.' in rendered
-    assert 'guide: use ? max_fpr for field detail before validation or execution.' in rendered
+    assert 'Type 1 to edit max_fpr, or use set max_fpr <value>.' in rendered
+    assert not any(line.startswith('guide:') for line in rendered)
 
 
 def test_ds_wizard_context_fields_are_wired_for_direct_updates() -> None:
@@ -539,6 +558,78 @@ def test_ds_wizard_context_fields_are_wired_for_direct_updates() -> None:
     assert state.mode == 'canary'
     assert state.values['source'] == 'real'
     assert state.values['mode'] == 'canary'
+
+
+def test_ds_wizard_context_summary_stays_hidden_without_dataset_metadata() -> None:
+    state = observerctl_module._ds_wizard_new_state('evaluate')
+
+    observerctl_module._ds_wizard_set_value(state, 'source', 'real')
+    observerctl_module._ds_wizard_set_value(state, 'mode', 'canary')
+
+    assert not any(line.startswith('context:') for line in observerctl_module._ds_wizard_summary_rows(state))
+
+
+def test_ds_wizard_clear_workflow_resets_to_build_and_clears_context() -> None:
+    state = observerctl_module._ds_wizard_new_state('evaluate')
+    state.source = 'real'
+    state.mode = 'canary'
+    state.values['source'] = 'real'
+    state.values['mode'] = 'canary'
+    state.hydrated_from['context'] = 'saved_run'
+    observerctl_module._ds_wizard_open_section(state, 'eval')
+
+    state, packet, should_exit = observerctl_module._ds_wizard_handle_command(state, 'clear workflow')
+
+    assert packet is None
+    assert should_exit is False
+    assert state.workflow == 'build'
+    assert state.values['workflow'] == 'build'
+    assert state.active_section == 'flow'
+    assert 'context' not in state.hydrated_from
+    assert observerctl_module._ds_wizard_transient_lines(state) == ['workflow reset: build', 'context: cleared']
+    assert not any(line.startswith('context:') for line in observerctl_module._ds_wizard_summary_rows(state))
+
+
+def test_ds_wizard_flow_advanced_menu_gates_source_context_override(monkeypatch) -> None:
+    monkeypatch.setattr(observerctl_module, '_load_state', lambda: {'source': 'sim', 'mode': 'watch'})
+    state = observerctl_module._ds_wizard_new_state('evaluate')
+    state, packet, should_exit = observerctl_module._ds_wizard_handle_command(state, 'configure')
+
+    assert packet is None
+    assert should_exit is False
+    rendered = observerctl_module._ds_wizard_render(state)
+    assert any('7. advanced' in line for line in rendered)
+    assert not any('rare override and expert actions' in line for line in rendered)
+    assert 'context overrides are high-risk' not in rendered
+
+    state, packet, should_exit = observerctl_module._ds_wizard_handle_command(state, '7')
+
+    assert packet is None
+    assert should_exit is False
+    assert state.transient_view == 'picker'
+    rendered = observerctl_module._ds_wizard_render(state)
+    assert 'advanced:' in rendered
+    assert any('context overrides are high-risk' in line for line in rendered)
+    assert '1. source context         current: sim' in rendered
+    assert '2. mode context           current: watch' in rendered
+
+    state, packet, should_exit = observerctl_module._ds_wizard_handle_command(state, '1')
+
+    assert packet is None
+    assert should_exit is False
+    assert state.transient_view == 'picker'
+    rendered = observerctl_module._ds_wizard_render(state)
+    assert 'source choices:' in rendered
+    assert '1. [*] sim' in rendered
+    assert '2. [ ] real' in rendered
+
+    state, packet, should_exit = observerctl_module._ds_wizard_handle_command(state, '2')
+
+    assert packet is None
+    assert should_exit is False
+    assert state.source == 'real'
+    assert state.values['source'] == 'real'
+    assert 'updated context: source = real' in observerctl_module._ds_wizard_transient_lines(state)
 
 
 def test_ds_wizard_hydrate_latest_explains_dataset_limit(monkeypatch, tmp_path: Path) -> None:
@@ -706,15 +797,64 @@ def test_ds_wizard_datasets_command_lists_approved_selectors(monkeypatch, tmp_pa
 
     assert packet is None
     assert should_exit is False
+    assert state.transient_view == 'picker'
     rendered = observerctl_module._ds_wizard_render(state)
     assert 'approved datasets:' in rendered
-    assert '1. Approved Alpha' in rendered
+    assert any('Approved Alpha' in line for line in rendered)
     assert any('Selector:' in line and 'alpha-run' in line for line in rendered)
     assert any('Access:' in line and 'local' in line for line in rendered)
     assert any('Workflow:' in line and 'manual-register' in line for line in rendered)
     assert any('Records:' in line and '12' in line for line in rendered)
     assert 'guidance:' in rendered
-    assert '- hydrate dataset <index|run_id|display_name|manifest.json>' in rendered
+    assert '  choose a number to load an approved dataset into the wizard' in rendered
+
+
+def test_ds_wizard_dataset_picker_supports_numbered_open_and_apply(monkeypatch, tmp_path: Path) -> None:
+    from calamum_librarian import register_librarian_dataset_packet
+
+    project_root, anchor = _make_temp_observer_project(tmp_path)
+    dataset_dir = project_root / 'datasets' / 'picker_alpha'
+    dataset_dir.mkdir(parents=True, exist_ok=True)
+    manifest_path = dataset_dir / 'dataset_manifest.json'
+    features_csv = dataset_dir / 'features.csv'
+    labels_csv = dataset_dir / 'labels.csv'
+    features_csv.write_text('record_id,feature\n1,0.1\n', encoding='utf-8')
+    labels_csv.write_text('record_id,label\n1,1\n', encoding='utf-8')
+    manifest_path.write_text(json.dumps({
+        'features_csv': str(features_csv),
+        'labels_csv': str(labels_csv),
+        'total_records': 1,
+        'has_labels': True,
+    }), encoding='utf-8')
+
+    register_librarian_dataset_packet(
+        anchor,
+        manifest_path,
+        access_class='local',
+        display_name='Picker Alpha',
+        run_id='picker-alpha-run',
+    )
+    monkeypatch.setattr(observerctl_module, '_project_root', lambda: project_root)
+    monkeypatch.setattr(observerctl_module, '_project_anchor', lambda: anchor)
+
+    state = observerctl_module._ds_wizard_new_state('evaluate')
+    observerctl_module._ds_wizard_open_section(state, 'in')
+
+    state, packet, should_exit = observerctl_module._ds_wizard_handle_command(state, '1')
+
+    assert packet is None
+    assert should_exit is False
+    assert state.transient_view == 'picker'
+    assert any('Picker Alpha' in line for line in observerctl_module._ds_wizard_render(state))
+
+    state, packet, should_exit = observerctl_module._ds_wizard_handle_command(state, '1')
+
+    assert packet is None
+    assert should_exit is False
+    assert state.values['dataset_manifest'] == str(manifest_path)
+    assert state.values['features_csv'] == str(features_csv)
+    assert state.values['labels_csv'] == str(labels_csv)
+    assert state.hydrated_from['dataset_manifest'] == 'librarian_dataset'
 
 
 def test_ds_wizard_hydrate_dataset_selector_releases_protected_dataset(monkeypatch, tmp_path: Path) -> None:
@@ -916,7 +1056,87 @@ def test_librarian_dataset_release_human_denial_surfaces_reasons_and_guidance(mo
     assert 'Reasons' in rendered
     assert any('critical_check_failed:librarian_dataset_not_found' in line for line in rendered)
     assert 'Guidance' in rendered
-    assert any('review observerctl librarian datasets' in line for line in rendered)
+    assert any('review observerctl librarian dataset list' in line for line in rendered)
+
+
+def test_librarian_nested_cli_dataset_and_vault_commands(monkeypatch, tmp_path: Path, capsys) -> None:
+    project_root, anchor = _make_temp_observer_project(tmp_path)
+    dataset_dir = project_root / 'datasets' / 'nested_alpha'
+    dataset_dir.mkdir(parents=True, exist_ok=True)
+    manifest_path = dataset_dir / 'dataset_manifest.json'
+    features_csv = dataset_dir / 'features.csv'
+    labels_csv = dataset_dir / 'labels.csv'
+    features_csv.write_text('record_id,feature\n', encoding='utf-8')
+    labels_csv.write_text('record_id,label\n', encoding='utf-8')
+    manifest_path.write_text(json.dumps({
+        'features_csv': str(features_csv),
+        'labels_csv': str(labels_csv),
+        'total_records': 2,
+        'has_labels': True,
+    }), encoding='utf-8')
+
+    monkeypatch.setattr(observerctl_module, '_project_root', lambda: project_root)
+    monkeypatch.setattr(observerctl_module, '_project_anchor', lambda: anchor)
+    monkeypatch.delenv('CALAMUM_DATA_SIGNING_KEY', raising=False)
+    monkeypatch.setenv('CALAMUM_REQUESTER_SIGNING_KEY', 'requester-key')
+    monkeypatch.setenv('CALAMUM_LIBRARIAN_ATTESTATION_KEY', 'librarian-key')
+    monkeypatch.setenv('CALAMUM_SOURCE_RELEASE_KEY', 'source-key')
+    monkeypatch.setenv('CALAMUM_LIBRARIAN_VAULT_KEY', 'vault-key')
+
+    rc = main([
+        'librarian',
+        'dataset',
+        'register',
+        str(manifest_path),
+        '--access-class', 'protected-source',
+        '--display-name', 'Nested Alpha',
+        '--run-id', 'nested-alpha',
+        '--json',
+    ])
+    assert rc == 0
+    payload = json.loads(capsys.readouterr().out)
+    assert payload['action'] == 'librarian-dataset-register'
+
+    rc = main(['librarian', 'dataset', 'list', '--json'])
+    assert rc == 0
+    payload = json.loads(capsys.readouterr().out)
+    assert payload['action'] == 'librarian-datasets'
+    assert payload['count'] == 1
+
+    rc = main(['librarian', 'vault', 'status', '--json'])
+    assert rc == 0
+    payload = json.loads(capsys.readouterr().out)
+    assert payload['action'] == 'librarian-vault-status'
+    assert payload['artifacts']['librarian_vault_baseline_json'].endswith('vault_checksum.json')
+
+    rc = main(['librarian', 'dataset', 'release', '1', '--requester-id', 'nested-suite', '--json'])
+    assert rc == 0
+    payload = json.loads(capsys.readouterr().out)
+    assert payload['action'] == 'librarian-dataset-release'
+    assert payload['release_mode'] == 'protected-source'
+
+    rc = main(['librarian', 'vault', 'lock', '--reason', 'maintenance-window', '--json'])
+    assert rc == 0
+    payload = json.loads(capsys.readouterr().out)
+    assert payload['action'] == 'librarian-vault-lock'
+    assert payload['locked'] is True
+
+    rc = main(['librarian', 'dataset', 'register', str(manifest_path), '--json'])
+    assert rc == 2
+    payload = json.loads(capsys.readouterr().out)
+    assert 'critical_check_failed:librarian_vault_locked' in payload['reason_codes']
+
+    rc = main(['librarian', 'vault', 'unlock', '--reason', 'maintenance-complete', '--json'])
+    assert rc == 0
+    payload = json.loads(capsys.readouterr().out)
+    assert payload['action'] == 'librarian-vault-unlock'
+    assert payload['locked'] is False
+
+    rc = main(['librarian', 'vault', 'verify', '--json'])
+    assert rc == 0
+    payload = json.loads(capsys.readouterr().out)
+    assert payload['action'] == 'librarian-vault-verify'
+    assert payload['decision'] == 'go'
 
 
 def test_ds_wizard_command_surface_supports_run_hydration_and_draft_round_trip(tmp_path: Path) -> None:
@@ -965,7 +1185,60 @@ def test_ds_wizard_command_surface_supports_run_hydration_and_draft_round_trip(t
     assert restored.draft_path == str(draft_path)
 
 
-def test_ds_retained_selector_commands_and_wizard_hydration(monkeypatch, tmp_path: Path, capsys) -> None:
+def test_ds_wizard_command_surface_drops_save_next_draft_menu_copy() -> None:
+    state = observerctl_module._ds_wizard_new_state('evaluate')
+    state, packet, should_exit = observerctl_module._ds_wizard_handle_command(state, 'cmd')
+
+    assert packet is None
+    assert should_exit is False
+    rendered = observerctl_module._ds_wizard_render(state)
+
+    assert any('1. load saved draft' in line for line in rendered)
+    assert any('2. latest saved context' in line for line in rendered)
+    assert not any('save next draft' in line for line in rendered)
+    assert not any('persist current state to the next canonical slot' in line for line in rendered)
+    assert not any('Direct save/load/hydrate file-path commands remain available outside the default guided lane.' in line for line in rendered)
+
+
+def test_ds_wizard_wide_render_keeps_workflow_items_aligned_with_color(monkeypatch) -> None:
+    from observerctl_terminal import strip_ansi
+
+    monkeypatch.delenv('NO_COLOR', raising=False)
+    monkeypatch.setenv('OBSERVERCTL_COLOR', 'always')
+    monkeypatch.setattr(observerctl_module, '_ds_wizard_get_terminal_width', lambda: 120)
+
+    state = observerctl_module._ds_wizard_new_state('')
+    state, _, _ = observerctl_module._ds_wizard_handle_command(state, 'configure')
+    rendered = observerctl_module._ds_wizard_render(state)
+
+    build_line = next(line for line in rendered if '1. ' in line and 'build' in line)
+    pipeline_line = next(line for line in rendered if '6. ' in line and 'run-pipeline' in line)
+    advanced_line = next(line for line in rendered if '7. ' in line and 'advanced' in line)
+
+    build_col = strip_ansi(build_line).index('1. ')
+    pipeline_col = strip_ansi(pipeline_line).index('6. ')
+    advanced_col = strip_ansi(advanced_line).index('7. ')
+
+    assert build_col == pipeline_col == advanced_col
+
+
+def test_ds_wizard_forced_color_styles_only_breadcrumb_tail(monkeypatch) -> None:
+    from observerctl_terminal import strip_ansi, style_heading
+
+    monkeypatch.delenv('NO_COLOR', raising=False)
+    monkeypatch.setenv('OBSERVERCTL_COLOR', 'always')
+    monkeypatch.setattr(observerctl_module, '_ds_wizard_get_terminal_width', lambda: 90)
+
+    state = observerctl_module._ds_wizard_new_state('build')
+    state, _, _ = observerctl_module._ds_wizard_handle_command(state, 'configure')
+    rendered = observerctl_module._ds_wizard_render(state)
+    path_line = next(line for line in rendered if line.startswith('path: '))
+
+    assert strip_ansi(path_line) == 'path: ds wizard > configure > flow'
+    assert path_line == 'path: ds wizard > configure > {0}'.format(style_heading('flow'))
+
+
+def test_ds_saved_selector_commands_and_wizard_hydration(monkeypatch, tmp_path: Path, capsys) -> None:
     project_root, anchor = _make_temp_observer_project(tmp_path)
     _bind_temp_observer_project(monkeypatch, project_root, anchor)
 
@@ -975,7 +1248,7 @@ def test_ds_retained_selector_commands_and_wizard_hydration(monkeypatch, tmp_pat
     (log_dir / 'control' / 'calamum').mkdir(parents=True, exist_ok=True)
     monkeypatch.setenv('CALAMUM_LOG_DIR', str(log_dir))
 
-    dataset_dir = project_root / 'retained' / 'dataset'
+    dataset_dir = project_root / 'saved' / 'dataset'
     dataset_dir.mkdir(parents=True, exist_ok=True)
     dataset_manifest = dataset_dir / 'dataset_manifest.json'
     features_csv = dataset_dir / 'features.csv'
@@ -989,7 +1262,7 @@ def test_ds_retained_selector_commands_and_wizard_hydration(monkeypatch, tmp_pat
         'has_labels': True,
     }), encoding='utf-8')
 
-    model_dir = project_root / 'retained' / 'model'
+    model_dir = project_root / 'saved' / 'model'
     model_dir.mkdir(parents=True, exist_ok=True)
     model_path = model_dir / 'model.pkl'
     train_manifest = model_dir / 'train_manifest.json'
@@ -999,7 +1272,7 @@ def test_ds_retained_selector_commands_and_wizard_hydration(monkeypatch, tmp_pat
         'model_path': str(model_path),
         'model_type': 'unsupervised',
     }), encoding='utf-8')
-    _append_retained_ds_manifest(
+    _append_saved_ds_manifest(
         anchor,
         'train',
         'selector-train-001',
@@ -1013,7 +1286,7 @@ def test_ds_retained_selector_commands_and_wizard_hydration(monkeypatch, tmp_pat
         summary='Retained train selector fixture.',
     )
 
-    evaluation_dir = project_root / 'retained' / 'evaluation'
+    evaluation_dir = project_root / 'saved' / 'evaluation'
     evaluation_dir.mkdir(parents=True, exist_ok=True)
     run_json = evaluation_dir / 'run.json'
     run_md = evaluation_dir / 'run.md'
@@ -1027,8 +1300,8 @@ def test_ds_retained_selector_commands_and_wizard_hydration(monkeypatch, tmp_pat
         },
         'model': {'source': str(model_path)},
     }), encoding='utf-8')
-    run_md.write_text('# retained run\n', encoding='utf-8')
-    _append_retained_ds_manifest(
+    run_md.write_text('# saved run\n', encoding='utf-8')
+    _append_saved_ds_manifest(
         anchor,
         'evaluate',
         'selector-eval-001',
@@ -1048,7 +1321,7 @@ def test_ds_retained_selector_commands_and_wizard_hydration(monkeypatch, tmp_pat
 
     evidence_dir = log_dir / 'data' / 'calamum' / 'observer_derived' / 'real' / 'canary' / 'evidence'
     evidence_dir.mkdir(parents=True, exist_ok=True)
-    baseline_packet = evidence_dir / 'observerctl_baseline-analysis_retained.json'
+    baseline_packet = evidence_dir / 'observerctl_baseline-analysis_saved.json'
     baseline_packet.write_text(json.dumps({
         'timestamp_utc': '2026-03-31T12:10:00Z',
         'decision': 'go',
@@ -1063,35 +1336,35 @@ def test_ds_retained_selector_commands_and_wizard_hydration(monkeypatch, tmp_pat
         'baseline_window_id': 'canary-window-001',
     }) + '\n', encoding='utf-8')
 
-    rc = main(['ds', 'retained', 'trains', '--json'])
+    rc = main(['ds', 'saved', 'trained', '--json'])
     assert rc == 0
     payload = json.loads(capsys.readouterr().out)
-    assert payload['action'] == 'ds-retained-trains'
-    assert payload['command_path'] == 'observerctl ds retained trains'
+    assert payload['action'] == 'ds-saved-trained'
+    assert payload['command_path'] == 'observerctl ds saved trained'
     assert payload['count'] == 1
     assert payload['selector_entries'][0]['run_id'] == 'selector-train-001'
 
-    rc = main(['ds', 'retained', 'runs', '--json'])
+    rc = main(['ds', 'saved', 'runs', '--json'])
     assert rc == 0
     payload = json.loads(capsys.readouterr().out)
-    assert payload['action'] == 'ds-retained-runs'
-    assert payload['command_path'] == 'observerctl ds retained runs'
+    assert payload['action'] == 'ds-saved-runs'
+    assert payload['command_path'] == 'observerctl ds saved runs'
     assert payload['count'] == 1
     assert payload['selector_entries'][0]['run_id'] == 'selector-eval-001'
 
-    rc = main(['ds', 'retained', 'baselines', '--source', 'real', '--mode', 'canary', '--json'])
+    rc = main(['ds', 'saved', 'baselines', '--source', 'real', '--mode', 'canary', '--json'])
     assert rc == 0
     payload = json.loads(capsys.readouterr().out)
-    assert payload['action'] == 'ds-retained-baselines'
-    assert payload['command_path'] == 'observerctl ds retained baselines'
+    assert payload['action'] == 'ds-saved-baselines'
+    assert payload['command_path'] == 'observerctl ds saved baselines'
     assert payload['count'] == 1
     assert payload['selector_entries'][0]['baseline_window_id'] == 'canary-window-001'
 
     train_state = observerctl_module._ds_wizard_new_state('score')
-    train_state, packet, should_exit = observerctl_module._ds_wizard_handle_command(train_state, 'trains')
+    train_state, packet, should_exit = observerctl_module._ds_wizard_handle_command(train_state, 'trained')
     assert packet is None
     assert should_exit is False
-    assert 'retained trains:' in observerctl_module._ds_wizard_render(train_state)
+    assert 'saved trained:' in observerctl_module._ds_wizard_render(train_state)
 
     train_state, packet, should_exit = observerctl_module._ds_wizard_handle_command(train_state, 'hydrate train 1')
     assert packet is None
@@ -1099,7 +1372,19 @@ def test_ds_retained_selector_commands_and_wizard_hydration(monkeypatch, tmp_pat
     assert train_state.values['train_manifest'] == str(train_manifest)
     assert train_state.values['dataset_manifest'] == str(dataset_manifest)
     assert train_state.values['model_path'] == str(model_path)
-    assert train_state.hydrated_from['train_manifest'] == 'retained_train'
+    assert train_state.hydrated_from['train_manifest'] == 'saved_train'
+
+    train_picker_state = observerctl_module._ds_wizard_new_state('score')
+    observerctl_module._ds_wizard_open_section(train_picker_state, 'model')
+    train_picker_state, packet, should_exit = observerctl_module._ds_wizard_handle_command(train_picker_state, '1')
+    assert packet is None
+    assert should_exit is False
+    assert train_picker_state.transient_view == 'picker'
+    train_picker_state, packet, should_exit = observerctl_module._ds_wizard_handle_command(train_picker_state, '1')
+    assert packet is None
+    assert should_exit is False
+    assert train_picker_state.values['train_manifest'] == str(train_manifest)
+    assert train_picker_state.hydrated_from['train_manifest'] == 'saved_train'
 
     run_state = observerctl_module._ds_wizard_new_state('evaluate')
     observerctl_module._ds_wizard_set_value(run_state, 'source', 'real')
@@ -1108,25 +1393,39 @@ def test_ds_retained_selector_commands_and_wizard_hydration(monkeypatch, tmp_pat
     run_state, packet, should_exit = observerctl_module._ds_wizard_handle_command(run_state, 'runs')
     assert packet is None
     assert should_exit is False
-    assert 'retained runs:' in observerctl_module._ds_wizard_render(run_state)
+    assert 'saved runs:' in observerctl_module._ds_wizard_render(run_state)
 
     run_state, packet, should_exit = observerctl_module._ds_wizard_handle_command(run_state, 'hydrate run 1')
     assert packet is None
     assert should_exit is False
     assert run_state.values['run_id'] == 'selector-eval-001'
     assert run_state.values['max_fpr'] == 0.02
-    assert run_state.hydrated_from['run_id'] == 'retained_run'
+    assert run_state.hydrated_from['run_id'] == 'saved_run'
 
     run_state, packet, should_exit = observerctl_module._ds_wizard_handle_command(run_state, 'baselines')
     assert packet is None
     assert should_exit is False
-    assert 'retained baselines:' in observerctl_module._ds_wizard_render(run_state)
+    assert 'saved baselines:' in observerctl_module._ds_wizard_render(run_state)
 
     run_state, packet, should_exit = observerctl_module._ds_wizard_handle_command(run_state, 'hydrate baseline 1')
     assert packet is None
     assert should_exit is False
     assert run_state.values['baseline_window_id'] == 'canary-window-001'
-    assert run_state.hydrated_from['baseline_window_id'] == 'retained_baseline'
+    assert run_state.hydrated_from['baseline_window_id'] == 'saved_baseline'
+
+    report_picker_state = observerctl_module._ds_wizard_new_state('evaluate')
+    observerctl_module._ds_wizard_set_value(report_picker_state, 'source', 'real')
+    observerctl_module._ds_wizard_set_value(report_picker_state, 'mode', 'canary')
+    observerctl_module._ds_wizard_open_section(report_picker_state, 'report')
+    report_picker_state, packet, should_exit = observerctl_module._ds_wizard_handle_command(report_picker_state, '2')
+    assert packet is None
+    assert should_exit is False
+    assert report_picker_state.transient_view == 'picker'
+    report_picker_state, packet, should_exit = observerctl_module._ds_wizard_handle_command(report_picker_state, '1')
+    assert packet is None
+    assert should_exit is False
+    assert report_picker_state.values['baseline_window_id'] == 'canary-window-001'
+    assert report_picker_state.hydrated_from['baseline_window_id'] == 'saved_baseline'
 
 
 def test_ds_wizard_canonical_draft_slots_and_output_preview(monkeypatch, tmp_path: Path, capsys) -> None:
@@ -1142,11 +1441,11 @@ def test_ds_wizard_canonical_draft_slots_and_output_preview(monkeypatch, tmp_pat
     assert Path(state.draft_path).name == 'slot-001.json'
     assert Path(state.draft_path).exists()
 
-    rc = main(['ds', 'retained', 'drafts', '--json'])
+    rc = main(['ds', 'saved', 'drafts', '--json'])
     assert rc == 0
     payload = json.loads(capsys.readouterr().out)
-    assert payload['action'] == 'ds-retained-drafts'
-    assert payload['command_path'] == 'observerctl ds retained drafts'
+    assert payload['action'] == 'ds-saved-drafts'
+    assert payload['command_path'] == 'observerctl ds saved drafts'
     assert payload['count'] == 1
     assert payload['selector_entries'][0]['slot_id'] == 1
 
@@ -1157,26 +1456,38 @@ def test_ds_wizard_canonical_draft_slots_and_output_preview(monkeypatch, tmp_pat
     assert restored.values['run_id'] == 'slot-draft-001'
     assert Path(restored.draft_path).name == 'slot-001.json'
 
+    guided_restore = observerctl_module._ds_wizard_new_state('evaluate')
+    observerctl_module._ds_wizard_open_section(guided_restore, 'cmd')
+    guided_restore, packet, should_exit = observerctl_module._ds_wizard_handle_command(guided_restore, '1')
+    assert packet is None
+    assert should_exit is False
+    assert guided_restore.transient_view == 'picker'
+    guided_restore, packet, should_exit = observerctl_module._ds_wizard_handle_command(guided_restore, '1')
+    assert packet is None
+    assert should_exit is False
+    assert guided_restore.values['run_id'] == 'slot-draft-001'
+    assert Path(guided_restore.draft_path).name == 'slot-001.json'
+
     list_state = observerctl_module._ds_wizard_new_state('evaluate')
     list_state, packet, should_exit = observerctl_module._ds_wizard_handle_command(list_state, 'drafts')
     assert packet is None
     assert should_exit is False
     rendered = observerctl_module._ds_wizard_render(list_state)
-    assert 'retained draft slots:' in rendered
+    assert 'saved draft slots:' in rendered
     assert any('slot-001' in line for line in rendered)
 
     out_state = observerctl_module._ds_wizard_new_state('train')
     observerctl_module._ds_wizard_open_section(out_state, 'out')
     rendered = observerctl_module._ds_wizard_render(out_state)
     assert 'canonical outputs:' in rendered
-    assert any('canonical run root:' in line and 'local_untracked/analysis/runs/train/auto-run-id' in line.replace('\\', '/') for line in rendered)
-    assert any('override note:' in line for line in rendered)
+    assert any('Canonical run root:' in line and 'local_untracked/analysis/runs/train/auto-run-id' in line.replace('\\', '/') for line in rendered)
+    assert any('Override note:' in line for line in rendered)
     assert '--out-dir' not in observerctl_module._ds_wizard_command_preview(out_state)
 
     observerctl_module._ds_wizard_set_value(out_state, 'out_dir', str(tmp_path / 'override-root'))
     rendered = observerctl_module._ds_wizard_render(out_state)
-    assert any('output policy: power override' in line for line in rendered)
-    assert any('active override:' in line for line in rendered)
+    assert any('Output policy:' in line and 'power override' in line for line in rendered)
+    assert any('Active override:' in line for line in rendered)
 
     score_state = observerctl_module._ds_wizard_new_state('score')
     assert '--out-file' not in observerctl_module._ds_wizard_command_preview(score_state)
@@ -1888,8 +2199,44 @@ def test_sandbox_list_human_output_uses_structured_decision_block(monkeypatch, c
     assert '[OK] SANDBOX_DEFINITIONS_LISTED' in out
     assert 'Template Class  : decision' in out
     assert 'Definition Count: 1' in out
-    assert '- metadata-contract' in out
+    assert 'metadata-contract' in out
     assert 'Purpose         : Validate metadata contract expectations.' in out
+
+
+def test_ds_wizard_exit_command_suppresses_post_exit_emit(capsys) -> None:
+    state = observerctl_module._ds_wizard_new_state('evaluate')
+
+    state, packet, should_exit = observerctl_module._ds_wizard_handle_command(state, 'exit')
+
+    assert should_exit is True
+    assert packet is not None
+    assert packet['suppress_human_emit'] is True
+
+    observerctl_module._emit(packet, as_json=False)
+
+    assert capsys.readouterr().out == ''
+
+
+def test_ds_wizard_execute_blocked_stays_in_wizard_and_lists_blockers() -> None:
+    state = observerctl_module._ds_wizard_new_state('evaluate')
+
+    state, packet, should_exit = observerctl_module._ds_wizard_handle_command(state, 'execute')
+
+    assert packet is None
+    assert should_exit is False
+    rendered = observerctl_module._ds_wizard_render(state)
+    assert 'executing blocked:' in rendered
+    assert any(line.startswith('- ') or line.startswith('  - ') for line in rendered)
+    assert any('features_csv is required' in line for line in rendered)
+
+
+def test_ds_wizard_forced_color_keeps_prefix_plain_on_picker_lines(monkeypatch) -> None:
+    monkeypatch.delenv('NO_COLOR', raising=False)
+    monkeypatch.setenv('OBSERVERCTL_COLOR', 'always')
+    line = observerctl_module._style_choice_label('1. [*] ', 'sim')
+
+    assert line.startswith('1. [*] ')
+    assert '\x1b[' in line[len('1. [*] '):]
 
 
 def test_sandbox_show_emits_definition_detail_json(monkeypatch, capsys) -> None:
@@ -1934,6 +2281,24 @@ def test_real_sandbox_registry_includes_ds_wizard_durability_definition() -> Non
     assert definition['run_index_path'].endswith('frame6_ds_wizard_durability_probe/run_index.jsonl')
 
 
+def test_real_sandbox_registry_includes_librarian_access_exchange_definition() -> None:
+    definition = observerctl_module.sandbox_get_definition('librarian-access-exchange')
+
+    assert definition is not None
+    assert definition['id'] == 'librarian-access-exchange'
+    assert definition['command'] == 'observerctl sandbox run librarian-access-exchange'
+    assert definition['run_index_path'].endswith('librarian_access_exchange_probe/run_index.jsonl')
+
+
+def test_real_sandbox_registry_includes_librarian_vault_controls_definition() -> None:
+    definition = observerctl_module.sandbox_get_definition('librarian-vault-controls')
+
+    assert definition is not None
+    assert definition['id'] == 'librarian-vault-controls'
+    assert definition['command'] == 'observerctl sandbox run librarian-vault-controls'
+    assert definition['run_index_path'].endswith('librarian_vault_controls_probe/run_index.jsonl')
+
+
 def test_sandbox_show_human_output_includes_alias_policy_and_trailing_contract(monkeypatch, capsys) -> None:
     monkeypatch.setattr(observerctl_module, 'sandbox_get_definition', lambda definition_id: {
         'id': definition_id,
@@ -1944,7 +2309,7 @@ def test_sandbox_show_human_output_includes_alias_policy_and_trailing_contract(m
         'aliases': [],
         'selector_policy': 'exact-name-only',
         'writes_to': 'report_tmp/job0022_baseline_monitor_runtime_probe',
-        'purpose': 'Prove the sandboxed baseline-monitor runtime and retained evidence flow are intact.',
+        'purpose': 'Prove the sandboxed baseline-monitor runtime and saved evidence flow are intact.',
         'command': 'observerctl sandbox run baseline-monitor-runtime',
         'run_index_path': 'report_tmp/job0022_baseline_monitor_runtime_probe/run_index.jsonl',
     })
@@ -1986,7 +2351,7 @@ def test_sandbox_run_emits_execution_packet_json(monkeypatch, capsys) -> None:
     assert payload['run_id'] == 'metadata-contract-001'
 
 
-def test_sandbox_runs_list_emits_retained_runs_json(monkeypatch, capsys) -> None:
+def test_sandbox_runs_list_emits_saved_runs_json(monkeypatch, capsys) -> None:
     monkeypatch.setattr(observerctl_module, 'sandbox_list_runs', lambda: [
         {
             'run_id': 'baseline-monitor-runtime-001',
@@ -2213,7 +2578,7 @@ def test_evidence_pack_writes_publish_grade_packet(tmp_path: Path, monkeypatch) 
     assert payload['provenance']['artifact_sha256']
 
 
-def test_evidence_pack_supports_non_activation_live_projection_and_retained_refs(tmp_path: Path, monkeypatch) -> None:
+def test_evidence_pack_supports_non_activation_live_projection_and_saved_refs(tmp_path: Path, monkeypatch) -> None:
     log_dir = tmp_path / 'logs'
     health = log_dir / 'health'
     data = log_dir / 'data' / 'calamum'
@@ -4215,7 +4580,7 @@ def test_gate_denies_when_security_report_link_unresolvable(tmp_path: Path, monk
     assert 'critical_check_failed:run_security_report_missing' in gate['reason_codes']
 
 
-def test_live_gate_denies_when_baseline_monitor_runtime_inactive_but_surfaces_retained_evidence(tmp_path: Path, monkeypatch) -> None:
+def test_live_gate_denies_when_baseline_monitor_runtime_inactive_but_surfaces_saved_evidence(tmp_path: Path, monkeypatch) -> None:
     log_dir = tmp_path / 'logs'
     health = log_dir / 'health'
     data = log_dir / 'data' / 'calamum'
