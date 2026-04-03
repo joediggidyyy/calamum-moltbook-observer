@@ -27,7 +27,7 @@ This policy covers:
 - public/private evidence boundaries,
 - vulnerability-reporting expectations.
 
-For the architectural runtime model behind those principles, see [`docs/manuals/reference/CALAMUM_SECURITY_MODEL.md`](docs/manuals/reference/CALAMUM_SECURITY_MODEL.md).
+For the architectural runtime model behind those principles, see [`docs/manuals/reference/SECURITY_MODEL.md`](docs/manuals/reference/SECURITY_MODEL.md).
 
 ## Supported Versions
 
@@ -87,7 +87,7 @@ Public posture model:
 | `live` | `lockdown` |
 | `honeypot` | `lockdown` |
 
-The deeper architecture for these controls is documented in [`docs/manuals/reference/CALAMUM_SECURITY_MODEL.md`](docs/manuals/reference/CALAMUM_SECURITY_MODEL.md), and the command-level transition contract is documented in [`docs/manuals/reference/CALAMUM_RUNTIME_TRANSITIONS.md`](docs/manuals/reference/CALAMUM_RUNTIME_TRANSITIONS.md).
+The deeper architecture for these controls is documented in [`docs/manuals/reference/SECURITY_MODEL.md`](docs/manuals/reference/SECURITY_MODEL.md), and the command-level transition contract is documented in [`docs/manuals/reference/RUNTIME_TRANSITIONS.md`](docs/manuals/reference/RUNTIME_TRANSITIONS.md).
 
 ## What we actively defend against
 
@@ -233,5 +233,5 @@ If a proposed change makes the system easier to demo but harder to trust, it is 
 
 - [`README.md`](README.md)
 - [`DATA_METHODOLOGY.md`](DATA_METHODOLOGY.md)
-- [`docs/manuals/reference/CALAMUM_SECURITY_MODEL.md`](docs/manuals/reference/CALAMUM_SECURITY_MODEL.md)
-- [`docs/manuals/reference/CALAMUM_RUNTIME_TRANSITIONS.md`](docs/manuals/reference/CALAMUM_RUNTIME_TRANSITIONS.md)
+- [`docs/manuals/reference/SECURITY_MODEL.md`](docs/manuals/reference/SECURITY_MODEL.md)
+- [`docs/manuals/reference/RUNTIME_TRANSITIONS.md`](docs/manuals/reference/RUNTIME_TRANSITIONS.md)

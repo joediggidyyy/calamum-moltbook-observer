@@ -95,8 +95,8 @@ When something looks wrong, use this order:
 
 ## Related documents
 
-- [`CALAMUM_RUNTIME_WORKFLOWS.md`](CALAMUM_RUNTIME_WORKFLOWS.md)
-- [`../reference/CALAMUM_RUNTIME_TRANSITIONS.md`](../reference/CALAMUM_RUNTIME_TRANSITIONS.md)
-- [`../reference/CALAMUM_SECURITY_MODEL.md`](../reference/CALAMUM_SECURITY_MODEL.md)
-- [`../data-science/CALAMUM_DS_OPERATIONS.md`](../data-science/CALAMUM_DS_OPERATIONS.md)
+- [`RUNTIME_WORKFLOWS.md`](RUNTIME_WORKFLOWS.md)
+- [`../reference/RUNTIME_TRANSITIONS.md`](../reference/RUNTIME_TRANSITIONS.md)
+- [`../reference/SECURITY_MODEL.md`](../reference/SECURITY_MODEL.md)
+- [`../data-science/DS_OPERATIONS.md`](../data-science/DS_OPERATIONS.md)
 - [`../INDEX.md`](../INDEX.md)

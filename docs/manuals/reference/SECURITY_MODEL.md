@@ -80,8 +80,8 @@ This separation helps preserve both auditability and containment.
 
 ## Related documents
 
-- [`CALAMUM_RUNTIME_TRANSITIONS.md`](CALAMUM_RUNTIME_TRANSITIONS.md)
-- [`../runtime/CALAMUM_RUNTIME_WORKFLOWS.md`](../runtime/CALAMUM_RUNTIME_WORKFLOWS.md)
-- [`../runtime/CALAMUM_RUNTIME_OPERATIONS.md`](../runtime/CALAMUM_RUNTIME_OPERATIONS.md)
+- [`RUNTIME_TRANSITIONS.md`](RUNTIME_TRANSITIONS.md)
+- [`../runtime/RUNTIME_WORKFLOWS.md`](../runtime/RUNTIME_WORKFLOWS.md)
+- [`../runtime/RUNTIME_OPERATIONS.md`](../runtime/RUNTIME_OPERATIONS.md)
 - [`../INDEX.md`](../INDEX.md)
 - [`../../INDEX.md`](../../INDEX.md)

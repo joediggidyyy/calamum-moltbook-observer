@@ -271,22 +271,71 @@ def _report_markdown(report_payload: Mapping[str, Any], *, project_root: Path, r
     title = WORKFLOW_TITLES.get(workflow, workflow.replace('-', ' ').title())
     result_payload = report_payload.get('result', {}) if isinstance(report_payload.get('result', {}), MappingABC) else {}
     result_without_visuals = {key: value for key, value in result_payload.items() if str(key) != 'visuals'}
+    decision = str(report_payload.get('decision', '') or '').strip()
+    runtime_cli_surface = str(report_payload.get('runtime_cli_surface', '') or '').strip()
+    command_path = str(report_payload.get('command_path', '') or '').strip()
+    summary = str(report_payload.get('summary', '') or '').strip()
     lines = [
         '# {0} Report: {1}'.format(title, str(report_payload.get('run_id', ''))),
         '',
-        '- Workflow: {0}'.format(workflow),
-        '- Created (UTC): {0}'.format(str(report_payload.get('timestamp_utc', ''))),
-        '- Decision: {0}'.format(str(report_payload.get('decision', ''))),
-        '- Summary: {0}'.format(str(report_payload.get('summary', ''))),
-        '',
+        '**Status**: `{0}`'.format(decision or 'unknown'),
+        '**Workflow**: `{0}`'.format(workflow),
+        '**Created (UTC)**: `{0}`'.format(str(report_payload.get('timestamp_utc', ''))),
     ]
-    _append_mapping(lines, 'Context', report_payload.get('context', {}))
-    _append_mapping(lines, 'Result', result_without_visuals)
+    if runtime_cli_surface:
+        lines.append('**Runtime CLI surface**: `{0}`'.format(runtime_cli_surface))
+    if command_path:
+        lines.append('**Command path**: `{0}`'.format(command_path))
+    lines.extend([
+        '',
+        '## Executive summary',
+        '',
+        summary or 'No summary was recorded for this run.',
+        '',
+    ])
+    _append_scalar_table(
+        lines,
+        'Run snapshot',
+        {
+            'run_id': report_payload.get('run_id', ''),
+            'workflow': workflow,
+            'decision': decision,
+            'created_utc': report_payload.get('timestamp_utc', ''),
+            'runtime_cli_surface': runtime_cli_surface,
+            'command_path': command_path,
+        },
+    )
+    _append_scalar_table(lines, 'Context', report_payload.get('context', {}))
+    _append_result_section(lines, result_without_visuals)
     _append_visuals(lines, result_payload, project_root=project_root, report_md_path=report_md_path)
-    _append_mapping(lines, 'Artifacts', report_payload.get('artifacts', {}))
-    _append_mapping(lines, 'Lineage', report_payload.get('lineage', {}))
-    _append_mapping(lines, 'Report paths', report_payload.get('report_paths', {}))
+    _append_path_table(lines, 'Artifact index', report_payload.get('artifacts', {}), key_label='Artifact')
+    _append_provenance_section(lines, report_payload.get('lineage', {}))
+    _append_path_table(lines, 'Report paths', report_payload.get('report_paths', {}), key_label='Surface')
     return '\n'.join(lines).rstrip() + '\n'
+
+
+def _append_result_section(lines: list[str], mapping: Any) -> None:
+    if not isinstance(mapping, MappingABC) or not mapping:
+        return
+
+    scalar_mapping: Dict[str, Any] = {}
+    counts = mapping.get('counts', {}) if isinstance(mapping.get('counts', {}), MappingABC) else {}
+    metrics = mapping.get('metrics', {}) if isinstance(mapping.get('metrics', {}), MappingABC) else {}
+    thresholding = mapping.get('thresholding', {}) if isinstance(mapping.get('thresholding', {}), MappingABC) else {}
+    workflow_steps = mapping.get('workflow_steps', [])
+    reason_codes = mapping.get('reason_codes', [])
+
+    for key, value in mapping.items():
+        if str(key) in {'counts', 'metrics', 'thresholding', 'workflow_steps', 'reason_codes'}:
+            continue
+        scalar_mapping[str(key)] = value
+
+    _append_scalar_table(lines, 'Result overview', scalar_mapping)
+    _append_horizontal_value_table(lines, 'Counts', counts)
+    _append_key_value_table(lines, 'Metrics', metrics, key_label='Metric')
+    _append_key_value_table(lines, 'Thresholding', thresholding, key_label='Field', code_values=True)
+    _append_list_section(lines, 'Workflow steps', workflow_steps)
+    _append_reason_codes_section(lines, reason_codes)
 
 
 def _append_visuals(lines: list, result_payload: Any, *, project_root: Path, report_md_path: Path) -> None:
@@ -302,10 +351,15 @@ def _append_visuals(lines: list, result_payload: Any, *, project_root: Path, rep
     lines.append('## Visuals')
     lines.append('')
     anomaly_direction = str(visuals.get('anomaly_direction', '') or '').strip()
-    if anomaly_direction:
-        lines.append('- Anomaly direction: {0}'.format(anomaly_direction))
-    lines.append('- Figure count: {0}'.format(int(visuals.get('figure_count', len(figures)) or len(figures))))
-    lines.append('')
+    _append_key_value_table(
+        lines,
+        'Visual summary',
+        {
+            'anomaly_direction': anomaly_direction,
+            'figure_count': int(visuals.get('figure_count', len(figures)) or len(figures)),
+        },
+        key_label='Field',
+    )
     for figure in figures:
         if not isinstance(figure, MappingABC):
             continue
@@ -327,6 +381,198 @@ def _append_mapping(lines: list, title: str, mapping: Any) -> None:
         return
     lines.append('## {0}'.format(title))
     lines.append('')
+
+
+def _append_scalar_table(lines: list[str], title: str, mapping: Any) -> None:
+    if not isinstance(mapping, MappingABC) or not mapping:
+        return
+    rows = []
+    for key, value in mapping.items():
+        if value in ('', None, [], {}, ()):
+            continue
+        if isinstance(value, (MappingABC, list, tuple, set)):
+            continue
+        rows.append((str(key), value))
+    if not rows:
+        return
+
+    lines.append('## {0}'.format(title))
+    lines.append('')
+    lines.append('| Field | Value |')
+    lines.append('| --- | --- |')
+    for key, value in rows:
+        lines.append('| {0} | {1} |'.format(_table_escape(_friendly_label(key)), _table_escape(_format_scalar(value))))
+    lines.append('')
+
+
+def _append_horizontal_value_table(lines: list[str], title: str, mapping: Any) -> None:
+    if not isinstance(mapping, MappingABC) or not mapping:
+        return
+    ordered_keys = [key for key in ('tp', 'fp', 'tn', 'fn') if key in mapping]
+    ordered_keys.extend([key for key in mapping.keys() if key not in ordered_keys])
+    if not ordered_keys:
+        return
+
+    lines.append('### {0}'.format(title))
+    lines.append('')
+    lines.append('| {0} |'.format(' | '.join(_table_escape(_friendly_label(str(key))) for key in ordered_keys)))
+    lines.append('| {0} |'.format(' | '.join('---:' for _ in ordered_keys)))
+    lines.append('| {0} |'.format(' | '.join(_table_escape(_format_scalar(mapping[key])) for key in ordered_keys)))
+    lines.append('')
+
+
+def _append_key_value_table(
+    lines: list[str],
+    title: str,
+    mapping: Any,
+    *,
+    key_label: str = 'Field',
+    code_values: bool = False,
+) -> None:
+    if not isinstance(mapping, MappingABC) or not mapping:
+        return
+
+    rows = []
+    for key, value in mapping.items():
+        if value in ('', None, [], {}, ()):
+            continue
+        rows.append((str(key), value))
+    if not rows:
+        return
+
+    lines.append('### {0}'.format(title))
+    lines.append('')
+    lines.append('| {0} | Value |'.format(key_label))
+    lines.append('| --- | --- |')
+    for key, value in rows:
+        lines.append(
+            '| {0} | {1} |'.format(
+                _table_escape(_friendly_label(key)),
+                _table_escape(_format_scalar(value, code_like=code_values)),
+            )
+        )
+    lines.append('')
+
+
+def _append_path_table(lines: list[str], title: str, mapping: Any, *, key_label: str) -> None:
+    if not isinstance(mapping, MappingABC) or not mapping:
+        return
+    rows = []
+    for key in sorted(mapping.keys()):
+        value = mapping[key]
+        if value in ('', None, [], {}, ()):
+            continue
+        if isinstance(value, MappingABC):
+            continue
+        rows.append((str(key), value))
+    if not rows:
+        return
+
+    lines.append('## {0}'.format(title))
+    lines.append('')
+    lines.append('| {0} | Path |'.format(key_label))
+    lines.append('| --- | --- |')
+    for key, value in rows:
+        lines.append('| {0} | {1} |'.format(_table_escape(_friendly_label(key)), _table_escape(_format_path_value(value))))
+    lines.append('')
+
+
+def _append_provenance_section(lines: list[str], mapping: Any) -> None:
+    if not isinstance(mapping, MappingABC) or not mapping:
+        return
+
+    lines.append('## Provenance')
+    lines.append('')
+    scalar_rows: Dict[str, Any] = {}
+    nested_mappings: Dict[str, Mapping[str, Any]] = {}
+    for key, value in mapping.items():
+        if value in ('', None, [], {}, ()):
+            continue
+        if isinstance(value, MappingABC):
+            nested_mappings[str(key)] = value
+        else:
+            scalar_rows[str(key)] = value
+
+    if scalar_rows:
+        lines.append('### Source lineage')
+        lines.append('')
+        lines.append('| Field | Value |')
+        lines.append('| --- | --- |')
+        for key, value in scalar_rows.items():
+            lines.append('| {0} | {1} |'.format(_table_escape(_friendly_label(key)), _table_escape(_format_path_value(value))))
+        lines.append('')
+
+    for key, value in nested_mappings.items():
+        lines.append('### {0}'.format(_friendly_label(key)))
+        lines.append('')
+        lines.append('| Surface | Path |')
+        lines.append('| --- | --- |')
+        for subkey in sorted(value.keys()):
+            lines.append('| {0} | {1} |'.format(_table_escape(_friendly_label(str(subkey))), _table_escape(_format_path_value(value[subkey]))))
+        lines.append('')
+
+
+def _append_list_section(lines: list[str], title: str, values: Any) -> None:
+    if not isinstance(values, (list, tuple, set)):
+        return
+    normalized = [str(value) for value in values if str(value or '').strip()]
+    if not normalized:
+        return
+    lines.append('### {0}'.format(title))
+    lines.append('')
+    for index, value in enumerate(normalized, start=1):
+        lines.append('{0}. `{1}`'.format(index, value))
+    lines.append('')
+
+
+def _append_reason_codes_section(lines: list[str], values: Any) -> None:
+    if not isinstance(values, (list, tuple, set)):
+        return
+    normalized = [str(value) for value in values if str(value or '').strip()]
+    lines.append('### Reason codes')
+    lines.append('')
+    if not normalized:
+        lines.append('- none')
+        lines.append('')
+        return
+    for value in normalized:
+        lines.append('- `{0}`'.format(value))
+    lines.append('')
+
+
+def _friendly_label(key: str) -> str:
+    tokens = str(key or '').replace('-', ' ').replace('_', ' ').split()
+    acronyms = {
+        'id': 'ID',
+        'utc': 'UTC',
+        'cli': 'CLI',
+        'fpr': 'FPR',
+        'json': 'JSON',
+        'md': 'MD',
+        'csv': 'CSV',
+        'png': 'PNG',
+    }
+    if not tokens:
+        return ''
+    return ' '.join(acronyms.get(token.lower(), token.capitalize()) for token in tokens)
+
+
+def _format_scalar(value: Any, *, code_like: bool = False) -> str:
+    if isinstance(value, (list, tuple, set, dict)):
+        text = json.dumps(value, sort_keys=True)
+    else:
+        text = str(value)
+    if code_like:
+        return '`{0}`'.format(text)
+    return text
+
+
+def _format_path_value(value: Any) -> str:
+    return '`{0}`'.format(str(value))
+
+
+def _table_escape(value: str) -> str:
+    return str(value).replace('|', '\\|').replace('\n', '<br>')
     for key in sorted(mapping.keys()):
         value = mapping[key]
         if isinstance(value, MappingABC):

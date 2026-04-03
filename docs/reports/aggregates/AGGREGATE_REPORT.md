@@ -179,7 +179,6 @@ Supporting latest-run evidence bundles consulted for selected current statistics
 
 ## Related surfaces
 
-- [`INDEX.md`](INDEX.md)
+- [`../INDEX.md`](../INDEX.md)
 - [`PUBLIC_RUN_LEDGER.md`](PUBLIC_RUN_LEDGER.md)
-- [`AGGREGATE_REPORT_SCHEMA.md`](AGGREGATE_REPORT_SCHEMA.md)
-- [`GENERATED_REPORT_SURFACES.md`](GENERATED_REPORT_SURFACES.md)
+- [`../reference/GENERATED_REPORT_SURFACES.md`](../reference/GENERATED_REPORT_SURFACES.md)

@@ -330,6 +330,12 @@ def _check_job_status_sync(repo_root: Path, project_root: Path) -> Dict[str, Any
                     is_status_bearing = True
                 if rel_norm.startswith("docs/reports/operations/JOB_REPORT_"):
                     is_status_bearing = True
+                if rel_norm.startswith(rel_project + "/docs/reports/operations/JOB_REPORT_"):
+                    is_status_bearing = True
+                if rel_norm.startswith("local_untracked/reports/operations/JOB_REPORT_"):
+                    is_status_bearing = True
+                if rel_norm.startswith(rel_project + "/local_untracked/reports/operations/JOB_REPORT_"):
+                    is_status_bearing = True
 
                 # Avoid false positives: only enforce status sync for known status-bearing docs.
                 if not is_status_bearing:

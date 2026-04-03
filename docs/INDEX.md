@@ -9,9 +9,9 @@ This index routes readers through the tracked documentation surfaces for Calamum
 | Reader goal | Start here | Then | Then |
 | --- | --- | --- | --- |
 | project overview | [`../README.md`](../README.md) | [`../SECURITY.md`](../SECURITY.md) | [`../DATA_METHODOLOGY.md`](../DATA_METHODOLOGY.md) |
-| runtime and operations | [`manuals/runtime/INDEX.md`](manuals/runtime/INDEX.md) | [`manuals/runtime/CALAMUM_RUNTIME_WORKFLOWS.md`](manuals/runtime/CALAMUM_RUNTIME_WORKFLOWS.md) | [`manuals/runtime/CALAMUM_RUNTIME_OPERATIONS.md`](manuals/runtime/CALAMUM_RUNTIME_OPERATIONS.md) |
-| security and transition rules | [`manuals/reference/INDEX.md`](manuals/reference/INDEX.md) | [`manuals/reference/CALAMUM_SECURITY_MODEL.md`](manuals/reference/CALAMUM_SECURITY_MODEL.md) | [`manuals/reference/CALAMUM_RUNTIME_TRANSITIONS.md`](manuals/reference/CALAMUM_RUNTIME_TRANSITIONS.md) |
-| data science and reporting | [`manuals/data-science/INDEX.md`](manuals/data-science/INDEX.md) | [`manuals/data-science/CALAMUM_DS_OPERATIONS.md`](manuals/data-science/CALAMUM_DS_OPERATIONS.md) | [`reports/ds/INDEX.md`](reports/ds/INDEX.md) |
+| runtime and operations | [`manuals/runtime/INDEX.md`](manuals/runtime/INDEX.md) | [`manuals/runtime/RUNTIME_WORKFLOWS.md`](manuals/runtime/RUNTIME_WORKFLOWS.md) | [`manuals/runtime/RUNTIME_OPERATIONS.md`](manuals/runtime/RUNTIME_OPERATIONS.md) |
+| security and transition rules | [`manuals/reference/INDEX.md`](manuals/reference/INDEX.md) | [`manuals/reference/SECURITY_MODEL.md`](manuals/reference/SECURITY_MODEL.md) | [`manuals/reference/RUNTIME_TRANSITIONS.md`](manuals/reference/RUNTIME_TRANSITIONS.md) |
+| data science and reporting | [`manuals/data-science/INDEX.md`](manuals/data-science/INDEX.md) | [`manuals/data-science/DS_OPERATIONS.md`](manuals/data-science/DS_OPERATIONS.md) | [`reports/ds/INDEX.md`](reports/ds/INDEX.md) |
 
 ## Root project documents
 

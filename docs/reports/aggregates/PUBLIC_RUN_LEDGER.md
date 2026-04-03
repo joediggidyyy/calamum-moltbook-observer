@@ -78,7 +78,7 @@ This means the public reporting surface is neither empty nor cosmetically flatte
 - The reporting corpus underneath that runtime headline is dominated by the three core operational families: `ops_parameters`, `runtime_artifacts`, and `repo_health`.
 - `implementation_drift` and `gui` remain useful public families, but their latest recorded runs are materially older than the March 24 operational cycle.
 - Some latest evidence bundles report degraded git metadata because the executing context hit a repository `safe.directory` restriction. Those provenance gaps affect selected git-derived fields, not the run-family counts shown here.
-- Probe families remain documented in [`GENERATED_REPORT_SURFACES.md`](GENERATED_REPORT_SURFACES.md), but they are not included in this starter ledger because the present public surface is intended to foreground the main publishable report families.
+- Probe families remain documented in [`../reference/GENERATED_REPORT_SURFACES.md`](../reference/GENERATED_REPORT_SURFACES.md), but they are not included in this starter ledger because the present public surface is intended to foreground the main publishable report families.
 - The current live runtime evidence shows `real:canary` as the active lane.
 
 ## Provenance
@@ -101,7 +101,6 @@ Supporting latest-run evidence bundles consulted for selected statistics:
 
 ## Related surfaces
 
-- [`INDEX.md`](INDEX.md)
+- [`../INDEX.md`](../INDEX.md)
 - [`AGGREGATE_REPORT.md`](AGGREGATE_REPORT.md)
-- [`AGGREGATE_REPORT_SCHEMA.md`](AGGREGATE_REPORT_SCHEMA.md)
-- [`GENERATED_REPORT_SURFACES.md`](GENERATED_REPORT_SURFACES.md)
+- [`../reference/GENERATED_REPORT_SURFACES.md`](../reference/GENERATED_REPORT_SURFACES.md)

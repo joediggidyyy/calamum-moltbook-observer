@@ -101,7 +101,7 @@ Use the wizard when any of the following are true:
 - you want to seed the run from a saved dataset, model, baseline packet, or prior run
 - you want draft save/load support while iterating on a DS workflow
 
-The wizard is documented separately in [`CALAMUM_DS_WIZARD.md`](CALAMUM_DS_WIZARD.md), but it targets the same underlying DS command surface.
+The wizard is documented separately in [`DS_WIZARD.md`](DS_WIZARD.md), but it targets the same underlying DS command surface.
 
 ## Practical guardrails
 
@@ -114,8 +114,8 @@ The wizard is documented separately in [`CALAMUM_DS_WIZARD.md`](CALAMUM_DS_WIZAR
 
 ## Related documents
 
-- [`CALAMUM_DS_WIZARD.md`](CALAMUM_DS_WIZARD.md)
+- [`DS_WIZARD.md`](DS_WIZARD.md)
 - [`../../../src/analysis/README.md`](../../../src/analysis/README.md)
 - [`../../reports/ds/INDEX.md`](../../reports/ds/INDEX.md)
-- [`../runtime/CALAMUM_RUNTIME_WORKFLOWS.md`](../runtime/CALAMUM_RUNTIME_WORKFLOWS.md)
+- [`../runtime/RUNTIME_WORKFLOWS.md`](../runtime/RUNTIME_WORKFLOWS.md)
 - [`../INDEX.md`](../INDEX.md)

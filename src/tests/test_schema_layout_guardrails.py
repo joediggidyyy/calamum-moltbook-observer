@@ -29,27 +29,46 @@ def test_jobs_and_operations_report_naming_boundaries() -> None:
     root = _project_root()
 
     jobs_dir = root / "jobs"
-    reports_dir = root / "docs" / "reports" / "operations"
+    local_reports_dir = root / "local_untracked" / "reports" / "operations"
+    legacy_ops_reports_dir = root / "docs" / "reports" / "operations"
+    legacy_queststack_reports_dir = root / "docs" / "reports" / "queststack"
 
     bad_in_jobs = sorted(
         p.name for p in jobs_dir.glob("**/*") if p.is_file() and p.name.startswith("JOB_REPORT_")
     )
     assert not bad_in_jobs, f"Job report files found in jobs/: {bad_in_jobs}"
 
+    assert not legacy_ops_reports_dir.exists(), "Legacy docs/reports/operations/ must not exist after report-root realignment"
+    assert not legacy_queststack_reports_dir.exists(), "Legacy docs/reports/queststack/ must not exist after report-root realignment"
+
     bad_in_reports = sorted(
-        p.name for p in reports_dir.glob("**/*") if p.is_file() and p.name.startswith("CALAMUM_JOB_")
+        p.name for p in local_reports_dir.glob("**/*") if p.is_file() and p.name.startswith("CALAMUM_JOB_")
     )
-    assert not bad_in_reports, f"Job definition files found in docs/reports/operations/: {bad_in_reports}"
+    assert not bad_in_reports, f"Job definition files found in local_untracked/reports/operations/: {bad_in_reports}"
 
 
 def test_manifest_authoritative_root_alignment() -> None:
     root = _project_root()
     manifest = json.loads((root / "PROJECT_MANIFEST.json").read_text(encoding="utf-8"))
 
-    tracked = set(manifest["layout"]["tracked_roots"])
-    ignored = set(manifest["layout"]["ignored_roots"])
+    public_surface = manifest["public_surface"]
+    content_roots = set(public_surface["content_roots"].keys())
+    public_reports = set(manifest["public_reports"])
 
-    assert "simulation/" not in tracked, "Legacy top-level simulation/ must not remain in tracked roots"
-    assert "src/" in tracked, "src/ must remain a tracked root"
-    assert "logs/" in ignored, "logs/ must remain ignored"
-    assert "local_untracked/" in ignored, "local_untracked/ must remain ignored"
+    assert "src/" in content_roots, "src/ must remain a public content root"
+    assert "docs/manuals/" in content_roots, "docs/manuals/ must remain a public content root"
+    assert "docs/reports/" in content_roots, "docs/reports/ must remain a public content root"
+    assert "template_library/" in content_roots, "template_library/ must remain a public content root"
+    assert "tools/" in content_roots, "tools/ must remain a public content root"
+    assert "local_untracked/" not in content_roots, "local_untracked/ must not appear as a public content root"
+
+    assert "docs/reports/ds/INDEX.md" in public_reports, "DS report index must remain declared as a public report"
+    assert "docs/reports/aggregates/PUBLIC_RUN_LEDGER.md" in public_reports, "Public run ledger must use the aggregates lane"
+    assert "docs/reports/aggregates/AGGREGATE_REPORT.md" in public_reports, "Aggregate report must use the aggregates lane"
+    assert "docs/reports/reference/GENERATED_REPORT_SURFACES.md" in public_reports, "Generated-report reference must use the reference lane"
+    assert "docs/reports/validations/APEXLAB_REFERENCE_VALIDATION_REPORT_20260324.md" in public_reports, "Validation report must use the validations lane"
+
+    assert "docs/reports/PUBLIC_RUN_LEDGER.md" not in public_reports, "Legacy root-level public run ledger path must not remain in the manifest"
+    assert "docs/reports/AGGREGATE_REPORT.md" not in public_reports, "Legacy root-level aggregate report path must not remain in the manifest"
+    assert "docs/reports/GENERATED_REPORT_SURFACES.md" not in public_reports, "Legacy root-level generated-report reference must not remain in the manifest"
+    assert "docs/reports/AGGREGATE_REPORT_SCHEMA.md" not in public_reports, "Archived aggregate schema must not remain in the manifest"

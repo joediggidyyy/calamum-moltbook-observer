@@ -385,13 +385,13 @@
 <h2 id="figure-panel--observer-integration-context">Figure panel — Observer integration context </h2>
 <p>The three figures already retained beside this report are relevant to the Observer integration context because they show the current canary anomaly-score landscape that depends on the same broader ApexLab-backed analytical lane. They are not direct outputs of <code>reference_validation_run.py</code>; they are companion Observer-side figures that help situate why validation quality matters.</p>
 <h3 id="figure-1-canary-anomaly-score-distribution-log-count-scale">Figure 1. Canary anomaly-score distribution (log-count scale) </h3>
-<p><img src="../../assets/plots/canary_v1_dist.png" alt="Figure 1 — Canary anomaly-score distribution on log-count scale"></p>
+<p><img src="../../../assets/plots/canary_v1_dist.png" alt="Figure 1 — Canary anomaly-score distribution on log-count scale"></p>
 <p><strong>Reading:</strong> the canary score distribution is broad and multi-modal, with a long left tail reaching into the anomaly region. The log-scale count view is especially useful for seeing low-frequency score regions that would otherwise be visually flattened.</p>
 <h3 id="figure-2-threshold-impact-analysis-at-the-current-false-positive-operating-point">Figure 2. Threshold impact analysis at the current false-positive operating point </h3>
-<p><img src="../../assets/plots/canary_v1_thresh.png" alt="Figure 2 — Threshold impact analysis"></p>
+<p><img src="../../../assets/plots/canary_v1_thresh.png" alt="Figure 2 — Threshold impact analysis"></p>
 <p><strong>Reading:</strong> the current threshold is approximately <code>-0.0450</code>, flagging <code>1364</code> of <code>133837</code> samples for an observed FPR near <code>1.0192%</code>. This matters because the Observer lane uses thresholded score interpretation operationally; numerical trust in the underlying analytical helpers therefore carries direct downstream consequences.</p>
 <h3 id="figure-3-canary-anomaly-score-distribution-linear-count-view">Figure 3. Canary anomaly-score distribution (linear-count view) </h3>
-<p><img src="../../assets/plots/canary_v1_test_nolog.png" alt="Figure 3 — Canary anomaly-score distribution on linear count scale"></p>
+<p><img src="../../../assets/plots/canary_v1_test_nolog.png" alt="Figure 3 — Canary anomaly-score distribution on linear count scale"></p>
 <p><strong>Reading:</strong> the linear-count view highlights the dense central mass and the higher-score concentration that the log view visually compresses. Together, Figures 1 and 3 provide complementary intuition for how the current threshold slices the empirical score landscape.</p>
 <h2 id="discussion">Discussion </h2>
 <h3 id="what-passed">What passed </h3>

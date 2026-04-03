@@ -4,11 +4,97 @@ Updated: 2026-04-03
 
 This document explains how to use the guided data-science wizard for `observerctl ds`.
 
+## Architecture Overview
+
+`mermaid
+stateDiagram-v2
+    direction LR
+    state "Librarian Vault" as Vault {
+        DatasetManifest
+        Models
+    }
+    state "DS Wizard" as Wizard {
+        PickDataset: page, date, file
+        SelectMode: <mode>-<source><hex>
+    }
+    state "Execution Pipeline" as Pipeline {
+        RunModel
+        Evaluate
+    }
+
+    Vault --> PickDataset : Token Loading
+    PickDataset --> SelectMode : Filtered Alias
+    SelectMode --> RunModel : CLI Execute
+    RunModel --> Evaluate
+`
+
+## Architecture Overview
+
+`mermaid
+stateDiagram-v2
+    direction LR
+    state "Librarian Vault" as Vault {
+        DatasetManifest
+        Models
+    }
+    state "DS Wizard" as Wizard {
+        PickDataset: page, date, file
+        SelectMode: <mode>-<source><hex>
+    }
+    state "Execution Pipeline" as Pipeline {
+        RunModel
+        Evaluate
+    }
+
+    Vault --> PickDataset : Token Loading
+    PickDataset --> SelectMode : Filtered Alias
+    SelectMode --> RunModel : CLI Execute
+    RunModel --> Evaluate
+`
+
 ## What the wizard is
 
-The wizard is the interactive front end for the same DS operations documented in [`CALAMUM_DS_OPERATIONS.md`](CALAMUM_DS_OPERATIONS.md).
+The wizard is the interactive front end for the same DS operations documented in [`DS_OPERATIONS.md`](DS_OPERATIONS.md).
 
 Use it when you want guided configuration, seeded state from existing artifacts, draft save/load, command preview, and optional execute handoff without manually assembling every CLI flag.
+
+### Loading Data: The Token Standard
+
+The Calamum ecosystem no longer supports raw filepaths for pipeline ingestion. Instead, **all data must be loaded securely via Librarian Vault tokens**. 
+
+Tokens follow the strict exact-match structure: <mode>-<source><hex> (e.g., can-s123A, liv-rF9B2).
+
+When you select an input parameter in the wizard, you will interact with the paginated vault selector:
+
+`	ext
+> Dataset Selection
+
+1. can-s123A  (2400 records)  [01-04-2026]
+2. liv-rF9B2  (150 records)   [29-03-2026]
+
+Enter selection or [page 2], [date DD-MM-YYYY], [file alias]:
+`
+
+Use page <#> to paginate, date <DD-MM-YYYY> to filter exact jumps, or ile <alias> to pick the token directly.
+
+### Loading Data: The Token Standard
+
+The Calamum ecosystem no longer supports raw filepaths for pipeline ingestion. Instead, **all data must be loaded securely via Librarian Vault tokens**. 
+
+Tokens follow the strict exact-match structure: <mode>-<source><hex> (e.g., can-s123A, liv-rF9B2).
+
+When you select an input parameter in the wizard, you will interact with the paginated vault selector:
+
+`	ext
+> Dataset Selection
+
+1. can-s123A  (2400 records)  [01-04-2026]
+2. liv-rF9B2  (150 records)   [29-03-2026]
+
+Enter selection or [page 2], [date DD-MM-YYYY], [file alias]:
+`
+
+Use page <#> to paginate, date <DD-MM-YYYY> to filter exact jumps, or ile <alias> to pick the token directly.
 
 ## Wizard workflows
 
@@ -106,7 +192,7 @@ The wizard writes into the same DS reporting structure as the direct CLI.
 | `docs/reports/ds/aggregates/*.md` | tracked rollups |
 | `docs/reports/ds/INDEX.md` | reader-facing DS publication hub |
 
-If you only need the publication view, go to [`../../reports/ds/INDEX.md`](../../reports/ds/INDEX.md). If you need the direct non-wizard command forms, go to [`CALAMUM_DS_OPERATIONS.md`](CALAMUM_DS_OPERATIONS.md).
+If you only need the publication view, go to [`../../reports/ds/INDEX.md`](../../reports/ds/INDEX.md). If you need the direct non-wizard command forms, go to [`DS_OPERATIONS.md`](DS_OPERATIONS.md).
 
 ## Practical tips
 
@@ -119,8 +205,8 @@ If you only need the publication view, go to [`../../reports/ds/INDEX.md`](../..
 
 ## Related documents
 
-- [`CALAMUM_DS_OPERATIONS.md`](CALAMUM_DS_OPERATIONS.md)
+- [`DS_OPERATIONS.md`](DS_OPERATIONS.md)
 - [`../../reports/ds/INDEX.md`](../../reports/ds/INDEX.md)
 - [`../../../src/analysis/README.md`](../../../src/analysis/README.md)
-- [`../runtime/CALAMUM_RUNTIME_WORKFLOWS.md`](../runtime/CALAMUM_RUNTIME_WORKFLOWS.md)
+- [`../runtime/RUNTIME_WORKFLOWS.md`](../runtime/RUNTIME_WORKFLOWS.md)
 - [`../INDEX.md`](../INDEX.md)

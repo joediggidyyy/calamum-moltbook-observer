@@ -24,9 +24,9 @@ Most generated report artifacts remain untracked runtime outputs. The DS lane al
 
 Use the companion report references alongside this document:
 
-- [`ds/INDEX.md`](ds/INDEX.md) for curated DS report packs and DS aggregate rollups derived from the canonical DS run spine
-- [`PUBLIC_RUN_LEDGER.md`](PUBLIC_RUN_LEDGER.md) for the public register of run families and authoritative evidence surfaces
-- [`AGGREGATE_REPORT_SCHEMA.md`](AGGREGATE_REPORT_SCHEMA.md) for the schema governing future public aggregate reports
+- [`../ds/INDEX.md`](../ds/INDEX.md) for curated DS report packs and DS aggregate rollups derived from the canonical DS run spine
+- [`../aggregates/PUBLIC_RUN_LEDGER.md`](../aggregates/PUBLIC_RUN_LEDGER.md) for the public register of run families and authoritative evidence surfaces
+- [`../aggregates/AGGREGATE_REPORT.md`](../aggregates/AGGREGATE_REPORT.md) for the current aggregate synthesis and threshold-calibration snapshot
 
 When runtime lane data is available, the public reporting surfaces should foreground runtime evidence aggregates before audit-family rollups.
 
@@ -65,11 +65,11 @@ These sources are not long-horizon family ledgers, but they are the highest-valu
 
 ## Threshold calibration coverage
 
-Threshold calibration currently appears as a compact subsection inside [`AGGREGATE_REPORT.md`](AGGREGATE_REPORT.md).
+Threshold calibration currently appears as a compact subsection inside [`../aggregates/AGGREGATE_REPORT.md`](../aggregates/AGGREGATE_REPORT.md).
 
 Current public direction:
 
-- publish the threshold, FPR, and score-distribution summary inside [`AGGREGATE_REPORT.md`](AGGREGATE_REPORT.md)
+- publish the threshold, FPR, and score-distribution summary inside [`../aggregates/AGGREGATE_REPORT.md`](../aggregates/AGGREGATE_REPORT.md)
 - treat threshold calibration as part of the aggregate report surface
 - defer broader model-eval aggregation until the observer has successfully run in each mode and the final pre-ship lockdown lane is complete
 
@@ -213,10 +213,10 @@ Example shape:
 
 ## Related surfaces
 
-- [`INDEX.md`](INDEX.md)
-- [`ds/INDEX.md`](ds/INDEX.md)
-- [`PUBLIC_RUN_LEDGER.md`](PUBLIC_RUN_LEDGER.md)
-- [`AGGREGATE_REPORT_SCHEMA.md`](AGGREGATE_REPORT_SCHEMA.md)
-- [`../manuals/INDEX.md`](../manuals/INDEX.md)
-- [`../../README.md`](../../README.md)
-- [`../../DATA_METHODOLOGY.md`](../../DATA_METHODOLOGY.md)
+- [`../INDEX.md`](../INDEX.md)
+- [`../ds/INDEX.md`](../ds/INDEX.md)
+- [`../aggregates/PUBLIC_RUN_LEDGER.md`](../aggregates/PUBLIC_RUN_LEDGER.md)
+- [`../aggregates/AGGREGATE_REPORT.md`](../aggregates/AGGREGATE_REPORT.md)
+- [`../../manuals/INDEX.md`](../../manuals/INDEX.md)
+- [`../../../README.md`](../../../README.md)
+- [`../../../DATA_METHODOLOGY.md`](../../../DATA_METHODOLOGY.md)

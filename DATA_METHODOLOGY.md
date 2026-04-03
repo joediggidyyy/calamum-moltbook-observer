@@ -25,8 +25,8 @@ It covers:
 
 - [`README.md`](README.md) — project overview and public entry point
 - [`SECURITY.md`](SECURITY.md) — security doctrine and disclosure policy
-- [`Calamum Security Model`](docs/manuals/reference/CALAMUM_SECURITY_MODEL.md) — posture and enforcement architecture
-- [`Calamum Runtime Transitions`](docs/manuals/reference/CALAMUM_RUNTIME_TRANSITIONS.md) — runtime transition contract
+- [`Calamum Security Model`](docs/manuals/reference/SECURITY_MODEL.md) — posture and enforcement architecture
+- [`Calamum Runtime Transitions`](docs/manuals/reference/RUNTIME_TRANSITIONS.md) — runtime transition contract
 
 ## 2. Verification basis
 
@@ -43,8 +43,8 @@ Primary verification basis:
 - `src/analysis/validate_jsonl.py`
 - `src/tests/test_obfuscator.py`
 - `src/tests/test_observerctl.py`
-- `docs/manuals/runtime/CALAMUM_RUNTIME_OPERATIONS.md`
-- `docs/manuals/reference/CALAMUM_RUNTIME_TRANSITIONS.md`
+- `docs/manuals/runtime/RUNTIME_OPERATIONS.md`
+- `docs/manuals/reference/RUNTIME_TRANSITIONS.md`
 
 ## 3. Methodological commitments
 

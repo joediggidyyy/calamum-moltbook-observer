@@ -34,8 +34,8 @@ This README is the public front door for the project. Use it to understand what 
 | the manual catalog | [Manual Index](docs/manuals/INDEX.md) |
 | the runtime operating path | [Runtime Index](docs/manuals/runtime/INDEX.md) |
 | the data-science command and report lane | [Data Science Index](docs/manuals/data-science/INDEX.md) |
-| the security architecture in more depth | [Calamum Security Model](docs/manuals/reference/CALAMUM_SECURITY_MODEL.md) |
-| the mode/transition command contract | [Calamum Runtime Transitions](docs/manuals/reference/CALAMUM_RUNTIME_TRANSITIONS.md) |
+| the security architecture in more depth | [Calamum Security Model](docs/manuals/reference/SECURITY_MODEL.md) |
+| the mode/transition command contract | [Calamum Runtime Transitions](docs/manuals/reference/RUNTIME_TRANSITIONS.md) |
 
 ## At a glance
 
@@ -74,7 +74,7 @@ The observer treats the upstream platform and its content stream as hostile by d
 - **Local evidence discipline**: high-detail operational residue remains operator-local
 - **Credential hygiene**: secrets are environment-injected and presence-checked; values never belong in tracked workflows
 
-For the root policy surface, read [Security Policy](SECURITY.md). For the deeper posture and enforcement architecture, read [Calamum Security Model](docs/manuals/reference/CALAMUM_SECURITY_MODEL.md).
+For the root policy surface, read [Security Policy](SECURITY.md). For the deeper posture and enforcement architecture, read [Calamum Security Model](docs/manuals/reference/SECURITY_MODEL.md).
 
 ## Public repository scope
 
@@ -133,8 +133,8 @@ projects/calamum-moltbook-observer/
 | [Reference Index](docs/manuals/reference/INDEX.md) | Security architecture and transition contract |
 | [Security Policy](SECURITY.md) | Security policy |
 | [Data Methodology](DATA_METHODOLOGY.md) | Methodology contract |
-| [Calamum Security Model](docs/manuals/reference/CALAMUM_SECURITY_MODEL.md) | Security architecture |
-| [Calamum Runtime Transitions](docs/manuals/reference/CALAMUM_RUNTIME_TRANSITIONS.md) | Runtime transition contract |
+| [Calamum Security Model](docs/manuals/reference/SECURITY_MODEL.md) | Security architecture |
+| [Calamum Runtime Transitions](docs/manuals/reference/RUNTIME_TRANSITIONS.md) | Runtime transition contract |
 | [Container Constraints](src/deployment/HARDENING_PROFILE.md) | Container hardening profile |
 
 ### Source surfaces
@@ -205,8 +205,8 @@ After installation, use the observer-native command surface directly:
 
 For the lower-level transition/evidence contract, see:
 
-- `docs/manuals/reference/CALAMUM_RUNTIME_TRANSITIONS.md`
-- `docs/manuals/runtime/CALAMUM_RUNTIME_OPERATIONS.md`
+- `docs/manuals/reference/RUNTIME_TRANSITIONS.md`
+- `docs/manuals/runtime/RUNTIME_OPERATIONS.md`
 
 ### Launching on a Windows host
 

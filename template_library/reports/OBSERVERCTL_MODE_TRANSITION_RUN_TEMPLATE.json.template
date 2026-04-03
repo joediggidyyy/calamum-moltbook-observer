@@ -24,7 +24,7 @@
     "run_id": "<observerctl-...>",
     "posture_trigger_id": "<pt-...>",
     "posture_trigger": "<isolation|lockdown>",
-    "security_report_ref": "<docs/reports/operations/...>"
+    "security_report_ref": "<local_untracked/reports/operations/...>"
   },
   "triad_packet": {
     "path": "<path>",

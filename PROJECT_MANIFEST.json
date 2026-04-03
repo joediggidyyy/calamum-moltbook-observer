@@ -36,22 +36,23 @@
   },
   "public_reports": [
     "docs/reports/INDEX.md",
-    "docs/reports/PUBLIC_RUN_LEDGER.md",
-    "docs/reports/AGGREGATE_REPORT.md",
-    "docs/reports/AGGREGATE_REPORT_SCHEMA.md",
-    "docs/reports/GENERATED_REPORT_SURFACES.md"
+    "docs/reports/ds/INDEX.md",
+    "docs/reports/aggregates/PUBLIC_RUN_LEDGER.md",
+    "docs/reports/aggregates/AGGREGATE_REPORT.md",
+    "docs/reports/reference/GENERATED_REPORT_SURFACES.md",
+    "docs/reports/validations/APEXLAB_REFERENCE_VALIDATION_REPORT_20260324.md"
   ],
   "public_manuals": [
     "docs/manuals/INDEX.md",
     "docs/manuals/runtime/INDEX.md",
-    "docs/manuals/runtime/CALAMUM_RUNTIME_WORKFLOWS.md",
-    "docs/manuals/runtime/CALAMUM_RUNTIME_OPERATIONS.md",
+    "docs/manuals/runtime/RUNTIME_WORKFLOWS.md",
+    "docs/manuals/runtime/RUNTIME_OPERATIONS.md",
     "docs/manuals/data-science/INDEX.md",
-    "docs/manuals/data-science/CALAMUM_DS_OPERATIONS.md",
-    "docs/manuals/data-science/CALAMUM_DS_WIZARD.md",
+    "docs/manuals/data-science/DS_OPERATIONS.md",
+    "docs/manuals/data-science/DS_WIZARD.md",
     "docs/manuals/reference/INDEX.md",
-    "docs/manuals/reference/CALAMUM_SECURITY_MODEL.md",
-    "docs/manuals/reference/CALAMUM_RUNTIME_TRANSITIONS.md"
+    "docs/manuals/reference/SECURITY_MODEL.md",
+    "docs/manuals/reference/RUNTIME_TRANSITIONS.md"
   ],
   "standards": {
     "names_only": true,

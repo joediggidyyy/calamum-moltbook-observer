@@ -122,8 +122,8 @@ Fail-closed behavior is part of the product, not a suggestion that you should im
 
 ## Related documents
 
-- [`CALAMUM_RUNTIME_OPERATIONS.md`](CALAMUM_RUNTIME_OPERATIONS.md)
-- [`../reference/CALAMUM_RUNTIME_TRANSITIONS.md`](../reference/CALAMUM_RUNTIME_TRANSITIONS.md)
-- [`../reference/CALAMUM_SECURITY_MODEL.md`](../reference/CALAMUM_SECURITY_MODEL.md)
-- [`../data-science/CALAMUM_DS_OPERATIONS.md`](../data-science/CALAMUM_DS_OPERATIONS.md)
+- [`RUNTIME_OPERATIONS.md`](RUNTIME_OPERATIONS.md)
+- [`../reference/RUNTIME_TRANSITIONS.md`](../reference/RUNTIME_TRANSITIONS.md)
+- [`../reference/SECURITY_MODEL.md`](../reference/SECURITY_MODEL.md)
+- [`../data-science/DS_OPERATIONS.md`](../data-science/DS_OPERATIONS.md)
 - [`../INDEX.md`](../INDEX.md)

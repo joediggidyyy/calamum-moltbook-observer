@@ -51,8 +51,6 @@ queststacks/
 # Local-only (intentionally not tracked)
 local_untracked/
 
-# Frame 3 boundary codification — local-only reporting / execution surfaces
-# Keep this narrow so future public-safe derivatives under docs/reports/public/
-# remain trackable when that lane is created.
-docs/reports/operations/
-docs/reports/queststack/
+# Public docs/report surfaces must remain visible to git.
+# Local execution residue belongs under local_untracked/ so accidental
+# reintroduction of legacy docs/reports local-only lanes is not hidden.

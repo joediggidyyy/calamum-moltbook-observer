@@ -109,7 +109,7 @@ Minimum public evidence fields include:
 
 ## Related documents
 
-- [`CALAMUM_SECURITY_MODEL.md`](CALAMUM_SECURITY_MODEL.md)
-- [`../runtime/CALAMUM_RUNTIME_WORKFLOWS.md`](../runtime/CALAMUM_RUNTIME_WORKFLOWS.md)
-- [`../runtime/CALAMUM_RUNTIME_OPERATIONS.md`](../runtime/CALAMUM_RUNTIME_OPERATIONS.md)
+- [`SECURITY_MODEL.md`](SECURITY_MODEL.md)
+- [`../runtime/RUNTIME_WORKFLOWS.md`](../runtime/RUNTIME_WORKFLOWS.md)
+- [`../runtime/RUNTIME_OPERATIONS.md`](../runtime/RUNTIME_OPERATIONS.md)
 - [`../INDEX.md`](../INDEX.md)

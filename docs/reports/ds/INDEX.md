@@ -8,8 +8,8 @@ Tracked DS publication is a curated reader-facing surface derived from the canon
 
 | If you need... | Go to |
 | --- | --- |
-| the DS command surface | [`../../manuals/data-science/CALAMUM_DS_OPERATIONS.md`](../../manuals/data-science/CALAMUM_DS_OPERATIONS.md) |
-| the guided wizard flow | [`../../manuals/data-science/CALAMUM_DS_WIZARD.md`](../../manuals/data-science/CALAMUM_DS_WIZARD.md) |
+| the DS command surface | [`../../manuals/data-science/DS_OPERATIONS.md`](../../manuals/data-science/DS_OPERATIONS.md) |
+| the guided wizard flow | [`../../manuals/data-science/DS_WIZARD.md`](../../manuals/data-science/DS_WIZARD.md) |
 | the local analysis home | [`../../../src/analysis/README.md`](../../../src/analysis/README.md) |
 
 ## Summary

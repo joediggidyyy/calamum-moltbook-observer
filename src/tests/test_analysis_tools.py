@@ -240,3 +240,100 @@ def test_report_visuals_emit_evaluation_figures(tmp_path: Path) -> None:
     assert {'confusion_matrix', 'metric_comparison', 'threshold_summary'}.issubset({figure['id'] for figure in visuals['figures']})
     for figure in visuals['figures']:
         assert Path(figure['path']).exists()
+
+
+def test_report_pack_markdown_uses_codesentinel_style_sections(tmp_path: Path) -> None:
+    from analysis.report_pack import prepare_report_bundle, write_report_bundle
+
+    project_root = tmp_path / 'observer_project'
+    anchor = project_root / 'src' / 'observerctl_anchor.py'
+    anchor.parent.mkdir(parents=True, exist_ok=True)
+    anchor.write_text('# anchor\n', encoding='utf-8')
+    (project_root / 'PROJECT_MANIFEST.json').write_text('{}\n', encoding='utf-8')
+
+    bundle = prepare_report_bundle(anchor, 'demo', run_id='demo-style-001')
+    dataset_dir = bundle.artifact_dirs['dataset']
+    models_dir = bundle.artifact_dirs['models']
+    evaluation_dir = bundle.artifact_dirs['evaluation']
+    figures_dir = bundle.run_root / 'figures'
+    dataset_dir.mkdir(parents=True, exist_ok=True)
+    models_dir.mkdir(parents=True, exist_ok=True)
+    evaluation_dir.mkdir(parents=True, exist_ok=True)
+    figures_dir.mkdir(parents=True, exist_ok=True)
+
+    dataset_manifest = dataset_dir / 'dataset_manifest.json'
+    features_csv = dataset_dir / 'features.csv'
+    run_json = evaluation_dir / 'run.json'
+    run_md = evaluation_dir / 'run.md'
+    figure_path = figures_dir / 'score_distribution.png'
+
+    dataset_manifest.write_text('{}\n', encoding='utf-8')
+    features_csv.write_text('record_id\n', encoding='utf-8')
+    run_json.write_text('{"decision":"go"}\n', encoding='utf-8')
+    run_md.write_text('# run\n', encoding='utf-8')
+    figure_path.write_bytes(b'fake-png')
+
+    bundle_result = write_report_bundle(
+        project_anchor=anchor,
+        bundle=bundle,
+        packet={
+            'timestamp_utc': '2026-04-02T12:00:00Z',
+            'runtime_cli_surface': 'observerctl',
+            'decision': 'go',
+            'action': 'ds-run',
+            'command_family': 'ds',
+            'command_path': 'observerctl ds run demo',
+            'implementation_state': 'automation-available',
+            'underlying_surface': 'analysis.demo_runner',
+            'summary': 'Demo pipeline completed through observerctl ds.',
+            'run_id': bundle.run_id,
+            'anomaly_direction': 'lower-is-more-anomalous',
+            'counts': {'tp': 10, 'fp': 0, 'tn': 50, 'fn': 0},
+            'metrics': {'precision': 1.0, 'recall': 1.0, 'f1': 1.0, 'fpr': 0.0},
+            'thresholding': {
+                'target_fpr': 0.01,
+                'actual_fpr': 0.0,
+                'threshold': 0.42,
+            },
+            'workflow_steps': ['generate', 'build', 'evaluate'],
+            'reason_codes': [],
+            'visuals': {
+                'anomaly_direction': 'lower-is-more-anomalous',
+                'figure_count': 1,
+                'figures': [
+                    {
+                        'id': 'score_distribution',
+                        'title': 'Score distribution',
+                        'caption': 'Distribution of anomaly scores.',
+                        'path': figure_path,
+                    }
+                ],
+            },
+            'artifacts': {},
+        },
+        artifact_paths={
+            'dataset_manifest': dataset_manifest,
+            'features_csv': features_csv,
+            'evaluation_run_json': run_json,
+            'evaluation_run_md': run_md,
+        },
+        context={'dataset_seed': 123, 'max_fpr': 0.01},
+        lineage={'source_run_root': bundle.run_root},
+    )
+
+    report_md = (project_root / bundle_result['paths']['report_md']).read_text(encoding='utf-8')
+
+    assert '**Status**: `go`' in report_md
+    assert '## Executive summary' in report_md
+    assert '## Run snapshot' in report_md
+    assert '## Context' in report_md
+    assert '## Result overview' in report_md
+    assert '### Counts' in report_md
+    assert '### Metrics' in report_md
+    assert '### Thresholding' in report_md
+    assert '### Workflow steps' in report_md
+    assert '### Reason codes' in report_md
+    assert '## Artifact index' in report_md
+    assert '## Provenance' in report_md
+    assert '## Report paths' in report_md
+    assert '| Field | Value |' in report_md

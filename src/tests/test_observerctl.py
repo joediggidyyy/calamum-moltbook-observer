@@ -117,6 +117,28 @@ def _make_temp_observer_project(tmp_path: Path) -> tuple[Path, Path]:
     return project_root, anchor
 
 
+import contextlib
+from unittest.mock import patch
+
+@contextlib.contextmanager
+def _bind_temp_observer_project_ctx(monkeypatch, tmp_path):
+    project_root, anchor = _make_temp_observer_project(tmp_path)
+    monkeypatch.setattr(observerctl_module, '_project_root', lambda: project_root)
+    monkeypatch.setattr(observerctl_module, '_project_anchor', lambda: anchor)
+    monkeypatch.setattr(observerctl_module, '__file__', str(anchor))
+    yield project_root
+
+import contextlib
+from unittest.mock import patch
+
+@contextlib.contextmanager
+def _bind_temp_observer_project_ctx(monkeypatch, tmp_path):
+    project_root, anchor = _make_temp_observer_project(tmp_path)
+    monkeypatch.setattr(observerctl_module, '_project_root', lambda: project_root)
+    monkeypatch.setattr(observerctl_module, '_project_anchor', lambda: anchor)
+    monkeypatch.setattr(observerctl_module, '__file__', str(anchor))
+    yield project_root
+
 def _bind_temp_observer_project(monkeypatch: pytest.MonkeyPatch, project_root: Path, anchor: Path) -> None:
     monkeypatch.setattr(observerctl_module, '_project_root', lambda: project_root)
     monkeypatch.setattr(observerctl_module, '_project_anchor', lambda: anchor)
@@ -1778,242 +1800,248 @@ def test_ds_wizard_cmd_surface_explains_execution_map() -> None:
     assert any('report lane:' in line for line in rendered)
 
 
-def test_ds_run_demo_executes_wrapper_and_emits_artifact_summary(tmp_path: Path, capsys) -> None:
-    try:
-        import apexlab  # noqa: F401
-    except ImportError:
-        pytest.skip('ApexLab not installed')
-
-    out_dir = tmp_path / 'demo_flow'
-    rc = main(['ds', 'run', 'demo', '--out-dir', str(out_dir), '--json'])
-
-    assert rc == 0
-    payload = json.loads(capsys.readouterr().out)
-    assert payload['action'] == 'ds-run'
-    assert payload['run_mode'] == 'demo'
-    assert payload['implementation_state'] == 'automation-available'
-    assert 'delivery_frame' not in payload
-    assert payload['total_records'] == 60
-    assert Path(payload['artifacts']['root_dir']).exists()
-    assert Path(payload['artifacts']['dataset_manifest']).exists()
-    assert Path(payload['artifacts']['supervised_model_path']).exists()
-    assert Path(payload['artifacts']['unsupervised_model_path']).exists()
-    assert Path(payload['artifacts']['evaluation_run_json']).exists()
-    assert Path(payload['artifacts']['evaluation_run_md']).exists()
-    assert _resolve_reported_path(payload['artifacts']['report_json']).exists()
-    assert _resolve_reported_path(payload['artifacts']['report_md']).exists()
-    assert _resolve_reported_path(payload['artifacts']['report_manifest_json']).exists()
-    assert _resolve_reported_path(payload['artifacts']['ds_run_index_jsonl']).exists()
-    assert _resolve_reported_path(payload['artifacts']['ds_latest_json']).exists()
+def test_ds_run_demo_executes_wrapper_and_emits_artifact_summary(tmp_path: Path, monkeypatch, capsys) -> None:
+    with _bind_temp_observer_project_ctx(monkeypatch, tmp_path) as project_dir:
+            try:
+                import apexlab  # noqa: F401
+            except ImportError:
+                pytest.skip('ApexLab not installed')
+        
+            out_dir = tmp_path / 'demo_flow'
+            rc = main(['ds', 'run', 'demo', '--out-dir', str(out_dir), '--json'])
+        
+            assert rc == 0
+            payload = json.loads(capsys.readouterr().out)
+            assert payload['action'] == 'ds-run'
+            assert payload['run_mode'] == 'demo'
+            assert payload['implementation_state'] == 'automation-available'
+            assert 'delivery_frame' not in payload
+            assert payload['total_records'] == 60
+            assert Path(payload['artifacts']['root_dir']).exists()
+            assert Path(payload['artifacts']['dataset_manifest']).exists()
+            assert Path(payload['artifacts']['supervised_model_path']).exists()
+            assert Path(payload['artifacts']['unsupervised_model_path']).exists()
+            assert Path(payload['artifacts']['evaluation_run_json']).exists()
+            assert Path(payload['artifacts']['evaluation_run_md']).exists()
+            assert _resolve_reported_path(payload['artifacts']['report_json']).exists()
+            assert _resolve_reported_path(payload['artifacts']['report_md']).exists()
+            assert _resolve_reported_path(payload['artifacts']['report_manifest_json']).exists()
+            assert _resolve_reported_path(payload['artifacts']['ds_run_index_jsonl']).exists()
+            assert _resolve_reported_path(payload['artifacts']['ds_latest_json']).exists()
 
 
 def test_ds_run_pipeline_executes_supervised_flow_and_emits_artifact_summary(tmp_path: Path, monkeypatch, capsys) -> None:
-    try:
-        import apexlab  # noqa: F401
-    except ImportError:
-        pytest.skip('ApexLab not installed')
-
-    log_dir = tmp_path / 'logs'
-    (log_dir / 'health').mkdir(parents=True, exist_ok=True)
-    (log_dir / 'data' / 'calamum').mkdir(parents=True, exist_ok=True)
-    (log_dir / 'control' / 'calamum').mkdir(parents=True, exist_ok=True)
-
-    monkeypatch.setenv('CALAMUM_LOG_DIR', str(log_dir))
-    monkeypatch.setenv('CALAMUM_DATA_SIGNING_KEY', 'unit-test-signing-key')
-
-    input_path = tmp_path / 'input.jsonl'
-    _write_signed_jsonl(input_path, _make_ds_records())
-    out_dir = tmp_path / 'pipeline_flow'
-
-    rc = main([
-        'ds', 'run', 'pipeline',
-        '--input', str(input_path),
-        '--out-dir', str(out_dir),
-        '--model-type', 'supervised',
-        '--seed', '42',
-        '--json',
-    ])
-
-    assert rc == 0
-    payload = json.loads(capsys.readouterr().out)
-    assert payload['action'] == 'ds-run'
-    assert payload['run_mode'] == 'pipeline'
-    assert payload['implementation_state'] == 'automation-available'
-    assert 'delivery_frame' not in payload
-    assert payload['model_type'] == 'supervised'
-    assert payload['has_labels'] is True
-    assert payload['workflow_steps'] == ['build', 'train', 'evaluate']
-    assert Path(payload['artifacts']['dataset_manifest']).exists()
-    assert Path(payload['artifacts']['train_manifest']).exists()
-    assert Path(payload['artifacts']['model_path']).exists()
-    assert Path(payload['artifacts']['run_json']).exists()
-    assert Path(payload['artifacts']['run_md']).exists()
-    assert _resolve_reported_path(payload['artifacts']['report_json']).exists()
-    assert _resolve_reported_path(payload['artifacts']['report_md']).exists()
-    assert _resolve_reported_path(payload['artifacts']['report_manifest_json']).exists()
-    assert _resolve_reported_path(payload['artifacts']['ds_run_index_jsonl']).exists()
-    assert _resolve_reported_path(payload['artifacts']['ds_latest_json']).exists()
+    with _bind_temp_observer_project_ctx(monkeypatch, tmp_path) as project_dir:
+            try:
+                import apexlab  # noqa: F401
+            except ImportError:
+                pytest.skip('ApexLab not installed')
+        
+            log_dir = tmp_path / 'logs'
+            (log_dir / 'health').mkdir(parents=True, exist_ok=True)
+            (log_dir / 'data' / 'calamum').mkdir(parents=True, exist_ok=True)
+            (log_dir / 'control' / 'calamum').mkdir(parents=True, exist_ok=True)
+        
+            monkeypatch.setenv('CALAMUM_LOG_DIR', str(log_dir))
+            monkeypatch.setenv('CALAMUM_DATA_SIGNING_KEY', 'unit-test-signing-key')
+        
+            input_path = tmp_path / 'input.jsonl'
+            _write_signed_jsonl(input_path, _make_ds_records())
+            out_dir = tmp_path / 'pipeline_flow'
+        
+            rc = main([
+                'ds', 'run', 'pipeline',
+                '--input', str(input_path),
+                '--out-dir', str(out_dir),
+                '--model-type', 'supervised',
+                '--seed', '42',
+                '--json',
+            ])
+        
+            assert rc == 0
+            payload = json.loads(capsys.readouterr().out)
+            assert payload['action'] == 'ds-run'
+            assert payload['run_mode'] == 'pipeline'
+            assert payload['implementation_state'] == 'automation-available'
+            assert 'delivery_frame' not in payload
+            assert payload['model_type'] == 'supervised'
+            assert payload['has_labels'] is True
+            assert payload['workflow_steps'] == ['build', 'train', 'evaluate']
+            assert Path(payload['artifacts']['dataset_manifest']).exists()
+            assert Path(payload['artifacts']['train_manifest']).exists()
+            assert Path(payload['artifacts']['model_path']).exists()
+            assert Path(payload['artifacts']['run_json']).exists()
+            assert Path(payload['artifacts']['run_md']).exists()
+            assert _resolve_reported_path(payload['artifacts']['report_json']).exists()
+            assert _resolve_reported_path(payload['artifacts']['report_md']).exists()
+            assert _resolve_reported_path(payload['artifacts']['report_manifest_json']).exists()
+            assert _resolve_reported_path(payload['artifacts']['ds_run_index_jsonl']).exists()
+            assert _resolve_reported_path(payload['artifacts']['ds_latest_json']).exists()
 
 
 def test_ds_build_executes_wrapper_and_emits_artifact_summary(tmp_path: Path, monkeypatch, capsys) -> None:
-    log_dir = tmp_path / 'logs'
-    (log_dir / 'health').mkdir(parents=True, exist_ok=True)
-    (log_dir / 'data' / 'calamum').mkdir(parents=True, exist_ok=True)
-    (log_dir / 'control' / 'calamum').mkdir(parents=True, exist_ok=True)
-
-    monkeypatch.setenv('CALAMUM_LOG_DIR', str(log_dir))
-    monkeypatch.setenv('CALAMUM_DATA_SIGNING_KEY', 'unit-test-signing-key')
-
-    input_path = tmp_path / 'input.jsonl'
-    _write_signed_jsonl(input_path, _make_ds_records())
-    out_dir = tmp_path / 'dataset'
-
-    rc = main(['ds', 'build', '--input', str(input_path), '--out-dir', str(out_dir), '--seed', '123', '--json'])
-    assert rc == 0
-
-    payload = json.loads(capsys.readouterr().out)
-    assert payload['action'] == 'ds-build'
-    assert payload['implementation_state'] == 'command-available'
-    assert 'delivery_frame' not in payload
-    assert Path(payload['artifacts']['dataset_manifest']).exists()
-    assert Path(payload['artifacts']['features_csv']).exists()
-    assert payload['has_labels'] is True
-    assert int(payload['total_records']) == 12
-    assert _resolve_reported_path(payload['artifacts']['report_json']).exists()
-    assert _resolve_reported_path(payload['artifacts']['report_md']).exists()
-    assert _resolve_reported_path(payload['artifacts']['report_manifest_json']).exists()
-    assert _resolve_reported_path(payload['artifacts']['ds_run_index_jsonl']).exists()
-    assert _resolve_reported_path(payload['artifacts']['ds_latest_json']).exists()
+    with _bind_temp_observer_project_ctx(monkeypatch, tmp_path) as project_dir:
+            log_dir = tmp_path / 'logs'
+            (log_dir / 'health').mkdir(parents=True, exist_ok=True)
+            (log_dir / 'data' / 'calamum').mkdir(parents=True, exist_ok=True)
+            (log_dir / 'control' / 'calamum').mkdir(parents=True, exist_ok=True)
+        
+            monkeypatch.setenv('CALAMUM_LOG_DIR', str(log_dir))
+            monkeypatch.setenv('CALAMUM_DATA_SIGNING_KEY', 'unit-test-signing-key')
+        
+            input_path = tmp_path / 'input.jsonl'
+            _write_signed_jsonl(input_path, _make_ds_records())
+            out_dir = tmp_path / 'dataset'
+        
+            rc = main(['ds', 'build', '--input', str(input_path), '--out-dir', str(out_dir), '--seed', '123', '--json'])
+            assert rc == 0
+        
+            payload = json.loads(capsys.readouterr().out)
+            assert payload['action'] == 'ds-build'
+            assert payload['implementation_state'] == 'command-available'
+            assert 'delivery_frame' not in payload
+            assert Path(payload['artifacts']['dataset_manifest']).exists()
+            assert Path(payload['artifacts']['features_csv']).exists()
+            assert payload['has_labels'] is True
+            assert int(payload['total_records']) == 12
+            assert _resolve_reported_path(payload['artifacts']['report_json']).exists()
+            assert _resolve_reported_path(payload['artifacts']['report_md']).exists()
+            assert _resolve_reported_path(payload['artifacts']['report_manifest_json']).exists()
+            assert _resolve_reported_path(payload['artifacts']['ds_run_index_jsonl']).exists()
+            assert _resolve_reported_path(payload['artifacts']['ds_latest_json']).exists()
 
 
 def test_ds_train_executes_wrapper_and_emits_expected_artifacts(tmp_path: Path, monkeypatch, capsys) -> None:
-    try:
-        import apexlab  # noqa: F401
-    except ImportError:
-        pytest.skip('ApexLab not installed')
-
-    log_dir = tmp_path / 'logs'
-    (log_dir / 'health').mkdir(parents=True, exist_ok=True)
-    (log_dir / 'data' / 'calamum').mkdir(parents=True, exist_ok=True)
-    (log_dir / 'control' / 'calamum').mkdir(parents=True, exist_ok=True)
-
-    monkeypatch.setenv('CALAMUM_LOG_DIR', str(log_dir))
-    monkeypatch.setenv('CALAMUM_DATA_SIGNING_KEY', 'unit-test-signing-key')
-
-    from analysis.dataset_builder import build_dataset
-
-    input_path = tmp_path / 'input.jsonl'
-    _write_signed_jsonl(input_path, _make_ds_records())
-    dataset_dir = tmp_path / 'dataset'
-    build_dataset([input_path], out_dir=dataset_dir, seed=123)
-    manifest_path = dataset_dir / 'dataset_manifest.json'
-    model_dir = tmp_path / 'models'
-
-    rc = main(['ds', 'train', '--dataset', str(manifest_path), '--out-dir', str(model_dir), '--model-type', 'supervised', '--json'])
-    assert rc == 0
-
-    payload = json.loads(capsys.readouterr().out)
-    assert payload['action'] == 'ds-train'
-    assert payload['model_type'] == 'supervised'
-    assert Path(payload['artifacts']['train_manifest']).exists()
-    assert Path(payload['artifacts']['model_path']).exists()
-    assert Path(payload['artifacts']['metrics_path']).exists()
-    assert _resolve_reported_path(payload['artifacts']['report_json']).exists()
-    assert _resolve_reported_path(payload['artifacts']['report_md']).exists()
-    assert _resolve_reported_path(payload['artifacts']['report_manifest_json']).exists()
-    assert _resolve_reported_path(payload['artifacts']['ds_run_index_jsonl']).exists()
-    assert _resolve_reported_path(payload['artifacts']['ds_latest_json']).exists()
+    with _bind_temp_observer_project_ctx(monkeypatch, tmp_path) as project_dir:
+            try:
+                import apexlab  # noqa: F401
+            except ImportError:
+                pytest.skip('ApexLab not installed')
+        
+            log_dir = tmp_path / 'logs'
+            (log_dir / 'health').mkdir(parents=True, exist_ok=True)
+            (log_dir / 'data' / 'calamum').mkdir(parents=True, exist_ok=True)
+            (log_dir / 'control' / 'calamum').mkdir(parents=True, exist_ok=True)
+        
+            monkeypatch.setenv('CALAMUM_LOG_DIR', str(log_dir))
+            monkeypatch.setenv('CALAMUM_DATA_SIGNING_KEY', 'unit-test-signing-key')
+        
+            from analysis.dataset_builder import build_dataset
+        
+            input_path = tmp_path / 'input.jsonl'
+            _write_signed_jsonl(input_path, _make_ds_records())
+            dataset_dir = tmp_path / 'dataset'
+            build_dataset([input_path], out_dir=dataset_dir, seed=123)
+            manifest_path = dataset_dir / 'dataset_manifest.json'
+            model_dir = tmp_path / 'models'
+        
+            rc = main(['ds', 'train', '--dataset', str(manifest_path), '--out-dir', str(model_dir), '--model-type', 'supervised', '--json'])
+            assert rc == 0
+        
+            payload = json.loads(capsys.readouterr().out)
+            assert payload['action'] == 'ds-train'
+            assert payload['model_type'] == 'supervised'
+            assert Path(payload['artifacts']['train_manifest']).exists()
+            assert Path(payload['artifacts']['model_path']).exists()
+            assert Path(payload['artifacts']['metrics_path']).exists()
+            assert _resolve_reported_path(payload['artifacts']['report_json']).exists()
+            assert _resolve_reported_path(payload['artifacts']['report_md']).exists()
+            assert _resolve_reported_path(payload['artifacts']['report_manifest_json']).exists()
+            assert _resolve_reported_path(payload['artifacts']['ds_run_index_jsonl']).exists()
+            assert _resolve_reported_path(payload['artifacts']['ds_latest_json']).exists()
 
 
 def test_ds_evaluate_executes_wrapper_and_emits_run_artifacts(tmp_path: Path, monkeypatch, capsys) -> None:
-    log_dir = tmp_path / 'logs'
-    (log_dir / 'health').mkdir(parents=True, exist_ok=True)
-    (log_dir / 'data' / 'calamum').mkdir(parents=True, exist_ok=True)
-    (log_dir / 'control' / 'calamum').mkdir(parents=True, exist_ok=True)
-
-    monkeypatch.setenv('CALAMUM_LOG_DIR', str(log_dir))
-    monkeypatch.setenv('CALAMUM_DATA_SIGNING_KEY', 'unit-test-signing-key')
-
-    from analysis.dataset_builder import build_dataset
-
-    input_path = tmp_path / 'input.jsonl'
-    _write_signed_jsonl(input_path, _make_ds_records())
-    dataset_dir = tmp_path / 'dataset'
-    manifest = build_dataset([input_path], out_dir=dataset_dir, seed=123)
-    eval_dir = tmp_path / 'evaluation'
-
-    rc = main([
-        'ds', 'evaluate',
-        '--features-csv', str(Path(manifest.features_csv)),
-        '--labels-csv', str(Path(manifest.labels_csv)),
-        '--dataset-manifest', str(dataset_dir / 'dataset_manifest.json'),
-        '--out-dir', str(eval_dir),
-        '--run-id', 'unit-eval',
-        '--json',
-    ])
-    assert rc == 0
-
-    payload = json.loads(capsys.readouterr().out)
-    assert payload['action'] == 'ds-evaluate'
-    assert payload['run_id'] == 'unit-eval'
-    assert Path(payload['artifacts']['run_json']).exists()
-    assert Path(payload['artifacts']['run_md']).exists()
-    assert payload['has_labels'] is True
-    assert _resolve_reported_path(payload['artifacts']['report_json']).exists()
-    assert _resolve_reported_path(payload['artifacts']['report_md']).exists()
-    assert _resolve_reported_path(payload['artifacts']['report_manifest_json']).exists()
-    assert _resolve_reported_path(payload['artifacts']['ds_run_index_jsonl']).exists()
-    assert _resolve_reported_path(payload['artifacts']['ds_latest_json']).exists()
+    with _bind_temp_observer_project_ctx(monkeypatch, tmp_path) as project_dir:
+            log_dir = tmp_path / 'logs'
+            (log_dir / 'health').mkdir(parents=True, exist_ok=True)
+            (log_dir / 'data' / 'calamum').mkdir(parents=True, exist_ok=True)
+            (log_dir / 'control' / 'calamum').mkdir(parents=True, exist_ok=True)
+        
+            monkeypatch.setenv('CALAMUM_LOG_DIR', str(log_dir))
+            monkeypatch.setenv('CALAMUM_DATA_SIGNING_KEY', 'unit-test-signing-key')
+        
+            from analysis.dataset_builder import build_dataset
+        
+            input_path = tmp_path / 'input.jsonl'
+            _write_signed_jsonl(input_path, _make_ds_records())
+            dataset_dir = tmp_path / 'dataset'
+            manifest = build_dataset([input_path], out_dir=dataset_dir, seed=123)
+            eval_dir = tmp_path / 'evaluation'
+        
+            rc = main([
+                'ds', 'evaluate',
+                '--features-csv', str(Path(manifest.features_csv)),
+                '--labels-csv', str(Path(manifest.labels_csv)),
+                '--dataset-manifest', str(dataset_dir / 'dataset_manifest.json'),
+                '--out-dir', str(eval_dir),
+                '--run-id', 'unit-eval',
+                '--json',
+            ])
+            assert rc == 0
+        
+            payload = json.loads(capsys.readouterr().out)
+            assert payload['action'] == 'ds-evaluate'
+            assert payload['run_id'] == 'unit-eval'
+            assert Path(payload['artifacts']['run_json']).exists()
+            assert Path(payload['artifacts']['run_md']).exists()
+            assert payload['has_labels'] is True
+            assert _resolve_reported_path(payload['artifacts']['report_json']).exists()
+            assert _resolve_reported_path(payload['artifacts']['report_md']).exists()
+            assert _resolve_reported_path(payload['artifacts']['report_manifest_json']).exists()
+            assert _resolve_reported_path(payload['artifacts']['ds_run_index_jsonl']).exists()
+            assert _resolve_reported_path(payload['artifacts']['ds_latest_json']).exists()
 
 
 def test_ds_score_executes_wrapper_and_emits_score_artifact_summary(tmp_path: Path, monkeypatch, capsys) -> None:
-    try:
-        import apexlab  # noqa: F401
-    except ImportError:
-        pytest.skip('ApexLab not installed')
-
-    log_dir = tmp_path / 'logs'
-    (log_dir / 'health').mkdir(parents=True, exist_ok=True)
-    (log_dir / 'data' / 'calamum').mkdir(parents=True, exist_ok=True)
-    (log_dir / 'control' / 'calamum').mkdir(parents=True, exist_ok=True)
-
-    monkeypatch.setenv('CALAMUM_LOG_DIR', str(log_dir))
-    monkeypatch.setenv('CALAMUM_DATA_SIGNING_KEY', 'unit-test-signing-key')
-
-    from analysis.dataset_builder import build_dataset
-    from analysis.train_model import train_model
-
-    input_path = tmp_path / 'input.jsonl'
-    _write_signed_jsonl(input_path, _make_ds_records())
-    dataset_dir = tmp_path / 'dataset'
-    build_dataset([input_path], out_dir=dataset_dir, seed=123)
-    manifest_path = dataset_dir / 'dataset_manifest.json'
-    model_dir = tmp_path / 'models_unsupervised'
-    train_model(manifest_path, out_dir=model_dir, model_type='unsupervised', seed=42)
-
-    out_file = tmp_path / 'scores.csv'
-    rc = main([
-        'ds', 'score',
-        '--dataset', str(manifest_path),
-        '--model', str(model_dir / 'train_manifest.json'),
-        '--out-file', str(out_file),
-        '--json',
-    ])
-    assert rc == 0
-
-    payload = json.loads(capsys.readouterr().out)
-    assert payload['action'] == 'ds-score'
-    assert payload['records_scored'] == 12
-    assert payload['score_column'] == 'score_anomaly'
-    assert payload['anomaly_direction'] == 'lower-is-more-anomalous'
-    assert payload['visuals']['decision'] == 'go'
-    assert Path(payload['artifacts']['scores_csv']).exists()
-    assert _resolve_reported_path(payload['artifacts']['score_distribution_png']).exists()
-    assert _resolve_reported_path(payload['artifacts']['report_json']).exists()
-    assert _resolve_reported_path(payload['artifacts']['report_md']).exists()
-    assert _resolve_reported_path(payload['artifacts']['report_manifest_json']).exists()
-    assert _resolve_reported_path(payload['artifacts']['ds_run_index_jsonl']).exists()
-    assert _resolve_reported_path(payload['artifacts']['ds_latest_json']).exists()
+    with _bind_temp_observer_project_ctx(monkeypatch, tmp_path) as project_dir:
+            try:
+                import apexlab  # noqa: F401
+            except ImportError:
+                pytest.skip('ApexLab not installed')
+        
+            log_dir = tmp_path / 'logs'
+            (log_dir / 'health').mkdir(parents=True, exist_ok=True)
+            (log_dir / 'data' / 'calamum').mkdir(parents=True, exist_ok=True)
+            (log_dir / 'control' / 'calamum').mkdir(parents=True, exist_ok=True)
+        
+            monkeypatch.setenv('CALAMUM_LOG_DIR', str(log_dir))
+            monkeypatch.setenv('CALAMUM_DATA_SIGNING_KEY', 'unit-test-signing-key')
+        
+            from analysis.dataset_builder import build_dataset
+            from analysis.train_model import train_model
+        
+            input_path = tmp_path / 'input.jsonl'
+            _write_signed_jsonl(input_path, _make_ds_records())
+            dataset_dir = tmp_path / 'dataset'
+            build_dataset([input_path], out_dir=dataset_dir, seed=123)
+            manifest_path = dataset_dir / 'dataset_manifest.json'
+            model_dir = tmp_path / 'models_unsupervised'
+            train_model(manifest_path, out_dir=model_dir, model_type='unsupervised', seed=42)
+        
+            out_file = tmp_path / 'scores.csv'
+            rc = main([
+                'ds', 'score',
+                '--dataset', str(manifest_path),
+                '--model', str(model_dir / 'train_manifest.json'),
+                '--out-file', str(out_file),
+                '--json',
+            ])
+            assert rc == 0
+        
+            payload = json.loads(capsys.readouterr().out)
+            assert payload['action'] == 'ds-score'
+            assert payload['records_scored'] == 12
+            assert payload['score_column'] == 'score_anomaly'
+            assert payload['anomaly_direction'] == 'lower-is-more-anomalous'
+            assert payload['visuals']['decision'] == 'go'
+            assert Path(payload['artifacts']['scores_csv']).exists()
+            assert _resolve_reported_path(payload['artifacts']['score_distribution_png']).exists()
+            assert _resolve_reported_path(payload['artifacts']['report_json']).exists()
+            assert _resolve_reported_path(payload['artifacts']['report_md']).exists()
+            assert _resolve_reported_path(payload['artifacts']['report_manifest_json']).exists()
+            assert _resolve_reported_path(payload['artifacts']['ds_run_index_jsonl']).exists()
+            assert _resolve_reported_path(payload['artifacts']['ds_latest_json']).exists()
 
 
 def test_ds_finalize_run_packet_keeps_librarian_authority_unchanged(tmp_path: Path, monkeypatch) -> None:

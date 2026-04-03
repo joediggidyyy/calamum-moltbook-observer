@@ -53,8 +53,8 @@ This is gitignored by design.
 
 Use these tracked docs when you want the public-facing command and reporting route:
 
-- `../../docs/manuals/data-science/CALAMUM_DS_OPERATIONS.md`
-- `../../docs/manuals/data-science/CALAMUM_DS_WIZARD.md`
+- `../../docs/manuals/data-science/DS_OPERATIONS.md`
+- `../../docs/manuals/data-science/DS_WIZARD.md`
 - `../../docs/reports/ds/INDEX.md`
 
 Historical planning context remains available in:

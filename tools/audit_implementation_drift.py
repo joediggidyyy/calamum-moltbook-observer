@@ -255,8 +255,14 @@ def _is_status_bearing_doc(rel_norm: str) -> bool:
     if rel_norm.startswith("docs/reports/operations/JOB_REPORT_"):
         return True
 
+    if rel_norm.startswith("local_untracked/reports/operations/JOB_REPORT_"):
+        return True
+
     # Calamum-specific job reports.
     if rel_norm.startswith("projects/calamum-moltbook-observer/docs/reports/") and "JOB_" in rel_norm:
+        return True
+
+    if rel_norm.startswith("projects/calamum-moltbook-observer/local_untracked/reports/operations/") and "JOB_" in rel_norm:
         return True
 
     return False

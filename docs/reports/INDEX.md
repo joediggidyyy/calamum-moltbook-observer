@@ -16,16 +16,15 @@ This index catalogs the tracked report surfaces that are intentionally part of t
 
 | Report | Topic | Relation to the manuals |
 | --- | --- | --- |
-| [`ds/INDEX.md`](ds/INDEX.md) | tracked data-science report packs and aggregate rollups | sits beside [`../manuals/data-science/CALAMUM_DS_OPERATIONS.md`](../manuals/data-science/CALAMUM_DS_OPERATIONS.md) as the publication-facing DS route |
-| [`GENERATED_REPORT_SURFACES.md`](GENERATED_REPORT_SURFACES.md) | generated report families and when they run | complements the runtime and DS manuals without replacing them |
-| [`PUBLIC_RUN_LEDGER.md`](PUBLIC_RUN_LEDGER.md) | runtime-first public ledger of current evidence and lane census | gives readers a concise evidence-first snapshot |
-| [`AGGREGATE_REPORT.md`](AGGREGATE_REPORT.md) | tracked aggregate synthesis of runtime evidence and threshold calibration | provides a public synthesis layer after readers understand the operating model |
-| [`AGGREGATE_REPORT_SCHEMA.md`](AGGREGATE_REPORT_SCHEMA.md) | schema and structure for future public aggregate reports | keeps future cross-run summaries methodologically aligned |
-| [`APEXLAB_REFERENCE_VALIDATION_REPORT_20260324.md`](APEXLAB_REFERENCE_VALIDATION_REPORT_20260324.md) | reference-validation report for the ApexLab evaluation lane | preserves the quantitative interpretation inside the tracked report set |
+| [`ds/INDEX.md`](ds/INDEX.md) | tracked data-science report packs and aggregate rollups | sits beside [`../manuals/data-science/DS_OPERATIONS.md`](../manuals/data-science/DS_OPERATIONS.md) as the publication-facing DS route |
+| [`reference/GENERATED_REPORT_SURFACES.md`](reference/GENERATED_REPORT_SURFACES.md) | generated report families and when they run | complements the runtime and DS manuals without replacing them |
+| [`aggregates/PUBLIC_RUN_LEDGER.md`](aggregates/PUBLIC_RUN_LEDGER.md) | runtime-first public ledger of current evidence and lane census | gives readers a concise evidence-first snapshot |
+| [`aggregates/AGGREGATE_REPORT.md`](aggregates/AGGREGATE_REPORT.md) | tracked aggregate synthesis of runtime evidence and threshold calibration | provides a public synthesis layer after readers understand the operating model |
+| [`validations/APEXLAB_REFERENCE_VALIDATION_REPORT_20260324.md`](validations/APEXLAB_REFERENCE_VALIDATION_REPORT_20260324.md) | reference-validation report for the ApexLab evaluation lane | preserves the quantitative interpretation inside the tracked report set |
 
 ## Suggested order
 
 1. [`../INDEX.md`](../INDEX.md) for the documentation map
 2. [`../../README.md`](../../README.md) for project orientation
-3. [`../manuals/data-science/CALAMUM_DS_OPERATIONS.md`](../manuals/data-science/CALAMUM_DS_OPERATIONS.md) for the DS command and artifact model
+3. [`../manuals/data-science/DS_OPERATIONS.md`](../manuals/data-science/DS_OPERATIONS.md) for the DS command and artifact model
 4. specific reports for curated evidence or evaluation artifacts

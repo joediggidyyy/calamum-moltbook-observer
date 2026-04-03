@@ -171,19 +171,19 @@ The three figures already retained beside this report are relevant to the Observ
 
 ### Figure 1. Canary anomaly-score distribution (log-count scale)
 
-![Figure 1 — Canary anomaly-score distribution on log-count scale](../../assets/plots/canary_v1_dist.png)
+![Figure 1 — Canary anomaly-score distribution on log-count scale](../../../assets/plots/canary_v1_dist.png)
 
 **Reading:** the canary score distribution is broad and multi-modal, with a long left tail reaching into the anomaly region. The log-scale count view is especially useful for seeing low-frequency score regions that would otherwise be visually flattened.
 
 ### Figure 2. Threshold impact analysis at the current false-positive operating point
 
-![Figure 2 — Threshold impact analysis](../../assets/plots/canary_v1_thresh.png)
+![Figure 2 — Threshold impact analysis](../../../assets/plots/canary_v1_thresh.png)
 
 **Reading:** the current threshold is approximately `-0.0450`, flagging `1364` of `133837` samples for an observed FPR near `1.0192%`. This matters because the Observer lane uses thresholded score interpretation operationally; numerical trust in the underlying analytical helpers therefore carries direct downstream consequences.
 
 ### Figure 3. Canary anomaly-score distribution (linear-count view)
 
-![Figure 3 — Canary anomaly-score distribution on linear count scale](../../assets/plots/canary_v1_test_nolog.png)
+![Figure 3 — Canary anomaly-score distribution on linear count scale](../../../assets/plots/canary_v1_test_nolog.png)
 
 **Reading:** the linear-count view highlights the dense central mass and the higher-score concentration that the log view visually compresses. Together, Figures 1 and 3 provide complementary intuition for how the current threshold slices the empirical score landscape.
 
