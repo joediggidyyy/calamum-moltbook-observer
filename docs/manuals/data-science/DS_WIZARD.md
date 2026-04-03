@@ -1,56 +1,8 @@
-# Calamum DS Wizard
+﻿# Calamum DS Wizard
 
 Updated: 2026-04-03
 
 This document explains how to use the guided data-science wizard for `observerctl ds`.
-
-## Architecture Overview
-
-`mermaid
-stateDiagram-v2
-    direction LR
-    state "Librarian Vault" as Vault {
-        DatasetManifest
-        Models
-    }
-    state "DS Wizard" as Wizard {
-        PickDataset: page, date, file
-        SelectMode: <mode>-<source><hex>
-    }
-    state "Execution Pipeline" as Pipeline {
-        RunModel
-        Evaluate
-    }
-
-    Vault --> PickDataset : Token Loading
-    PickDataset --> SelectMode : Filtered Alias
-    SelectMode --> RunModel : CLI Execute
-    RunModel --> Evaluate
-`
-
-## Architecture Overview
-
-`mermaid
-stateDiagram-v2
-    direction LR
-    state "Librarian Vault" as Vault {
-        DatasetManifest
-        Models
-    }
-    state "DS Wizard" as Wizard {
-        PickDataset: page, date, file
-        SelectMode: <mode>-<source><hex>
-    }
-    state "Execution Pipeline" as Pipeline {
-        RunModel
-        Evaluate
-    }
-
-    Vault --> PickDataset : Token Loading
-    PickDataset --> SelectMode : Filtered Alias
-    SelectMode --> RunModel : CLI Execute
-    RunModel --> Evaluate
-`
 
 ## What the wizard is
 
@@ -58,43 +10,52 @@ The wizard is the interactive front end for the same DS operations documented in
 
 Use it when you want guided configuration, seeded state from existing artifacts, draft save/load, command preview, and optional execute handoff without manually assembling every CLI flag.
 
-### Loading Data: The Token Standard
+## Dataset authority: Librarian-first
 
-The Calamum ecosystem no longer supports raw filepaths for pipeline ingestion. Instead, **all data must be loaded securely via Librarian Vault tokens**. 
+Raw filesystem paths are not accepted for dataset inputs in `train`, `evaluate`, or `score` workflows -- in the wizard or at the CLI. All datasets must be registered in the approved Librarian catalog before use.
 
-Tokens follow the strict exact-match structure: <mode>-<source><hex> (e.g., can-s123A, liv-rF9B2).
+### Onboarding a dataset
 
-When you select an input parameter in the wizard, you will interact with the paginated vault selector:
+Register a built dataset manifest once:
 
-`	ext
-> Dataset Selection
+```
+observerctl librarian dataset register local_untracked/analysis/datasets/<your-run>/dataset_manifest.json
+```
 
-1. can-s123A  (2400 records)  [01-04-2026]
-2. liv-rF9B2  (150 records)   [29-03-2026]
+This assigns a stable `entry_id` selector. The selector can be passed by index, `entry_id`, `run_id`, or display name anywhere a dataset token is accepted.
 
-Enter selection or [page 2], [date DD-MM-YYYY], [file alias]:
-`
+To confirm the catalog:
 
-Use page <#> to paginate, date <DD-MM-YYYY> to filter exact jumps, or ile <alias> to pick the token directly.
+```
+observerctl librarian datasets
+```
 
-### Loading Data: The Token Standard
+### Dataset inputs by workflow
 
-The Calamum ecosystem no longer supports raw filepaths for pipeline ingestion. Instead, **all data must be loaded securely via Librarian Vault tokens**. 
+| Workflow | `in` page dataset surface | Notes |
+| --- | --- | --- |
+| `train` | approved dataset picker (Librarian) | selector resolved via `librarian dataset release` |
+| `evaluate` | approved dataset picker (Librarian) | features/labels/manifest hydrated from approved entry |
+| `score` | approved dataset picker (Librarian) | selector resolved via `librarian dataset release` |
+| `build` | raw `--input` telemetry paths (CLI-seeded) | pre-Librarian; raw JSONL telemetry is the input |
+| `run-pipeline` | raw `--input` telemetry paths (CLI-seeded) | pre-Librarian; same as `build` |
+| `run-demo` | self-contained; no external dataset input required | generates its own synthetic data |
 
-Tokens follow the strict exact-match structure: <mode>-<source><hex> (e.g., can-s123A, liv-rF9B2).
+The wizard `in` section for `train`/`evaluate`/`score` opens an approved dataset picker that resolves the entry through the Librarian before hydrating wizard fields. The `source` and `mode` advanced-route fields do not appear in the default `in` menu for `build` and `run-pipeline`.
 
-When you select an input parameter in the wizard, you will interact with the paginated vault selector:
+### CLI dataset selectors
 
-`	ext
-> Dataset Selection
+The `ds train --dataset` and `ds score --dataset` flags accept the same approved selector tokens as the wizard:
 
-1. can-s123A  (2400 records)  [01-04-2026]
-2. liv-rF9B2  (150 records)   [29-03-2026]
+```
+# by index (1-based position in the catalog)
+observerctl ds train --dataset 1 --model-type supervised
 
-Enter selection or [page 2], [date DD-MM-YYYY], [file alias]:
-`
+# by entry_id
+observerctl ds score --dataset demo_20260331t221410 --model local_untracked/analysis/runs/demo/.../models
+```
 
-Use page <#> to paginate, date <DD-MM-YYYY> to filter exact jumps, or ile <alias> to pick the token directly.
+Raw paths passed to `--dataset` will be rejected with a registration instruction.
 
 ## Wizard workflows
 
@@ -139,7 +100,7 @@ You can also seed it on launch with any of the supported helper switches below.
 
 | Switch | What it seeds from |
 | --- | --- |
-| `--hydrate-dataset <selector-or-path>` | an approved dataset selector or `manifest.json` |
+| `--hydrate-dataset <selector>` | an approved dataset selector (index, run_id, display name, or entry_id) |
 | `--hydrate-train <path>` | `train_manifest.json` |
 | `--hydrate-model <path>` | a saved model artifact path |
 | `--hydrate-baseline-analysis <path>` | a baseline analysis packet |

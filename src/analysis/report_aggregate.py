@@ -24,6 +24,22 @@ from .report_pack import _normalize_json_value, _report_markdown
 PUBLISHED_REPORT_REQUIRED_KEYS = ('markdown', 'json', 'manifest')
 PUBLISHED_IMAGE_SUFFIXES = {'.png', '.svg', '.jpg', '.jpeg', '.gif', '.webp'}
 
+_EPHEMERAL_RUN_ROOT_MARKERS = (
+    'pytest',
+    '/Temp/',
+    '\\Temp\\',
+    'AppData',
+    'report_tmp',
+)
+
+
+def _is_ephemeral_run_root(run_root: str) -> bool:
+    """Return True if a run-root path is from an ephemeral/test context and should be excluded from selector surfaces."""
+    if not run_root:
+        return False
+    normalized = run_root.replace('\\', '/')
+    return any(marker.replace('\\', '/') in normalized for marker in _EPHEMERAL_RUN_ROOT_MARKERS)
+
 
 def append_ds_run_index(*, project_anchor: Path, manifest_payload: Mapping[str, Any]) -> Dict[str, Any]:
     project_root = find_project_root(project_anchor)
@@ -59,6 +75,9 @@ def load_ds_run_manifest_records(*, project_anchor: Path) -> List[Dict[str, Any]
         if not isinstance(line.obj, dict):
             continue
         entry = dict(line.obj)
+        run_root = str(entry.get('run_root', '') or '').strip()
+        if _is_ephemeral_run_root(run_root):
+            continue
         report_paths = dict(entry.get('report_paths', {}) or {})
         manifest_path = _resolve_repo_path(project_root, str(report_paths.get('manifest', '') or '').strip())
         rows.append(

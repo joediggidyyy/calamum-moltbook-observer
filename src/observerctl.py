@@ -7289,6 +7289,8 @@ def _ds_wizard_menu_items(state: _DSWizardState, section: Optional[str] = None) 
                 continue
             if workflow == 'run-demo' and spec.key not in ('source', 'mode'):
                 continue
+            if workflow in ('build', 'run-pipeline') and spec.key in _DS_WIZARD_ADVANCED_ROUTE_KEYS:
+                continue
             items.append(_field_item(spec))
         return items
     if current_section == 'model':
@@ -8323,10 +8325,6 @@ def _ds_wizard_hydrate_dataset_reference(state: _DSWizardState, dataset_ref: str
     if not token:
         raise ValueError('dataset reference is required')
 
-    direct_path = _resolve_existing_project_path(token)
-    if direct_path is not None:
-        return _ds_wizard_hydrate_dataset_manifest(state, direct_path)
-
     packet = _librarian_dataset_release(
         token,
         requester_id='observerctl-ds-wizard',
@@ -8334,7 +8332,11 @@ def _ds_wizard_hydrate_dataset_reference(state: _DSWizardState, dataset_ref: str
     )
     if str(packet.get('decision', 'no-go')).strip().lower() != 'go':
         summary = str(packet.get('summary', '') or '').strip()
-        raise FileNotFoundError(summary or 'approved dataset selector could not be resolved')
+        raise FileNotFoundError(
+            summary
+            or 'dataset token could not be resolved via the librarian; raw filesystem paths are not accepted -- '
+               'register the dataset first with: observerctl librarian dataset register <manifest>'
+        )
 
     manifest_path = _resolve_existing_project_path(str(packet.get('dataset_manifest_path', '') or '').strip())
     if manifest_path is None:
@@ -10960,8 +10962,39 @@ def _dispatch(args: argparse.Namespace) -> Dict[str, Any]:
                 max_lines_per_file=args.max_lines_per_file,
             )
         if args.ds_cmd == 'train':
+            _train_release = _librarian_dataset_release(args.dataset, 'observerctl-ds-train', 'ds-train')
+            if str(_train_release.get('decision', 'no-go')).strip().lower() != 'go':
+                _train_summary = str(_train_release.get('summary', '') or '').strip()
+                return {
+                    'timestamp_utc': _utc_now(),
+                    'runtime_cli_surface': 'observerctl',
+                    'decision': 'no-go',
+                    'action': 'ds-train',
+                    'command_family': 'ds',
+                    'command_path': 'observerctl ds train',
+                    'summary': _train_summary or (
+                        'dataset token could not be resolved via the librarian; '
+                        'raw filesystem paths are not accepted -- '
+                        'register the dataset first with: observerctl librarian dataset register <manifest>'
+                    ),
+                    'reason_codes': ['critical_check_failed:librarian_dataset_not_resolved'],
+                }
+            _train_dataset_path = _resolve_existing_project_path(
+                str(_train_release.get('dataset_manifest_path', '') or '').strip()
+            )
+            if _train_dataset_path is None:
+                return {
+                    'timestamp_utc': _utc_now(),
+                    'runtime_cli_surface': 'observerctl',
+                    'decision': 'no-go',
+                    'action': 'ds-train',
+                    'command_family': 'ds',
+                    'command_path': 'observerctl ds train',
+                    'summary': 'resolved dataset manifest path is missing or does not exist',
+                    'reason_codes': ['critical_check_failed:librarian_dataset_manifest_missing'],
+                }
             return _ds_train(
-                dataset=args.dataset,
+                dataset=str(_train_dataset_path),
                 out_dir=args.out_dir,
                 model_type=args.model_type,
                 seed=args.seed,
@@ -10977,8 +11010,39 @@ def _dispatch(args: argparse.Namespace) -> Dict[str, Any]:
                 model_path=args.model_path,
             )
         if args.ds_cmd == 'score':
+            _score_release = _librarian_dataset_release(args.dataset, 'observerctl-ds-score', 'ds-score')
+            if str(_score_release.get('decision', 'no-go')).strip().lower() != 'go':
+                _score_summary = str(_score_release.get('summary', '') or '').strip()
+                return {
+                    'timestamp_utc': _utc_now(),
+                    'runtime_cli_surface': 'observerctl',
+                    'decision': 'no-go',
+                    'action': 'ds-score',
+                    'command_family': 'ds',
+                    'command_path': 'observerctl ds score',
+                    'summary': _score_summary or (
+                        'dataset token could not be resolved via the librarian; '
+                        'raw filesystem paths are not accepted -- '
+                        'register the dataset first with: observerctl librarian dataset register <manifest>'
+                    ),
+                    'reason_codes': ['critical_check_failed:librarian_dataset_not_resolved'],
+                }
+            _score_dataset_path = _resolve_existing_project_path(
+                str(_score_release.get('dataset_manifest_path', '') or '').strip()
+            )
+            if _score_dataset_path is None:
+                return {
+                    'timestamp_utc': _utc_now(),
+                    'runtime_cli_surface': 'observerctl',
+                    'decision': 'no-go',
+                    'action': 'ds-score',
+                    'command_family': 'ds',
+                    'command_path': 'observerctl ds score',
+                    'summary': 'resolved dataset manifest path is missing or does not exist',
+                    'reason_codes': ['critical_check_failed:librarian_dataset_manifest_missing'],
+                }
             return _ds_score(
-                dataset=args.dataset,
+                dataset=str(_score_dataset_path),
                 model=args.model,
                 out_file=args.out_file,
             )
@@ -11280,7 +11344,7 @@ def _build_parser() -> argparse.ArgumentParser:
     ds_build.add_argument('--max-lines-per-file', type=int, default=None)
 
     ds_train = ds_sub.add_parser('train', help='Train a model from a dataset manifest')
-    ds_train.add_argument('--dataset', required=True, help='Path to dataset manifest.json')
+    ds_train.add_argument('--dataset', required=True, help='Approved dataset selector (index, run_id, display name, or entry_id)')
     ds_train.add_argument('--out-dir', default='', help='Optional run root or model artifact directory')
     ds_train.add_argument('--model-type', choices=['supervised', 'unsupervised'], default='supervised')
     ds_train.add_argument('--seed', type=int, default=42)
@@ -11295,7 +11359,7 @@ def _build_parser() -> argparse.ArgumentParser:
     ds_evaluate.add_argument('--model-path', default='', help='Optional serialized model path for metadata handoff')
 
     ds_score = ds_sub.add_parser('score', help='Score a dataset with an unsupervised model')
-    ds_score.add_argument('--dataset', required=True, help='Path to dataset manifest.json')
+    ds_score.add_argument('--dataset', required=True, help='Approved dataset selector (index, run_id, display name, or entry_id)')
     ds_score.add_argument('--model', required=True, help='Path to model artifact or train_manifest.json')
     ds_score.add_argument('--out-file', default='', help='Optional output path for scores CSV')
 

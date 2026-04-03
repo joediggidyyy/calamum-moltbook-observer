@@ -1934,8 +1934,13 @@ def test_ds_train_executes_wrapper_and_emits_expected_artifacts(tmp_path: Path, 
             build_dataset([input_path], out_dir=dataset_dir, seed=123)
             manifest_path = dataset_dir / 'dataset_manifest.json'
             model_dir = tmp_path / 'models'
-        
-            rc = main(['ds', 'train', '--dataset', str(manifest_path), '--out-dir', str(model_dir), '--model-type', 'supervised', '--json'])
+
+            reg_rc = main(['librarian', 'dataset-register', str(manifest_path), '--json'])
+            assert reg_rc == 0
+            reg_payload = json.loads(capsys.readouterr().out)
+            dataset_token = str(reg_payload['dataset']['entry_id'])
+
+            rc = main(['ds', 'train', '--dataset', dataset_token, '--out-dir', str(model_dir), '--model-type', 'supervised', '--json'])
             assert rc == 0
         
             payload = json.loads(capsys.readouterr().out)
@@ -2020,9 +2025,15 @@ def test_ds_score_executes_wrapper_and_emits_score_artifact_summary(tmp_path: Pa
             train_model(manifest_path, out_dir=model_dir, model_type='unsupervised', seed=42)
         
             out_file = tmp_path / 'scores.csv'
+
+            reg_rc = main(['librarian', 'dataset-register', str(manifest_path), '--json'])
+            assert reg_rc == 0
+            reg_payload = json.loads(capsys.readouterr().out)
+            dataset_token = str(reg_payload['dataset']['entry_id'])
+
             rc = main([
                 'ds', 'score',
-                '--dataset', str(manifest_path),
+                '--dataset', dataset_token,
                 '--model', str(model_dir / 'train_manifest.json'),
                 '--out-file', str(out_file),
                 '--json',
