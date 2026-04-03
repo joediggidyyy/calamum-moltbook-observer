@@ -49,7 +49,15 @@ This is gitignored by design.
 - unsupervised anomaly semantics in the DS report lane are: **lower score = more anomalous**
 - old sklearn-oriented wording in historical planning docs should be treated as background context rather than current execution authority
 
-See the ML execution plan:
+## Reader-facing DS documentation
+
+Use these tracked docs when you want the public-facing command and reporting route:
+
+- `../../docs/manuals/data-science/CALAMUM_DS_OPERATIONS.md`
+- `../../docs/manuals/data-science/CALAMUM_DS_WIZARD.md`
+- `../../docs/reports/ds/INDEX.md`
+
+Historical planning context remains available in:
 
 - `../../planning/CALAMUM_BLIND_ML_EXECUTION_PLAN_2026-02-10.md`
 - `../../planning/CALAMUM_MODEL_TRAINING_GAP_ANALYSIS_20260210.md`

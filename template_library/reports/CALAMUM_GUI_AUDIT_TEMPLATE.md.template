@@ -1,6 +1,6 @@
 # Calamum GUI Audit Report
 
-- Operator guide (names-only): `projects/calamum-moltbook-observer/docs/manuals/OBSERVERCTL_CLI_TRANSITION_OPERATOR_GUIDE_20260221.md`
+- Operator guide (names-only): `projects/calamum-moltbook-observer/docs/manuals/runtime/CALAMUM_RUNTIME_OPERATIONS.md`
 - Evidence discipline: names-only; no secret values in output.
 
 - timestamp_utc: {{ timestamp_utc }}

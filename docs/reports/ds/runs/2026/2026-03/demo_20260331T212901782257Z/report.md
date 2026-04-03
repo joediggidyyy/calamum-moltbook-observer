@@ -38,8 +38,16 @@
 - unsupervised_model_path: local_untracked/analysis/runs/demo/demo_20260331T212901782257Z/models/unsupervised/model.pkl
 - unsupervised_train_manifest: local_untracked/analysis/runs/demo/demo_20260331T212901782257Z/models/unsupervised/train_manifest.json
 
+## Lineage
+
+- source_report_paths:
+  - json: local_untracked/analysis/runs/demo/demo_20260331T212901782257Z/report/report.json
+  - manifest: local_untracked/analysis/runs/demo/demo_20260331T212901782257Z/report/manifest.json
+  - markdown: local_untracked/analysis/runs/demo/demo_20260331T212901782257Z/report/report.md
+- source_run_root: local_untracked/analysis/runs/demo/demo_20260331T212901782257Z
+
 ## Report paths
 
-- json: local_untracked/analysis/runs/demo/demo_20260331T212901782257Z/report/report.json
-- manifest: local_untracked/analysis/runs/demo/demo_20260331T212901782257Z/report/manifest.json
-- markdown: local_untracked/analysis/runs/demo/demo_20260331T212901782257Z/report/report.md
+- json: docs/reports/ds/runs/2026/2026-03/demo_20260331T212901782257Z/report.json
+- manifest: docs/reports/ds/runs/2026/2026-03/demo_20260331T212901782257Z/manifest.json
+- markdown: docs/reports/ds/runs/2026/2026-03/demo_20260331T212901782257Z/report.md

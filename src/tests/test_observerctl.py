@@ -93,6 +93,14 @@ def _set_security_report_ref(monkeypatch, base_dir: Path) -> Path:
     return report
 
 
+def _set_signing_env(monkeypatch) -> None:
+    monkeypatch.setenv('CALAMUM_DATA_SIGNING_KEY', 'unit-test-signing-key')
+    monkeypatch.setenv('CALAMUM_REQUESTER_SIGNING_KEY', 'unit-test-requester-signing-key')
+    monkeypatch.setenv('CALAMUM_LIBRARIAN_ATTESTATION_KEY', 'unit-test-librarian-attestation-key')
+    monkeypatch.setenv('CALAMUM_SOURCE_RELEASE_KEY', 'unit-test-source-release-key')
+    monkeypatch.setenv('CALAMUM_LIBRARIAN_VAULT_KEY', 'unit-test-vault-integrity-key')
+
+
 def _write_signed_jsonl(path: Path, records: list[dict]) -> None:
     path.parent.mkdir(parents=True, exist_ok=True)
     with path.open('w', encoding='utf-8') as f:
@@ -481,9 +489,21 @@ def test_ds_wizard_scope_help_from_landing_shows_top_level_choices() -> None:
     assert should_exit is False
     rendered = observerctl_module._ds_wizard_render(state)
     assert 'help:' in rendered
-    assert 'configure          guided workflow and configuration' in rendered
-    assert 'review and run     validation, command preview, and execution' in rendered
-    assert 'command and utilities preview the command and use save/load/hydrate helper commands' in rendered
+    assert any('configure opens the workflow-specific pages and shared section rail.' in line for line in rendered)
+    assert any('review and run stays read-only until validation clears.' in line for line in rendered)
+    assert any('command and utilities explains the CLI preview plus save/load/hydrate helpers.' in line for line in rendered)
+    assert not any('configure          guided workflow and configuration' in line for line in rendered)
+
+
+def test_ds_wizard_stacked_render_hides_raw_section_scaffold_on_non_landing_pages(monkeypatch) -> None:
+    monkeypatch.setattr(observerctl_module, '_ds_wizard_get_terminal_width', lambda: 90)
+    state = observerctl_module._ds_wizard_new_state('run-pipeline')
+    observerctl_module._ds_wizard_open_section(state, 'model')
+
+    rendered = observerctl_module._ds_wizard_render(state)
+
+    assert not any(line.startswith('sections:') for line in rendered)
+    assert 'actions: prev | ? | next | exit' in rendered
 
 
 def test_ds_wizard_landing_choices_route_to_top_level_pages() -> None:
@@ -1102,6 +1122,70 @@ def test_librarian_dataset_human_list_surfaces_sectioned_output(monkeypatch, tmp
     assert 'Guidance' in rendered
 
 
+def test_librarian_dataset_list_and_release_ignore_run_refresh_contamination(monkeypatch, tmp_path: Path, capsys) -> None:
+    from calamum_librarian import _build_dataset_entry, _dataset_catalog_paths, _save_dataset_snapshot
+
+    project_root, anchor = _make_temp_observer_project(tmp_path)
+    dataset_dir = project_root / 'datasets' / 'authority_alpha'
+    dataset_dir.mkdir(parents=True, exist_ok=True)
+    manifest_path = dataset_dir / 'dataset_manifest.json'
+    features_csv = dataset_dir / 'features.csv'
+    labels_csv = dataset_dir / 'labels.csv'
+    features_csv.write_text('record_id,feature\n1,0.25\n', encoding='utf-8')
+    labels_csv.write_text('record_id,label\n1,1\n', encoding='utf-8')
+    manifest_path.write_text(json.dumps({
+        'features_csv': str(features_csv),
+        'labels_csv': str(labels_csv),
+        'total_records': 1,
+        'has_labels': True,
+    }), encoding='utf-8')
+
+    admitted = _build_dataset_entry(
+        anchor,
+        manifest_path,
+        access_class='local',
+        display_name='Authority Alpha',
+        run_id='authority-alpha',
+        workflow='manual-register',
+        recorded_at_utc='2026-04-02T00:00:00Z',
+        registration_kind='manual-register',
+        source_binding='manual-register:dataset_manifest.json',
+    )
+    contaminated = dict(admitted)
+    contaminated.update({
+        'entry_id': 'dataset-build-20260401',
+        'display_name': 'Build Drift',
+        'run_id': 'build_20260401T203055450331Z',
+        'workflow': 'build',
+        'registration_kind': 'run-refresh',
+        'source_binding': 'run-manifest:build_20260401T203055450331Z',
+        'report_manifest_ref': 'C:/Users/tester/AppData/Local/Temp/pytest-of-user/report_manifest.json',
+    })
+
+    paths = _dataset_catalog_paths(anchor)
+    _save_dataset_snapshot(paths, [contaminated, admitted])
+
+    monkeypatch.setattr(observerctl_module, '_project_root', lambda: project_root)
+    monkeypatch.setattr(observerctl_module, '_project_anchor', lambda: anchor)
+
+    rc = main(['librarian', 'dataset', 'list', '--json'])
+    assert rc == 0
+    payload = json.loads(capsys.readouterr().out)
+    assert payload['count'] == 1
+    assert payload['selector_entries'][0]['run_id'] == 'authority-alpha'
+
+    rc = main(['librarian', 'dataset', 'release', 'build_20260401T203055450331Z', '--json'])
+    assert rc == 2
+    payload = json.loads(capsys.readouterr().out)
+    assert 'critical_check_failed:librarian_dataset_not_found' in payload['reason_codes']
+
+    rc = main(['librarian', 'dataset', 'release', '1', '--json'])
+    assert rc == 0
+    payload = json.loads(capsys.readouterr().out)
+    assert payload['dataset']['run_id'] == 'authority-alpha'
+    assert payload['release_mode'] == 'local'
+
+
 def test_librarian_dataset_release_human_surfaces_evidence_and_guidance(monkeypatch, tmp_path: Path, capsys) -> None:
     from calamum_librarian import register_librarian_dataset_packet
 
@@ -1653,6 +1737,9 @@ def test_ds_wizard_partition_headers_render_on_frame3_surfaces() -> None:
     assert any('load saved draft' in line for line in build_rendered)
     assert not any(line.strip().startswith('2.') and 'telemetry inputs' in line for line in build_rendered)
     assert not any('cli-only' in line for line in build_rendered)
+    assert not any('telemetry inputs' in line for line in build_rendered)
+    assert any('source' in line for line in build_rendered)
+    assert any('mode' in line for line in build_rendered)
 
     eval_state = observerctl_module._ds_wizard_new_state('evaluate')
     observerctl_module._ds_wizard_open_section(eval_state, 'model')
@@ -1664,6 +1751,18 @@ def test_ds_wizard_partition_headers_render_on_frame3_surfaces() -> None:
     assert any('load previous' in line for line in eval_rendered)
     assert any('model artifact' in line for line in eval_rendered)
     assert any('dataset artifact' in line for line in eval_rendered)
+
+
+def test_ds_wizard_build_model_surface_keeps_split_controls_visible() -> None:
+    state = observerctl_module._ds_wizard_new_state('build')
+    observerctl_module._ds_wizard_open_section(state, 'model')
+
+    rendered = observerctl_module._ds_wizard_render(state)
+
+    assert any('seed' in line for line in rendered)
+    assert any('split' in line for line in rendered)
+    assert any('validation split' in line for line in rendered)
+    assert any('test split' in line for line in rendered)
 
 
 def test_ds_wizard_cmd_surface_explains_execution_map() -> None:
@@ -1917,7 +2016,7 @@ def test_ds_score_executes_wrapper_and_emits_score_artifact_summary(tmp_path: Pa
     assert _resolve_reported_path(payload['artifacts']['ds_latest_json']).exists()
 
 
-def test_ds_finalize_run_packet_refreshes_librarian_dataset_catalog(tmp_path: Path, monkeypatch) -> None:
+def test_ds_finalize_run_packet_keeps_librarian_authority_unchanged(tmp_path: Path, monkeypatch) -> None:
     from analysis.report_pack import prepare_report_bundle
 
     project_root, anchor = _make_temp_observer_project(tmp_path)
@@ -1967,15 +2066,11 @@ def test_ds_finalize_run_packet_refreshes_librarian_dataset_catalog(tmp_path: Pa
         lineage={'input_paths': [project_root / 'input.jsonl']},
     )
 
-    snapshot_path = project_root / final_packet['artifacts']['librarian_dataset_manifest_json']
-    catalog_path = project_root / final_packet['artifacts']['librarian_dataset_catalog_jsonl']
-    snapshot = json.loads(snapshot_path.read_text(encoding='utf-8'))
-
-    assert snapshot_path.exists()
-    assert catalog_path.exists()
-    assert snapshot['entries'][0]['run_id'] == 'framec-build-refresh'
-    assert snapshot['entries'][0]['status'] == 'approved'
-    assert snapshot['entries'][0]['workflow'] == 'build'
+    assert 'librarian_dataset_manifest_json' not in final_packet['artifacts']
+    assert 'librarian_dataset_catalog_jsonl' not in final_packet['artifacts']
+    assert _resolve_reported_path(final_packet['artifacts']['report_manifest_json']).exists()
+    assert _resolve_reported_path(final_packet['artifacts']['ds_run_index_jsonl']).exists()
+    assert _resolve_reported_path(final_packet['artifacts']['ds_latest_json']).exists()
 
 
 def test_ds_report_pack_defaults_to_canonical_run_root_and_repo_relative_index_paths(tmp_path: Path) -> None:
@@ -2127,16 +2222,11 @@ def test_ds_report_publication_requires_canonical_run_root(tmp_path: Path) -> No
     )
 
     reasons = publication_eligibility_reasons(project_anchor=anchor, manifest_payload=report_bundle['manifest'])
-
-    assert 'publication_skipped:noncanonical_run_root' in reasons
-
-
-def test_ds_report_publication_refresh_builds_tracked_surfaces_from_canonical_runs(tmp_path: Path) -> None:
-    from analysis.report_aggregate import append_ds_run_index, refresh_tracked_ds_publication
-    from analysis.report_pack import prepare_report_bundle, write_report_bundle
-
-    project_root = tmp_path / 'observer_project'
-    anchor = project_root / 'src' / 'observerctl_anchor.py'
+    assert 'librarian_dataset_manifest_json' not in final_packet['artifacts']
+    assert 'librarian_dataset_catalog_jsonl' not in final_packet['artifacts']
+    assert Path(final_packet['artifacts']['report_manifest_json']).exists()
+    assert Path(final_packet['artifacts']['ds_run_index_jsonl']).exists()
+    assert Path(final_packet['artifacts']['ds_latest_json']).exists()
     anchor.parent.mkdir(parents=True, exist_ok=True)
     anchor.write_text('# anchor\n', encoding='utf-8')
     (project_root / 'PROJECT_MANIFEST.json').write_text('{}\n', encoding='utf-8')
@@ -2290,6 +2380,132 @@ def test_ds_report_publication_refresh_copies_visual_figures_and_rewrites_links(
     assert (project_root / publication['current_run']['published_figures'][0]).exists()
     assert '](figures/score_distribution.png)' in published_report_md.read_text(encoding='utf-8')
     assert '../figures/' not in published_report_md.read_text(encoding='utf-8')
+
+
+def test_ds_report_publication_refresh_rewrites_tracked_report_paths_and_strips_absolute_path_noise(tmp_path: Path) -> None:
+    from analysis.report_aggregate import append_ds_run_index, refresh_tracked_ds_publication
+    from analysis.report_pack import prepare_report_bundle, write_report_bundle
+
+    project_root = tmp_path / 'observer_project'
+    anchor = project_root / 'src' / 'observerctl_anchor.py'
+    anchor.parent.mkdir(parents=True, exist_ok=True)
+    anchor.write_text('# anchor\n', encoding='utf-8')
+    (project_root / 'PROJECT_MANIFEST.json').write_text('{}\n', encoding='utf-8')
+
+    score_bundle = prepare_report_bundle(anchor, 'score', run_id='score-publication-clean')
+    scoring_dir = score_bundle.artifact_dirs['scoring']
+    scoring_dir.mkdir(parents=True, exist_ok=True)
+    scores_csv = scoring_dir / 'scores.csv'
+    threshold_report_json = scoring_dir / 'threshold_report.json'
+    threshold_report_md = scoring_dir / 'threshold_report.md'
+    scores_csv.write_text('record_id,score_anomaly\na,0.1\nb,0.9\n', encoding='utf-8')
+    threshold_report_json.write_text('{}\n', encoding='utf-8')
+    threshold_report_md.write_text('# threshold\n', encoding='utf-8')
+
+    figures_dir = score_bundle.run_root / 'figures'
+    figures_dir.mkdir(parents=True, exist_ok=True)
+    figure_path = figures_dir / 'score_distribution.png'
+    figure_path.write_bytes(b'not-a-real-png-but-good-enough-for-copy')
+
+    score_report_bundle = write_report_bundle(
+        project_anchor=anchor,
+        bundle=score_bundle,
+        packet={
+            'timestamp_utc': '2026-03-31T12:05:00Z',
+            'runtime_cli_surface': 'observerctl',
+            'decision': 'go',
+            'action': 'ds-score',
+            'command_family': 'ds',
+            'command_path': 'observerctl ds score',
+            'implementation_state': 'command-available',
+            'underlying_surface': 'analysis.score_unsupervised',
+            'summary': 'Unsupervised scoring completed through observerctl ds.',
+            'run_id': score_bundle.run_id,
+            'records_scored': 2,
+            'anomaly_direction': 'lower-is-more-anomalous',
+            'score_column': 'score_anomaly',
+            'thresholding': {
+                'decision': 'go',
+                'anomaly_direction': 'lower-is-more-anomalous',
+                'flag_rule': 'score <= threshold',
+                'threshold': 0.2,
+                'target_fpr': 0.01,
+                'actual_fpr': 0.0,
+                'flagged_records': 1,
+                'records_scored': 2,
+                'report_json': str(threshold_report_json),
+                'report_md': str(threshold_report_md),
+                'scores_csv': str(scores_csv),
+            },
+            'visuals': {
+                'decision': 'go',
+                'figure_count': 1,
+                'anomaly_direction': 'lower-is-more-anomalous',
+                'score_column': 'score_anomaly',
+                'figures': [
+                    {
+                        'id': 'score_distribution',
+                        'title': 'Score distribution',
+                        'caption': 'Distribution of anomaly scores.',
+                        'path': str(figure_path),
+                        'kind': 'distribution',
+                    }
+                ],
+            },
+            'artifacts': {},
+            'reason_codes': [],
+        },
+        artifact_paths={
+            'scores_csv': scores_csv,
+            'score_distribution_png': figure_path,
+            'threshold_report_json': threshold_report_json,
+            'threshold_report_md': threshold_report_md,
+        },
+        context={'output_override': False},
+    )
+
+    source_report_json_path = project_root / score_report_bundle['paths']['report_json']
+    source_report_md_path = project_root / score_report_bundle['paths']['report_md']
+    source_report_payload = json.loads(source_report_json_path.read_text(encoding='utf-8'))
+    source_report_payload['result']['thresholding']['report_json'] = str(threshold_report_json).replace('\\', '/')
+    source_report_payload['result']['thresholding']['report_md'] = str(threshold_report_md).replace('\\', '/')
+    source_report_payload['result']['thresholding']['scores_csv'] = str(scores_csv).replace('\\', '/')
+    source_report_payload['result']['visuals']['figures'][0]['path'] = str(figure_path).replace('\\', '/')
+    source_report_json_path.write_text(json.dumps(source_report_payload, indent=2, sort_keys=True), encoding='utf-8')
+    source_report_md_path.write_text(
+        '# stale canonical markdown\n\n- leaked path: {0}\n'.format(str(figure_path).replace('\\', '/')),
+        encoding='utf-8',
+    )
+
+    append_ds_run_index(project_anchor=anchor, manifest_payload=score_report_bundle['manifest'])
+    publication = refresh_tracked_ds_publication(project_anchor=anchor, current_manifest_payload=score_report_bundle['manifest'])
+
+    current_run = publication['current_run']
+    published_report_md_path = project_root / current_run['published_report_paths']['markdown']
+    published_report_json_path = project_root / current_run['published_report_paths']['json']
+    published_manifest_path = project_root / current_run['published_report_paths']['manifest']
+
+    published_report_text = published_report_md_path.read_text(encoding='utf-8')
+    published_report_payload = json.loads(published_report_json_path.read_text(encoding='utf-8'))
+    published_manifest_payload = json.loads(published_manifest_path.read_text(encoding='utf-8'))
+    project_root_prefix = str(project_root).replace('\\', '/')
+
+    assert publication['decision'] == 'go'
+    assert project_root_prefix not in published_report_text
+    assert project_root_prefix not in json.dumps(published_report_payload, sort_keys=True)
+    assert published_report_payload['report_paths'] == current_run['published_report_paths']
+    assert published_manifest_payload['report_paths'] == current_run['published_report_paths']
+    assert published_report_payload['source_report_paths'] == score_report_bundle['report']['report_paths']
+    assert published_manifest_payload['source_report_paths'] == score_report_bundle['manifest']['report_paths']
+    assert published_report_payload['source_run_root'] == score_report_bundle['manifest']['run_root']
+    assert published_manifest_payload['source_run_root'] == score_report_bundle['manifest']['run_root']
+    assert published_report_payload['published_run_dir'] == current_run['published_run_dir']
+    assert published_manifest_payload['published_run_dir'] == current_run['published_run_dir']
+    assert published_report_payload['result']['visuals']['figures'][0]['path'] == current_run['published_figures'][0]
+    assert '## Lineage' in published_report_text
+    assert '](figures/score_distribution.png)' in published_report_text
+    assert '../figures/' not in published_report_text
+    assert 'scoring/threshold_report.json' in published_report_text
 
 
 def test_ds_run_pipeline_unsupervised_emits_visual_figures(monkeypatch, tmp_path: Path) -> None:
@@ -2509,6 +2725,23 @@ def test_sandbox_show_human_output_includes_alias_policy_and_trailing_contract(m
     assert 'Aliases         : none (exact-name-only)' in out
     assert 'Guardrails' in out
     assert 'Contract' in out
+
+
+def test_sandbox_show_missing_definition_human_output_guides_to_runs_review(monkeypatch, capsys) -> None:
+    monkeypatch.setattr(observerctl_module, 'sandbox_get_definition', lambda definition_id: None)
+
+    rc = main(['sandbox', 'show', 'metadata-contract-001'])
+    assert rc == 2
+
+    out = capsys.readouterr().out
+    normalized = ' '.join(out.split())
+    assert '[FAIL] SANDBOX_DEFINITION_NOT_FOUND' in out
+    assert 'Sandbox definition details are unavailable for the requested identifier.' in out
+    assert 'Requested       : metadata-contract-001' in out
+    assert 'observerctl sandbox runs show metadata-contract-001' in normalized
+    assert 'observerctl sandbox list' in out
+    assert 'SANDBOX_DEFINITION_READY' not in out
+    assert 'Definition details are available for review.' not in out
 
 
 def test_sandbox_run_emits_execution_packet_json(monkeypatch, capsys) -> None:
@@ -4373,6 +4606,225 @@ def test_baseline_monitor_once_degrades_explicitly_when_persisted_state_is_malfo
     repaired_state = json.loads(malformed_state_path.read_text(encoding='utf-8'))
     assert repaired_state.get('last_normal_sample_epoch_s') != 'not-a-float'
     assert repaired_state.get('last_baseline_packet_path') == '456'
+
+
+def test_baseline_monitor_status_cli_emits_truth_contract_fields(tmp_path: Path, monkeypatch, capsys) -> None:
+    log_dir = tmp_path / 'logs'
+    for d in [log_dir / 'health', log_dir / 'data' / 'calamum', log_dir / 'control' / 'calamum']:
+        d.mkdir(parents=True, exist_ok=True)
+
+    monkeypatch.setenv('CALAMUM_LOG_DIR', str(log_dir))
+    project_root, anchor = _make_temp_observer_project(tmp_path)
+    _bind_temp_observer_project(monkeypatch, project_root, anchor)
+
+    observerctl_module._save_state('sim', 'canary')
+    _touch(log_dir / 'health' / 'calamum_baseline_monitor.heartbeat')
+    observerctl_module._baseline_monitor_pid_path().write_text(str(os.getpid()), encoding='utf-8')
+    (log_dir / 'control' / 'calamum' / 'baseline_monitor_state.json').write_text(
+        json.dumps({
+            'source': 'sim',
+            'mode': 'canary',
+            'last_validation_cycle_event': 'baseline_ready',
+            'last_validation_cycle_packet_path': 'logs/data/calamum/observer_derived/sim/canary/evidence/observerctl_baseline_ready.json',
+        }),
+        encoding='utf-8',
+    )
+
+    rc = main(['baseline', 'monitor-status', '--json'])
+    assert rc == 0
+
+    payload = json.loads(capsys.readouterr().out)
+    assert payload.get('decision') == 'go'
+    assert payload.get('action') == 'baseline-monitor-status'
+    assert payload.get('runtime_label') == 'baseline-monitor'
+    assert payload.get('summary') == 'Baseline monitor runtime ready.'
+    assert payload.get('reason_codes') == []
+    assert payload.get('state') == 'active'
+    assert ((payload.get('monitor_state') or {}).get('last_validation_cycle_event')) == 'baseline_ready'
+
+
+def test_baseline_ready_writes_receipt_and_updates_monitor_state(tmp_path: Path, monkeypatch) -> None:
+    log_dir = tmp_path / 'logs'
+    health = log_dir / 'health'
+    data = log_dir / 'data' / 'calamum'
+    control = log_dir / 'control' / 'calamum'
+
+    for d in [health, data, control]:
+        d.mkdir(parents=True, exist_ok=True)
+
+    monkeypatch.setenv('CALAMUM_LOG_DIR', str(log_dir))
+    _set_signing_env(monkeypatch)
+    _set_security_report_ref(monkeypatch, log_dir)
+
+    project_root, anchor = _make_temp_observer_project(tmp_path)
+    _bind_temp_observer_project(monkeypatch, project_root, anchor)
+
+    _touch(health / 'calamum_ops_watchdog.heartbeat')
+    _touch(health / 'calamum_observer.heartbeat')
+    _touch(health / 'calamum_librarian.heartbeat')
+    observerctl_module._agent_pid_path().write_text(str(os.getpid()), encoding='utf-8')
+    _write_watchdog_resource(control, cpu_now=45, ram_now=50, cpu_p95=40, ram_p95=45, score=0.1, age_s=3)
+
+    monkeypatch.setattr(observerctl_module, '_baseline_monitor_start', lambda **kwargs: {
+        'timestamp_utc': observerctl_module._utc_now(),
+        'runtime_cli_surface': 'observerctl',
+        'decision': 'go',
+        'action': 'baseline-monitor-start',
+        'reason_codes': [],
+        'state': 'active',
+        'pid': {'value': os.getpid(), 'alive': True},
+        'startup_verified': True,
+    })
+
+    packet = observerctl_module._baseline_ready(
+        source='sim',
+        mode='canary',
+        target_mode='live',
+        normal_interval_sec=0.01,
+        baseline_window_sec=0.05,
+        baseline_sample_interval_sec=0.01,
+        min_normal_samples=1,
+        min_baseline_samples=1,
+        startup_probe_sec=0.0,
+        timeout_sec=0.0,
+    )
+
+    assert packet.get('decision') == 'go'
+    assert packet.get('action') == 'baseline-ready'
+    assert packet.get('mode') == 'canary'
+    assert packet.get('target_mode') == 'live'
+    assert packet.get('projection_mode') == 'non-activation'
+    assert ((packet.get('gate_packet') or {}).get('decision')) == 'go'
+    assert ((packet.get('stage5_prerequisites') or {}).get('overall', {}).get('status')) == 'ok'
+    assert str((packet.get('normal_packet') or {}).get('artifact_path', '')).strip() != ''
+    assert str((packet.get('baseline_packet') or {}).get('artifact_path', '')).strip() != ''
+    assert str((packet.get('analysis_packet') or {}).get('artifact_path', '')).strip() != ''
+
+    receipt_path = Path(str(packet.get('validation_cycle_packet_path', '')).replace('/', os.sep))
+    assert receipt_path.exists()
+    receipt_doc = json.loads(receipt_path.read_text(encoding='utf-8'))
+    assert receipt_doc.get('decision') == 'go'
+    assert receipt_doc.get('target_mode') == 'live'
+
+    monitor_state_path = Path(str(packet.get('monitor_state_path', '')).replace('/', os.sep))
+    monitor_state = json.loads(monitor_state_path.read_text(encoding='utf-8'))
+    assert monitor_state.get('last_validation_cycle_event') == 'baseline_ready'
+    assert monitor_state.get('last_validation_cycle_decision') == 'go'
+    assert monitor_state.get('last_validation_cycle_packet_path') == str(receipt_path).replace('\\', '/')
+    assert str(monitor_state.get('last_baseline_window_id', '')).strip() != ''
+
+    evidence_index = data / 'observer_derived' / 'sim' / 'canary' / 'evidence' / 'index.jsonl'
+    ready_row = _latest_jsonl_row_for_event(evidence_index, 'baseline_ready')
+    assert ready_row.get('decision') == 'go'
+    assert Path(str(ready_row.get('packet_path', '')).replace('/', os.sep)).exists()
+
+
+def test_live_gate_accepts_fresh_baseline_ready_receipt_without_pretransition_lockdown_cadence(tmp_path: Path, monkeypatch) -> None:
+    log_dir = tmp_path / 'logs'
+    health = log_dir / 'health'
+    data = log_dir / 'data' / 'calamum'
+    control = log_dir / 'control' / 'calamum'
+
+    for d in [health, data, control]:
+        d.mkdir(parents=True, exist_ok=True)
+
+    monkeypatch.setenv('CALAMUM_LOG_DIR', str(log_dir))
+    _set_signing_env(monkeypatch)
+    _set_security_report_ref(monkeypatch, log_dir)
+
+    project_root, anchor = _make_temp_observer_project(tmp_path)
+    _bind_temp_observer_project(monkeypatch, project_root, anchor)
+
+    _touch(health / 'calamum_ops_watchdog.heartbeat')
+    _touch(health / 'calamum_observer.heartbeat')
+    _touch(health / 'calamum_librarian.heartbeat')
+    _touch(health / 'calamum_baseline_monitor.heartbeat')
+    observerctl_module._agent_pid_path().write_text(str(os.getpid()), encoding='utf-8')
+    observerctl_module._baseline_monitor_pid_path().write_text(str(os.getpid()), encoding='utf-8')
+
+    observerctl_module._save_state('sim', 'canary')
+    _write_watchdog_posture(control, posture='isolation', heartbeat_interval=10, baseline_interval=120)
+    _write_watchdog_resource(control, cpu_now=45, ram_now=50, cpu_p95=40, ram_p95=45, score=0.1, age_s=3)
+    (control / 'baseline_monitor_state.json').write_text(json.dumps({
+        'source': 'sim',
+        'mode': 'canary',
+        'posture_trigger': 'isolation',
+        'last_validation_cycle_event': 'baseline_ready',
+    }), encoding='utf-8')
+
+    resource_dir = data / 'observer_derived' / 'sim' / 'canary' / 'resource'
+    evidence_dir = data / 'observer_derived' / 'sim' / 'canary' / 'evidence'
+    archive_dir = data / 'archive'
+    resource_dir.mkdir(parents=True, exist_ok=True)
+    evidence_dir.mkdir(parents=True, exist_ok=True)
+    archive_dir.mkdir(parents=True, exist_ok=True)
+
+    normal_segment_path = archive_dir / 'resource_sim_canary_normal_framec_gate_seg0001.jsonl'
+    baseline_segment_path = archive_dir / 'resource_sim_canary_baseline_framec_gate_seg0001.jsonl'
+    normal_segment_path.write_text('{"timestamp_utc":"2026-03-22T00:00:00Z"}\n', encoding='utf-8')
+    baseline_segment_path.write_text('{"timestamp_utc":"2026-03-22T00:00:00Z","baseline_window_id":"framec-gate-window"}\n', encoding='utf-8')
+    (resource_dir / 'index.jsonl').write_text(
+        json.dumps({
+            'timestamp_utc': observerctl_module._utc_now(),
+            'segment_path': str(normal_segment_path).replace('\\', '/'),
+            'segment_records': 1,
+            'stream_type': 'resource_normal',
+        }) + '\n' + json.dumps({
+            'timestamp_utc': observerctl_module._utc_now(),
+            'segment_path': str(baseline_segment_path).replace('\\', '/'),
+            'segment_records': 1,
+            'stream_type': 'resource_baseline',
+            'baseline_window_id': 'framec-gate-window',
+            'window_id': 'framec-gate-window',
+        }) + '\n',
+        encoding='utf-8',
+    )
+
+    baseline_analysis_path = evidence_dir / 'observerctl_baseline-analysis_framec_gate.json'
+    baseline_ready_path = evidence_dir / 'observerctl_baseline_ready_framec_gate.json'
+    baseline_analysis_path.write_text(json.dumps({
+        'timestamp_utc': observerctl_module._utc_now(),
+        'decision': 'go',
+        'baseline_window_id': 'framec-gate-window',
+        'sample_counts': {'resource_normal': 1, 'resource_baseline': 1},
+        'provenance': {'artifact_path': str(baseline_analysis_path).replace('\\', '/')},
+    }), encoding='utf-8')
+    baseline_ready_path.write_text(json.dumps({
+        'timestamp_utc': observerctl_module._utc_now(),
+        'decision': 'go',
+        'action': 'baseline-ready',
+        'source': 'sim',
+        'mode': 'canary',
+        'target_mode': 'live',
+        'reason_codes': [],
+        'summary': 'Baseline readiness is green for the target gate.',
+        'provenance': {'artifact_path': str(baseline_ready_path).replace('\\', '/')},
+    }), encoding='utf-8')
+    (evidence_dir / 'index.jsonl').write_text(
+        json.dumps({
+            'timestamp_utc': observerctl_module._utc_now(),
+            'event': 'baseline_analysis',
+            'packet_path': str(baseline_analysis_path).replace('\\', '/'),
+        }) + '\n' + json.dumps({
+            'timestamp_utc': observerctl_module._utc_now(),
+            'event': 'baseline_ready',
+            'packet_path': str(baseline_ready_path).replace('\\', '/'),
+        }) + '\n',
+        encoding='utf-8',
+    )
+
+    status = collect_runtime_status(source='sim')
+    gate = evaluate_gate_decision(status, target_mode='live')
+
+    assert gate['decision'] == 'go'
+    assert gate['reason_codes'] == []
+    assert gate['baseline_ready_receipt']['projection_authorized'] is True
+    assert gate['baseline_ready_receipt']['path'] == str(baseline_ready_path).replace('\\', '/')
+    assert gate['stage5_prerequisites']['C22_baseline_validation_rate_escalated']['status'] == 'ok'
+    assert gate['stage5_prerequisites']['C24_resource_stream_retention_ready']['status'] == 'ok'
+    assert gate['stage5_prerequisites']['C25_resource_baseline_window_ready']['status'] == 'ok'
+    assert gate['stage5_prerequisites']['overall']['status'] == 'ok'
+    assert any(str(ref).endswith('observerctl_baseline_ready_framec_gate.json') for ref in gate['evidence_refs'])
 
 
 def test_non_activation_live_projection_can_prove_c22_from_projected_lockdown_defaults(tmp_path: Path, monkeypatch) -> None:

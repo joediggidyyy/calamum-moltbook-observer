@@ -1,6 +1,6 @@
 # Calamum Moltbook Observer — Repo Health Audit
 
-Operator guide (names-only): `projects/calamum-moltbook-observer/docs/manuals/OBSERVERCTL_CLI_TRANSITION_OPERATOR_GUIDE_20260221.md`
+Operator guide (names-only): `projects/calamum-moltbook-observer/docs/manuals/runtime/CALAMUM_RUNTIME_OPERATIONS.md`
 
 Timestamp (UTC): {{ timestamp_utc }}
 Run ID: {{ run_id }}

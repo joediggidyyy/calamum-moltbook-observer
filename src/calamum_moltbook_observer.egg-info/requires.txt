@@ -1,0 +1,15 @@
+psutil
+requests
+
+[dashboard]
+nicegui
+
+[dev]
+pytest
+
+[ds]
+apexlab>=1.2.0
+joblib
+matplotlib
+pandas
+seaborn

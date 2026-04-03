@@ -1,0 +1,126 @@
+# Calamum DS Wizard
+
+Updated: 2026-04-03
+
+This document explains how to use the guided data-science wizard for `observerctl ds`.
+
+## What the wizard is
+
+The wizard is the interactive front end for the same DS operations documented in [`CALAMUM_DS_OPERATIONS.md`](CALAMUM_DS_OPERATIONS.md).
+
+Use it when you want guided configuration, seeded state from existing artifacts, draft save/load, command preview, and optional execute handoff without manually assembling every CLI flag.
+
+## Wizard workflows
+
+The current shipped workflow presets are:
+
+| Workflow | Use it for |
+| --- | --- |
+| `build` | dataset creation from approved telemetry inputs |
+| `train` | model training from an existing dataset manifest |
+| `evaluate` | metric and threshold evaluation using prepared features and optional labels |
+| `score` | scoring a dataset with an unsupervised model |
+| `run-demo` | the packaged demo route |
+| `run-pipeline` | the default build/train/evaluate sequence |
+
+## Wizard sections
+
+The wizard uses these sections to walk through a run:
+
+| Section | Purpose |
+| --- | --- |
+| `flow` | choose the workflow preset |
+| `in` | bind inputs, source/mode context, and dataset-facing artifacts |
+| `model` | choose model family, seeds, split values, and model artifacts |
+| `eval` | set evaluation guards such as `--max-fpr` |
+| `report` | choose output destinations |
+| `cmd` | preview the assembled command |
+| `check` | review validation issues before execution |
+| `run` | execute the handoff |
+| `exit` | leave the wizard |
+
+Not every workflow uses every section. The wizard trims the path to the sections that apply to the selected workflow.
+
+## How to launch it
+
+Launch the wizard directly:
+
+- `observerctl ds wizard`
+
+You can also seed it on launch with any of the supported helper switches below.
+
+## Hydration and seeding options
+
+| Switch | What it seeds from |
+| --- | --- |
+| `--hydrate-dataset <selector-or-path>` | an approved dataset selector or `manifest.json` |
+| `--hydrate-train <path>` | `train_manifest.json` |
+| `--hydrate-model <path>` | a saved model artifact path |
+| `--hydrate-baseline-analysis <path>` | a baseline analysis packet |
+| `--hydrate-run <path>` | an existing evaluation `run.json` ledger |
+| `--hydrate-latest-context` | the latest SSOT source/mode context and latest saved baseline-analysis packet when available |
+
+These options are especially useful when you want the wizard to open with a partially completed run context instead of starting from zero.
+
+## Draft save and load
+
+| Switch | What it does |
+| --- | --- |
+| `--load-draft <slot-or-path>` | load a canonical draft slot token or a saved draft JSON file |
+| `--save-draft [slot-or-path]` | save the seeded or current wizard state to the next canonical slot or an explicit draft path |
+
+If you want to work iteratively, save a draft after the input and model sections are correct, then return later for validation and execute handoff.
+
+## Preloading field values
+
+Use repeatable `--set key=value` items to preload individual fields before the interactive flow starts.
+
+This is useful for values such as:
+
+- source and mode context
+- seeds
+- split values
+- output paths
+- run identifiers
+
+## Execute handoff
+
+Add `--execute` if you want the wizard to attempt the execute handoff after seeding state.
+
+Recommended flow:
+
+1. choose the workflow in `flow`
+2. fill the required inputs and model context
+3. review the assembled command in `cmd`
+4. review validation issues in `check`
+5. execute only when the wizard shows a clean handoff path
+
+## Reporting and artifacts
+
+The wizard writes into the same DS reporting structure as the direct CLI.
+
+| Surface | Role |
+| --- | --- |
+| local run artifacts under the chosen output root | detailed execution residue and ledgers |
+| `docs/reports/ds/runs/.../report.md` | tracked publication copy for selected runs |
+| `docs/reports/ds/aggregates/*.md` | tracked rollups |
+| `docs/reports/ds/INDEX.md` | reader-facing DS publication hub |
+
+If you only need the publication view, go to [`../../reports/ds/INDEX.md`](../../reports/ds/INDEX.md). If you need the direct non-wizard command forms, go to [`CALAMUM_DS_OPERATIONS.md`](CALAMUM_DS_OPERATIONS.md).
+
+## Practical tips
+
+| Tip | Why it helps |
+| --- | --- |
+| start with `--hydrate-latest-context` when working from a current runtime lane | it saves you from re-entering source/mode context |
+| use `saved baselines` before evaluation-heavy runs | the wizard can cite the right baseline packet more cleanly when you already know the selector |
+| review the `cmd` and `check` sections before execute | this catches missing context before the run is launched |
+| save drafts for longer workflows | it keeps iterative configuration work reproducible |
+
+## Related documents
+
+- [`CALAMUM_DS_OPERATIONS.md`](CALAMUM_DS_OPERATIONS.md)
+- [`../../reports/ds/INDEX.md`](../../reports/ds/INDEX.md)
+- [`../../../src/analysis/README.md`](../../../src/analysis/README.md)
+- [`../runtime/CALAMUM_RUNTIME_WORKFLOWS.md`](../runtime/CALAMUM_RUNTIME_WORKFLOWS.md)
+- [`../INDEX.md`](../INDEX.md)

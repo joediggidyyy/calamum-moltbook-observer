@@ -22,7 +22,7 @@
     "content_roots": {
       "assets/": "Branding, visuals, and static presentation assets.",
       "deployment/": "Deployment packaging, container assets, and service definitions.",
-      "docs/manuals/": "Public runtime and operator-reference manuals.",
+      "docs/manuals/": "Public runtime, data-science, and reference manuals.",
       "docs/reports/": "Curated public reports and evaluation artifacts.",
       "src/": "Observer runtime, analysis pipeline, and tests.",
       "template_library/": "Reusable names-only templates shipped with the project.",
@@ -43,10 +43,15 @@
   ],
   "public_manuals": [
     "docs/manuals/INDEX.md",
-    "docs/manuals/OBSERVER_WORKFLOW_MANUAL_20260324.md",
-    "docs/manuals/OBSERVER_SECURITY_MODEL_20260324.md",
-    "docs/manuals/OBSERVERCTL_CLI_TRANSITION_OPERATOR_GUIDE_20260221.md",
-    "docs/manuals/OBSERVERCTL_MODE_TRANSITION_MATRIX_20260221.md"
+    "docs/manuals/runtime/INDEX.md",
+    "docs/manuals/runtime/CALAMUM_RUNTIME_WORKFLOWS.md",
+    "docs/manuals/runtime/CALAMUM_RUNTIME_OPERATIONS.md",
+    "docs/manuals/data-science/INDEX.md",
+    "docs/manuals/data-science/CALAMUM_DS_OPERATIONS.md",
+    "docs/manuals/data-science/CALAMUM_DS_WIZARD.md",
+    "docs/manuals/reference/INDEX.md",
+    "docs/manuals/reference/CALAMUM_SECURITY_MODEL.md",
+    "docs/manuals/reference/CALAMUM_RUNTIME_TRANSITIONS.md"
   ],
   "standards": {
     "names_only": true,

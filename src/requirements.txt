@@ -1,5 +1,10 @@
-requests
-pytest
+# Convenience install surface for the full observer runtime + DS/reporting stack.
+# The canonical packaging contract lives in pyproject.toml extras.
+apexlab>=1.2.0
+joblib
 matplotlib
-seaborn
+nicegui
 pandas
+psutil
+requests
+seaborn

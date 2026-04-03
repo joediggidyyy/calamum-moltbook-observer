@@ -35,14 +35,22 @@
   "implementation_state": "automation-available",
   "indexes_dir": "local_untracked/analysis/indexes",
   "kind": "run",
-  "lineage": {},
+  "lineage": {
+    "source_report_paths": {
+      "json": "local_untracked/analysis/runs/demo/demo_20260331T212901782257Z/report/report.json",
+      "manifest": "local_untracked/analysis/runs/demo/demo_20260331T212901782257Z/report/manifest.json",
+      "markdown": "local_untracked/analysis/runs/demo/demo_20260331T212901782257Z/report/report.md"
+    },
+    "source_run_root": "local_untracked/analysis/runs/demo/demo_20260331T212901782257Z"
+  },
   "producer_command": "observerctl ds run demo",
   "producer_entrypoint": "projects/calamum-moltbook-observer/src/observerctl.py",
-  "report_dir": "local_untracked/analysis/runs/demo/demo_20260331T212901782257Z/report",
+  "published_run_dir": "docs/reports/ds/runs/2026/2026-03/demo_20260331T212901782257Z",
+  "report_dir": "docs/reports/ds/runs/2026/2026-03/demo_20260331T212901782257Z",
   "report_paths": {
-    "json": "local_untracked/analysis/runs/demo/demo_20260331T212901782257Z/report/report.json",
-    "manifest": "local_untracked/analysis/runs/demo/demo_20260331T212901782257Z/report/manifest.json",
-    "markdown": "local_untracked/analysis/runs/demo/demo_20260331T212901782257Z/report/report.md"
+    "json": "docs/reports/ds/runs/2026/2026-03/demo_20260331T212901782257Z/report.json",
+    "manifest": "docs/reports/ds/runs/2026/2026-03/demo_20260331T212901782257Z/manifest.json",
+    "markdown": "docs/reports/ds/runs/2026/2026-03/demo_20260331T212901782257Z/report.md"
   },
   "result": {
     "max_fpr": 0.01,
@@ -68,6 +76,12 @@
   "run_root_policy": "canonical",
   "runtime_cli_surface": "observerctl",
   "schema_version": "1.0",
+  "source_report_paths": {
+    "json": "local_untracked/analysis/runs/demo/demo_20260331T212901782257Z/report/report.json",
+    "manifest": "local_untracked/analysis/runs/demo/demo_20260331T212901782257Z/report/manifest.json",
+    "markdown": "local_untracked/analysis/runs/demo/demo_20260331T212901782257Z/report/report.md"
+  },
+  "source_run_root": "local_untracked/analysis/runs/demo/demo_20260331T212901782257Z",
   "summary": "Demo pipeline completed through observerctl ds.",
   "timestamp_utc": "2026-03-31T21:29:02.286858Z",
   "underlying_surface": "analysis.run_demo",
