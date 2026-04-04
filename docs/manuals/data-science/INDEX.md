@@ -15,7 +15,7 @@ This section covers the supported data-science workflow for `observerctl ds` and
 
 | Surface | Purpose |
 | --- | --- |
-| [`../../reports/ds/INDEX.md`](../../reports/ds/INDEX.md) | tracked publication view of DS report packs and aggregates |
+| [`../../reports/INDEX.md`](../../reports/INDEX.md) | tracked publication view of report collections and aggregate rollups |
 | [`../../../src/analysis/README.md`](../../../src/analysis/README.md) | project-local analysis home and artifact layout |
 
 ## Read next

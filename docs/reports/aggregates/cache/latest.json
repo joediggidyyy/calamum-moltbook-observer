@@ -1,0 +1,44 @@
+{
+  "family_id": "ds_publication",
+  "latest_run": {
+    "context": {
+      "output_override": false,
+      "source_materialization": true
+    },
+    "decision": "go",
+    "figure_count": 0,
+    "published_figures": [],
+    "published_report_paths": {
+      "json": "docs/reports/ds/runs/2026/2026-04/build_20260404T055440594778Z/report.json",
+      "manifest": "docs/reports/ds/runs/2026/2026-04/build_20260404T055440594778Z/manifest.json",
+      "markdown": "docs/reports/ds/runs/2026/2026-04/build_20260404T055440594778Z/report.md"
+    },
+    "published_run_dir": "docs/reports/ds/runs/2026/2026-04/build_20260404T055440594778Z",
+    "result": {
+      "has_labels": false,
+      "reason_codes": [],
+      "seed": 42,
+      "split": {
+        "test": 0.15,
+        "train": 0.7,
+        "val": 0.15
+      },
+      "total_records": 50
+    },
+    "run_id": "build_20260404T055440594778Z",
+    "source_manifest_path": "local_untracked/analysis/runs/build/build_20260404T055440594778Z/report/manifest.json",
+    "source_report_paths": {
+      "json": "local_untracked/analysis/runs/build/build_20260404T055440594778Z/report/report.json",
+      "manifest": "local_untracked/analysis/runs/build/build_20260404T055440594778Z/report/manifest.json",
+      "markdown": "local_untracked/analysis/runs/build/build_20260404T055440594778Z/report/report.md"
+    },
+    "source_run_root": "local_untracked/analysis/runs/build/build_20260404T055440594778Z",
+    "summary": "Approved dataset materialized through observerctl ds.",
+    "timestamp_utc": "2026-04-04T05:54:40.599867Z",
+    "workflow": "build"
+  },
+  "publish_root": "docs/reports/ds",
+  "published_at_utc": "2026-04-04T05:54:40.599867Z",
+  "published_run_count": 20,
+  "schema_version": "1.0"
+}

@@ -12,7 +12,7 @@ This document is the practical operating path for the Calamum observer stack.
 | Baseline | collect and validate the resource baseline for the target lane | `observerctl baseline collect`, `observerctl baseline analyze` |
 | Execute | move into the requested runtime state through a guarded transition | `observerctl ops mode gate`, `observerctl ops mode transition` |
 | Close | verify current state, evidence emission, and runtime health | `observerctl ops mode current`, `observerctl ops evidence index`, `observerctl health full` |
-| Hand off | route retained artifacts into analysis and reporting work | `observerctl librarian stats`, `observerctl ds *`, `docs/reports/ds/INDEX.md` |
+| Hand off | route retained artifacts into analysis and reporting work | `observerctl librarian stats`, `observerctl ds *`, `docs/reports/INDEX.md` |
 
 ## Before touching the system
 

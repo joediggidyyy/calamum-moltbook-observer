@@ -147,6 +147,13 @@ _DATASET_SCOPE_MODE_PATTERNS = {
     ),
 }
 
+_DATASET_ALIAS_MODE_TOKENS = {
+    'watch': 'wat',
+    'canary': 'can',
+    'live': 'liv',
+    'honeypot': 'hon',
+}
+
 
 def _utc_now_iso() -> str:
     return datetime.now(timezone.utc).isoformat().replace('+00:00', 'Z')
@@ -868,8 +875,71 @@ def _dataset_selector_entry(entry: Dict[str, Any], index: int) -> Dict[str, Any]
         'requires_librarian_attestation': bool(entry.get('requires_librarian_attestation', False)),
         'source': str(entry.get('source', 'unknown') or 'unknown'),
         'mode': str(entry.get('mode', 'unknown') or 'unknown'),
+        'display_alias': _dataset_entry_display_alias(entry, resolver),
         'dataset_manifest_sha256': str(resolver.get('dataset_manifest_sha256', '') or '').strip(),
     }
+
+
+def _dataset_entry_display_alias(entry: Dict[str, Any], resolver: Dict[str, Any]) -> str:
+    explicit_alias = str(entry.get('display_alias', '') or '').strip()
+    if explicit_alias:
+        return explicit_alias
+    source = str(entry.get('source', '') or '').strip().lower()
+    mode = str(entry.get('mode', '') or '').strip().lower()
+    manifest_sha = str(resolver.get('dataset_manifest_sha256', '') or '').strip().lower()
+    return _dataset_display_alias_from_scope(source, mode, manifest_sha)
+
+
+def _dataset_display_alias_from_scope(source: str, mode: str, manifest_sha: str) -> str:
+    source_token = str(source or '').strip().lower()
+    mode_token = str(mode or '').strip().lower()
+    sha_token = str(manifest_sha or '').strip().lower()
+    mode_alias = _DATASET_ALIAS_MODE_TOKENS.get(mode_token, '')
+    source_alias = 's' if source_token == 'sim' else ('r' if source_token == 'real' else '')
+    if not mode_alias or not source_alias or len(sha_token) < 4:
+        return ''
+    return '{0}-{1}{2}'.format(mode_alias, source_alias, sha_token[-4:])
+
+
+def dataset_display_alias_for_manifest(project_anchor: Path, dataset_manifest_ref: Any) -> str:
+    paths = _dataset_catalog_paths(project_anchor)
+    _bootstrap_librarian_vault(paths)
+    project_root = paths['project_root']
+    token = str(dataset_manifest_ref or '').strip()
+    if not token:
+        return ''
+    try:
+        manifest_path = _resolve_catalog_ref(project_root, token)
+    except Exception:
+        return ''
+    if not manifest_path.exists():
+        return ''
+
+    manifest_sha = sha256_path(manifest_path)
+    manifest_key = normalize_repo_or_absolute_path(manifest_path, project_root)
+
+    for entry in _load_dataset_snapshot(paths):
+        if not isinstance(entry, dict):
+            continue
+        resolver = dict(entry.get('resolver', {}) or {}) if isinstance(entry.get('resolver', {}), dict) else {}
+        entry_manifest_key = str(resolver.get('dataset_manifest_path', '') or '').strip()
+        entry_manifest_sha = str(resolver.get('dataset_manifest_sha256', '') or '').strip().lower()
+        if entry_manifest_key == manifest_key or (entry_manifest_sha and entry_manifest_sha == manifest_sha.lower()):
+            alias = _dataset_entry_display_alias(entry, resolver)
+            if alias:
+                return alias
+
+    payload = _read_json_dict(manifest_path, default={})
+    if not payload:
+        return ''
+    inferred_source, inferred_mode = _infer_dataset_scope(
+        manifest_path,
+        payload,
+        display_name=str(payload.get('display_name', '') or manifest_path.parent.name or manifest_path.stem).strip(),
+        run_id=str(payload.get('run_id', '') or '').strip(),
+        source_binding='dataset_manifest_sha256:{0}'.format(manifest_sha),
+    )
+    return _dataset_display_alias_from_scope(inferred_source, inferred_mode, manifest_sha)
 
 
 def _load_dataset_snapshot(paths: Dict[str, Path]) -> List[Dict[str, Any]]:

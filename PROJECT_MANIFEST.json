@@ -36,11 +36,11 @@
   },
   "public_reports": [
     "docs/reports/INDEX.md",
-    "docs/reports/ds/INDEX.md",
-    "docs/reports/aggregates/PUBLIC_RUN_LEDGER.md",
-    "docs/reports/aggregates/AGGREGATE_REPORT.md",
+    "docs/reports/aggregates/LATEST_COLLECTIONS.md",
+    "docs/reports/aggregates/WORKFLOW_ROLLUP.md",
+    "docs/reports/aggregates/THRESHOLD_SUMMARY.md",
     "docs/reports/reference/GENERATED_REPORT_SURFACES.md",
-    "docs/reports/validations/APEXLAB_REFERENCE_VALIDATION_REPORT_20260324.md"
+    "docs/reports/validations/INDEX.md"
   ],
   "public_manuals": [
     "docs/manuals/INDEX.md",

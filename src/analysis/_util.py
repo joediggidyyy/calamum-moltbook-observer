@@ -101,23 +101,51 @@ def ds_drafts_dir(start: Path) -> Path:
 
 def ds_publication_dir(start: Path) -> Path:
     root = find_project_root(start)
-    return root / 'docs' / 'reports' / 'ds'
+    return root / 'docs' / 'reports'
+
+
+def ds_publication_collections_dir(start: Path) -> Path:
+    return ds_publication_dir(start) / 'collections'
 
 
 def ds_publication_runs_dir(start: Path) -> Path:
-    return ds_publication_dir(start) / 'runs'
+    return ds_publication_collections_dir(start)
 
 
 def ds_publication_aggregates_dir(start: Path) -> Path:
     return ds_publication_dir(start) / 'aggregates'
 
 
+def ds_publication_reference_dir(start: Path) -> Path:
+    return ds_publication_dir(start) / 'reference'
+
+
+def ds_publication_validations_dir(start: Path) -> Path:
+    return ds_publication_dir(start) / 'validations'
+
+
+def ds_publication_internal_dir(start: Path) -> Path:
+    return ds_indexes_dir(start) / 'ds_publication'
+
+
 def ds_published_run_dir(start: Path, timestamp_utc: str, run_id: str) -> Path:
-    timestamp_text = str(timestamp_utc or '').strip()
-    year = timestamp_text[:4] if len(timestamp_text) >= 4 and timestamp_text[:4].isdigit() else 'unknown'
-    year_month = timestamp_text[:7] if len(timestamp_text) >= 7 and timestamp_text[4] == '-' else '{0}-unknown'.format(year)
-    resolved_run_id = sanitize_run_id(run_id) or default_run_id('run', timestamp_text or None)
-    return ds_publication_runs_dir(start) / year / year_month / resolved_run_id
+    resolved_run_id = sanitize_run_id(run_id) or default_run_id('run', timestamp_utc or None)
+    return ds_publication_runs_dir(start) / resolved_run_id
+
+
+def ds_published_collection_dir(start: Path, run_id: str) -> Path:
+    return ds_publication_runs_dir(start) / (sanitize_run_id(run_id) or default_run_id('run')) / 'collection'
+
+
+def ds_published_processing_dir(start: Path, run_id: str, workflow: str) -> Path:
+    resolved_run_id = sanitize_run_id(run_id) or default_run_id('run')
+    workflow_name = canonical_ds_workflow_name(workflow)
+    return ds_publication_runs_dir(start) / resolved_run_id / 'processing' / workflow_name
+
+
+def ds_publication_internal_run_dir(start: Path, run_id: str) -> Path:
+    resolved_run_id = sanitize_run_id(run_id) or default_run_id('run')
+    return ds_publication_internal_dir(start) / 'collections' / resolved_run_id
 
 
 def librarian_dataset_manifest_path(start: Path) -> Path:

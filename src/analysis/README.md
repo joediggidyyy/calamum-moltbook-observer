@@ -55,7 +55,7 @@ Use these tracked docs when you want the public-facing command and reporting rou
 
 - `../../docs/manuals/data-science/DS_OPERATIONS.md`
 - `../../docs/manuals/data-science/DS_WIZARD.md`
-- `../../docs/reports/ds/INDEX.md`
+- `../../docs/reports/INDEX.md`
 
 Historical planning context remains available in:
 

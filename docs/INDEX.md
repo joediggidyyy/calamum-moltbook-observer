@@ -11,7 +11,7 @@ This index routes readers through the tracked documentation surfaces for Calamum
 | project overview | [`../README.md`](../README.md) | [`../SECURITY.md`](../SECURITY.md) | [`../DATA_METHODOLOGY.md`](../DATA_METHODOLOGY.md) |
 | runtime and operations | [`manuals/runtime/INDEX.md`](manuals/runtime/INDEX.md) | [`manuals/runtime/RUNTIME_WORKFLOWS.md`](manuals/runtime/RUNTIME_WORKFLOWS.md) | [`manuals/runtime/RUNTIME_OPERATIONS.md`](manuals/runtime/RUNTIME_OPERATIONS.md) |
 | security and transition rules | [`manuals/reference/INDEX.md`](manuals/reference/INDEX.md) | [`manuals/reference/SECURITY_MODEL.md`](manuals/reference/SECURITY_MODEL.md) | [`manuals/reference/RUNTIME_TRANSITIONS.md`](manuals/reference/RUNTIME_TRANSITIONS.md) |
-| data science and reporting | [`manuals/data-science/INDEX.md`](manuals/data-science/INDEX.md) | [`manuals/data-science/DS_OPERATIONS.md`](manuals/data-science/DS_OPERATIONS.md) | [`reports/ds/INDEX.md`](reports/ds/INDEX.md) |
+| data science and reporting | [`manuals/data-science/INDEX.md`](manuals/data-science/INDEX.md) | [`manuals/data-science/DS_OPERATIONS.md`](manuals/data-science/DS_OPERATIONS.md) | [`reports/INDEX.md`](reports/INDEX.md) |
 
 ## Root project documents
 
@@ -38,4 +38,4 @@ Use [`reports/INDEX.md`](reports/INDEX.md) for the curated tracked report catalo
 - Want the project overview? Start at [`../README.md`](../README.md)
 - Want the manual hub? Use [`manuals/INDEX.md`](manuals/INDEX.md)
 - Want runtime guidance? Use [`manuals/runtime/INDEX.md`](manuals/runtime/INDEX.md)
-- Want the DS lane? Use [`manuals/data-science/INDEX.md`](manuals/data-science/INDEX.md) and [`reports/ds/INDEX.md`](reports/ds/INDEX.md)
+- Want the DS lane? Use [`manuals/data-science/INDEX.md`](manuals/data-science/INDEX.md) and [`reports/INDEX.md`](reports/INDEX.md)

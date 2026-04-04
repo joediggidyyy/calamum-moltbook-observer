@@ -39,7 +39,7 @@ The DS lane turns names-only runtime telemetry into reproducible local analysis 
 | telemetry inputs | names-only runtime JSONL under the observer-derived lane or approved local telemetry files |
 | local analysis home | `src/analysis/` |
 | default ignored output root | `local_untracked/analysis/` |
-| tracked DS publication hub | `docs/reports/ds/INDEX.md` |
+| tracked report publication hub | `docs/reports/INDEX.md` |
 
 The project-local analysis home also documents the current supported analysis stack in [`src/analysis/README.md`](../../../src/analysis/README.md).
 
@@ -72,7 +72,7 @@ The saved namespace makes it easier to reuse approved artifacts without rebuildi
 1. build a dataset with `observerctl ds build`
 2. train a model with `observerctl ds train`
 3. evaluate the resulting artifact with `observerctl ds evaluate`
-4. publish or review tracked DS outputs through [`../../reports/ds/INDEX.md`](../../reports/ds/INDEX.md)
+4. publish or review tracked report collections through [`../../reports/INDEX.md`](../../reports/INDEX.md)
 
 ### Demo lane
 
@@ -89,9 +89,12 @@ The DS lane uses both local run artifacts and tracked reader-facing summaries.
 | Surface | What it is for |
 | --- | --- |
 | local run ledgers such as `run.json` and `run.md` | detailed per-run execution records kept with the generated analysis output |
-| `docs/reports/ds/runs/.../report.md` | tracked publication copy for selected DS runs |
-| `docs/reports/ds/aggregates/*.md` | tracked rollups such as latest, by-workflow, and threshold summaries |
-| `docs/reports/ds/INDEX.md` | the entry point for the tracked DS publication set |
+| `docs/reports/collections/<collection-alias>/collection/report.md` | tracked collection-level report keyed by the canonical alias shown in the wizard |
+| `docs/reports/collections/<collection-alias>/processing/<stage>/YYYYMMDD.<stage>.md` | dated stage report for each published calculation run under that collection alias |
+| `docs/reports/aggregates/*.md` | tracked rollups such as latest collections, workflow rollup, and threshold summary |
+| `docs/reports/INDEX.md` | the entry point for the tracked report collection set |
+
+If more than one calculation run is published for the same alias and stage on the same day, the first document keeps the base `YYYYMMDD.<stage>.md` form and later documents receive an ordered suffix.
 
 ## When to use the wizard instead
 
@@ -116,6 +119,6 @@ The wizard is documented separately in [`DS_WIZARD.md`](DS_WIZARD.md), but it ta
 
 - [`DS_WIZARD.md`](DS_WIZARD.md)
 - [`../../../src/analysis/README.md`](../../../src/analysis/README.md)
-- [`../../reports/ds/INDEX.md`](../../reports/ds/INDEX.md)
+- [`../../reports/INDEX.md`](../../reports/INDEX.md)
 - [`../runtime/RUNTIME_WORKFLOWS.md`](../runtime/RUNTIME_WORKFLOWS.md)
 - [`../INDEX.md`](../INDEX.md)

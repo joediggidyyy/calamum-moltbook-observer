@@ -20,11 +20,11 @@ It is the public-facing contract for:
 - how each family is produced and retained
 - how untracked runtime ledgers should be structured
 
-Most generated report artifacts remain untracked runtime outputs. The DS lane also publishes a curated tracked reader subtree under `docs/reports/ds/` derived from the canonical untracked DS run spine.
+Most generated report artifacts remain untracked runtime outputs. The DS lane also publishes a curated tracked reader subtree under `docs/reports/collections/`, `docs/reports/aggregates/`, and companion report-reference surfaces derived from the canonical untracked DS run spine.
 
 Use the companion report references alongside this document:
 
-- [`../ds/INDEX.md`](../ds/INDEX.md) for curated DS report packs and DS aggregate rollups derived from the canonical DS run spine
+- [`../INDEX.md`](../INDEX.md) for curated DS collection packets and aggregate rollups derived from the canonical DS run spine
 - [`../aggregates/PUBLIC_RUN_LEDGER.md`](../aggregates/PUBLIC_RUN_LEDGER.md) for the public register of run families and authoritative evidence surfaces
 - [`../aggregates/AGGREGATE_REPORT.md`](../aggregates/AGGREGATE_REPORT.md) for the current aggregate synthesis and threshold-calibration snapshot
 
@@ -37,7 +37,7 @@ Calamum uses three distinct report surfaces:
 | Surface | Role | Retention model |
 |---|---|---|
 | Tracked public reports | Publishable, reader-facing reference artifacts | Committed under `docs/reports/` |
-| Tracked DS publication packs | Curated per-run DS report packs plus DS aggregate rollups derived from the canonical DS run spine | Committed under `docs/reports/ds/` |
+| Tracked DS publication packs | Curated collection packets plus DS aggregate rollups derived from the canonical DS run spine | Committed under `docs/reports/` |
 | Untracked generated reports | Per-run operational, audit, and probe outputs | Written under `local_untracked/` or `report_tmp/` |
 | Runtime ledgers | Append-only run history for generated report families | Written as JSONL under the family output root |
 
@@ -49,9 +49,15 @@ The DS reporting lane now uses a dual-surface publication model:
 |---|---|---|
 | Canonical untracked DS run bundle | Per-run operational source of truth for report payloads, manifests, and runtime artifacts | `local_untracked/analysis/runs/<workflow>/<run_id>/` |
 | DS run ledger and latest pointer | Append-only history plus convenience latest surface for DS runs | `local_untracked/analysis/indexes/ds_run_index.jsonl` and `local_untracked/analysis/indexes/ds_latest.json` |
-| Curated tracked DS report packs | Reader-facing per-run report packs and aggregate rollups | `docs/reports/ds/` derived from the canonical DS run spine |
+| Curated tracked DS report packs | Reader-facing collection packets and aggregate rollups | `docs/reports/collections/`, `docs/reports/aggregates/`, `docs/reports/reference/`, and `docs/reports/validations/` derived from the canonical DS run spine |
 
-Tracked DS publication stays reader-facing and derived. It does not replace the canonical untracked DS run bundle or the append-only DS run ledger.
+Tracked DS publication stays reader-facing and derived. It does not replace the canonical untracked DS run bundle or the append-only DS run ledger. Collection packets are keyed by the canonical dataset alias exposed in the wizard, while the dated stage documents under each packet preserve the individual calculation runs.
+
+Immediate guardrails now in force:
+
+- workflow `demo` is excluded from tracked `docs/reports/` publication
+- automated DS run surfaces can skip local derived report generation with `--no-derived-reports`
+- tracked `docs/reports/` publication surfaces are rebuilt from current eligible canonical runs during publication refresh
 
 ## Runtime evidence aggregate sources
 
@@ -214,7 +220,7 @@ Example shape:
 ## Related surfaces
 
 - [`../INDEX.md`](../INDEX.md)
-- [`../ds/INDEX.md`](../ds/INDEX.md)
+- [`../INDEX.md`](../INDEX.md)
 - [`../aggregates/PUBLIC_RUN_LEDGER.md`](../aggregates/PUBLIC_RUN_LEDGER.md)
 - [`../aggregates/AGGREGATE_REPORT.md`](../aggregates/AGGREGATE_REPORT.md)
 - [`../../manuals/INDEX.md`](../../manuals/INDEX.md)

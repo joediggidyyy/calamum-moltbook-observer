@@ -215,6 +215,7 @@ def generate_evaluation_visuals(
     threshold: Optional[float] = None,
     max_fpr: Optional[float] = None,
     threshold_summary: Optional[Mapping[str, Any]] = None,
+    scores_csv: Optional[Path] = None,
 ) -> Dict[str, Any]:
     pyplot = _load_pyplot()
     if pyplot is None:
@@ -227,6 +228,8 @@ def generate_evaluation_visuals(
 
     figures_dir.mkdir(parents=True, exist_ok=True)
     figures: List[Dict[str, Any]] = []
+    anomaly_direction = ''
+    score_column = ''
 
     if _has_confusion_counts(counts):
         confusion_path = figures_dir / 'confusion_matrix.png'
@@ -278,10 +281,37 @@ def generate_evaluation_visuals(
             kind='summary',
         ))
 
+    if scores_csv is not None and threshold_summary is not None:
+        series = load_score_series(Path(scores_csv))
+        if str(series.get('decision', '')) == 'go':
+            threshold_value = _optional_float((threshold_summary or {}).get('threshold'))
+            if threshold_value is not None:
+                score_column = str(series.get('score_column', '') or '')
+                anomaly_direction = ANOMALY_DIRECTION
+                threshold_path = figures_dir / 'threshold_selection.png'
+                _render_threshold_chart(
+                    pyplot,
+                    list(series.get('scores', []) or []),
+                    threshold_path,
+                    threshold=float(threshold_value),
+                    target_fpr=_optional_float((threshold_summary or {}).get('target_fpr')),
+                    actual_fpr=_optional_float((threshold_summary or {}).get('actual_fpr')),
+                    score_column=score_column,
+                )
+                figures.append(_figure_record(
+                    figure_id='threshold_selection',
+                    title='Threshold selection',
+                    caption='Lower-tail threshold overlay. Scores at or below the threshold are treated as anomalous.',
+                    path=threshold_path,
+                    kind='threshold',
+                ))
+
     return {
         'decision': 'go' if figures else 'skipped',
         'reason_codes': [] if figures else ['visualization_skipped:no_evaluation_figures_rendered'],
         'figure_count': int(len(figures)),
+        'anomaly_direction': anomaly_direction,
+        'score_column': score_column,
         'figures': figures,
     }
 

@@ -57,6 +57,7 @@ PACKET_RESULT_EXCLUDED_FIELDS = {
     'decision',
     'artifacts',
     'run_id',
+    'collection_alias',
 }
 
 
@@ -147,6 +148,7 @@ def write_report_bundle(
         'schema_version': REPORT_SCHEMA_VERSION,
         'workflow': bundle.workflow,
         'run_id': bundle.run_id,
+        'collection_alias': str(packet.get('collection_alias', '') or '').strip(),
         'timestamp_utc': timestamp_utc,
         'decision': str(packet.get('decision', '')),
         'summary': str(packet.get('summary', '')),
@@ -170,6 +172,7 @@ def write_report_bundle(
         'category': WORKFLOW_CATEGORIES.get(bundle.workflow, 'ds-run'),
         'workflow': bundle.workflow,
         'run_id': bundle.run_id,
+        'collection_alias': str(packet.get('collection_alias', '') or '').strip(),
         'timestamp_utc': timestamp_utc,
         'producer_command': str(packet.get('command_path', '')),
         'producer_entrypoint': 'projects/calamum-moltbook-observer/src/observerctl.py',

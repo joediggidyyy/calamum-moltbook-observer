@@ -149,11 +149,14 @@ The wizard writes into the same DS reporting structure as the direct CLI.
 | Surface | Role |
 | --- | --- |
 | local run artifacts under the chosen output root | detailed execution residue and ledgers |
-| `docs/reports/ds/runs/.../report.md` | tracked publication copy for selected runs |
-| `docs/reports/ds/aggregates/*.md` | tracked rollups |
-| `docs/reports/ds/INDEX.md` | reader-facing DS publication hub |
+| `docs/reports/collections/<collection-alias>/collection/report.md` | tracked collection packet keyed by the canonical alias shown in the wizard |
+| `docs/reports/collections/<collection-alias>/processing/<stage>/YYYYMMDD.<stage>.md` | tracked stage report for each published calculation run under that collection alias |
+| `docs/reports/aggregates/*.md` | tracked rollups |
+| `docs/reports/INDEX.md` | reader-facing report-collections hub |
 
-If you only need the publication view, go to [`../../reports/ds/INDEX.md`](../../reports/ds/INDEX.md). If you need the direct non-wizard command forms, go to [`DS_OPERATIONS.md`](DS_OPERATIONS.md).
+The collection folder is keyed by the canonical alias used in the wizard dataset selector, not by the calculation run id. If more than one calculation run is published for the same alias and stage on the same day, the first document keeps the base `YYYYMMDD.<stage>.md` form and later documents receive an ordered suffix.
+
+If you only need the publication view, go to [`../../reports/INDEX.md`](../../reports/INDEX.md). If you need the direct non-wizard command forms, go to [`DS_OPERATIONS.md`](DS_OPERATIONS.md).
 
 ## Practical tips
 
@@ -167,7 +170,7 @@ If you only need the publication view, go to [`../../reports/ds/INDEX.md`](../..
 ## Related documents
 
 - [`DS_OPERATIONS.md`](DS_OPERATIONS.md)
-- [`../../reports/ds/INDEX.md`](../../reports/ds/INDEX.md)
+- [`../../reports/INDEX.md`](../../reports/INDEX.md)
 - [`../../../src/analysis/README.md`](../../../src/analysis/README.md)
 - [`../runtime/RUNTIME_WORKFLOWS.md`](../runtime/RUNTIME_WORKFLOWS.md)
 - [`../INDEX.md`](../INDEX.md)

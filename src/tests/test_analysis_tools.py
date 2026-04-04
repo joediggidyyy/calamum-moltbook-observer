@@ -242,6 +242,34 @@ def test_report_visuals_emit_evaluation_figures(tmp_path: Path) -> None:
         assert Path(figure['path']).exists()
 
 
+def test_report_visuals_emit_evaluation_threshold_overlay_when_scores_are_available(tmp_path: Path) -> None:
+    from analysis.report_visuals import generate_evaluation_visuals
+
+    scores_csv = tmp_path / 'scores.csv'
+    scores_csv.write_text('record_id,score_anomaly\na,0.1\nb,0.2\nc,0.8\nd,0.9\n', encoding='utf-8')
+
+    visuals = generate_evaluation_visuals(
+        figures_dir=tmp_path / 'figures',
+        metrics={'flag_rate': 0.5},
+        counts={'flagged': 2, 'total': 4},
+        threshold=0.2,
+        max_fpr=0.25,
+        threshold_summary={
+            'threshold': 0.2,
+            'target_fpr': 0.25,
+            'actual_fpr': 0.5,
+            'flagged_records': 2,
+            'records_scored': 4,
+        },
+        scores_csv=scores_csv,
+    )
+
+    assert visuals['decision'] == 'go'
+    assert visuals['anomaly_direction'] == 'lower-is-more-anomalous'
+    assert visuals['score_column'] == 'score_anomaly'
+    assert 'threshold_selection' in {figure['id'] for figure in visuals['figures']}
+
+
 def test_report_pack_markdown_uses_codesentinel_style_sections(tmp_path: Path) -> None:
     from analysis.report_pack import prepare_report_bundle, write_report_bundle
 

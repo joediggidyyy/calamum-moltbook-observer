@@ -129,6 +129,197 @@ def _read_env_presence(name: str) -> bool:
     return bool((os.getenv(name) or '').strip())
 
 
+def _keysmith_supported_venues() -> Tuple[str, ...]:
+    return ('moltbook',)
+
+
+def _keysmith_surface_paths() -> Dict[str, Path]:
+    project_root = _project_root()
+    return {
+        'src_keysmith_py': project_root / 'src' / 'keysmith.py',
+        'deployment_keysmith_dockerfile': project_root / 'deployment' / 'keysmith' / 'Dockerfile',
+        'deployment_keysmith_requirements': project_root / 'deployment' / 'keysmith' / 'requirements.txt',
+    }
+
+
+def _keysmith_surface_status() -> Dict[str, Dict[str, Any]]:
+    status: Dict[str, Dict[str, Any]] = {}
+    for name, path in _keysmith_surface_paths().items():
+        status[name] = {
+            'path': str(path).replace('\\', '/'),
+            'exists': bool(path.exists()),
+        }
+    return status
+
+
+def _resolve_keysmith_venue(venue: str, action: str) -> Tuple[str, Optional[Dict[str, Any]]]:
+    resolved = str(venue or 'moltbook').strip().lower() or 'moltbook'
+    if resolved in _keysmith_supported_venues():
+        return resolved, None
+    return '', {
+        'timestamp_utc': _utc_now(),
+        'runtime_cli_surface': 'observerctl',
+        'decision': 'no-go',
+        'action': action,
+        'summary': 'Requested KEYSMITH venue is not supported in the current observer slice.',
+        'reason_codes': ['policy_denied:keysmith_venue_unsupported'],
+        'venue': resolved,
+        'supported_venues': list(_keysmith_supported_venues()),
+    }
+
+
+def _ops_keysmith_status(venue: str = 'moltbook') -> Dict[str, Any]:
+    resolved_venue, venue_denial = _resolve_keysmith_venue(venue, 'ops-keysmith')
+    if venue_denial is not None:
+        return venue_denial
+
+    surface_status = _keysmith_surface_status()
+    env_presence = {
+        'moltbook_api_key': _read_env_presence('MOLTBOOK_API_KEY'),
+        'keysmith_sandbox': _read_env_presence('KEYSMITH_SANDBOX'),
+        'keysmith_sandbox_output_root': _read_env_presence('KEYSMITH_SANDBOX_OUTPUT_ROOT'),
+    }
+    artifacts = {name: str(info.get('path', '') or '') for name, info in surface_status.items()}
+    reason_codes: List[str] = []
+
+    try:
+        import keysmith as keysmith_module
+
+        artifacts['default_output_dir'] = str(keysmith_module._default_output_dir().as_posix())
+    except Exception:
+        artifacts['default_output_dir'] = ''
+        reason_codes.append('critical_check_failed:keysmith_import_failed')
+
+    missing_surfaces = [
+        name for name, info in surface_status.items()
+        if not bool(info.get('exists', False))
+    ]
+    if missing_surfaces:
+        reason_codes.append('critical_check_failed:keysmith_surface_missing')
+
+    decision = 'go' if len(reason_codes) == 0 else 'no-go'
+    live_mint_ready = bool(decision == 'go' and env_presence.get('keysmith_sandbox', False))
+    summary = 'KEYSMITH lane is present; dry-run is available from host and live mint requires the KEYSMITH sandbox/container lane.'
+    if live_mint_ready:
+        summary = 'KEYSMITH lane is present and live mint is armed through the KEYSMITH sandbox/container lane.'
+    elif decision != 'go':
+        summary = 'KEYSMITH lane is incomplete for the current observer venue stub.'
+
+    return {
+        'timestamp_utc': _utc_now(),
+        'runtime_cli_surface': 'observerctl',
+        'decision': decision,
+        'action': 'ops-keysmith',
+        'summary': summary,
+        'reason_codes': reason_codes,
+        'venue': resolved_venue,
+        'live_mint_authority': 'sandbox-only',
+        'dry_run_authority': 'host-or-sandbox',
+        'live_mint_ready': live_mint_ready,
+        'surface_status': surface_status,
+        'env_presence': env_presence,
+        'artifacts': artifacts,
+    }
+
+
+def _ops_keysmith_mint(
+    venue: str,
+    dry_run: bool,
+    output_dir: str,
+    base_url: str,
+    register_path: str,
+    allow_hosts: List[str],
+    agent_metadata_json: str,
+    timeout_sec: int,
+) -> Dict[str, Any]:
+    resolved_venue, venue_denial = _resolve_keysmith_venue(venue, 'ops-keysmith-mint')
+    if venue_denial is not None:
+        return venue_denial
+
+    try:
+        import keysmith as keysmith_module
+    except Exception:
+        return {
+            'timestamp_utc': _utc_now(),
+            'runtime_cli_surface': 'observerctl',
+            'decision': 'no-go',
+            'action': 'ops-keysmith-mint',
+            'summary': 'KEYSMITH module import failed before mint delegation.',
+            'reason_codes': ['critical_check_failed:keysmith_import_failed'],
+            'venue': resolved_venue,
+            'dry_run': bool(dry_run),
+            'sandbox': False,
+            'live_mint_authority': 'sandbox-only',
+            'output_dir': str(output_dir or '').strip(),
+        }
+
+    sandbox_active = bool(keysmith_module._sandbox_flag())
+    output_dir_path = Path(str(output_dir).strip()) if str(output_dir).strip() else keysmith_module._default_output_dir()
+    base_url_text = str(base_url).strip() or str(keysmith_module._default_base_url())
+    register_path_text = str(register_path).strip() or str(keysmith_module._default_register_path())
+    allowlist = tuple(str(item).strip() for item in (allow_hosts or []) if str(item).strip())
+    if len(allowlist) == 0:
+        allowlist = tuple(keysmith_module._default_allowed_hosts())
+
+    try:
+        cfg = keysmith_module.KeysmithConfig(
+            base_url=base_url_text,
+            register_path=register_path_text,
+            output_dir=output_dir_path,
+            dry_run=bool(dry_run),
+            allowed_hosts=allowlist,
+            agent_metadata=keysmith_module._parse_agent_metadata_json(agent_metadata_json),
+            timeout_sec=int(timeout_sec),
+        )
+        artifacts = keysmith_module.run_keysmith(cfg)
+    except keysmith_module.KeysmithError as exc:
+        return {
+            'timestamp_utc': _utc_now(),
+            'runtime_cli_surface': 'observerctl',
+            'decision': 'no-go',
+            'action': 'ops-keysmith-mint',
+            'summary': str(exc),
+            'reason_codes': ['critical_check_failed:keysmith_mint_failed'],
+            'venue': resolved_venue,
+            'dry_run': bool(dry_run),
+            'sandbox': sandbox_active,
+            'live_mint_authority': 'sandbox-only',
+            'output_dir': str(output_dir_path.as_posix()),
+        }
+    except Exception:
+        return {
+            'timestamp_utc': _utc_now(),
+            'runtime_cli_surface': 'observerctl',
+            'decision': 'no-go',
+            'action': 'ops-keysmith-mint',
+            'summary': 'KEYSMITH mint failed before artifact handoff.',
+            'reason_codes': ['critical_check_failed:keysmith_mint_failed'],
+            'venue': resolved_venue,
+            'dry_run': bool(dry_run),
+            'sandbox': sandbox_active,
+            'live_mint_authority': 'sandbox-only',
+            'output_dir': str(output_dir_path.as_posix()),
+        }
+
+    return {
+        'timestamp_utc': _utc_now(),
+        'runtime_cli_surface': 'observerctl',
+        'decision': 'go',
+        'action': 'ops-keysmith-mint',
+        'summary': 'KEYSMITH artifacts written through observerctl.',
+        'reason_codes': [],
+        'venue': resolved_venue,
+        'dry_run': bool(dry_run),
+        'sandbox': sandbox_active,
+        'live_mint_authority': 'sandbox-only',
+        'output_dir': str(artifacts.output_dir.as_posix()),
+        'claim_url_path': str(artifacts.claim_url_txt.as_posix()),
+        'sealed_drop_path': str(artifacts.sealed_drop_bin.as_posix()),
+        'audit_path': str(artifacts.audit_jsonl.as_posix()),
+        'result_json': str(artifacts.result_json.as_posix()),
+    }
+
+
 def _sha256_text(text: str) -> str:
     return hashlib.sha256(text.encode('utf-8')).hexdigest()
 
@@ -1940,7 +2131,7 @@ def _ops_runtime_stop(timeout_sec: float = 8.0) -> Dict[str, Any]:
     }
 
 
-def _ops_runtime_start(source: str, mode: str, interval_sec: float, timeout_sec: float) -> Dict[str, Any]:
+def _ops_runtime_start(source: str, mode: str, interval_sec: float, timeout_sec: float, gui: bool = False) -> Dict[str, Any]:
     launcher_path = _project_root() / 'launch_ghost_console.ps1'
     if not launcher_path.exists():
         return {
@@ -1958,7 +2149,8 @@ def _ops_runtime_start(source: str, mode: str, interval_sec: float, timeout_sec:
         mode_norm = 'watch'
 
     env = os.environ.copy()
-    env['CALAMUM_SKIP_BROWSER'] = '1'
+    if not bool(gui):
+        env['CALAMUM_SKIP_BROWSER'] = '1'
     env['CALAMUM_GUI_AUTOSTART_OBSERVER'] = '1'
     env['CALAMUM_MOLTBOOK_SOURCE'] = source_norm
     env['CALAMUM_OPS_MODE'] = mode_norm
@@ -2031,15 +2223,16 @@ def _ops_runtime_start(source: str, mode: str, interval_sec: float, timeout_sec:
 
     if timeout_s <= 0.0:
         status = _runtime_observer_status()
+        defaults = _baseline_monitor_defaults_for_mode(mode_norm)
         monitor_packet = _baseline_monitor_start(
             source=source_norm,
             mode=mode_norm,
-            normal_interval_sec=float(RESOURCE_NORMAL_INTERVAL_SEC),
-            baseline_interval_sec=float(_posture_cadence_defaults(mode_norm)['baseline_validation_interval_seconds']),
-            baseline_window_sec=float(RESOURCE_BASELINE_WINDOW_SEC),
-            baseline_sample_interval_sec=float(RESOURCE_BASELINE_INTERVAL_SEC),
-            min_normal_samples=int(RESOURCE_BASELINE_MIN_NORMAL_SAMPLES),
-            min_baseline_samples=int(RESOURCE_BASELINE_MIN_BASELINE_SAMPLES),
+            normal_interval_sec=float(defaults['normal_interval_sec']),
+            baseline_interval_sec=float(defaults['baseline_interval_sec']),
+            baseline_window_sec=float(defaults['baseline_window_sec']),
+            baseline_sample_interval_sec=float(defaults['baseline_sample_interval_sec']),
+            min_normal_samples=int(defaults['min_normal_samples']),
+            min_baseline_samples=int(defaults['min_baseline_samples']),
             startup_probe_sec=3.0,
         )
         reasons = []
@@ -2055,6 +2248,7 @@ def _ops_runtime_start(source: str, mode: str, interval_sec: float, timeout_sec:
             'launcher_pid': int(getattr(proc, 'pid', 0) or 0),
             'launcher_stdout_log': str(start_stdout_path).replace('\\', '/'),
             'launcher_stderr_log': str(start_stderr_path).replace('\\', '/'),
+            'gui_requested': bool(gui),
             'startup_verified': bool(str(status.get('state', '')) == 'active'),
             'state': status.get('state', 'degraded'),
             'pid': status.get('pid', {}),
@@ -2065,15 +2259,16 @@ def _ops_runtime_start(source: str, mode: str, interval_sec: float, timeout_sec:
     while time.time() <= deadline:
         status = _runtime_observer_status()
         if str(status.get('state', '')) == 'active':
+            defaults = _baseline_monitor_defaults_for_mode(mode_norm)
             monitor_packet = _baseline_monitor_start(
                 source=source_norm,
                 mode=mode_norm,
-                normal_interval_sec=float(RESOURCE_NORMAL_INTERVAL_SEC),
-                baseline_interval_sec=float(_posture_cadence_defaults(mode_norm)['baseline_validation_interval_seconds']),
-                baseline_window_sec=float(RESOURCE_BASELINE_WINDOW_SEC),
-                baseline_sample_interval_sec=float(RESOURCE_BASELINE_INTERVAL_SEC),
-                min_normal_samples=int(RESOURCE_BASELINE_MIN_NORMAL_SAMPLES),
-                min_baseline_samples=int(RESOURCE_BASELINE_MIN_BASELINE_SAMPLES),
+                normal_interval_sec=float(defaults['normal_interval_sec']),
+                baseline_interval_sec=float(defaults['baseline_interval_sec']),
+                baseline_window_sec=float(defaults['baseline_window_sec']),
+                baseline_sample_interval_sec=float(defaults['baseline_sample_interval_sec']),
+                min_normal_samples=int(defaults['min_normal_samples']),
+                min_baseline_samples=int(defaults['min_baseline_samples']),
                 startup_probe_sec=3.0,
             )
             reasons = []
@@ -2089,6 +2284,7 @@ def _ops_runtime_start(source: str, mode: str, interval_sec: float, timeout_sec:
                 'launcher_pid': int(getattr(proc, 'pid', 0) or 0),
                 'launcher_stdout_log': str(start_stdout_path).replace('\\', '/'),
                 'launcher_stderr_log': str(start_stderr_path).replace('\\', '/'),
+                'gui_requested': bool(gui),
                 'startup_verified': True,
                 'state': status.get('state', 'degraded'),
                 'pid': status.get('pid', {}),
@@ -2097,15 +2293,16 @@ def _ops_runtime_start(source: str, mode: str, interval_sec: float, timeout_sec:
         time.sleep(0.25)
 
     final_status = _runtime_observer_status()
+    defaults = _baseline_monitor_defaults_for_mode(mode_norm)
     monitor_packet = _baseline_monitor_start(
         source=source_norm,
         mode=mode_norm,
-        normal_interval_sec=float(RESOURCE_NORMAL_INTERVAL_SEC),
-        baseline_interval_sec=float(_posture_cadence_defaults(mode_norm)['baseline_validation_interval_seconds']),
-        baseline_window_sec=float(RESOURCE_BASELINE_WINDOW_SEC),
-        baseline_sample_interval_sec=float(RESOURCE_BASELINE_INTERVAL_SEC),
-        min_normal_samples=int(RESOURCE_BASELINE_MIN_NORMAL_SAMPLES),
-        min_baseline_samples=int(RESOURCE_BASELINE_MIN_BASELINE_SAMPLES),
+        normal_interval_sec=float(defaults['normal_interval_sec']),
+        baseline_interval_sec=float(defaults['baseline_interval_sec']),
+        baseline_window_sec=float(defaults['baseline_window_sec']),
+        baseline_sample_interval_sec=float(defaults['baseline_sample_interval_sec']),
+        min_normal_samples=int(defaults['min_normal_samples']),
+        min_baseline_samples=int(defaults['min_baseline_samples']),
         startup_probe_sec=3.0,
     )
     reasons = []
@@ -2122,6 +2319,7 @@ def _ops_runtime_start(source: str, mode: str, interval_sec: float, timeout_sec:
         'launcher_pid': int(getattr(proc, 'pid', 0) or 0),
         'launcher_stdout_log': str(start_stdout_path).replace('\\', '/'),
         'launcher_stderr_log': str(start_stderr_path).replace('\\', '/'),
+        'gui_requested': bool(gui),
         'startup_verified': False,
         'state': final_status.get('state', 'degraded'),
         'pid': final_status.get('pid', {}),
@@ -2967,6 +3165,144 @@ def _baseline_hash_generate(max_files: int, output: str) -> Dict[str, Any]:
         'baseline_path': str(out_path).replace('\\', '/'),
         'statistics': payload.get('statistics', {}),
         'reason_codes': [],
+    }
+
+
+def _baseline_monitor_defaults_for_mode(mode: str) -> Dict[str, Any]:
+    mode_norm = str(mode or 'watch').strip().lower()
+    if mode_norm not in MODES:
+        mode_norm = 'watch'
+    posture_defaults = _posture_cadence_defaults(mode_norm)
+    return {
+        'normal_interval_sec': float(RESOURCE_NORMAL_INTERVAL_SEC),
+        'baseline_interval_sec': float(posture_defaults['baseline_validation_interval_seconds']),
+        'baseline_window_sec': float(RESOURCE_BASELINE_WINDOW_SEC),
+        'baseline_sample_interval_sec': float(RESOURCE_BASELINE_INTERVAL_SEC),
+        'min_normal_samples': int(RESOURCE_BASELINE_MIN_NORMAL_SAMPLES),
+        'min_baseline_samples': int(RESOURCE_BASELINE_MIN_BASELINE_SAMPLES),
+    }
+
+
+def _baseline_generate_start(repair: bool) -> Dict[str, Any]:
+    state = _load_state()
+    source = _normalize_source(str(state.get('source', 'sim') or 'sim'))
+    mode = str(state.get('mode', 'watch') or 'watch').strip().lower()
+    if mode not in MODES:
+        mode = 'watch'
+
+    defaults = _baseline_monitor_defaults_for_mode(mode)
+    reasons: List[str] = []
+    runtime_before = _runtime_baseline_monitor_status(max_age_sec=max(90.0, float(defaults['normal_interval_sec']) * 3.0))
+    continuity_before = _load_monitor_continuity(_load_json_file(_baseline_monitor_state_path(), {}))
+
+    repair_packet: Dict[str, Any] = {}
+    repair_stop_packet: Dict[str, Any] = {}
+    if repair:
+        repair_needed = str(runtime_before.get('state', 'stopped')) not in ('active', 'degraded') or str(continuity_before.get('state', 'fresh_start')) == 'degraded'
+        repair_packet = _apply_watchdog_posture(source, mode, event='baseline-generate-repair')
+        if str(repair_packet.get('decision', 'no-go')) != 'go':
+            for code in list(repair_packet.get('reason_codes', ['critical_check_failed:watchdog_posture_persist_failed'])):
+                if code not in reasons:
+                    reasons.append(str(code))
+        if repair_needed and len(reasons) == 0:
+            repair_stop_packet = _baseline_monitor_stop(timeout_sec=0.0)
+            if str(repair_stop_packet.get('decision', 'no-go')) != 'go':
+                for code in list(repair_stop_packet.get('reason_codes', ['critical_check_failed:baseline_monitor_stop_timeout'])):
+                    if code not in reasons:
+                        reasons.append(str(code))
+
+    if len(reasons) > 0:
+        return {
+            'timestamp_utc': _utc_now(),
+            'runtime_cli_surface': 'observerctl',
+            'decision': 'no-go',
+            'action': 'baseline-generate',
+            'generate_mode': 'start-repair' if repair else 'start',
+            'repair_requested': bool(repair),
+            'source': source,
+            'mode': mode,
+            'reason_codes': reasons,
+            'summary': 'Observer baseline lane repair did not clear for start.',
+            'runtime_before': runtime_before,
+            'continuity_before': continuity_before,
+            'repair_packet': repair_packet,
+            'repair_stop_packet': repair_stop_packet,
+        }
+
+    start_packet = _baseline_monitor_start(
+        source=source,
+        mode=mode,
+        normal_interval_sec=float(defaults['normal_interval_sec']),
+        baseline_interval_sec=float(defaults['baseline_interval_sec']),
+        baseline_window_sec=float(defaults['baseline_window_sec']),
+        baseline_sample_interval_sec=float(defaults['baseline_sample_interval_sec']),
+        min_normal_samples=int(defaults['min_normal_samples']),
+        min_baseline_samples=int(defaults['min_baseline_samples']),
+        startup_probe_sec=3.0,
+    )
+    if str(start_packet.get('decision', 'no-go')) != 'go':
+        for code in list(start_packet.get('reason_codes', ['critical_check_failed:baseline_monitor_start_failed'])):
+            if code not in reasons:
+                reasons.append(str(code))
+        return {
+            'timestamp_utc': _utc_now(),
+            'runtime_cli_surface': 'observerctl',
+            'decision': 'no-go',
+            'action': 'baseline-generate',
+            'generate_mode': 'start-repair' if repair else 'start',
+            'repair_requested': bool(repair),
+            'source': source,
+            'mode': mode,
+            'reason_codes': reasons,
+            'summary': 'Observer baseline lane did not start cleanly.',
+            'runtime_before': runtime_before,
+            'continuity_before': continuity_before,
+            'repair_packet': repair_packet,
+            'repair_stop_packet': repair_stop_packet,
+            'baseline_monitor_start_packet': start_packet,
+        }
+
+    seed_packet = _baseline_monitor_once(
+        source=source,
+        mode=mode,
+        normal_interval_sec=float(defaults['normal_interval_sec']),
+        baseline_interval_sec=float(defaults['baseline_interval_sec']),
+        baseline_window_sec=float(defaults['baseline_window_sec']),
+        baseline_sample_interval_sec=float(defaults['baseline_sample_interval_sec']),
+        min_normal_samples=int(defaults['min_normal_samples']),
+        min_baseline_samples=int(defaults['min_baseline_samples']),
+    )
+    if str(seed_packet.get('decision', 'no-go')) != 'go':
+        for code in list(seed_packet.get('reason_codes', ['critical_check_failed:baseline_seed_cycle_failed'])):
+            if code not in reasons:
+                reasons.append(str(code))
+
+    summary = 'Observer baseline lane started and emitted a fresh receipt.'
+    if str(seed_packet.get('decision', 'no-go')) != 'go':
+        summary = 'Observer baseline lane started, but the fresh seed receipt did not clear.'
+    elif str(seed_packet.get('validation_cycle_packet_decision', '') or '').strip().lower() != 'go':
+        summary = 'Observer baseline lane started and remains warming after the fresh receipt.'
+
+    return {
+        'timestamp_utc': _utc_now(),
+        'runtime_cli_surface': 'observerctl',
+        'decision': 'go' if len(reasons) == 0 else 'no-go',
+        'action': 'baseline-generate',
+        'generate_mode': 'start-repair' if repair else 'start',
+        'repair_requested': bool(repair),
+        'source': source,
+        'mode': mode,
+        'reason_codes': reasons,
+        'summary': summary,
+        'runtime_before': runtime_before,
+        'continuity_before': continuity_before,
+        'repair_packet': repair_packet,
+        'repair_stop_packet': repair_stop_packet,
+        'baseline_monitor_start_packet': start_packet,
+        'seed_packet': seed_packet,
+        'validation_cycle_event': str(seed_packet.get('validation_cycle_event', '') or ''),
+        'validation_cycle_packet_path': str(seed_packet.get('validation_cycle_packet_path', '') or ''),
+        'validation_cycle_packet_decision': str(seed_packet.get('validation_cycle_packet_decision', seed_packet.get('decision', 'no-go')) or 'no-go'),
     }
 
 
@@ -3999,6 +4335,156 @@ def _render_ds_report_artifact_pairs(artifacts: Dict[str, Any]) -> List[Tuple[st
     return sorted(pairs, key=lambda item: item[0])
 
 
+def _render_keysmith_guidance_lines(packet: Dict[str, Any]) -> List[str]:
+    action = str(packet.get('action', '') or '').strip().lower()
+    decision = str(packet.get('decision', '') or '').strip().lower()
+    dry_run = bool(packet.get('dry_run', False))
+    sandbox = bool(packet.get('sandbox', False))
+    summary = str(packet.get('summary', '') or '').strip().lower()
+    if action == 'ops-keysmith':
+        return [
+            'Dry-run may be executed from the host shell or the KEYSMITH sandbox lane.',
+            'Live mint is authorized only from the KEYSMITH sandbox/container lane.',
+        ]
+    if decision != 'go' and 'sandbox' in summary:
+        return [
+            'Run live mint inside the KEYSMITH sandbox/container lane.',
+            'Use --dry-run from the host shell only for preflight validation.',
+        ]
+    if decision == 'go' and dry_run and not sandbox:
+        return [
+            'Review the names-only artifact paths created by dry-run.',
+            'Run live mint only from the KEYSMITH sandbox/container lane.',
+        ]
+    if decision == 'go' and sandbox:
+        return [
+            'Review the names-only artifact paths and proceed with the container-lane handoff.',
+        ]
+    return [
+        'Run live mint only from the KEYSMITH sandbox/container lane.',
+    ]
+
+
+def _render_keysmith_status_human(packet: Dict[str, Any]) -> List[str]:
+    lines: List[str] = [_style_section_title('ObserverCTL KEYSMITH')]
+    ts = str(packet.get('timestamp_utc', '') or '').strip()
+    if ts:
+        lines.append('generated_at_utc: {0}'.format(ts))
+    decision = str(packet.get('decision', '') or '').strip().lower()
+    summary = str(packet.get('summary', '') or '').strip()
+    if decision or summary:
+        if summary:
+            lines.append('decision: {0} - {1}'.format(_style_decision_value(decision or 'go'), summary))
+        else:
+            lines.append('decision: {0}'.format(_style_decision_value(decision)))
+
+    _append_human_section(
+        lines,
+        'Summary',
+        _render_human_kv_rows(
+            [
+                ('Venue', str(packet.get('venue', '') or 'moltbook')),
+                ('Live mint authority', str(packet.get('live_mint_authority', '') or 'sandbox-only')),
+                ('Dry-run authority', str(packet.get('dry_run_authority', '') or 'host-or-sandbox')),
+                ('Live mint ready', _yes_no_text(bool(packet.get('live_mint_ready', False)))),
+            ],
+            indent='  ',
+            min_label_width=18,
+            max_label_width=20,
+        ),
+    )
+
+    surface_status = packet.get('surface_status', {}) if isinstance(packet.get('surface_status', {}), dict) else {}
+    surface_lines: List[str] = []
+    for label, key in (
+        ('src/keysmith.py', 'src_keysmith_py'),
+        ('deployment/keysmith/Dockerfile', 'deployment_keysmith_dockerfile'),
+        ('deployment/keysmith/requirements.txt', 'deployment_keysmith_requirements'),
+    ):
+        row = surface_status.get(key, {}) if isinstance(surface_status.get(key, {}), dict) else {}
+        rendered_value = '{0} ({1})'.format(_render_human_path_tail(row.get('path', '')), 'present' if bool(row.get('exists', False)) else 'missing')
+        surface_lines.extend(_render_human_kv_rows([(label, rendered_value)], indent='  ', min_label_width=30, max_label_width=32))
+    _append_human_section(lines, 'Surfaces', surface_lines)
+
+    env_presence = packet.get('env_presence', {}) if isinstance(packet.get('env_presence', {}), dict) else {}
+    artifacts = packet.get('artifacts', {}) if isinstance(packet.get('artifacts', {}), dict) else {}
+    evidence_lines: List[str] = []
+    evidence_lines.extend(
+        _render_human_kv_rows(
+            [
+                ('Default output root', _render_human_path_tail(artifacts.get('default_output_dir', ''))),
+                ('MOLTBOOK API key', _yes_no_text(bool(env_presence.get('moltbook_api_key', False)))),
+                ('KEYSMITH sandbox', _yes_no_text(bool(env_presence.get('keysmith_sandbox', False)))),
+                ('Sandbox output root', _yes_no_text(bool(env_presence.get('keysmith_sandbox_output_root', False)))),
+            ],
+            indent='  ',
+            min_label_width=20,
+            max_label_width=22,
+        )
+    )
+    _append_human_section(lines, 'Evidence', evidence_lines)
+
+    reason_codes = packet.get('reason_codes', []) if isinstance(packet.get('reason_codes', []), list) else []
+    if reason_codes:
+        _append_human_section(lines, 'Reasons', ['  {0}'.format(reason) for reason in reason_codes])
+
+    _append_human_section(lines, 'Guidance', ['  {0}'.format(line) for line in _render_keysmith_guidance_lines(packet)])
+    return lines
+
+
+def _render_keysmith_mint_human(packet: Dict[str, Any]) -> List[str]:
+    lines: List[str] = [_style_section_title('ObserverCTL KEYSMITH mint')]
+    ts = str(packet.get('timestamp_utc', '') or '').strip()
+    if ts:
+        lines.append('generated_at_utc: {0}'.format(ts))
+    decision = str(packet.get('decision', '') or '').strip().lower()
+    summary = str(packet.get('summary', '') or '').strip()
+    if decision or summary:
+        if summary:
+            lines.append('decision: {0} - {1}'.format(_style_decision_value(decision or 'no-go'), summary))
+        else:
+            lines.append('decision: {0}'.format(_style_decision_value(decision)))
+
+    sandbox = bool(packet.get('sandbox', False))
+    dry_run = bool(packet.get('dry_run', False))
+    execution_lane = 'sandbox' if sandbox else ('host-dry-run' if dry_run else 'host')
+    _append_human_section(
+        lines,
+        'Summary',
+        _render_human_kv_rows(
+            [
+                ('Venue', str(packet.get('venue', '') or 'moltbook')),
+                ('Dry run', _yes_no_text(dry_run)),
+                ('Execution lane', execution_lane),
+                ('Live mint authority', str(packet.get('live_mint_authority', '') or 'sandbox-only')),
+            ],
+            indent='  ',
+            min_label_width=18,
+            max_label_width=20,
+        ),
+    )
+
+    evidence_lines: List[str] = []
+    for label, value in (
+        ('Output dir', packet.get('output_dir', '')),
+        ('Claim-url path', packet.get('claim_url_path', '')),
+        ('Sealed-drop path', packet.get('sealed_drop_path', '')),
+        ('Audit path', packet.get('audit_path', '')),
+        ('Result JSON', packet.get('result_json', '')),
+    ):
+        rendered = _render_human_path_tail(value)
+        if rendered:
+            evidence_lines.extend(_render_human_kv_rows([(label, rendered)], indent='  ', min_label_width=18, max_label_width=20))
+    _append_human_section(lines, 'Evidence', evidence_lines)
+
+    reason_codes = packet.get('reason_codes', []) if isinstance(packet.get('reason_codes', []), list) else []
+    if reason_codes:
+        _append_human_section(lines, 'Reasons', ['  {0}'.format(reason) for reason in reason_codes])
+
+    _append_human_section(lines, 'Guidance', ['  {0}'.format(line) for line in _render_keysmith_guidance_lines(packet)])
+    return lines
+
+
 def _render_ds_human(packet: Dict[str, Any]) -> List[str]:
     wizard_view = packet.get('wizard_view', []) if isinstance(packet.get('wizard_view', []), list) else []
     if str(packet.get('action', '')).strip().lower() == 'ds-wizard' and wizard_view:
@@ -4078,6 +4564,10 @@ def _render_human_known_packet(packet: Dict[str, Any]) -> Optional[List[str]]:
     if not isinstance(packet, dict):
         return None
     action = str(packet.get('action', '') or '').strip().lower()
+    if action == 'ops-keysmith':
+        return _render_keysmith_status_human(packet)
+    if action == 'ops-keysmith-mint':
+        return _render_keysmith_mint_human(packet)
     if action.startswith('ds-saved-'):
         return _render_ds_saved_selectors_human(packet)
     if str(packet.get('command_family', '')).strip().lower() == 'ds':
@@ -4750,10 +5240,95 @@ def _baseline_chunked_check() -> Dict[str, Any]:
     }
 
 
+def _baseline_runtime_readiness(action: str, strict: bool) -> Dict[str, Any]:
+    state = _load_state()
+    source = _normalize_source(str(state.get('source', 'sim') or 'sim'))
+    mode = str(state.get('mode', 'watch') or 'watch').strip().lower()
+    if mode not in MODES:
+        mode = 'watch'
+
+    defaults = _baseline_monitor_defaults_for_mode(mode)
+    runtime_packet = _runtime_baseline_monitor_status(max_age_sec=max(90.0, float(defaults['normal_interval_sec']) * 3.0))
+    monitor_state = runtime_packet.get('monitor_state', {}) if isinstance(runtime_packet.get('monitor_state', {}), dict) else {}
+    continuity = _load_monitor_continuity(monitor_state)
+    anchors = continuity.get('anchors', {}) if isinstance(continuity.get('anchors', {}), dict) else {}
+
+    cycle_packet_path_text = str(anchors.get('last_validation_cycle_packet_path', '') or '').strip()
+    cycle_packet_path = Path(cycle_packet_path_text.replace('/', os.sep)) if cycle_packet_path_text else None
+    cycle_packet_exists = bool(cycle_packet_path and cycle_packet_path.exists())
+    cycle_packet = _load_json_file(cycle_packet_path, {}) if cycle_packet_exists and cycle_packet_path is not None else {}
+    cycle_decision = str(anchors.get('last_validation_cycle_decision', '') or cycle_packet.get('decision', '') or '').strip().lower()
+    cycle_reason_codes = list(cycle_packet.get('reason_codes', [])) if isinstance(cycle_packet.get('reason_codes', []), list) else []
+
+    reasons: List[str] = []
+    advisories: List[str] = []
+    if str(runtime_packet.get('decision', 'no-go') or 'no-go').strip().lower() != 'go':
+        for code in list(runtime_packet.get('reason_codes', [])) if isinstance(runtime_packet.get('reason_codes', []), list) else ['critical_check_failed:baseline_monitor_runtime_inactive']:
+            if code not in reasons:
+                reasons.append(str(code))
+    if str(continuity.get('state', 'fresh_start')) == 'degraded':
+        continuity_codes = list(continuity.get('reason_codes', [])) if isinstance(continuity.get('reason_codes', []), list) else ['major_check_failed:baseline_monitor_state_malformed']
+        target = reasons if strict else advisories
+        for code in continuity_codes:
+            if code not in target:
+                target.append(str(code))
+    if not cycle_packet_exists:
+        reasons.append('critical_check_failed:baseline_validation_cycle_missing')
+    elif cycle_decision != 'go':
+        if cycle_reason_codes:
+            for code in cycle_reason_codes:
+                if code not in reasons:
+                    reasons.append(str(code))
+        else:
+            reasons.append('critical_check_failed:baseline_validation_cycle_failed')
+
+    decision = 'go' if len(reasons) == 0 else 'no-go'
+    runtime_state = str(runtime_packet.get('state', 'stopped') or 'stopped')
+    if decision == 'go':
+        summary = 'Observer baseline lane has a passing validation cycle.'
+        if runtime_state == 'degraded':
+            summary = 'Observer baseline lane is partially live and the latest validation cycle cleared.'
+    elif 'critical_check_failed:baseline_monitor_runtime_inactive' in reasons:
+        summary = 'Observer baseline lane monitor is not active.'
+    elif 'critical_check_failed:baseline_validation_cycle_missing' in reasons:
+        summary = 'Observer baseline lane has not emitted a validation-cycle receipt yet.'
+    else:
+        summary = 'Observer baseline lane did not clear the latest validation cycle.'
+
+    return {
+        'timestamp_utc': _utc_now(),
+        'runtime_cli_surface': 'observerctl',
+        'action': action,
+        'baseline_type': 'observer_runtime',
+        'source': source,
+        'mode': mode,
+        'summary': summary,
+        'decision': decision,
+        'reason_codes': reasons,
+        'advisory_reason_codes': advisories,
+        'monitor_runtime': {
+            'state': runtime_state,
+            'decision': str(runtime_packet.get('decision', 'no-go') or 'no-go'),
+            'heartbeat': runtime_packet.get('heartbeat', {}) if isinstance(runtime_packet.get('heartbeat', {}), dict) else {},
+            'pid': runtime_packet.get('pid', {}) if isinstance(runtime_packet.get('pid', {}), dict) else {},
+        },
+        'continuity': continuity,
+        'validation_cycle': {
+            'event': str(anchors.get('last_validation_cycle_event', '') or cycle_packet.get('action', '') or ''),
+            'decision': cycle_decision,
+            'timestamp_utc': str(anchors.get('last_validation_cycle_at_utc', '') or cycle_packet.get('timestamp_utc', '') or ''),
+            'packet_path': str(cycle_packet_path).replace('\\', '/') if cycle_packet_path is not None else '',
+            'exists': bool(cycle_packet_exists),
+            'reason_codes': cycle_reason_codes,
+        },
+        'monitor_state_path': str(_baseline_monitor_state_path()).replace('\\', '/'),
+    }
+
+
 def _baseline_status(baseline: str = '') -> Dict[str, Any]:
     if str(baseline).strip():
         return _baseline_hash_status(baseline)
-    return _baseline_chunked_status()
+    return _baseline_runtime_readiness(action='baseline-status', strict=False)
 
 
 def _baseline_graph() -> Dict[str, Any]:
@@ -4770,7 +5345,7 @@ def _baseline_graph() -> Dict[str, Any]:
 def _baseline_check(baseline: str = '') -> Dict[str, Any]:
     if str(baseline).strip():
         return _baseline_hash_check(baseline)
-    return _baseline_chunked_check()
+    return _baseline_runtime_readiness(action='baseline-check', strict=True)
 
 
 def _baseline_list() -> Dict[str, Any]:
@@ -5956,6 +6531,16 @@ def _generate_short_alias(run_id: str) -> str:
     return raw
 
 
+def _ds_saved_manifest_is_demo_record(manifest: Dict[str, Any], record: Dict[str, Any]) -> bool:
+    workflow = str(manifest.get('workflow', '') or '').strip().lower()
+    if not workflow:
+        entry = record.get('entry', {}) if isinstance(record.get('entry', {}), dict) else {}
+        workflow = str(entry.get('workflow', '') or '').strip().lower()
+    run_mode = str(manifest.get('run_mode', '') or '').strip().lower()
+    command_path = str(manifest.get('command_path', '') or '').strip().lower()
+    return workflow == 'demo' or run_mode == 'demo' or command_path == 'observerctl ds run demo'
+
+
 def _ds_saved_train_entries() -> List[Dict[str, Any]]:
     from analysis._util import sanitize_run_id
 
@@ -5963,6 +6548,8 @@ def _ds_saved_train_entries() -> List[Dict[str, Any]]:
     for record in _ds_saved_manifest_records():
         manifest = dict(record.get('manifest_payload', {}) or {}) if isinstance(record.get('manifest_payload', {}), dict) else {}
         if not manifest:
+            continue
+        if _ds_saved_manifest_is_demo_record(manifest, record):
             continue
 
         artifacts = dict(manifest.get('artifacts', {}) or {}) if isinstance(manifest.get('artifacts', {}), dict) else {}
@@ -6048,6 +6635,8 @@ def _ds_saved_run_entries() -> List[Dict[str, Any]]:
     for record in _ds_saved_manifest_records():
         manifest = dict(record.get('manifest_payload', {}) or {}) if isinstance(record.get('manifest_payload', {}), dict) else {}
         if not manifest:
+            continue
+        if _ds_saved_manifest_is_demo_record(manifest, record):
             continue
 
         artifacts = dict(manifest.get('artifacts', {}) or {}) if isinstance(manifest.get('artifacts', {}), dict) else {}
@@ -6619,7 +7208,7 @@ _DS_WIZARD_WORKFLOW_SECTIONS: Dict[str, Tuple[str, ...]] = {
     'build':        ('flow', 'in', 'report', 'cmd', 'check', 'run', 'exit'),
     'train':        ('flow', 'model', 'report', 'cmd', 'check', 'run', 'exit'),
     'evaluate':     ('flow', 'model', 'eval', 'report', 'cmd', 'check', 'run', 'exit'),
-    'score':        ('flow', 'model', 'report', 'cmd', 'check', 'run', 'exit'),
+    'score':        ('flow', 'report', 'cmd', 'check', 'run', 'exit'),
     'run-pipeline': ('flow', 'report', 'cmd', 'check', 'run', 'exit'),
 }
 _DS_WIZARD_LANDING_CHOICES: Tuple[Tuple[str, str], ...] = (
@@ -6736,49 +7325,95 @@ _DS_WIZARD_FIELD_SPECS: Tuple[_DSWizardFieldSpec, ...] = (
 _DS_WIZARD_SECTION_HELP: Dict[str, Dict[str, str]] = {
     'flow': {
         'label': 'workflow and run type',
-        'detail': 'Select the data science pipeline routine to execute.',
-        'guidance': 'Changing workflows dynamically pares the remaining wizard pages to show only applicable configuration. The active workflow determines whether we require datasets, models, or both.',
+        'detail': 'Select the pipeline routine first; the active workflow decides which sections, artifacts, and validation rules the wizard exposes next.',
+        'guidance': 'Changing workflows re-trims the section rail immediately. Use this page to choose the lane, then configure only the sections that remain visible for that lane.',
     },
     'in': {
         'label': 'inputs and sources',
-        'detail': 'Select authorized upstream data telemetry and dataset targets. The wizard rejects raw filesystem paths and strictly uses registered references.',
-        'guidance': 'Always begin by binding the primary dataset. Empty diagnostic blocks later in the wizard typically indicate missing dataset context here.',
+        'detail': 'Bind the governed dataset or observer context that feeds the workflow. Guided mode prefers approved selectors and saved state over raw path entry.',
+        'guidance': 'If dataset, source, or mode are blank in the header, return here and hydrate context first. Downstream model, report, and run pages assume this page already resolved the primary data reference.',
     },
     'model': {
         'label': 'model family and context',
-        'detail': 'Pin the model architecture and structural boundaries. This page binds algorithms and context for reproducible regeneration.',
-        'guidance': 'If building or training, select your architecture. If scoring or evaluating, select a previously certified training artifact.',
+        'detail': 'Bind the model family or approved saved model context that the workflow will use. This keeps training, evaluation, and scoring reproducible.',
+        'guidance': 'Train and pipeline lanes shape the model family here. Evaluate and score lanes should hydrate a saved model or prior certified training context before execution.',
     },
     'eval': {
         'label': 'evaluation guards',
-        'detail': 'Define the mechanical validation thresholds, such as false positive rates or bounds. Pipelines failing these assertions will halt.',
-        'guidance': 'These are hard operational stops. Edit values explicitly by number or use "set <field> <value>".',
+        'detail': 'Define the mechanical validation thresholds, such as false positive rates or policy bounds. Pipelines failing these assertions will halt.',
+        'guidance': 'These are explicit operational guardrails, not advisory notes. Edit values deliberately and re-run validate after changes so the blocker surface reflects the new thresholds.',
     },
     'report': {
         'label': 'artifact targeting',
-        'detail': 'Preview the canonical output locations the system will generate. Predictable run logs guarantee safety against production bounds.',
-        'guidance': 'This is a read-first view. Overrides should be done securely using direct CLI parameter injection, not guided flow.',
+        'detail': 'Preview the canonical artifact targets the workflow will write. This page is the operator readout for where reports, manifests, models, scores, and logs will land.',
+        'guidance': 'Treat this as a verification page. Loaded markers mean the wizard already resolved the backing dataset, model, run, or draft reference; after execute succeeds, this page also shows the compact results block for the latest completed run.',
     },
     'cmd': {
         'label': 'execution preview',
-        'detail': 'Inspect the raw non-interactive CLI equivalent compiled by your current choices.',
-        'guidance': 'Review the flags for unexpected telemetry injections. Before execution, verify you understand why each flag exists.',
+        'detail': 'Inspect the non-interactive CLI equivalent compiled from the current wizard state before you dispatch the workflow.',
+        'guidance': 'Use this page for a final command audit. Placeholders stand in for resolved paths so you can sanity-check flags, overrides, and hydration results without dumping long local filesystem strings into the terminal.',
     },
     'check': {
         'label': 'validation blockers',
         'detail': 'Validate whether the current workflow can run right now against invariant schema and contract rules.',
-        'guidance': 'Validate is the run gate, not the advance gate. If blockers remain, type "validate" after making fixes to force a rescan, or "open <section-name>" to navigate directly to the missing parameters.',
+        'guidance': 'Validate recomputes blockers only; it does not execute anything. Use the blocker list to decide which section to reopen, fix the missing parameter, and validate again.',
     },
     'run': {
         'label': 'workflow dispatch',
-        'detail': 'Dispatch the pipeline. Execution yields real artifacts against the active system target.',
-        'guidance': 'Execution remains blocked until validate is ready. A successful execute flips status to go only after the expected workflow artifacts exist.',
+        'detail': 'Dispatch the workflow against the active governed target. Execution produces real artifacts, not a dry run.',
+        'guidance': 'Validate must be ready before execute, but validate alone does not move status to go. Status flips only after the expected workflow artifacts exist and the completion record is stored.',
     },
     'exit': {
         'label': 'leave wizard',
         'detail': 'Terminate the interactive session without triggering any further validations.',
         'guidance': 'State is transient; any un-drafted progress is lost upon exit.',
     },
+}
+
+
+_DS_WIZARD_SECTION_HELP_POINTS: Dict[str, Tuple[str, ...]] = {
+    'flow': (
+        'Choose the workflow first; everything else in the rail depends on that choice.',
+        'If a page disappears after you switch workflows, that lane no longer needs it.',
+        'Use advanced only for deliberate operator overrides that the normal guided lane does not expose.',
+    ),
+    'in': (
+        'Confirm dataset, source, and mode in the header before moving on.',
+        'Build uses bounded selector-driven input loading; other lanes expect approved dataset context or saved state.',
+        'If later pages look empty, the root cause is often unresolved data context here.',
+    ),
+    'model': (
+        'Hydrate a saved train/run/baseline surface when you need certified prior context.',
+        'Train and pipeline lanes define model family here; evaluate and score lanes confirm an already-built model here.',
+        'Loaded markers mean the wizard already resolved the referenced artifact and stored it in state.',
+    ),
+    'eval': (
+        'Review the threshold as an operational stop, not a soft preference.',
+        'Re-run validate after changing a guard so blocker output reflects the current threshold.',
+    ),
+    'report': (
+        'Verify canonical output targets before you run so artifact placement is predictable.',
+        'Loaded markers indicate the wizard resolved the backing reference even though the raw path is suppressed here.',
+        'After execute succeeds, return here to confirm the results block without leaving the wizard.',
+    ),
+    'cmd': (
+        'Compare the preview against your mental model of the workflow before you execute.',
+        'Use the command surface when you want to audit hydration, save/load helpers, and final flags in one place.',
+        'Placeholders are intentional: they keep the preview readable while still proving the correct flags are present.',
+    ),
+    'check': (
+        'A clean validate means the workflow can run now; it does not mean the workflow already completed.',
+        'Use blocker text as a routing hint for which section to reopen next.',
+    ),
+    'run': (
+        'Run is the only place that dispatches the workflow from the wizard.',
+        'Score surfaces also summarize processing/completion state here after execution.',
+        'If execute succeeds, report becomes the quickest place to verify emitted artifacts and result rows.',
+    ),
+    'exit': (
+        'Save a draft first if you want to preserve operator state for later.',
+        'Exit never auto-runs validate or execute on your behalf.',
+    ),
 }
 
 
@@ -7189,6 +7824,8 @@ def _ds_wizard_section_display_label(section: str) -> str:
 def _ds_wizard_action_line(state: _DSWizardState) -> str:
     if state.active_page == 'landing':
         return ''
+    if _ds_wizard_current_section(state) == 'run':
+        return 'actions: prev | ? | next | execute | exit'
     return 'actions: prev | ? | next | exit'
 
 
@@ -7269,6 +7906,10 @@ def _ds_wizard_stringify_value(value: Any) -> str:
     return text or '<none>'
 
 
+def _ds_wizard_loaded_marker() -> str:
+    return style_text('loaded', 'positive')
+
+
 def _ds_wizard_short_list_summary(values: Any) -> str:
     if not isinstance(values, list):
         return _ds_wizard_short_path(str(values)) if _ds_wizard_has_value(values) else '<none>'
@@ -7287,7 +7928,7 @@ def _ds_wizard_render_field_current(state: _DSWizardState, spec: _DSWizardFieldS
     if not _ds_wizard_has_value(value):
         return _ds_wizard_stringify_value(value)
     if spec.path_kind:
-        return _ds_wizard_short_path(str(value))
+        return _ds_wizard_loaded_marker()
     return _ds_wizard_stringify_value(value)
 
 
@@ -7463,15 +8104,9 @@ def _ds_wizard_dataset_picker_status(state: _DSWizardState) -> str:
 
 
 def _ds_wizard_dataset_picker_current(state: _DSWizardState) -> str:
-    bits: List[str] = []
-    dataset_manifest = str(state.values.get('dataset_manifest', '') or '').strip()
-    if dataset_manifest:
-        bits.append(_ds_wizard_short_path(dataset_manifest))
-    if _ds_wizard_has_value(state.values.get('features_csv')):
-        bits.append('features')
-    if _ds_wizard_has_value(state.values.get('labels_csv')):
-        bits.append('labels')
-    return ', '.join(bits) if bits else '<choose approved dataset>'
+    if _ds_wizard_has_value(state.values.get('dataset_manifest')) or _ds_wizard_has_value(state.values.get('features_csv')):
+        return _ds_wizard_loaded_marker()
+    return '<choose approved dataset>'
 
 
 def _ds_wizard_train_picker_status(state: _DSWizardState) -> str:
@@ -7484,36 +8119,29 @@ def _ds_wizard_train_picker_status(state: _DSWizardState) -> str:
 
 def _ds_wizard_train_picker_current(state: _DSWizardState) -> str:
     train_manifest = str(state.values.get('train_manifest', '') or '').strip()
-    if train_manifest:
-        return _ds_wizard_short_path(train_manifest)
     model_path = str(state.values.get('model_path', '') or '').strip()
-    if model_path:
-        return _ds_wizard_short_path(model_path)
+    if train_manifest or model_path:
+        return _ds_wizard_loaded_marker()
     return '<choose saved model/train>'
 
 
 def _ds_wizard_baseline_picker_current(state: _DSWizardState) -> str:
     baseline_window_id = str(state.values.get('baseline_window_id', '') or '').strip()
-    if baseline_window_id:
-        return baseline_window_id
     baseline_packet = str(state.values.get('baseline_analysis_packet', '') or '').strip()
-    if baseline_packet:
-        return _ds_wizard_short_path(baseline_packet)
+    if baseline_window_id or baseline_packet:
+        return _ds_wizard_loaded_marker()
     return '<no saved baseline>'
 
 
 def _ds_wizard_run_picker_current(state: _DSWizardState) -> str:
-    if str(state.run_ledger_path or '').strip():
-        return _ds_wizard_short_path(str(state.run_ledger_path))
-    run_id = str(state.values.get('run_id', '') or '').strip()
-    if run_id:
-        return run_id
+    if str(state.run_ledger_path or '').strip() or str(state.values.get('run_id', '') or '').strip():
+        return _ds_wizard_loaded_marker()
     return '<no prior run>'
 
 
 def _ds_wizard_draft_picker_current(state: _DSWizardState) -> str:
     if str(state.draft_path or '').strip():
-        return _ds_wizard_short_path(str(state.draft_path))
+        return _ds_wizard_loaded_marker()
     return '<choose saved draft>'
 
 
@@ -7673,9 +8301,6 @@ def _ds_wizard_partition_menu_lines(state: _DSWizardState, section: str, lines: 
     if current_section == 'model' and workflow == 'evaluate':
         grouped: List[str] = [_style_section_line('load configs')]
         grouped.extend(lines[:3])
-        grouped.append('')
-        grouped.append(_style_section_line('load data'))
-        grouped.append('dataset is displayed in header only; no dataset loader here')
         if len(lines) > 3:
             grouped.append('')
             grouped.extend(lines[3:])
@@ -7692,14 +8317,10 @@ def _ds_wizard_render_menu_items(state: _DSWizardState, section: Optional[str] =
     def _row(label_prefix: str, label: str, status: str, current: str = '', detail: str = '', current_width: int = 0) -> str:
         label_block = _style_padded_choice_label(label_prefix, label, 22)
         current_text = str(current or '').strip()
-        detail_text = str(detail or '').strip()
-        if current_text and detail_text:
-            current_block = rjust_ansi(current_text, current_width or len(strip_ansi(current_text)))
-            tail = '{0} | {1}'.format(current_block, detail_text)
-        elif current_text:
+        if current_text:
             tail = current_text
         else:
-            tail = detail_text
+            tail = ''
         return '{0} {1}'.format(label_block, tail).rstrip()
 
     start_idx = len(_DS_WIZARD_WORKFLOWS) + 1 if current_section == 'flow' else 1
@@ -8037,6 +8658,7 @@ def _ds_wizard_set_value(state: _DSWizardState, key: str, value: Any) -> _DSWiza
             state.active_section = 'flow'
             _ds_wizard_sync_page_from_section(state)
         _ds_wizard_clear_transient_view(state)
+        _ds_wizard_sync_model_type_from_dataset(state)
         return state
     if key == 'source':
         normalized_source = _normalize_source(str(coerced or state.source or 'sim'))
@@ -8159,6 +8781,86 @@ def _ds_wizard_menu_help_lines(state: _DSWizardState) -> List[str]:
     return lines
 
 
+def _ds_wizard_scope_help_points(state: _DSWizardState, section: str) -> List[str]:
+    current_section = str(section or '').strip().lower()
+    workflow = str(state.workflow or '').strip()
+    if current_section == 'in' and workflow == 'build':
+        return [
+            'Choose the source family, then the operating mode, then the approved dataset record to materialize.',
+            'Build guided mode intentionally avoids direct raw input-path editing in this lane.',
+            'Once a dataset is selected, downstream report and run pages use that staged dataset context.',
+        ]
+    return [str(line).strip() for line in _DS_WIZARD_SECTION_HELP_POINTS.get(current_section, ()) if str(line).strip()]
+
+
+def _ds_wizard_scope_help_commands(state: _DSWizardState, section: str) -> List[Tuple[str, str]]:
+    current_section = str(section or '').strip().lower()
+    if current_section == 'flow':
+        return [
+            ("<number>", 'switch to that workflow preset'),
+            ('open <section>', 'jump directly to another visible section'),
+            ('? <workflow>', 'preview a workflow lane before switching'),
+        ]
+    if current_section == 'in':
+        commands: List[Tuple[str, str]] = []
+        if str(state.workflow or '').strip() == 'build':
+            commands.extend([
+                ('<number>', 'step through source, mode, and approved dataset selection'),
+                ('date <yyyy-mm-dd>', 'filter build datasets by capture date'),
+                ('< / > / page <n>', 'page through approved build datasets'),
+            ])
+        else:
+            commands.extend([
+                ('datasets', 'open the approved dataset selector surface'),
+                ('hydrate dataset <selector>', 'load dataset context directly by selector or path'),
+            ])
+        return commands
+    if current_section == 'model':
+        return [
+            ('trained', 'open saved train/model selector surface'),
+            ('runs', 'open saved evaluation run selector surface'),
+            ('baselines', 'open saved baseline selector surface when available'),
+            ('hydrate train|run|baseline <selector>', 'load approved saved context directly'),
+        ]
+    if current_section == 'eval':
+        return [
+            ('<number>', 'edit that numbered field interactively'),
+            ('set <field> <val>', 'update a field directly (for example: set max_fpr 0.02)'),
+            ('clear <field>', 'remove the current value'),
+            ('? <field>', 'explain a field and show the current value'),
+        ]
+    if current_section == 'report':
+        return [
+            ('next / prev', 'move between report, cmd, check, and run pages'),
+            ('cmd', 'jump to the raw command preview for the same workflow state'),
+            ('run', 'jump to the dispatch page after verifying outputs here'),
+        ]
+    if current_section == 'cmd':
+        return [
+            ('save draft [slot|path]', 'persist the current wizard state for reuse'),
+            ('load draft <slot|path>', 'restore a prior wizard draft'),
+            ('hydrate dataset|train|run|baseline <selector>', 'seed command preview from saved context'),
+            ('? status', 'peek the difference between validate and status gates'),
+        ]
+    if current_section == 'check':
+        return [
+            ('validate', 'recompute blockers for the current workflow'),
+            ('open <section>', 'jump straight to the section you need to fix'),
+        ]
+    if current_section == 'run':
+        return [
+            ('execute', 'start the configured workflow when blocked=no'),
+            ('report', 'return to output and results verification after execute'),
+            ('check', 'jump back to validation if you need to re-scan blockers'),
+        ]
+    if current_section == 'exit':
+        return [
+            ('save draft', 'persist current state before leaving'),
+            ('exit', 'close the wizard without further actions'),
+        ]
+    return []
+
+
 def _ds_wizard_scope_help_lines(state: _DSWizardState) -> List[str]:
     if state.active_page == 'landing':
         lines = [_style_section_line('help')]
@@ -8167,10 +8869,17 @@ def _ds_wizard_scope_help_lines(state: _DSWizardState) -> List[str]:
         lines.append('  command and utilities explains the CLI preview plus save/load/hydrate helpers.')
         lines.append('  exit closes the wizard without dispatching a workflow.')
         lines.append('')
+        lines.append(_style_section_line('operator loop'))
+        lines.append('  configure -> choose workflow, hydrate context, and verify outputs.')
+        lines.append('  check -> validate blockers before you run.')
+        lines.append('  run -> execute once validate says ready.')
+        lines.append('  report -> return there after execute to confirm artifact targets and results.')
+        lines.append('')
         lines.append(_style_section_line('use'))
         lines.append('  type a number or choice name to open that page')
         lines.append('  type home from anywhere to return here')
         lines.append("  type ? <choice> to preview a page before opening it")
+        lines.append('  press Enter on a help surface to dismiss it and return to the page')
         return lines
     
     current_section = _ds_wizard_current_section(state)
@@ -8192,6 +8901,13 @@ def _ds_wizard_scope_help_lines(state: _DSWizardState) -> List[str]:
         lines.append(_style_section_line('guidance'))
         lines.append('  {0}'.format(guidance))
 
+    focus_points = _ds_wizard_scope_help_points(state, current_section)
+    if focus_points:
+        lines.append('')
+        lines.append(_style_section_line('verify'))
+        for point in focus_points:
+            lines.append('  - {0}'.format(point))
+
     if current_section in ('check', 'run'):
         lines.append('')
         lines.append(_style_section_line('lifecycle'))
@@ -8210,18 +8926,7 @@ def _ds_wizard_scope_help_lines(state: _DSWizardState) -> List[str]:
             desc = spec.description if spec.description else spec.key
             lines.append('  {0:<16} {1}'.format(_ds_wizard_ui_label(spec.key), desc))
 
-    commands = []
-    if current_section == 'check':
-        commands.append(('validate', 'recompute blockers for the current workflow'))
-        commands.append(('open <section>', 'jump straight to the section you need to fix'))
-    elif current_section == 'run':
-        commands.append(('execute', 'start the configured workflow when blocked=no'))
-    elif current_section == 'eval':
-        commands.append(('<number>', 'edit that numbered field interactively'))
-        commands.append(('set <field> <val>', 'update a field directly (e.g. set max_fpr 0.02)'))
-        commands.append(('clear <field>', 'remove the current value'))
-        commands.append(('? <field>', 'explain a field and show the current value'))
-        
+    commands = _ds_wizard_scope_help_commands(state, current_section)
     if commands:
         lines.append('')
         lines.append(_style_section_line('commands'))
@@ -8493,12 +9198,25 @@ def _ds_wizard_item_peek_lines(state: _DSWizardState, target: str) -> List[str]:
         lines = ['peek: {0}'.format(token)]
         label = str(info.get('label', '')).strip()
         detail = str(info.get('detail', '')).strip()
+        guidance = str(info.get('guidance', '')).strip()
         if label:
             lines.append(label)
         if detail:
             lines.append(detail)
+        if guidance:
+            lines.append('guidance: {0}'.format(guidance))
         if token in _ds_wizard_visible_sections(state):
             lines.append('state: {0}'.format('active' if token == state.active_section else 'available'))
+        focus_points = _ds_wizard_scope_help_points(state, token)
+        if focus_points:
+            lines.append('verify:')
+            for point in focus_points[:3]:
+                lines.append('  - {0}'.format(point))
+        commands = _ds_wizard_scope_help_commands(state, token)
+        if commands:
+            lines.append('commands:')
+            for cmd, cmd_desc in commands[:4]:
+                lines.append('  {0:<24} {1}'.format(cmd, cmd_desc))
         section_fields = _ds_wizard_fields_for_section(state, token)
         if section_fields:
             lines.append('fields:')
@@ -8533,34 +9251,6 @@ def _ds_wizard_item_peek_lines(state: _DSWizardState, target: str) -> List[str]:
 
 
 def _ds_wizard_inline_guidance_lines(state: _DSWizardState, section: str) -> List[str]:
-    current_section = str(section or '').strip().lower()
-    workflow = str(state.workflow or '').strip()
-    if current_section == 'flow':
-        return []
-    if current_section == 'in':
-        if workflow == 'build':
-            return []
-        return [
-            'Choose the approved dataset item by number to load dataset, feature, and label context.',
-        ]
-    if current_section == 'model':
-        return []
-    if current_section == 'report':
-        return []
-    if current_section == 'eval':
-        return [
-            'Type 1 to edit max_fpr, or use set max_fpr <value>.',
-        ]
-    if current_section == 'cmd':
-        return []
-    if current_section == 'check':
-        return [
-            'Type validate to recompute blockers after edits or hydration.',
-        ]
-    if current_section == 'run':
-        return [
-            'Type execute only when blocked=no.',
-        ]
     return []
 
 
@@ -8643,7 +9333,11 @@ def _ds_wizard_hydrate_dataset_manifest(state: _DSWizardState, manifest_path: Pa
         labels_path = _resolve_existing_reference_path(labels_ref, manifest_path.parent)
         state.values['labels_csv'] = str(labels_path or labels_ref).strip()
         state.hydrated_from['labels_csv'] = 'dataset_manifest'
+    else:
+        state.values['labels_csv'] = ''
+        state.hydrated_from.pop('labels_csv', None)
     state.hydrated_from['dataset_manifest'] = 'dataset_manifest'
+    _ds_wizard_sync_model_type_from_dataset(state)
     state.last_action = 'hydrate:dataset_manifest'
     _ds_wizard_set_transient_lines(state, ['dataset loaded'])
     return state
@@ -9131,9 +9825,14 @@ def _ds_wizard_train_dataset_contract_issues(state: _DSWizardState) -> List[str]
         return ['train dataset manifest is not a JSON object']
 
     issues: List[str] = []
+    has_labels = bool(payload.get('has_labels', False))
+    if not has_labels and str(payload.get('labels_csv', '') or '').strip():
+        has_labels = True
     required_fields = ['features_csv', 'splits_csv', 'feature_columns']
-    if str(state.values.get('model_type', 'supervised') or 'supervised').strip() == 'supervised':
+    if str(state.values.get('model_type', 'supervised') or 'supervised').strip() == 'supervised' and has_labels:
         required_fields.append('labels_csv')
+    elif str(state.values.get('model_type', 'supervised') or 'supervised').strip() == 'supervised' and not has_labels:
+        issues.append('train dataset is unlabeled: choose unsupervised model family or rebuild with labels')
 
     for field in required_fields:
         value = payload.get(field, '')
@@ -9149,6 +9848,38 @@ def _ds_wizard_train_dataset_contract_issues(state: _DSWizardState) -> List[str]
             issues.append('train dataset manifest path missing: {0}'.format(field))
 
     return issues
+
+
+def _ds_wizard_dataset_manifest_payload(state: _DSWizardState) -> Dict[str, Any]:
+    manifest_text = str(state.values.get('dataset_manifest', '') or '').strip()
+    manifest_path = _resolve_existing_project_path(manifest_text)
+    if manifest_path is None:
+        return {}
+    payload = _load_json_file(manifest_path, {})
+    return payload if isinstance(payload, dict) else {}
+
+
+def _ds_wizard_dataset_has_labels(state: _DSWizardState) -> bool:
+    payload = _ds_wizard_dataset_manifest_payload(state)
+    if not payload:
+        return False
+    if bool(payload.get('has_labels', False)):
+        return True
+    return str(payload.get('labels_csv', '') or '').strip() != ''
+
+
+def _ds_wizard_sync_model_type_from_dataset(state: _DSWizardState) -> _DSWizardState:
+    workflow = str(state.workflow or '').strip()
+    if workflow not in ('train', 'run-pipeline'):
+        return state
+    if not _ds_wizard_has_value(state.values.get('dataset_manifest')):
+        return state
+    if _ds_wizard_dataset_has_labels(state):
+        return state
+    if str(state.values.get('model_type', '') or '').strip().lower() != 'unsupervised':
+        state.values['model_type'] = 'unsupervised'
+        state.hydrated_from['model_type'] = 'dataset_contract'
+    return state
 
 
 def _ds_wizard_build_dataset_contract_issues(state: _DSWizardState) -> List[str]:
@@ -9282,11 +10013,15 @@ def _ds_wizard_advance_status(state: _DSWizardState) -> str:
 def _ds_wizard_record_workflow_completion(state: _DSWizardState, packet: Dict[str, Any], command_preview: str) -> List[str]:
     workflow = str(state.workflow or '').strip()
     required_keys = list(_ds_wizard_completion_required_artifact_keys(workflow))
+    packet_artifacts = packet.get('artifacts', {}) if isinstance(packet.get('artifacts', {}), dict) else {}
     record = {
         'completed_at_utc': str(packet.get('timestamp_utc', '') or _utc_now()),
         'run_id': str(packet.get('run_id', '') or '').strip(),
         'command_preview': str(command_preview or '').strip(),
         'required_artifact_keys': required_keys,
+        'packet_artifacts': {str(key): str(value or '').strip() for key, value in packet_artifacts.items() if str(key).strip()},
+        'result_rows': _ds_wizard_packet_result_rows(packet),
+        'completion_line': _ds_wizard_packet_completion_line(packet),
         'artifacts': {
             key: _ds_wizard_packet_artifact_text(packet, key)
             for key in required_keys
@@ -9324,6 +10059,8 @@ def _ds_wizard_sync_execution_artifacts(state: _DSWizardState, packet: Dict[str,
         run_json_path = _resolve_existing_reference_path(_ds_wizard_packet_artifact_text(packet, 'run_json'))
         if run_json_path is not None:
             state.run_ledger_path = str(run_json_path)
+        return state
+    if workflow == 'score':
         return state
     if workflow == 'run-pipeline':
         dataset_manifest_path = _resolve_existing_reference_path(_ds_wizard_packet_artifact_text(packet, 'dataset_manifest'))
@@ -9584,6 +10321,10 @@ def _ds_wizard_dataset_manifest_report_values(manifest_path: Path) -> Dict[str, 
 
 def _ds_wizard_report_values(state: _DSWizardState) -> Dict[str, str]:
     values: Dict[str, str] = {}
+    workflow = str(state.workflow or '').strip()
+    completion_record = state.completed_workflows.get(workflow, {}) if isinstance(state.completed_workflows, dict) else {}
+    if isinstance(completion_record, dict):
+        _ds_wizard_apply_saved_artifact_names(values, completion_record.get('packet_artifacts', {}))
 
     run_source = str(state.hydrated_from.get('run_id', '') or '').strip().lower()
     if str(state.run_ledger_path or '').strip() and run_source in ('run_ledger', 'saved_run'):
@@ -9629,6 +10370,110 @@ def _ds_wizard_report_values(state: _DSWizardState) -> Dict[str, str]:
             values.update(_ds_wizard_dataset_manifest_report_values(dataset_manifest_path))
             _ds_wizard_apply_saved_artifact_names(values, _ds_wizard_saved_artifacts_for_path(str(dataset_manifest_path)))
     return values
+
+
+def _ds_wizard_packet_result_rows(packet: Dict[str, Any]) -> List[Tuple[str, str]]:
+    rows: List[Tuple[str, str]] = []
+    workflow = str(packet.get('wizard_workflow', '') or '').strip()
+    summary = str(packet.get('summary', '') or '').strip()
+    if summary:
+        rows.append(('summary', summary))
+    if workflow in ('build', 'run-pipeline') and packet.get('total_records', '') not in ('', None):
+        rows.append(('total records', str(packet.get('total_records', ''))))
+    if workflow in ('train', 'run-pipeline'):
+        model_type = str(packet.get('model_type', '') or '').strip()
+        if model_type:
+            rows.append(('model type', model_type))
+    if workflow == 'evaluate' and packet.get('threshold', '') not in ('', None):
+        rows.append(('threshold', str(packet.get('threshold', ''))))
+    if workflow == 'score':
+        rows.append(('records scored', str(packet.get('records_scored', 0))))
+        score_column = str(packet.get('score_column', '') or '').strip()
+        if score_column:
+            rows.append(('score column', score_column))
+        anomaly_direction = str(packet.get('anomaly_direction', '') or '').strip()
+        if anomaly_direction:
+            rows.append(('anomaly direction', anomaly_direction))
+    return rows
+
+
+def _ds_wizard_packet_completion_line(packet: Dict[str, Any]) -> str:
+    workflow = str(packet.get('wizard_workflow', '') or '').strip()
+    if workflow == 'build':
+        total_records = packet.get('total_records', '')
+        if total_records not in ('', None):
+            count = int(total_records or 0)
+            return 'build complete: {0} {1}'.format(count, 'record' if count == 1 else 'records')
+        return 'build complete'
+    if workflow == 'train':
+        model_type = str(packet.get('model_type', '') or '').strip()
+        if model_type:
+            return 'train complete: {0} model ready'.format(model_type)
+        return 'train complete'
+    if workflow == 'evaluate':
+        threshold = packet.get('threshold', '')
+        if threshold not in ('', None):
+            return 'evaluate complete: threshold {0}'.format(threshold)
+        return 'evaluate complete'
+    if workflow == 'score':
+        records_scored = int(packet.get('records_scored', 0) or 0)
+        score_column = str(packet.get('score_column', '') or '').strip()
+        anomaly_direction = str(packet.get('anomaly_direction', '') or '').strip()
+        detail_bits = ['{0} records scored'.format(records_scored)]
+        if score_column:
+            detail_bits.append(score_column)
+        if anomaly_direction:
+            detail_bits.append(anomaly_direction)
+        return 'score complete: {0}'.format(' | '.join(detail_bits))
+    if workflow == 'run-pipeline':
+        detail_bits: List[str] = []
+        model_type = str(packet.get('model_type', '') or '').strip()
+        if model_type:
+            detail_bits.append(model_type)
+        total_records = packet.get('total_records', '')
+        if total_records not in ('', None):
+            count = int(total_records or 0)
+            detail_bits.append('{0} {1}'.format(count, 'record' if count == 1 else 'records'))
+        if detail_bits:
+            return 'pipeline complete: {0}'.format(' | '.join(detail_bits))
+        return 'pipeline complete'
+    if workflow:
+        return '{0} complete'.format(workflow)
+    return 'execute complete'
+
+
+def _ds_wizard_completion_result_rows(state: _DSWizardState) -> List[Tuple[str, str]]:
+    workflow = str(state.workflow or '').strip()
+    if workflow not in _DS_WIZARD_WORKFLOWS:
+        return []
+    record = state.completed_workflows.get(workflow, {}) if isinstance(state.completed_workflows, dict) else {}
+    if not isinstance(record, dict):
+        return []
+    rows = record.get('result_rows', []) if isinstance(record.get('result_rows', []), list) else []
+    cleaned: List[Tuple[str, str]] = []
+    for row in rows:
+        if not isinstance(row, (list, tuple)) or len(row) != 2:
+            continue
+        label_text = str(row[0] or '').strip()
+        value_text = str(row[1] or '').strip()
+        if label_text and value_text:
+            cleaned.append((label_text, value_text))
+    return cleaned
+
+
+def _ds_wizard_run_status_lines(state: _DSWizardState) -> List[str]:
+    blocked = len(_ds_wizard_run_gate_issues(state)) > 0
+    lines = ['blocked: {0}'.format(_style_blocked_value(blocked))]
+    workflow = str(state.workflow or '').strip()
+    completion_record = state.completed_workflows.get(workflow, {}) if isinstance(state.completed_workflows, dict) else {}
+    if isinstance(completion_record, dict) and completion_record:
+        lines.append('processing: {0}'.format(style_text('complete', 'positive')))
+        completion_line = str(completion_record.get('completion_line', '') or '').strip()
+        if completion_line:
+            lines.append('completion: {0}'.format(completion_line))
+    else:
+        lines.append('processing: {0}'.format(style_text('blocked' if blocked else 'ready', 'advisory' if blocked else 'positive')))
+    return lines
 
 
 def _ds_wizard_output_preview_lines(state: _DSWizardState) -> List[str]:
@@ -9959,9 +10804,7 @@ def _ds_wizard_build_pane(state: _DSWizardState) -> List[str]:
                     lines.append('  - {0}'.format(issue))
         elif current_section == 'run':
             lines.append(_style_section_line('execute'))
-            lines.append(_ds_wizard_display_command_preview(state))
-            blocked = len(_ds_wizard_run_gate_issues(state)) > 0
-            lines.append('blocked: {0}'.format(_style_blocked_value(blocked)))
+            lines.extend(_ds_wizard_run_status_lines(state))
         else:
             lines.append('type exit to leave the wizard')
         guidance_lines = _ds_wizard_inline_guidance_lines(state, current_section)
@@ -9975,6 +10818,11 @@ def _ds_wizard_build_pane(state: _DSWizardState) -> List[str]:
         if current_section == 'report':
             lines.append(_style_section_line('report'))
             lines.extend(_ds_wizard_output_preview_lines(state))
+            result_rows = _ds_wizard_completion_result_rows(state)
+            if result_rows:
+                lines.append('')
+                lines.append(_style_section_line('results'))
+                lines.extend(_ds_wizard_report_render_rows(result_rows, min_label_width=18, max_label_width=20, indent='  '))
         elif current_section == 'in':
             if str(state.workflow or '').strip() == 'build':
                 lines.append(_style_section_line('load data'))
@@ -10065,9 +10913,6 @@ def _ds_wizard_render_stacked(state: _DSWizardState) -> List[str]:
         lines.append(_style_choice_label('3. ', 'command and utilities'))
         lines.append(_style_choice_label('4. ', 'exit'))
         lines.append('')
-        if not state.transient_view:
-            lines.append('Type ? for general help, or ? <section> for detail.')
-            lines.append('')
     else:
         lines.extend(_ds_wizard_left_rail_rows(state))
         lines.extend(_ds_wizard_right_pane_ops_rows(state))
@@ -10400,6 +11245,7 @@ def _ds_wizard_handle_command(state: _DSWizardState, command: str) -> Tuple[_DSW
             return state, None, False
         state = _ds_wizard_sync_execution_artifacts(state, packet)
         command_preview = _ds_wizard_command_preview(state)
+        packet['wizard_workflow'] = str(state.workflow or '').strip()
         missing_artifacts = _ds_wizard_record_workflow_completion(state, packet, command_preview)
         if missing_artifacts:
             _ds_wizard_set_transient_lines(
@@ -10410,13 +11256,7 @@ def _ds_wizard_handle_command(state: _DSWizardState, command: str) -> Tuple[_DSW
                 ],
             )
         else:
-            _ds_wizard_set_transient_lines(
-                state,
-                [
-                    'execute complete: {0}'.format(str(state.workflow or '').strip()),
-                    'status: go (you can advance when ready)',
-                ],
-            )
+            _ds_wizard_set_transient_lines(state, [_ds_wizard_packet_completion_line(packet)])
         state.last_action = 'execute:{0}'.format(str(state.workflow or '').strip() or 'unknown')
         return state, None, False
     if lowered in ('exit', 'q', 'quit'):
@@ -10715,6 +11555,7 @@ def _ds_finalize_run_packet(
     artifact_paths: Mapping[str, Optional[Path]],
     context: Optional[Dict[str, Any]] = None,
     lineage: Optional[Dict[str, Any]] = None,
+    derived_reports_enabled: bool = True,
 ) -> Dict[str, Any]:
     from calamum_librarian import refresh_librarian_dataset_catalog_from_run_manifest
     from analysis.report_aggregate import append_ds_run_index, publication_eligibility_reasons, refresh_tracked_ds_publication
@@ -10723,68 +11564,73 @@ def _ds_finalize_run_packet(
     final_packet = dict(packet)
     final_packet['run_id'] = str(bundle.run_id)
     final_packet['artifacts'] = dict(final_packet.get('artifacts', {}))
-
-    report_bundle = write_report_bundle(
-        project_anchor=Path(__file__),
-        bundle=bundle,
-        packet=final_packet,
-        artifact_paths=artifact_paths,
-        context=context or {},
-        lineage=lineage or {},
-    )
-    aggregate_state = append_ds_run_index(
-        project_anchor=Path(__file__),
-        manifest_payload=report_bundle['manifest'],
-    )
-    dataset_refresh = refresh_librarian_dataset_catalog_from_run_manifest(
-        project_anchor=_project_anchor(),
-        manifest_payload=report_bundle['manifest'],
-    )
     publication_state = {
         'decision': 'skipped',
-        'reason_codes': publication_eligibility_reasons(
+        'reason_codes': ['publication_skipped:derived_reports_disabled'],
+    }
+
+    if derived_reports_enabled:
+        report_bundle = write_report_bundle(
+            project_anchor=Path(__file__),
+            bundle=bundle,
+            packet=final_packet,
+            artifact_paths=artifact_paths,
+            context=context or {},
+            lineage=lineage or {},
+        )
+        aggregate_state = append_ds_run_index(
             project_anchor=Path(__file__),
             manifest_payload=report_bundle['manifest'],
-        ),
-    }
-    if len(list(publication_state.get('reason_codes', []))) == 0:
-        publication_state = refresh_tracked_ds_publication(
-            project_anchor=Path(__file__),
-            current_manifest_payload=report_bundle['manifest'],
         )
+        dataset_refresh = refresh_librarian_dataset_catalog_from_run_manifest(
+            project_anchor=_project_anchor(),
+            manifest_payload=report_bundle['manifest'],
+        )
+        publication_state = {
+            'decision': 'skipped',
+            'reason_codes': publication_eligibility_reasons(
+                project_anchor=Path(__file__),
+                manifest_payload=report_bundle['manifest'],
+            ),
+        }
+        if len(list(publication_state.get('reason_codes', []))) == 0:
+            publication_state = refresh_tracked_ds_publication(
+                project_anchor=Path(__file__),
+                current_manifest_payload=report_bundle['manifest'],
+            )
 
-    final_packet['artifacts'].update({
-        'run_root': report_bundle['paths']['run_root'],
-        'report_json': report_bundle['paths']['report_json'],
-        'report_md': report_bundle['paths']['report_md'],
-        'report_manifest_json': report_bundle['paths']['manifest_json'],
-        'ds_run_index_jsonl': aggregate_state['ledger_path'],
-        'ds_latest_json': aggregate_state['latest_index_path'],
-    })
-    if isinstance(dataset_refresh, dict) and bool(dataset_refresh.get('catalog_updated')):
         final_packet['artifacts'].update({
-            'librarian_dataset_manifest_json': str(dataset_refresh.get('snapshot_path', '') or ''),
-            'librarian_dataset_catalog_jsonl': str(dataset_refresh.get('catalog_path', '') or ''),
+            'run_root': report_bundle['paths']['run_root'],
+            'report_json': report_bundle['paths']['report_json'],
+            'report_md': report_bundle['paths']['report_md'],
+            'report_manifest_json': report_bundle['paths']['manifest_json'],
+            'ds_run_index_jsonl': aggregate_state['ledger_path'],
+            'ds_latest_json': aggregate_state['latest_index_path'],
         })
-    if str(publication_state.get('decision', '') or '').strip().lower() == 'go':
-        aggregate_paths = publication_state.get('aggregate_paths', {}) if isinstance(publication_state.get('aggregate_paths', {}), dict) else {}
-        current_publication = publication_state.get('current_run', {}) if isinstance(publication_state.get('current_run', {}), dict) else {}
-        final_packet['artifacts'].update({
-            'tracked_ds_index_md': str(aggregate_paths.get('index_md', '') or ''),
-            'tracked_ds_latest_json': str(aggregate_paths.get('latest_json', '') or ''),
-            'tracked_ds_latest_md': str(aggregate_paths.get('latest_md', '') or ''),
-            'tracked_ds_by_workflow_json': str(aggregate_paths.get('by_workflow_json', '') or ''),
-            'tracked_ds_by_workflow_md': str(aggregate_paths.get('by_workflow_md', '') or ''),
-            'tracked_ds_thresholds_json': str(aggregate_paths.get('thresholds_json', '') or ''),
-            'tracked_ds_thresholds_md': str(aggregate_paths.get('thresholds_md', '') or ''),
-        })
-        published_report_paths = current_publication.get('published_report_paths', {}) if isinstance(current_publication.get('published_report_paths', {}), dict) else {}
-        final_packet['artifacts'].update({
-            'published_run_dir': str(current_publication.get('published_run_dir', '') or ''),
-            'published_report_json': str(published_report_paths.get('json', '') or ''),
-            'published_report_md': str(published_report_paths.get('markdown', '') or ''),
-            'published_report_manifest_json': str(published_report_paths.get('manifest', '') or ''),
-        })
+        if isinstance(dataset_refresh, dict) and bool(dataset_refresh.get('catalog_updated')):
+            final_packet['artifacts'].update({
+                'librarian_dataset_manifest_json': str(dataset_refresh.get('snapshot_path', '') or ''),
+                'librarian_dataset_catalog_jsonl': str(dataset_refresh.get('catalog_path', '') or ''),
+            })
+        if str(publication_state.get('decision', '') or '').strip().lower() == 'go':
+            aggregate_paths = publication_state.get('aggregate_paths', {}) if isinstance(publication_state.get('aggregate_paths', {}), dict) else {}
+            current_publication = publication_state.get('current_run', {}) if isinstance(publication_state.get('current_run', {}), dict) else {}
+            final_packet['artifacts'].update({
+                'tracked_ds_index_md': str(aggregate_paths.get('index_md', '') or ''),
+                'tracked_ds_latest_json': str(aggregate_paths.get('latest_json', '') or ''),
+                'tracked_ds_latest_md': str(aggregate_paths.get('latest_md', '') or ''),
+                'tracked_ds_by_workflow_json': str(aggregate_paths.get('by_workflow_json', '') or ''),
+                'tracked_ds_by_workflow_md': str(aggregate_paths.get('by_workflow_md', '') or ''),
+                'tracked_ds_thresholds_json': str(aggregate_paths.get('thresholds_json', '') or ''),
+                'tracked_ds_thresholds_md': str(aggregate_paths.get('thresholds_md', '') or ''),
+            })
+            published_report_paths = current_publication.get('published_report_paths', {}) if isinstance(current_publication.get('published_report_paths', {}), dict) else {}
+            final_packet['artifacts'].update({
+                'published_run_dir': str(current_publication.get('published_run_dir', '') or ''),
+                'published_report_json': str(published_report_paths.get('json', '') or ''),
+                'published_report_md': str(published_report_paths.get('markdown', '') or ''),
+                'published_report_manifest_json': str(published_report_paths.get('manifest', '') or ''),
+            })
     final_packet['publication'] = publication_state
     return final_packet
 
@@ -10989,22 +11835,54 @@ def _ds_train(dataset: str, out_dir: str, model_type: str, seed: int) -> Dict[st
 
 def _ds_evaluate(features_csv: str, labels_csv: str, dataset_manifest: str, max_fpr: float, out_dir: str, run_id: str, model_path: str) -> Dict[str, Any]:
     from dataclasses import asdict
+    import pickle
 
-    from analysis.report_visuals import generate_evaluation_visuals
-    from analysis.evaluation_harness import evaluate, write_run_artifacts
+    try:
+        import joblib
+    except ImportError:
+        joblib = None
+
+    from analysis.report_visuals import ANOMALY_DIRECTION, generate_evaluation_visuals
+    from analysis.evaluation_harness import evaluate, infer_model_score_direction, make_model_scorer, write_run_artifacts
+    from analysis.score_unsupervised import score_dataset
 
     bundle, target_out_dir = _ds_prepare_bundle_for_artifact('evaluate', out_dir, 'evaluation', ['eval'], run_id=run_id)
     resolved_run_id = str(bundle.run_id)
+    scorer = None
+    score_direction = 'higher'
+    resolved_model_path = None
+    if str(model_path).strip():
+        resolved_model_path = Path(model_path)
+        if resolved_model_path.name.endswith('.json'):
+            with resolved_model_path.open('r', encoding='utf-8') as handle:
+                train_manifest = json.load(handle)
+            resolved_model_path = resolved_model_path.parent / Path(str(train_manifest.get('model_path', ''))).name
+        try:
+            with resolved_model_path.open('rb') as handle:
+                loaded_model = pickle.load(handle)
+        except Exception as pickle_error:
+            if joblib is None:
+                raise RuntimeError('could not load model via pickle and joblib is unavailable ({0})'.format(pickle_error))
+            loaded_model = joblib.load(resolved_model_path)
+        scorer = make_model_scorer(loaded_model)
+        score_direction = infer_model_score_direction(loaded_model)
+    evaluate_kwargs = {
+        'labels_csv': Path(labels_csv) if str(labels_csv).strip() else None,
+        'max_fpr': float(max_fpr),
+        'score_direction': score_direction,
+    }
+    if scorer is not None:
+        evaluate_kwargs['scorer'] = scorer
     result = evaluate(
         Path(features_csv),
-        labels_csv=Path(labels_csv) if str(labels_csv).strip() else None,
-        max_fpr=float(max_fpr),
+        **evaluate_kwargs,
     )
     model_meta = None
-    if str(model_path).strip():
+    if resolved_model_path is not None:
         model_meta = {
             'family': 'trained_apexlab',
-            'name': Path(model_path).name,
+            'name': resolved_model_path.name,
+            'class': type(loaded_model).__name__,
             'source': str(model_path),
         }
     write_run_artifacts(
@@ -11021,13 +11899,21 @@ def _ds_evaluate(features_csv: str, labels_csv: str, dataset_manifest: str, max_
         'run_json': target_out_dir / 'run.json',
         'run_md': target_out_dir / 'run.md',
     }
-    threshold_summary = {
+    threshold_summary: Dict[str, Any] = {
         'threshold': float(result_dict.get('threshold', 0.0)),
         'target_fpr': float(max_fpr),
         'actual_fpr': (result_dict.get('metrics', {}) if isinstance(result_dict.get('metrics', {}), dict) else {}).get('fpr', ''),
         'flagged_records': _ds_positive_prediction_count(result_dict.get('counts', {})),
         'records_scored': _ds_total_prediction_count(result_dict.get('counts', {})),
     }
+    if str(dataset_manifest).strip() and resolved_model_path is not None and str(score_direction).strip().lower() == 'lower':
+        scoring_dir = bundle.run_root / 'scoring'
+        scores_csv = scoring_dir / 'scores.csv'
+        score_summary = score_dataset(Path(dataset_manifest), Path(model_path), scores_csv)
+        artifact_paths['scores_csv'] = Path(str(score_summary.get('out_file', '')))
+        threshold_summary = _ds_write_threshold_artifacts(artifact_paths['scores_csv'], scoring_dir, float(max_fpr))
+        artifact_paths['threshold_report_json'] = Path(str(threshold_summary.get('report_json', '')))
+        artifact_paths['threshold_report_md'] = Path(str(threshold_summary.get('report_md', '')))
     visual_state = generate_evaluation_visuals(
         figures_dir=bundle.run_root / 'figures',
         metrics=result_dict.get('metrics', {}) if isinstance(result_dict.get('metrics', {}), dict) else {},
@@ -11035,6 +11921,7 @@ def _ds_evaluate(features_csv: str, labels_csv: str, dataset_manifest: str, max_
         threshold=float(result_dict.get('threshold', 0.0)),
         max_fpr=float(max_fpr),
         threshold_summary=threshold_summary,
+        scores_csv=artifact_paths.get('scores_csv'),
     )
     artifact_paths.update(_ds_visual_artifact_paths(visual_state))
     packet = {
@@ -11050,6 +11937,8 @@ def _ds_evaluate(features_csv: str, labels_csv: str, dataset_manifest: str, max_
         'run_id': resolved_run_id,
         'has_labels': bool(result_dict.get('has_labels', False)),
         'threshold': float(result_dict.get('threshold', 0.0)),
+        'score_column': str(threshold_summary.get('score_column', '') or visual_state.get('score_column', '') or ''),
+        'anomaly_direction': ANOMALY_DIRECTION if str(score_direction).strip().lower() == 'lower' else '',
         'metrics': result_dict.get('metrics', {}),
         'counts': result_dict.get('counts', {}),
         'visuals': visual_state,
@@ -11120,7 +12009,7 @@ def _ds_score(dataset: str, model: str, out_file: str) -> Dict[str, Any]:
     )
 
 
-def _ds_run_demo(out_dir: str, dataset_seed: int, model_seed: int, max_fpr: float) -> Dict[str, Any]:
+def _ds_run_demo(out_dir: str, dataset_seed: int, model_seed: int, max_fpr: float, derived_reports_enabled: bool = True) -> Dict[str, Any]:
     from analysis.report_visuals import ANOMALY_DIRECTION, generate_evaluation_visuals, generate_score_visuals, generate_summary_card_visual, merge_visual_states
     from analysis.run_demo import run_demo
 
@@ -11215,6 +12104,7 @@ def _ds_run_demo(out_dir: str, dataset_seed: int, model_seed: int, max_fpr: floa
             'max_fpr': float(max_fpr),
             'output_override': bool(str(out_dir).strip()),
         },
+        derived_reports_enabled=derived_reports_enabled,
     )
 
 
@@ -11236,6 +12126,7 @@ def _ds_run_pipeline(
     split_val: float,
     split_test: float,
     max_fpr: float,
+    derived_reports_enabled: bool = True,
 ) -> Dict[str, Any]:
     import pickle
 
@@ -11307,6 +12198,7 @@ def _ds_run_pipeline(
             lineage={
                 'input_paths': list(input_paths),
             },
+            derived_reports_enabled=derived_reports_enabled,
         )
 
     train_manifest = train_model(
@@ -11464,6 +12356,7 @@ def _ds_run_pipeline(
         lineage={
             'input_paths': list(input_paths),
         },
+        derived_reports_enabled=derived_reports_enabled,
     )
 
 
@@ -11520,12 +12413,25 @@ def _dispatch(args: argparse.Namespace) -> Dict[str, Any]:
             return _ops_preflight(args.source)
         if args.ops_cmd == 'gate-check':
             return _ops_gate_check(args.source)
+        if args.ops_cmd == 'keysmith':
+            return _ops_keysmith_status(args.venue)
+        if args.ops_cmd == 'keysmith-mint':
+            return _ops_keysmith_mint(
+                venue=args.venue,
+                dry_run=args.dry_run,
+                output_dir=args.output_dir,
+                base_url=args.base_url,
+                register_path=args.register_path,
+                allow_hosts=args.allow_host,
+                agent_metadata_json=args.agent_metadata_json,
+                timeout_sec=args.timeout_sec,
+            )
         if args.ops_cmd == 'runtime-status':
             return _ops_runtime_status()
         if args.ops_cmd == 'runtime-stop':
             return _ops_runtime_stop(args.timeout_sec)
         if args.ops_cmd == 'runtime-start':
-            return _ops_runtime_start(args.source, args.mode, args.interval_sec, args.timeout_sec)
+            return _ops_runtime_start(args.source, args.mode, args.interval_sec, args.timeout_sec, args.gui)
         if args.ops_cmd == 'mode-current':
             return _ops_mode_current()
         if args.ops_cmd == 'mode-list':
@@ -11561,6 +12467,34 @@ def _dispatch(args: argparse.Namespace) -> Dict[str, Any]:
         if args.base_cmd == 'check':
             return _baseline_check(args.baseline)
         if args.base_cmd == 'generate':
+            if bool(args.repair) and not bool(args.start):
+                return {
+                    'timestamp_utc': _utc_now(),
+                    'runtime_cli_surface': 'observerctl',
+                    'decision': 'no-go',
+                    'action': 'baseline-generate',
+                    'generate_mode': 'invalid',
+                    'reason_codes': ['policy_denied:baseline_generate_repair_requires_start'],
+                    'summary': '--repair requires --start on observerctl baseline generate.',
+                }
+            if bool(args.start):
+                invalid_flags: List[str] = []
+                if int(args.max_files or 20000) != 20000:
+                    invalid_flags.append('--max-files')
+                if str(args.output or '').strip():
+                    invalid_flags.append('--output')
+                if invalid_flags:
+                    return {
+                        'timestamp_utc': _utc_now(),
+                        'runtime_cli_surface': 'observerctl',
+                        'decision': 'no-go',
+                        'action': 'baseline-generate',
+                        'generate_mode': 'invalid',
+                        'reason_codes': ['policy_denied:baseline_generate_start_rejects_hash_flags'],
+                        'invalid_flags': invalid_flags,
+                        'summary': 'Hash-generation flags are not valid with baseline generate --start.',
+                    }
+                return _baseline_generate_start(repair=bool(args.repair))
             return _baseline_hash_generate(max_files=args.max_files, output=args.output)
         if args.base_cmd == 'list':
             return _baseline_list()
@@ -11875,6 +12809,7 @@ def _dispatch(args: argparse.Namespace) -> Dict[str, Any]:
                 dataset_seed=args.dataset_seed,
                 model_seed=args.model_seed,
                 max_fpr=args.max_fpr,
+                derived_reports_enabled=not bool(args.no_derived_reports),
             )
         if args.ds_cmd == 'run-pipeline':
             return _ds_run_pipeline(
@@ -11886,6 +12821,7 @@ def _dispatch(args: argparse.Namespace) -> Dict[str, Any]:
                 split_val=args.split_val,
                 split_test=args.split_test,
                 max_fpr=args.max_fpr,
+                derived_reports_enabled=not bool(args.no_derived_reports),
             )
 
     return {'timestamp_utc': _utc_now(), 'decision': 'no-go', 'reason_codes': ['critical_check_failed:unknown_command']}
@@ -11917,6 +12853,19 @@ def _build_parser() -> argparse.ArgumentParser:
     op_gatecheck = ops_sub.add_parser('gate-check', help='Evaluate go/no-go over current state')
     op_gatecheck.add_argument('--source', choices=['sim', 'real'], default=_state_default_source())
 
+    op_keysmith = ops_sub.add_parser('keysmith', help='KEYSMITH readiness and mint surface')
+    op_keysmith.add_argument('--venue', default='moltbook', help='Venue profile stub (currently only moltbook)')
+    op_keysmith_sub = op_keysmith.add_subparsers(dest='keysmith_cmd', required=False)
+    op_keysmith_mint = op_keysmith_sub.add_parser('mint', help='Mint a claim-url plus sealed-drop KEYSMITH artifact set')
+    op_keysmith_mint.add_argument('--venue', default='moltbook', help='Venue profile stub (currently only moltbook)')
+    op_keysmith_mint.add_argument('--dry-run', action='store_true')
+    op_keysmith_mint.add_argument('--output-dir', default='')
+    op_keysmith_mint.add_argument('--base-url', default='')
+    op_keysmith_mint.add_argument('--register-path', default='')
+    op_keysmith_mint.add_argument('--allow-host', action='append', default=[])
+    op_keysmith_mint.add_argument('--agent-metadata-json', default='')
+    op_keysmith_mint.add_argument('--timeout-sec', type=int, default=20)
+
     op_runtime = ops_sub.add_parser('runtime', help='Observer lifecycle controls')
     op_runtime_sub = op_runtime.add_subparsers(dest='runtime_cmd', required=True)
     op_runtime_sub.add_parser('status', help='Show observer runtime status')
@@ -11927,6 +12876,7 @@ def _build_parser() -> argparse.ArgumentParser:
     op_runtime_start.add_argument('--mode', choices=list(MODES), default=_state_default_mode())
     op_runtime_start.add_argument('--interval-sec', type=float, default=float(os.getenv('CALAMUM_AGENT_INTERVAL_SEC', '2.0')))
     op_runtime_start.add_argument('--timeout-sec', type=float, default=0.0, help='Readiness probe timeout after detached launch (0 = no probe)')
+    op_runtime_start.add_argument('--gui', action='store_true', help='Open the delegated operator GUI path instead of forcing browser skip mode')
 
     op_mode = ops_sub.add_parser('mode', help='Mode controls')
     op_mode_sub = op_mode.add_subparsers(dest='mode_cmd', required=True)
@@ -11974,6 +12924,8 @@ def _build_parser() -> argparse.ArgumentParser:
     baseline_generate = baseline_sub.add_parser('generate')
     baseline_generate.add_argument('--max-files', type=int, default=20000, help='Maximum files to include in hash baseline')
     baseline_generate.add_argument('--output', default='', help='Optional output path for filesystem baseline file')
+    baseline_generate.add_argument('--start', action='store_true', help='Start the observer baseline lane instead of filesystem-hash generation')
+    baseline_generate.add_argument('--repair', action='store_true', help='Repair the observer baseline lane first; requires --start')
     baseline_sub.add_parser('list')
     baseline_set = baseline_sub.add_parser('set')
     baseline_set.add_argument('--id', required=True)
@@ -12197,6 +13149,7 @@ def _build_parser() -> argparse.ArgumentParser:
     ds_run_demo.add_argument('--dataset-seed', type=int, default=123)
     ds_run_demo.add_argument('--model-seed', type=int, default=42)
     ds_run_demo.add_argument('--max-fpr', type=float, default=0.01)
+    ds_run_demo.add_argument('--no-derived-reports', action='store_true', help='Skip derived report bundle generation and tracked DS publication refresh')
 
     ds_run_pipeline = ds_run_sub.add_parser('pipeline', help='Run the default build/train/evaluate pipeline')
     ds_run_pipeline.add_argument('--input', action='append', required=True, type=Path, help='JSONL input path (repeatable)')
@@ -12207,6 +13160,7 @@ def _build_parser() -> argparse.ArgumentParser:
     ds_run_pipeline.add_argument('--split-val', type=float, default=0.15)
     ds_run_pipeline.add_argument('--split-test', type=float, default=0.15)
     ds_run_pipeline.add_argument('--max-fpr', type=float, default=0.01)
+    ds_run_pipeline.add_argument('--no-derived-reports', action='store_true', help='Skip derived report bundle generation and tracked DS publication refresh')
     ds_wizard = ds_sub.add_parser('wizard', help='Launch the guided DS command wizard')
     ds_wizard.add_argument('--workflow', choices=list(_DS_WIZARD_WORKFLOWS), default='')
     ds_wizard.add_argument('--section', choices=list(_DS_WIZARD_SECTION_ORDER), default='')
@@ -12287,6 +13241,9 @@ def _normalize_nested_aliases(args: argparse.Namespace) -> argparse.Namespace:
             args.ops_cmd = 'runtime-stop'
         elif args.runtime_cmd == 'start':
             args.ops_cmd = 'runtime-start'
+    if args.command == 'ops' and args.ops_cmd == 'keysmith':
+        if getattr(args, 'keysmith_cmd', '') == 'mint':
+            args.ops_cmd = 'keysmith-mint'
     if args.command == 'ops' and args.ops_cmd == 'evidence':
         if args.evidence_cmd == 'pack':
             args.ops_cmd = 'evidence-pack'

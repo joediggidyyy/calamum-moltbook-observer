@@ -102,6 +102,15 @@ def _set_signing_env(monkeypatch) -> None:
     monkeypatch.setenv('CALAMUM_LIBRARIAN_VAULT_KEY', 'unit-test-vault-integrity-key')
 
 
+def _seed_keysmith_surface(project_root: Path) -> None:
+    (project_root / 'src').mkdir(parents=True, exist_ok=True)
+    (project_root / 'src' / 'keysmith.py').write_text('# keysmith surface\n', encoding='utf-8')
+    deployment_dir = project_root / 'deployment' / 'keysmith'
+    deployment_dir.mkdir(parents=True, exist_ok=True)
+    (deployment_dir / 'Dockerfile').write_text('FROM python:3.11\n', encoding='utf-8')
+    (deployment_dir / 'requirements.txt').write_text('requests\n', encoding='utf-8')
+
+
 def _write_signed_jsonl(path: Path, records: list[dict]) -> None:
     path.parent.mkdir(parents=True, exist_ok=True)
     with path.open('w', encoding='utf-8') as f:
@@ -288,6 +297,136 @@ def test_observerctl_top_level_help_exposes_ds_namespace(capsys) -> None:
     assert 'Data-science operations namespace' in out
 
 
+def test_ops_keysmith_status_reports_shipped_surfaces(monkeypatch, tmp_path: Path, capsys) -> None:
+    project_root, anchor = _make_temp_observer_project(tmp_path)
+    _bind_temp_observer_project(monkeypatch, project_root, anchor)
+    _seed_keysmith_surface(project_root)
+    monkeypatch.delenv('MOLTBOOK_API_KEY', raising=False)
+
+    rc = main(['ops', 'keysmith', '--json'])
+
+    assert rc == 0
+    payload = json.loads(capsys.readouterr().out)
+    assert payload['action'] == 'ops-keysmith'
+    assert payload['decision'] == 'go'
+    assert payload['venue'] == 'moltbook'
+    assert payload['live_mint_authority'] == 'sandbox-only'
+    assert payload['dry_run_authority'] == 'host-or-sandbox'
+    assert payload['live_mint_ready'] is False
+    assert payload['surface_status']['src_keysmith_py']['exists'] is True
+    assert payload['surface_status']['deployment_keysmith_dockerfile']['exists'] is True
+    assert payload['surface_status']['deployment_keysmith_requirements']['exists'] is True
+    assert payload['env_presence']['moltbook_api_key'] is False
+    assert 'keysmith_allow_unsandboxed' not in payload['env_presence']
+    assert payload['artifacts']['default_output_dir'] != ''
+
+
+def test_ops_keysmith_mint_dry_run_delegates_and_keeps_output_names_only(tmp_path: Path, capsys) -> None:
+    out_dir = tmp_path / 'keysmith_exports'
+
+    rc = main(['ops', 'keysmith', 'mint', '--dry-run', '--output-dir', str(out_dir), '--json'])
+
+    assert rc == 0
+    out = capsys.readouterr().out
+    assert 'DRY_RUN_PLACEHOLDER_DO_NOT_USE' not in out
+    assert 'https://moltbook.com/claim/' not in out
+    payload = json.loads(out)
+    assert payload['action'] == 'ops-keysmith-mint'
+    assert payload['decision'] == 'go'
+    assert payload['venue'] == 'moltbook'
+    assert payload['dry_run'] is True
+    assert Path(payload['claim_url_path']).exists()
+    assert Path(payload['sealed_drop_path']).exists()
+    assert Path(payload['audit_path']).exists()
+    assert Path(payload['result_json']).exists()
+
+
+def test_ops_keysmith_mint_non_dry_run_requires_sandbox(tmp_path: Path, monkeypatch, capsys) -> None:
+    monkeypatch.delenv('KEYSMITH_SANDBOX', raising=False)
+    monkeypatch.delenv('KEYSMITH_ALLOW_UNSANDBOXED', raising=False)
+
+    rc = main(['ops', 'keysmith', 'mint', '--output-dir', str(tmp_path / 'live_keysmith'), '--json'])
+
+    assert rc == 2
+    payload = json.loads(capsys.readouterr().out)
+    assert payload['action'] == 'ops-keysmith-mint'
+    assert payload['decision'] == 'no-go'
+    assert 'critical_check_failed:keysmith_mint_failed' in payload['reason_codes']
+    assert 'sandbox' in payload['summary'].lower()
+
+
+def test_ops_keysmith_mint_non_dry_run_ignores_legacy_unsandboxed_override(tmp_path: Path, monkeypatch, capsys) -> None:
+    monkeypatch.delenv('KEYSMITH_SANDBOX', raising=False)
+    monkeypatch.setenv('KEYSMITH_ALLOW_UNSANDBOXED', '1')
+
+    rc = main(['ops', 'keysmith', 'mint', '--output-dir', str(tmp_path / 'live_keysmith'), '--json'])
+
+    assert rc == 2
+    payload = json.loads(capsys.readouterr().out)
+    assert payload['action'] == 'ops-keysmith-mint'
+    assert payload['decision'] == 'no-go'
+    assert 'critical_check_failed:keysmith_mint_failed' in payload['reason_codes']
+    assert 'sandbox/container lane' in payload['summary'].lower()
+
+
+def test_ops_keysmith_status_human_render_uses_sectioned_operator_layout(monkeypatch, tmp_path: Path, capsys) -> None:
+    project_root, anchor = _make_temp_observer_project(tmp_path)
+    _bind_temp_observer_project(monkeypatch, project_root, anchor)
+    _seed_keysmith_surface(project_root)
+    monkeypatch.delenv('KEYSMITH_SANDBOX', raising=False)
+    monkeypatch.delenv('MOLTBOOK_API_KEY', raising=False)
+
+    rc = main(['ops', 'keysmith'])
+
+    assert rc == 0
+    rendered = capsys.readouterr().out.splitlines()
+    assert rendered[0] == 'ObserverCTL KEYSMITH'
+    assert 'Summary' in rendered
+    assert 'Evidence' in rendered
+    assert 'Guidance' in rendered
+    assert any('Live mint authority:' in line and 'sandbox-only' in line for line in rendered)
+
+
+def test_ops_keysmith_mint_human_denial_requires_container_lane(tmp_path: Path, monkeypatch, capsys) -> None:
+    monkeypatch.delenv('KEYSMITH_SANDBOX', raising=False)
+    monkeypatch.delenv('KEYSMITH_ALLOW_UNSANDBOXED', raising=False)
+
+    rc = main(['ops', 'keysmith', 'mint', '--output-dir', str(tmp_path / 'live_keysmith')])
+
+    assert rc == 2
+    rendered = capsys.readouterr().out.splitlines()
+    assert rendered[0] == 'ObserverCTL KEYSMITH mint'
+    assert 'Reasons' in rendered
+    assert 'Guidance' in rendered
+    assert any('sandbox/container lane' in line for line in rendered)
+
+
+def test_ops_keysmith_mint_human_dry_run_stays_names_only(tmp_path: Path, capsys) -> None:
+    out_dir = tmp_path / 'keysmith_exports'
+
+    rc = main(['ops', 'keysmith', 'mint', '--dry-run', '--output-dir', str(out_dir)])
+
+    assert rc == 0
+    rendered = capsys.readouterr().out
+    assert 'ObserverCTL KEYSMITH mint' in rendered
+    assert 'Summary' in rendered
+    assert 'Evidence' in rendered
+    assert 'Guidance' in rendered
+    assert 'https://moltbook.com/claim/' not in rendered
+    assert 'DRY_RUN_PLACEHOLDER_DO_NOT_USE' not in rendered
+
+
+def test_ops_keysmith_unsupported_venue_fails_closed(capsys) -> None:
+    rc = main(['ops', 'keysmith', '--venue', 'otherbook', '--json'])
+
+    assert rc == 2
+    payload = json.loads(capsys.readouterr().out)
+    assert payload['action'] == 'ops-keysmith'
+    assert payload['decision'] == 'no-go'
+    assert payload['venue'] == 'otherbook'
+    assert 'policy_denied:keysmith_venue_unsupported' in payload['reason_codes']
+
+
 def test_observerctl_ds_help_exposes_frame1_command_family(capsys) -> None:
     parser = observerctl_module._build_parser()
 
@@ -338,7 +477,7 @@ def test_ds_wizard_emits_frame4_shell_packet_with_workflow_filtering(capsys) -> 
     assert payload['current_page'] == 'landing'
     assert 'flow' in payload['visible_sections']
     assert 'in' not in payload['visible_sections']
-    assert 'eval' in payload['visible_sections']
+    assert 'eval' not in payload['visible_sections']
     assert 'report' in payload['visible_sections']
     assert 'out' not in payload['visible_sections']
     assert payload['execution_state'] == 'blocked'
@@ -350,13 +489,13 @@ def test_ds_wizard_state_persists_across_section_navigation() -> None:
     state = observerctl_module._ds_wizard_new_state('run-pipeline')
     observerctl_module._ds_wizard_set_value(state, 'input_paths', ['alpha.jsonl'])
 
-    observerctl_module._ds_wizard_open_section(state, 'model')
+    observerctl_module._ds_wizard_open_section(state, 'report')
     observerctl_module._ds_wizard_move_section(state, 'next')
     observerctl_module._ds_wizard_move_section(state, 'prev')
 
-    assert state.active_section == 'model'
+    assert state.active_section == 'report'
     assert state.active_page == 'configure'
-    assert state.active_group == 'model'
+    assert state.active_group == 'eval-report'
     assert state.values['input_paths'] == ['alpha.jsonl']
 
 
@@ -548,6 +687,11 @@ def test_ds_wizard_build_execute_marks_build_go_and_train_stays_no_go(tmp_path: 
     assert Path(str(state.values['dataset_manifest'])).exists()
     assert strip_ansi(observerctl_module._ds_wizard_left_rail_rows(state)[1]) == 'status: go'
     assert observerctl_module._ds_wizard_run_gate_issues(state) == []
+    assert observerctl_module._ds_wizard_transient_lines(state) == ['build complete: 1 record']
+
+    run_lines = [' '.join(strip_ansi(line).split()) for line in observerctl_module._ds_wizard_render(state)]
+    assert any(line == 'processing: complete' for line in run_lines)
+    assert any(line == 'completion: build complete: 1 record' for line in run_lines)
 
     state, packet, should_exit = observerctl_module._ds_wizard_handle_command(state, 'train')
 
@@ -565,6 +709,51 @@ def test_ds_wizard_build_execute_marks_build_go_and_train_stays_no_go(tmp_path: 
     assert any(line == 'dataset manifest: dataset_manifest.json' for line in report_lines)
     assert any(line == 'features csv: features.csv' for line in report_lines)
     assert any(line == 'labels csv: labels.csv' for line in report_lines)
+
+
+def test_ds_wizard_unlabeled_build_switches_train_to_unsupervised(tmp_path: Path) -> None:
+    dataset_dir = tmp_path / 'dataset'
+    dataset_manifest = dataset_dir / 'dataset_manifest.json'
+    features_csv = dataset_dir / 'features.csv'
+    splits_csv = dataset_dir / 'splits.csv'
+    split_manifest_json = dataset_dir / 'split_manifest.json'
+
+    dataset_dir.mkdir(parents=True, exist_ok=True)
+    features_csv.write_text('record_id,feature\n1,0.1\n', encoding='utf-8')
+    splits_csv.write_text('record_id,split\n1,train\n', encoding='utf-8')
+    split_manifest_json.write_text('{"train": 1}\n', encoding='utf-8')
+    dataset_manifest.write_text(json.dumps({
+        'features_csv': str(features_csv),
+        'splits_csv': str(splits_csv),
+        'split_manifest_json': str(split_manifest_json),
+        'feature_columns': ['feature'],
+        'total_records': 1,
+        'has_labels': False,
+    }), encoding='utf-8')
+
+    state = observerctl_module._ds_wizard_new_state('build')
+    observerctl_module._ds_wizard_set_value(state, 'dataset_manifest', str(dataset_manifest))
+    observerctl_module._ds_wizard_open_section(state, 'run')
+
+    state, packet, should_exit = observerctl_module._ds_wizard_handle_command(state, 'execute')
+
+    assert packet is None
+    assert should_exit is False
+
+    state, packet, should_exit = observerctl_module._ds_wizard_handle_command(state, 'train')
+
+    assert packet is None
+    assert should_exit is False
+    assert state.workflow == 'train'
+    assert state.values['model_type'] == 'unsupervised'
+    assert observerctl_module._ds_wizard_run_gate_issues(state) == []
+
+
+def test_ds_wizard_completion_line_is_workflow_specific() -> None:
+    assert observerctl_module._ds_wizard_packet_completion_line({'wizard_workflow': 'build', 'total_records': 1}) == 'build complete: 1 record'
+    assert observerctl_module._ds_wizard_packet_completion_line({'wizard_workflow': 'train', 'model_type': 'supervised'}) == 'train complete: supervised model ready'
+    assert observerctl_module._ds_wizard_packet_completion_line({'wizard_workflow': 'evaluate', 'threshold': 0.125}) == 'evaluate complete: threshold 0.125'
+    assert observerctl_module._ds_wizard_packet_completion_line({'wizard_workflow': 'run-pipeline', 'model_type': 'unsupervised', 'total_records': 8}) == 'pipeline complete: unsupervised | 8 records'
 
 
 def test_ds_wizard_build_validation_accepts_selected_dataset_without_input_paths(tmp_path: Path) -> None:
@@ -710,13 +899,15 @@ def test_ds_wizard_scope_help_from_landing_shows_top_level_choices() -> None:
     assert any('configure opens the workflow-specific pages and shared section rail.' in line for line in rendered)
     assert any('review and run keeps validate and status separate: validate answers can-run-now, status answers can-advance.' in line for line in rendered)
     assert any('command and utilities explains the CLI preview plus save/load/hydrate helpers.' in line for line in rendered)
+    assert any('operator loop:' in line for line in rendered)
+    assert any('report -> return there after execute to confirm artifact targets and results.' in line for line in rendered)
     assert not any('configure          guided workflow and configuration' in line for line in rendered)
 
 
 def test_ds_wizard_stacked_render_hides_raw_section_scaffold_on_non_landing_pages(monkeypatch) -> None:
     monkeypatch.setattr(observerctl_module, '_ds_wizard_get_terminal_width', lambda: 90)
     state = observerctl_module._ds_wizard_new_state('run-pipeline')
-    observerctl_module._ds_wizard_open_section(state, 'model')
+    observerctl_module._ds_wizard_open_section(state, 'report')
 
     rendered = observerctl_module._ds_wizard_render(state)
 
@@ -800,12 +991,15 @@ def test_ds_wizard_configure_restores_shared_section_rail() -> None:
 def test_ds_wizard_non_landing_pages_share_navigation_only_action_bar() -> None:
     state = observerctl_module._ds_wizard_new_state('run-pipeline')
 
-    for section in ('flow', 'model', 'check', 'run'):
+    for section in ('flow', 'model', 'check'):
         observerctl_module._ds_wizard_open_section(state, section)
         assert observerctl_module._ds_wizard_action_line(state) == 'actions: prev | ? | next | exit'
 
+    observerctl_module._ds_wizard_open_section(state, 'run')
+    assert observerctl_module._ds_wizard_action_line(state) == 'actions: prev | ? | next | execute | exit'
+
     state.transient_view = 'picker'
-    assert observerctl_module._ds_wizard_action_line(state) == 'actions: prev | ? | next | exit'
+    assert observerctl_module._ds_wizard_action_line(state) == 'actions: prev | ? | next | execute | exit'
 
 
 def test_ds_wizard_scope_help_from_section_is_section_scoped() -> None:
@@ -818,10 +1012,43 @@ def test_ds_wizard_scope_help_from_section_is_section_scoped() -> None:
     assert should_exit is False
     rendered = observerctl_module._ds_wizard_render(state)
     assert 'help: eval' in rendered
-    assert 'Review evaluation thresholds and execution guards before report generation.' in rendered
+    assert any('mechanical validation thresholds' in line for line in rendered)
+    assert any('verify:' in line for line in rendered)
     assert 'fields:' in rendered
     assert any('max FPR' in line and 'Maximum false-positive rate' in line for line in rendered)
     assert any('set max_fpr 0.02' in line for line in rendered)
+
+
+def test_ds_wizard_report_help_explains_loaded_markers_and_results_block() -> None:
+    state = observerctl_module._ds_wizard_new_state('build')
+    observerctl_module._ds_wizard_open_section(state, 'report')
+
+    state, packet, should_exit = observerctl_module._ds_wizard_handle_command(state, '?')
+
+    assert packet is None
+    assert should_exit is False
+    rendered = observerctl_module._ds_wizard_render(state)
+    assert 'help: report' in rendered
+    assert any('canonical artifact targets' in line for line in rendered)
+    assert any('Loaded markers mean the wizard already resolved the backing dataset, model, run, or draft reference' in line for line in rendered)
+    assert any('After execute succeeds, return here to confirm the results block without leaving the wizard.' in line for line in rendered)
+    assert any('cmd' in line and 'raw command preview' in line for line in rendered)
+
+
+def test_ds_wizard_cmd_help_explains_preview_and_hydration_helpers() -> None:
+    state = observerctl_module._ds_wizard_new_state('evaluate')
+    observerctl_module._ds_wizard_open_section(state, 'cmd')
+
+    state, packet, should_exit = observerctl_module._ds_wizard_handle_command(state, '?')
+
+    assert packet is None
+    assert should_exit is False
+    rendered = observerctl_module._ds_wizard_render(state)
+    assert 'help: cmd' in rendered
+    assert any('non-interactive CLI equivalent' in line for line in rendered)
+    assert any('Placeholders stand in for resolved paths' in line for line in rendered)
+    assert any('save draft [slot|path]' in line for line in rendered)
+    assert any('hydrate dataset|train|run|baseline <selector>' in line for line in rendered)
 
 
 def test_ds_wizard_status_help_explains_advance_gate() -> None:
@@ -843,7 +1070,7 @@ def test_ds_wizard_eval_page_surfaces_edit_guidance() -> None:
 
     rendered = observerctl_module._ds_wizard_render(state)
 
-    assert 'Type 1 to edit max_fpr, or use set max_fpr <value>.' in rendered
+    assert 'Type 1 to edit max_fpr, or use set max_fpr <value>.' not in rendered
     assert not any(line.startswith('guide:') for line in rendered)
 
 
@@ -1752,6 +1979,46 @@ def test_ds_saved_selector_commands_and_wizard_hydration(monkeypatch, tmp_path: 
         summary='Retained run selector fixture.',
     )
 
+    demo_dir = project_root / 'saved' / 'demo'
+    demo_dir.mkdir(parents=True, exist_ok=True)
+    demo_run_json = demo_dir / 'run.json'
+    demo_run_md = demo_dir / 'run.md'
+    demo_supervised_model = demo_dir / 'supervised_model.pkl'
+    demo_supervised_train = demo_dir / 'supervised_train_manifest.json'
+    demo_unsupervised_model = demo_dir / 'unsupervised_model.pkl'
+    demo_unsupervised_train = demo_dir / 'unsupervised_train_manifest.json'
+    demo_run_json.write_text(json.dumps({'identity': {'run_id': 'demo-should-hide'}}), encoding='utf-8')
+    demo_run_md.write_text('# demo run\n', encoding='utf-8')
+    demo_supervised_model.write_bytes(b'supervised')
+    demo_unsupervised_model.write_bytes(b'unsupervised')
+    demo_supervised_train.write_text(json.dumps({
+        'dataset_manifest_path': str(dataset_manifest),
+        'model_path': str(demo_supervised_model),
+        'model_type': 'supervised',
+    }), encoding='utf-8')
+    demo_unsupervised_train.write_text(json.dumps({
+        'dataset_manifest_path': str(dataset_manifest),
+        'model_path': str(demo_unsupervised_model),
+        'model_type': 'unsupervised',
+    }), encoding='utf-8')
+    _append_saved_ds_manifest(
+        anchor,
+        'demo',
+        'demo-should-hide',
+        timestamp_utc='2026-04-04T00:00:00Z',
+        artifact_paths={
+            'evaluation_run_json': demo_run_json,
+            'evaluation_run_md': demo_run_md,
+            'supervised_train_manifest': demo_supervised_train,
+            'supervised_model_path': demo_supervised_model,
+            'unsupervised_train_manifest': demo_unsupervised_train,
+            'unsupervised_model_path': demo_unsupervised_model,
+            'dataset_manifest': dataset_manifest,
+        },
+        context={'source': 'real', 'mode': 'canary'},
+        summary='Demo selector that should stay hidden.',
+    )
+
     evidence_dir = log_dir / 'data' / 'calamum' / 'observer_derived' / 'real' / 'canary' / 'evidence'
     evidence_dir.mkdir(parents=True, exist_ok=True)
     baseline_packet = evidence_dir / 'observerctl_baseline-analysis_saved.json'
@@ -1776,6 +2043,7 @@ def test_ds_saved_selector_commands_and_wizard_hydration(monkeypatch, tmp_path: 
     assert payload['command_path'] == 'observerctl ds saved trained'
     assert payload['count'] == 1
     assert payload['selector_entries'][0]['run_id'] == 'selector-train-001'
+    assert all(str(entry.get('run_id', '') or '').strip() != 'demo-should-hide' for entry in payload['selector_entries'])
 
     rc = main(['ds', 'saved', 'runs', '--json'])
     assert rc == 0
@@ -1784,6 +2052,7 @@ def test_ds_saved_selector_commands_and_wizard_hydration(monkeypatch, tmp_path: 
     assert payload['command_path'] == 'observerctl ds saved runs'
     assert payload['count'] == 1
     assert payload['selector_entries'][0]['run_id'] == 'selector-eval-001'
+    assert all(str(entry.get('run_id', '') or '').strip() != 'demo-should-hide' for entry in payload['selector_entries'])
 
     rc = main(['ds', 'saved', 'baselines', '--source', 'real', '--mode', 'canary', '--json'])
     assert rc == 0
@@ -1808,8 +2077,7 @@ def test_ds_saved_selector_commands_and_wizard_hydration(monkeypatch, tmp_path: 
     assert train_state.hydrated_from['train_manifest'] == 'saved_train'
 
     train_picker_state = observerctl_module._ds_wizard_new_state('score')
-    observerctl_module._ds_wizard_open_section(train_picker_state, 'model')
-    train_picker_state, packet, should_exit = observerctl_module._ds_wizard_handle_command(train_picker_state, '1')
+    train_picker_state, packet, should_exit = observerctl_module._ds_wizard_handle_command(train_picker_state, 'trained')
     assert packet is None
     assert should_exit is False
     assert train_picker_state.transient_view == 'picker'
@@ -1985,11 +2253,11 @@ def test_ds_wizard_partition_headers_render_on_frame3_surfaces() -> None:
     eval_rendered = observerctl_module._ds_wizard_render(eval_state)
 
     assert 'load configs:' in eval_rendered
-    assert 'load data:' in eval_rendered
     assert any('load saved baseline' in line for line in eval_rendered)
     assert any('load previous' in line for line in eval_rendered)
     assert any('model artifact' in line for line in eval_rendered)
-    assert any('dataset is displayed in header only; no dataset loader here' in line for line in eval_rendered)
+    assert 'load data:' not in eval_rendered
+    assert not any('dataset is displayed in header only; no dataset loader here' in line for line in eval_rendered)
     assert not any('dataset artifact' in line for line in eval_rendered)
 
 
@@ -2206,7 +2474,7 @@ def test_ds_wizard_build_in_filters_legacy_unknown_scope_entries(monkeypatch, tm
 
 def test_ds_wizard_workflow_menu_sections_match_agreed_contract() -> None:
     assert observerctl_module._ds_wizard_visible_sections(observerctl_module._ds_wizard_new_state('build')) == [
-        'flow', 'in', 'report', 'cmd', 'check', 'exit'
+        'flow', 'in', 'report', 'cmd', 'check', 'run', 'exit'
     ]
     assert observerctl_module._ds_wizard_visible_sections(observerctl_module._ds_wizard_new_state('train')) == [
         'flow', 'model', 'report', 'cmd', 'check', 'run', 'exit'
@@ -2215,7 +2483,7 @@ def test_ds_wizard_workflow_menu_sections_match_agreed_contract() -> None:
         'flow', 'model', 'eval', 'report', 'cmd', 'check', 'run', 'exit'
     ]
     assert observerctl_module._ds_wizard_visible_sections(observerctl_module._ds_wizard_new_state('score')) == [
-        'flow', 'model', 'report', 'cmd', 'check', 'run', 'exit'
+        'flow', 'report', 'cmd', 'check', 'run', 'exit'
     ]
     assert observerctl_module._ds_wizard_visible_sections(observerctl_module._ds_wizard_new_state('run-pipeline')) == [
         'flow', 'report', 'cmd', 'check', 'run', 'exit'
@@ -2236,15 +2504,10 @@ def test_ds_wizard_train_model_surface_keeps_prior_train_and_seed_only() -> None
     assert not any('test split' in line for line in rendered)
 
 
-def test_ds_wizard_score_model_surface_only_surfaces_saved_model_context() -> None:
+def test_ds_wizard_score_workflow_removes_redundant_model_surface() -> None:
     state = observerctl_module._ds_wizard_new_state('score')
-    observerctl_module._ds_wizard_open_section(state, 'model')
-
-    rendered = [strip_ansi(line) for line in observerctl_module._ds_wizard_render(state)]
-
-    assert any('model artifact' in line for line in rendered)
-    assert not any('dataset artifact' in line for line in rendered)
-    assert not any('load previous' in line for line in rendered)
+    assert observerctl_module._ds_wizard_page_sections(state) == ['flow', 'report', 'cmd', 'check', 'run']
+    assert 'model' not in observerctl_module._ds_wizard_visible_sections(state)
 
 
 def test_ds_wizard_run_pipeline_menu_removes_duplicate_config_sections() -> None:
@@ -2278,9 +2541,30 @@ def test_ds_wizard_run_surface_uses_dataset_manifest_placeholder_in_render() -> 
 
     rendered = [strip_ansi(line) for line in observerctl_module._ds_wizard_render(state)]
 
-    assert any('--dataset <path to dataset_manifest.json>' in line for line in rendered)
-    assert not any(r'C:\demo\datasets\alpha\dataset_manifest.json' in line for line in rendered)
+    assert not any('--dataset <path to dataset_manifest.json>' in line for line in rendered)
+    assert 'actions: prev | ? | next | execute | exit' in rendered
+    assert any(line.startswith('blocked: ') for line in rendered)
     assert r'C:\demo\datasets\alpha\dataset_manifest.json' in observerctl_module._ds_wizard_command_preview(state)
+
+
+def test_ds_wizard_standard_surfaces_render_loaded_markers_for_hydrated_paths(tmp_path: Path) -> None:
+    baseline_packet = tmp_path / 'baseline.json'
+    baseline_packet.write_text('{}\n', encoding='utf-8')
+    train_manifest = tmp_path / 'train_manifest.json'
+    train_manifest.write_text('{}\n', encoding='utf-8')
+
+    eval_state = observerctl_module._ds_wizard_new_state('evaluate')
+    observerctl_module._ds_wizard_set_value(eval_state, 'baseline_analysis_packet', str(baseline_packet))
+    observerctl_module._ds_wizard_set_value(eval_state, 'baseline_window_id', 'baseline-window-001')
+    observerctl_module._ds_wizard_open_section(eval_state, 'model')
+    eval_rendered = [strip_ansi(line) for line in observerctl_module._ds_wizard_render(eval_state)]
+    assert any('load saved baseline' in line and 'loaded' in line for line in eval_rendered)
+
+    train_state = observerctl_module._ds_wizard_new_state('train')
+    observerctl_module._ds_wizard_set_value(train_state, 'train_manifest', str(train_manifest))
+    observerctl_module._ds_wizard_open_section(train_state, 'model')
+    train_rendered = [strip_ansi(line) for line in observerctl_module._ds_wizard_render(train_state)]
+    assert any('load previous train' in line and 'loaded' in line for line in train_rendered)
 
 
 def test_ds_wizard_cmd_surfaces_use_path_placeholders_across_workflows() -> None:
@@ -2350,6 +2634,59 @@ def test_ds_wizard_report_surface_uses_shared_row_contract_across_workflows() ->
             assert label in rendered
 
 
+def test_ds_wizard_score_execute_populates_report_results_and_completion_feedback(tmp_path: Path, monkeypatch) -> None:
+    dataset_manifest = tmp_path / 'dataset_manifest.json'
+    train_manifest = tmp_path / 'train_manifest.json'
+    model_path = tmp_path / 'model.pkl'
+    scores_csv = tmp_path / 'scores.csv'
+    dataset_manifest.write_text('{}\n', encoding='utf-8')
+    train_manifest.write_text('{}\n', encoding='utf-8')
+    model_path.write_bytes(b'model')
+    scores_csv.write_text('record_id,score_anomaly\n1,0.1\n', encoding='utf-8')
+
+    def _fake_ds_score(dataset: str, model: str, out_file: str) -> dict:
+        return {
+            'timestamp_utc': '2026-04-04T12:00:00Z',
+            'decision': 'go',
+            'action': 'ds-score',
+            'summary': 'Unsupervised scoring completed through observerctl ds.',
+            'run_id': 'score-run-001',
+            'records_scored': 12,
+            'score_column': 'score_anomaly',
+            'anomaly_direction': 'higher=worse',
+            'artifacts': {
+                'scores_csv': str(scores_csv),
+            },
+            'reason_codes': [],
+        }
+
+    monkeypatch.setattr(observerctl_module, '_ds_score', _fake_ds_score)
+
+    state = observerctl_module._ds_wizard_new_state('score')
+    observerctl_module._ds_wizard_set_value(state, 'dataset_manifest', str(dataset_manifest))
+    observerctl_module._ds_wizard_set_value(state, 'train_manifest', str(train_manifest))
+    observerctl_module._ds_wizard_set_value(state, 'model_path', str(model_path))
+    observerctl_module._ds_wizard_open_section(state, 'run')
+
+    state, packet, should_exit = observerctl_module._ds_wizard_handle_command(state, 'execute')
+
+    assert packet is None
+    assert should_exit is False
+    assert observerctl_module._ds_wizard_transient_lines(state) == ['score complete: 12 records scored | score_anomaly | higher=worse']
+
+    run_rendered = [' '.join(strip_ansi(line).split()) for line in observerctl_module._ds_wizard_render(state)]
+    assert any(line == 'processing: complete' for line in run_rendered)
+    assert any(line == 'completion: score complete: 12 records scored | score_anomaly | higher=worse' for line in run_rendered)
+
+    observerctl_module._ds_wizard_open_section(state, 'report')
+    report_rendered = [' '.join(strip_ansi(line).split()) for line in observerctl_module._ds_wizard_render(state)]
+    assert 'results:' in report_rendered
+    assert any(line == 'scores csv: scores.csv' for line in report_rendered)
+    assert any(line == 'records scored: 12' for line in report_rendered)
+    assert any(line == 'score column: score_anomaly' for line in report_rendered)
+    assert any(line == 'anomaly direction: higher=worse' for line in report_rendered)
+
+
 def test_ds_run_demo_executes_wrapper_and_emits_artifact_summary(tmp_path: Path, monkeypatch, capsys) -> None:
     with _bind_temp_observer_project_ctx(monkeypatch, tmp_path) as project_dir:
             try:
@@ -2378,6 +2715,33 @@ def test_ds_run_demo_executes_wrapper_and_emits_artifact_summary(tmp_path: Path,
             assert _resolve_reported_path(payload['artifacts']['report_manifest_json']).exists()
             assert _resolve_reported_path(payload['artifacts']['ds_run_index_jsonl']).exists()
             assert _resolve_reported_path(payload['artifacts']['ds_latest_json']).exists()
+
+
+def test_ds_run_demo_no_derived_reports_skips_report_bundle_and_publication(tmp_path: Path, monkeypatch, capsys) -> None:
+    with _bind_temp_observer_project_ctx(monkeypatch, tmp_path) as project_dir:
+            try:
+                import apexlab  # noqa: F401
+            except ImportError:
+                pytest.skip('ApexLab not installed')
+
+            out_dir = tmp_path / 'demo_flow'
+            rc = main(['ds', 'run', 'demo', '--out-dir', str(out_dir), '--no-derived-reports', '--json'])
+
+            assert rc == 0
+            payload = json.loads(capsys.readouterr().out)
+            assert payload['action'] == 'ds-run'
+            assert payload['run_mode'] == 'demo'
+            assert payload['publication']['decision'] == 'skipped'
+            assert 'publication_skipped:derived_reports_disabled' in payload['publication']['reason_codes']
+            assert Path(payload['artifacts']['root_dir']).exists()
+            assert Path(payload['artifacts']['dataset_manifest']).exists()
+            assert Path(payload['artifacts']['evaluation_run_json']).exists()
+            assert 'report_json' not in payload['artifacts']
+            assert 'report_md' not in payload['artifacts']
+            assert 'report_manifest_json' not in payload['artifacts']
+            assert 'ds_run_index_jsonl' not in payload['artifacts']
+            assert 'tracked_ds_index_md' not in payload['artifacts']
+            assert not (project_dir / 'docs' / 'reports' / 'ds').exists()
 
 
 def test_ds_run_pipeline_executes_supervised_flow_and_emits_artifact_summary(tmp_path: Path, monkeypatch, capsys) -> None:
@@ -2427,6 +2791,52 @@ def test_ds_run_pipeline_executes_supervised_flow_and_emits_artifact_summary(tmp
             assert _resolve_reported_path(payload['artifacts']['report_manifest_json']).exists()
             assert _resolve_reported_path(payload['artifacts']['ds_run_index_jsonl']).exists()
             assert _resolve_reported_path(payload['artifacts']['ds_latest_json']).exists()
+
+
+def test_ds_run_pipeline_no_derived_reports_skips_report_bundle_and_publication(tmp_path: Path, monkeypatch, capsys) -> None:
+    with _bind_temp_observer_project_ctx(monkeypatch, tmp_path) as project_dir:
+            try:
+                import apexlab  # noqa: F401
+            except ImportError:
+                pytest.skip('ApexLab not installed')
+
+            log_dir = tmp_path / 'logs'
+            (log_dir / 'health').mkdir(parents=True, exist_ok=True)
+            (log_dir / 'data' / 'calamum').mkdir(parents=True, exist_ok=True)
+            (log_dir / 'control' / 'calamum').mkdir(parents=True, exist_ok=True)
+
+            monkeypatch.setenv('CALAMUM_LOG_DIR', str(log_dir))
+            monkeypatch.setenv('CALAMUM_DATA_SIGNING_KEY', 'unit-test-signing-key')
+
+            input_path = tmp_path / 'input.jsonl'
+            _write_signed_jsonl(input_path, _make_ds_records())
+            out_dir = tmp_path / 'pipeline_flow'
+
+            rc = main([
+                'ds', 'run', 'pipeline',
+                '--input', str(input_path),
+                '--out-dir', str(out_dir),
+                '--model-type', 'supervised',
+                '--seed', '42',
+                '--no-derived-reports',
+                '--json',
+            ])
+
+            assert rc == 0
+            payload = json.loads(capsys.readouterr().out)
+            assert payload['action'] == 'ds-run'
+            assert payload['run_mode'] == 'pipeline'
+            assert payload['publication']['decision'] == 'skipped'
+            assert 'publication_skipped:derived_reports_disabled' in payload['publication']['reason_codes']
+            assert Path(payload['artifacts']['dataset_manifest']).exists()
+            assert Path(payload['artifacts']['train_manifest']).exists()
+            assert Path(payload['artifacts']['run_json']).exists()
+            assert 'report_json' not in payload['artifacts']
+            assert 'report_md' not in payload['artifacts']
+            assert 'report_manifest_json' not in payload['artifacts']
+            assert 'ds_run_index_jsonl' not in payload['artifacts']
+            assert 'tracked_ds_index_md' not in payload['artifacts']
+            assert not (project_dir / 'docs' / 'reports' / 'ds').exists()
 
 
 def test_ds_build_executes_wrapper_and_emits_artifact_summary(tmp_path: Path, monkeypatch, capsys) -> None:
@@ -2586,6 +2996,55 @@ def test_ds_evaluate_executes_wrapper_and_emits_run_artifacts(tmp_path: Path, mo
             assert _resolve_reported_path(payload['artifacts']['ds_latest_json']).exists()
 
 
+def test_ds_evaluate_unsupervised_emits_threshold_overlay_when_model_and_manifest_are_present(tmp_path: Path, monkeypatch, capsys) -> None:
+    with _bind_temp_observer_project_ctx(monkeypatch, tmp_path):
+            try:
+                import apexlab  # noqa: F401
+            except ImportError:
+                pytest.skip('ApexLab not installed')
+
+            log_dir = tmp_path / 'logs'
+            (log_dir / 'health').mkdir(parents=True, exist_ok=True)
+            (log_dir / 'data' / 'calamum').mkdir(parents=True, exist_ok=True)
+            (log_dir / 'control' / 'calamum').mkdir(parents=True, exist_ok=True)
+
+            monkeypatch.setenv('CALAMUM_LOG_DIR', str(log_dir))
+            monkeypatch.setenv('CALAMUM_DATA_SIGNING_KEY', 'unit-test-signing-key')
+
+            from analysis.dataset_builder import build_dataset
+            from analysis.train_model import train_model
+
+            input_path = tmp_path / 'input.jsonl'
+            _write_signed_jsonl(input_path, _make_ds_records())
+            dataset_dir = tmp_path / 'dataset'
+            build_dataset([input_path], out_dir=dataset_dir, seed=123)
+            manifest_path = dataset_dir / 'dataset_manifest.json'
+            model_dir = tmp_path / 'models_unsupervised'
+            train_model(manifest_path, out_dir=model_dir, model_type='unsupervised', seed=42)
+            eval_dir = tmp_path / 'evaluation'
+
+            rc = main([
+                'ds', 'evaluate',
+                '--features-csv', str(dataset_dir / 'features.csv'),
+                '--dataset-manifest', str(manifest_path),
+                '--model-path', str(model_dir / 'train_manifest.json'),
+                '--out-dir', str(eval_dir),
+                '--run-id', 'unit-eval-unsup',
+                '--json',
+            ])
+            assert rc == 0
+
+            payload = json.loads(capsys.readouterr().out)
+            assert payload['action'] == 'ds-evaluate'
+            assert payload['run_id'] == 'unit-eval-unsup'
+            assert payload['anomaly_direction'] == 'lower-is-more-anomalous'
+            assert payload['visuals']['decision'] == 'go'
+            assert _resolve_reported_path(payload['artifacts']['scores_csv']).exists()
+            assert _resolve_reported_path(payload['artifacts']['threshold_report_json']).exists()
+            assert _resolve_reported_path(payload['artifacts']['threshold_report_md']).exists()
+            assert _resolve_reported_path(payload['artifacts']['threshold_selection_png']).exists()
+
+
 def test_ds_score_executes_wrapper_and_emits_score_artifact_summary(tmp_path: Path, monkeypatch, capsys) -> None:
     with _bind_temp_observer_project_ctx(monkeypatch, tmp_path) as project_dir:
             try:
@@ -2700,6 +3159,67 @@ def test_ds_finalize_run_packet_keeps_librarian_authority_unchanged(tmp_path: Pa
     assert _resolve_reported_path(final_packet['artifacts']['ds_latest_json']).exists()
 
 
+def test_ds_finalize_run_packet_can_skip_derived_reporting_side_effects(tmp_path: Path, monkeypatch) -> None:
+    from analysis.report_pack import prepare_report_bundle
+
+    project_root, anchor = _make_temp_observer_project(tmp_path)
+    monkeypatch.setattr(observerctl_module, '_project_root', lambda: project_root)
+    monkeypatch.setattr(observerctl_module, '_project_anchor', lambda: anchor)
+    monkeypatch.setattr(observerctl_module, '__file__', str(anchor))
+
+    bundle = prepare_report_bundle(anchor, 'pipeline', run_id='framec-pipeline-no-derived')
+    dataset_dir = bundle.run_root / 'dataset'
+    model_dir = bundle.run_root / 'models'
+    evaluation_dir = bundle.run_root / 'evaluation'
+    dataset_dir.mkdir(parents=True, exist_ok=True)
+    model_dir.mkdir(parents=True, exist_ok=True)
+    evaluation_dir.mkdir(parents=True, exist_ok=True)
+
+    dataset_manifest = dataset_dir / 'dataset_manifest.json'
+    train_manifest = model_dir / 'train_manifest.json'
+    run_json = evaluation_dir / 'run.json'
+    dataset_manifest.write_text('{}\n', encoding='utf-8')
+    train_manifest.write_text('{}\n', encoding='utf-8')
+    run_json.write_text('{}\n', encoding='utf-8')
+
+    final_packet = observerctl_module._ds_finalize_run_packet(
+        {
+            'timestamp_utc': '2026-03-31T12:00:00Z',
+            'runtime_cli_surface': 'observerctl',
+            'decision': 'go',
+            'action': 'ds-run',
+            'command_family': 'ds',
+            'command_path': 'observerctl ds run pipeline',
+            'implementation_state': 'automation-available',
+            'underlying_surface': 'observerctl ds pipeline orchestration',
+            'summary': 'Pipeline completed through observerctl ds.',
+            'run_id': bundle.run_id,
+            'run_mode': 'pipeline',
+            'artifacts': {},
+            'reason_codes': [],
+        },
+        bundle=bundle,
+        artifact_paths={
+            'dataset_manifest': dataset_manifest,
+            'train_manifest': train_manifest,
+            'run_json': run_json,
+        },
+        context={'output_override': False},
+        lineage={'input_paths': [project_root / 'input.jsonl']},
+        derived_reports_enabled=False,
+    )
+
+    assert final_packet['publication']['decision'] == 'skipped'
+    assert 'publication_skipped:derived_reports_disabled' in final_packet['publication']['reason_codes']
+    assert 'report_json' not in final_packet['artifacts']
+    assert 'report_md' not in final_packet['artifacts']
+    assert 'report_manifest_json' not in final_packet['artifacts']
+    assert 'ds_run_index_jsonl' not in final_packet['artifacts']
+    assert 'tracked_ds_index_md' not in final_packet['artifacts']
+    assert not (project_root / 'local_untracked' / 'analysis' / 'indexes' / 'ds_run_index.jsonl').exists()
+    assert not (project_root / 'docs' / 'reports' / 'ds').exists()
+
+
 def test_ds_report_pack_defaults_to_canonical_run_root_and_repo_relative_index_paths(tmp_path: Path) -> None:
     from analysis.report_aggregate import append_ds_run_index
     from analysis.report_pack import prepare_report_bundle, write_report_bundle
@@ -2808,7 +3328,7 @@ def test_ds_report_aggregate_appends_history_and_refreshes_latest_by_workflow(tm
 
 
 def test_ds_report_publication_requires_canonical_run_root(tmp_path: Path) -> None:
-    from analysis.report_aggregate import publication_eligibility_reasons
+    from analysis.report_aggregate import append_ds_run_index, publication_eligibility_reasons, refresh_tracked_ds_publication
     from analysis.report_pack import prepare_report_bundle, write_report_bundle
 
     project_root = tmp_path / 'observer_project'
@@ -2849,11 +3369,8 @@ def test_ds_report_publication_requires_canonical_run_root(tmp_path: Path) -> No
     )
 
     reasons = publication_eligibility_reasons(project_anchor=anchor, manifest_payload=report_bundle['manifest'])
-    assert 'librarian_dataset_manifest_json' not in final_packet['artifacts']
-    assert 'librarian_dataset_catalog_jsonl' not in final_packet['artifacts']
-    assert Path(final_packet['artifacts']['report_manifest_json']).exists()
-    assert Path(final_packet['artifacts']['ds_run_index_jsonl']).exists()
-    assert Path(final_packet['artifacts']['ds_latest_json']).exists()
+    assert 'publication_skipped:noncanonical_run_root' in reasons
+    assert 'publication_skipped:run_root_outside_canonical_spine' in reasons
     anchor.parent.mkdir(parents=True, exist_ok=True)
     anchor.write_text('# anchor\n', encoding='utf-8')
     (project_root / 'PROJECT_MANIFEST.json').write_text('{}\n', encoding='utf-8')
@@ -3001,11 +3518,11 @@ def test_ds_report_publication_refresh_copies_visual_figures_and_rewrites_links(
 
     publication = refresh_tracked_ds_publication(project_anchor=anchor, current_manifest_payload=score_report_bundle['manifest'])
 
-    published_report_md = project_root / publication['current_run']['published_report_paths']['markdown']
+    published_report_md = project_root / publication['current_run']['published_report_paths']['processing_markdown']
     assert publication['decision'] == 'go'
     assert publication['current_run']['figure_count'] == 1
     assert (project_root / publication['current_run']['published_figures'][0]).exists()
-    assert '](figures/score_distribution.png)' in published_report_md.read_text(encoding='utf-8')
+    assert '](figures/20260331.score/score_distribution.png)' in published_report_md.read_text(encoding='utf-8')
     assert '../figures/' not in published_report_md.read_text(encoding='utf-8')
 
 
@@ -3108,7 +3625,7 @@ def test_ds_report_publication_refresh_rewrites_tracked_report_paths_and_strips_
     publication = refresh_tracked_ds_publication(project_anchor=anchor, current_manifest_payload=score_report_bundle['manifest'])
 
     current_run = publication['current_run']
-    published_report_md_path = project_root / current_run['published_report_paths']['markdown']
+    published_report_md_path = project_root / current_run['published_report_paths']['processing_markdown']
     published_report_json_path = project_root / current_run['published_report_paths']['json']
     published_manifest_path = project_root / current_run['published_report_paths']['manifest']
 
@@ -3129,10 +3646,186 @@ def test_ds_report_publication_refresh_rewrites_tracked_report_paths_and_strips_
     assert published_report_payload['published_run_dir'] == current_run['published_run_dir']
     assert published_manifest_payload['published_run_dir'] == current_run['published_run_dir']
     assert published_report_payload['result']['visuals']['figures'][0]['path'] == current_run['published_figures'][0]
-    assert '## Lineage' in published_report_text
-    assert '](figures/score_distribution.png)' in published_report_text
+    assert '## Provenance' in published_report_text
+    assert '](figures/20260331.score/score_distribution.png)' in published_report_text
     assert '../figures/' not in published_report_text
     assert 'scoring/threshold_report.json' in published_report_text
+
+
+def test_ds_report_publication_groups_multiple_stage_runs_under_one_collection_alias(tmp_path: Path) -> None:
+    from analysis.report_aggregate import append_ds_run_index, refresh_tracked_ds_publication
+    from analysis.report_pack import prepare_report_bundle, write_report_bundle
+
+    project_root = tmp_path / 'observer_project'
+    anchor = project_root / 'src' / 'observerctl_anchor.py'
+    anchor.parent.mkdir(parents=True, exist_ok=True)
+    anchor.write_text('# anchor\n', encoding='utf-8')
+    (project_root / 'PROJECT_MANIFEST.json').write_text('{}\n', encoding='utf-8')
+
+    first_bundle = prepare_report_bundle(anchor, 'evaluate', run_id='eval-alpha')
+    first_eval_dir = first_bundle.artifact_dirs['evaluation']
+    first_eval_dir.mkdir(parents=True, exist_ok=True)
+    first_run_json = first_eval_dir / 'run.json'
+    first_run_md = first_eval_dir / 'run.md'
+    first_run_json.write_text('{}\n', encoding='utf-8')
+    first_run_md.write_text('# eval alpha\n', encoding='utf-8')
+    first_report_bundle = write_report_bundle(
+        project_anchor=anchor,
+        bundle=first_bundle,
+        packet={
+            'timestamp_utc': '2026-03-31T12:05:00Z',
+            'runtime_cli_surface': 'observerctl',
+            'decision': 'go',
+            'action': 'ds-evaluate',
+            'command_family': 'ds',
+            'command_path': 'observerctl ds evaluate',
+            'implementation_state': 'command-available',
+            'underlying_surface': 'analysis.evaluation_harness',
+            'summary': 'First evaluation completed through observerctl ds.',
+            'run_id': first_bundle.run_id,
+            'collection_alias': 'can-r1a2b',
+            'threshold': 0.42,
+            'artifacts': {},
+            'reason_codes': [],
+        },
+        artifact_paths={
+            'run_json': first_run_json,
+            'run_md': first_run_md,
+        },
+        context={'max_fpr': 0.02},
+    )
+    append_ds_run_index(project_anchor=anchor, manifest_payload=first_report_bundle['manifest'])
+
+    second_bundle = prepare_report_bundle(anchor, 'evaluate', run_id='eval-beta')
+    second_eval_dir = second_bundle.artifact_dirs['evaluation']
+    second_eval_dir.mkdir(parents=True, exist_ok=True)
+    second_run_json = second_eval_dir / 'run.json'
+    second_run_md = second_eval_dir / 'run.md'
+    second_run_json.write_text('{}\n', encoding='utf-8')
+    second_run_md.write_text('# eval beta\n', encoding='utf-8')
+    second_report_bundle = write_report_bundle(
+        project_anchor=anchor,
+        bundle=second_bundle,
+        packet={
+            'timestamp_utc': '2026-03-31T12:05:00Z',
+            'runtime_cli_surface': 'observerctl',
+            'decision': 'go',
+            'action': 'ds-evaluate',
+            'command_family': 'ds',
+            'command_path': 'observerctl ds evaluate',
+            'implementation_state': 'command-available',
+            'underlying_surface': 'analysis.evaluation_harness',
+            'summary': 'Second evaluation completed through observerctl ds.',
+            'run_id': second_bundle.run_id,
+            'collection_alias': 'can-r1a2b',
+            'threshold': 0.44,
+            'artifacts': {},
+            'reason_codes': [],
+        },
+        artifact_paths={
+            'run_json': second_run_json,
+            'run_md': second_run_md,
+        },
+        context={'max_fpr': 0.02},
+    )
+    append_ds_run_index(project_anchor=anchor, manifest_payload=second_report_bundle['manifest'])
+
+    publication = refresh_tracked_ds_publication(project_anchor=anchor, current_manifest_payload=second_report_bundle['manifest'])
+
+    first_stage_doc = project_root / 'docs' / 'reports' / 'collections' / 'can-r1a2b' / 'processing' / 'eval' / '20260331.eval.md'
+    second_stage_doc = project_root / publication['current_run']['published_report_paths']['processing_markdown']
+    collection_report = project_root / publication['current_run']['published_report_paths']['markdown']
+
+    assert publication['decision'] == 'go'
+    assert publication['published_run_count'] == 2
+    assert first_stage_doc.exists()
+    assert second_stage_doc.exists()
+    assert second_stage_doc.name == '20260331.02.eval.md'
+    assert collection_report.exists()
+    collection_report_text = collection_report.read_text(encoding='utf-8')
+    assert '20260331.eval.md' in collection_report_text
+    assert '20260331.02.eval.md' in collection_report_text
+
+
+def test_ds_report_publication_excludes_demo_workflow_and_resets_cache(tmp_path: Path) -> None:
+    from analysis.report_aggregate import append_ds_run_index, publication_eligibility_reasons, refresh_tracked_ds_publication
+    from analysis.report_pack import prepare_report_bundle, write_report_bundle
+
+    project_root = tmp_path / 'observer_project'
+    anchor = project_root / 'src' / 'observerctl_anchor.py'
+    anchor.parent.mkdir(parents=True, exist_ok=True)
+    anchor.write_text('# anchor\n', encoding='utf-8')
+    (project_root / 'PROJECT_MANIFEST.json').write_text('{}\n', encoding='utf-8')
+
+    build_bundle = prepare_report_bundle(anchor, 'build', run_id='build-public')
+    build_dataset_dir = build_bundle.artifact_dirs['dataset']
+    build_dataset_dir.mkdir(parents=True, exist_ok=True)
+    (build_dataset_dir / 'dataset_manifest.json').write_text('{}\n', encoding='utf-8')
+    (build_dataset_dir / 'features.csv').write_text('record_id\n', encoding='utf-8')
+    build_report_bundle = write_report_bundle(
+        project_anchor=anchor,
+        bundle=build_bundle,
+        packet={
+            'timestamp_utc': '2026-03-31T12:00:00Z',
+            'runtime_cli_surface': 'observerctl',
+            'decision': 'go',
+            'action': 'ds-build',
+            'command_family': 'ds',
+            'command_path': 'observerctl ds build',
+            'implementation_state': 'command-available',
+            'underlying_surface': 'analysis.dataset_builder',
+            'summary': 'Dataset built through observerctl ds.',
+            'run_id': build_bundle.run_id,
+            'artifacts': {},
+            'reason_codes': [],
+        },
+        artifact_paths={
+            'dataset_manifest': build_dataset_dir / 'dataset_manifest.json',
+            'features_csv': build_dataset_dir / 'features.csv',
+        },
+        context={'output_override': False},
+    )
+    append_ds_run_index(project_anchor=anchor, manifest_payload=build_report_bundle['manifest'])
+
+    demo_bundle = prepare_report_bundle(anchor, 'demo', run_id='demo-blocked')
+    demo_report_bundle = write_report_bundle(
+        project_anchor=anchor,
+        bundle=demo_bundle,
+        packet={
+            'timestamp_utc': '2026-03-31T12:05:00Z',
+            'runtime_cli_surface': 'observerctl',
+            'decision': 'go',
+            'action': 'ds-run',
+            'command_family': 'ds',
+            'command_path': 'observerctl ds run demo',
+            'implementation_state': 'automation-available',
+            'underlying_surface': 'analysis.run_demo',
+            'summary': 'Demo pipeline completed through observerctl ds.',
+            'run_id': demo_bundle.run_id,
+            'artifacts': {},
+            'reason_codes': [],
+        },
+        artifact_paths={'root_dir': demo_bundle.run_root},
+        context={'output_override': False},
+    )
+    append_ds_run_index(project_anchor=anchor, manifest_payload=demo_report_bundle['manifest'])
+
+    stale_path = project_root / 'docs' / 'reports' / 'ds' / 'stale.md'
+    stale_path.parent.mkdir(parents=True, exist_ok=True)
+    stale_path.write_text('stale\n', encoding='utf-8')
+
+    reasons = publication_eligibility_reasons(project_anchor=anchor, manifest_payload=demo_report_bundle['manifest'])
+    publication = refresh_tracked_ds_publication(project_anchor=anchor, current_manifest_payload=build_report_bundle['manifest'])
+    by_workflow_payload = json.loads((project_root / publication['aggregate_paths']['by_workflow_json']).read_text(encoding='utf-8'))
+
+    assert 'publication_skipped:workflow_not_publishable' in reasons
+    assert publication['decision'] == 'go'
+    assert publication['published_run_count'] == 1
+    assert publication['current_run']['run_id'] == 'build-public'
+    assert 'build' in by_workflow_payload['workflows']
+    assert 'demo' not in by_workflow_payload['workflows']
+    assert not stale_path.exists()
+    assert (project_root / publication['current_run']['published_report_paths']['markdown']).exists()
 
 
 def test_ds_run_pipeline_unsupervised_emits_visual_figures(monkeypatch, tmp_path: Path) -> None:
@@ -3248,15 +3941,13 @@ def test_ds_wizard_exit_command_suppresses_post_exit_emit(capsys) -> None:
 
 def test_ds_wizard_execute_blocked_stays_in_wizard_and_lists_blockers() -> None:
     state = observerctl_module._ds_wizard_new_state('evaluate')
+    observerctl_module._ds_wizard_open_section(state, 'run')
 
     state, packet, should_exit = observerctl_module._ds_wizard_handle_command(state, 'execute')
 
     assert packet is None
     assert should_exit is False
-    rendered = observerctl_module._ds_wizard_render(state)
-    assert 'executing blocked:' in rendered
-    assert any(line.startswith('- ') or line.startswith('  - ') for line in rendered)
-    assert any('features_csv is required' in line for line in rendered)
+    assert observerctl_module._ds_wizard_transient_lines(state) == ['execute blocked: validate this workflow first']
 
 
 def test_ds_wizard_forced_color_keeps_prefix_plain_on_picker_lines(monkeypatch) -> None:
@@ -5565,6 +6256,263 @@ def test_baseline_generate_and_check_filesystem_hashes(tmp_path: Path, monkeypat
     assert rc_check == 0
 
 
+def test_baseline_generate_start_routes_to_monitor_start_and_seed_cycle(tmp_path: Path, monkeypatch, capsys) -> None:
+    log_dir = tmp_path / 'logs'
+    for d in [log_dir / 'health', log_dir / 'data' / 'calamum', log_dir / 'control' / 'calamum']:
+        d.mkdir(parents=True, exist_ok=True)
+
+    monkeypatch.setenv('CALAMUM_LOG_DIR', str(log_dir))
+    observerctl_module._save_state('sim', 'canary')
+
+    monkeypatch.setattr(observerctl_module, '_runtime_baseline_monitor_status', lambda max_age_sec=90.0: {
+        'timestamp_utc': observerctl_module._utc_now(),
+        'runtime_cli_surface': 'observerctl',
+        'decision': 'no-go',
+        'action': 'baseline-monitor-status',
+        'state': 'stopped',
+        'reason_codes': ['critical_check_failed:baseline_monitor_runtime_inactive'],
+        'monitor_state': {},
+    })
+    monkeypatch.setattr(observerctl_module, '_baseline_monitor_start', lambda **kwargs: {
+        'timestamp_utc': observerctl_module._utc_now(),
+        'runtime_cli_surface': 'observerctl',
+        'decision': 'go',
+        'action': 'baseline-monitor-start',
+        'reason_codes': [],
+        'state': 'active',
+        'pid': {'value': 2468, 'alive': True},
+        'startup_verified': True,
+    })
+    monkeypatch.setattr(observerctl_module, '_baseline_monitor_once', lambda **kwargs: {
+        'timestamp_utc': observerctl_module._utc_now(),
+        'runtime_cli_surface': 'observerctl',
+        'decision': 'go',
+        'action': 'baseline-monitor-once',
+        'reason_codes': [],
+        'validation_cycle_event': 'baseline_monitor_cycle',
+        'validation_cycle_packet_path': str(tmp_path / 'seed_cycle.json').replace('\\', '/'),
+        'validation_cycle_packet_decision': 'go',
+    })
+
+    rc = main(['baseline', 'generate', '--start', '--json'])
+    assert rc == 0
+
+    payload = json.loads(capsys.readouterr().out)
+    assert payload.get('decision') == 'go'
+    assert payload.get('action') == 'baseline-generate'
+    assert payload.get('generate_mode') == 'start'
+    assert payload.get('repair_requested') is False
+    assert payload.get('mode') == 'canary'
+    assert payload.get('source') == 'sim'
+    assert (payload.get('baseline_monitor_start_packet') or {}).get('action') == 'baseline-monitor-start'
+    assert (payload.get('seed_packet') or {}).get('validation_cycle_event') == 'baseline_monitor_cycle'
+
+
+def test_baseline_generate_start_repair_runs_repair_then_seed(tmp_path: Path, monkeypatch, capsys) -> None:
+    log_dir = tmp_path / 'logs'
+    control = log_dir / 'control' / 'calamum'
+    for d in [log_dir / 'health', log_dir / 'data' / 'calamum', control]:
+        d.mkdir(parents=True, exist_ok=True)
+
+    monkeypatch.setenv('CALAMUM_LOG_DIR', str(log_dir))
+    observerctl_module._save_state('sim', 'canary')
+    (control / 'baseline_monitor_state.json').write_text(json.dumps({
+        'last_normal_sample_epoch_s': 'bad-float',
+    }), encoding='utf-8')
+
+    monkeypatch.setattr(observerctl_module, '_runtime_baseline_monitor_status', lambda max_age_sec=90.0: {
+        'timestamp_utc': observerctl_module._utc_now(),
+        'runtime_cli_surface': 'observerctl',
+        'decision': 'no-go',
+        'action': 'baseline-monitor-status',
+        'state': 'stopped',
+        'reason_codes': ['critical_check_failed:baseline_monitor_runtime_inactive'],
+        'monitor_state': {},
+    })
+
+    repair_calls = {'posture': 0, 'stop': 0}
+
+    def _fake_posture(source: str, mode: str, event: str = 'mode-set') -> dict:
+        repair_calls['posture'] += 1
+        return {
+            'timestamp_utc': observerctl_module._utc_now(),
+            'runtime_cli_surface': 'observerctl',
+            'decision': 'go',
+            'action': 'posture-apply',
+            'reason_codes': [],
+            'source': source,
+            'mode': mode,
+            'receipt_path': str(tmp_path / 'repair_posture.json').replace('\\', '/'),
+            'posture_state_path': str(control / 'watchdog_posture_state.json').replace('\\', '/'),
+        }
+
+    def _fake_stop(timeout_sec: float = 8.0) -> dict:
+        repair_calls['stop'] += 1
+        return {
+            'timestamp_utc': observerctl_module._utc_now(),
+            'runtime_cli_surface': 'observerctl',
+            'decision': 'go',
+            'action': 'baseline-monitor-stop',
+            'reason_codes': [],
+            'stopped_cleanly': True,
+        }
+
+    monkeypatch.setattr(observerctl_module, '_apply_watchdog_posture', _fake_posture)
+    monkeypatch.setattr(observerctl_module, '_baseline_monitor_stop', _fake_stop)
+    monkeypatch.setattr(observerctl_module, '_baseline_monitor_start', lambda **kwargs: {
+        'timestamp_utc': observerctl_module._utc_now(),
+        'runtime_cli_surface': 'observerctl',
+        'decision': 'go',
+        'action': 'baseline-monitor-start',
+        'reason_codes': [],
+        'state': 'active',
+        'pid': {'value': 2468, 'alive': True},
+        'startup_verified': True,
+    })
+    monkeypatch.setattr(observerctl_module, '_baseline_monitor_once', lambda **kwargs: {
+        'timestamp_utc': observerctl_module._utc_now(),
+        'runtime_cli_surface': 'observerctl',
+        'decision': 'go',
+        'action': 'baseline-monitor-once',
+        'reason_codes': [],
+        'validation_cycle_event': 'baseline_monitor_cycle',
+        'validation_cycle_packet_path': str(tmp_path / 'repair_seed_cycle.json').replace('\\', '/'),
+        'validation_cycle_packet_decision': 'go',
+    })
+
+    rc = main(['baseline', 'generate', '--start', '--repair', '--json'])
+    assert rc == 0
+
+    payload = json.loads(capsys.readouterr().out)
+    assert payload.get('decision') == 'go'
+    assert payload.get('generate_mode') == 'start-repair'
+    assert payload.get('repair_requested') is True
+    assert repair_calls['posture'] == 1
+    assert repair_calls['stop'] == 1
+    assert (payload.get('repair_packet') or {}).get('action') == 'posture-apply'
+    assert (payload.get('repair_stop_packet') or {}).get('action') == 'baseline-monitor-stop'
+
+
+def test_baseline_generate_repair_requires_start(tmp_path: Path, monkeypatch, capsys) -> None:
+    log_dir = tmp_path / 'logs'
+    for d in [log_dir / 'health', log_dir / 'data' / 'calamum', log_dir / 'control' / 'calamum']:
+        d.mkdir(parents=True, exist_ok=True)
+
+    monkeypatch.setenv('CALAMUM_LOG_DIR', str(log_dir))
+
+    rc = main(['baseline', 'generate', '--repair', '--json'])
+    assert rc == 2
+
+    payload = json.loads(capsys.readouterr().out)
+    assert payload.get('decision') == 'no-go'
+    assert payload.get('action') == 'baseline-generate'
+    assert 'policy_denied:baseline_generate_repair_requires_start' in payload.get('reason_codes', [])
+
+
+def test_baseline_status_uses_runtime_validation_cycle_not_chunked_catalog(tmp_path: Path, monkeypatch, capsys) -> None:
+    log_dir = tmp_path / 'logs'
+    control = log_dir / 'control' / 'calamum'
+    for d in [log_dir / 'health', log_dir / 'data' / 'calamum', control]:
+        d.mkdir(parents=True, exist_ok=True)
+
+    monkeypatch.setenv('CALAMUM_LOG_DIR', str(log_dir))
+    observerctl_module._save_state('sim', 'canary')
+
+    cycle_path = tmp_path / 'baseline_cycle.json'
+    cycle_path.write_text(json.dumps({
+        'timestamp_utc': observerctl_module._utc_now(),
+        'decision': 'go',
+        'action': 'baseline-monitor-cycle',
+        'reason_codes': [],
+    }), encoding='utf-8')
+
+    monitor_state = {
+        'last_validation_cycle_packet_path': str(cycle_path).replace('\\', '/'),
+        'last_validation_cycle_decision': 'go',
+        'last_validation_cycle_event': 'baseline_monitor_cycle',
+        'last_validation_cycle_at_utc': observerctl_module._utc_now(),
+        'last_normal_sample_epoch_s': float(observerctl_module.time.time()),
+    }
+    (control / 'baseline_monitor_state.json').write_text(json.dumps(monitor_state), encoding='utf-8')
+
+    def _legacy_catalog_guard() -> dict:
+        raise AssertionError('legacy chunked catalog should not be consulted')
+
+    monkeypatch.setattr(observerctl_module, '_load_baselines', _legacy_catalog_guard)
+    monkeypatch.setattr(observerctl_module, '_runtime_baseline_monitor_status', lambda max_age_sec=90.0: {
+        'timestamp_utc': observerctl_module._utc_now(),
+        'runtime_cli_surface': 'observerctl',
+        'decision': 'go',
+        'action': 'baseline-monitor-status',
+        'state': 'active',
+        'reason_codes': [],
+        'heartbeat': {'status': 'ok'},
+        'pid': {'value': 2468, 'alive': True},
+        'monitor_state': monitor_state,
+    })
+
+    rc = main(['baseline', 'status', '--json'])
+    assert rc == 0
+
+    payload = json.loads(capsys.readouterr().out)
+    assert payload.get('decision') == 'go'
+    assert payload.get('baseline_type') == 'observer_runtime'
+    assert (payload.get('validation_cycle') or {}).get('exists') is True
+    assert (payload.get('validation_cycle') or {}).get('decision') == 'go'
+
+
+def test_baseline_check_uses_runtime_validation_cycle_not_chunked_catalog(tmp_path: Path, monkeypatch, capsys) -> None:
+    log_dir = tmp_path / 'logs'
+    control = log_dir / 'control' / 'calamum'
+    for d in [log_dir / 'health', log_dir / 'data' / 'calamum', control]:
+        d.mkdir(parents=True, exist_ok=True)
+
+    monkeypatch.setenv('CALAMUM_LOG_DIR', str(log_dir))
+    observerctl_module._save_state('sim', 'canary')
+
+    cycle_path = tmp_path / 'baseline_cycle.json'
+    cycle_path.write_text(json.dumps({
+        'timestamp_utc': observerctl_module._utc_now(),
+        'decision': 'go',
+        'action': 'baseline-monitor-cycle',
+        'reason_codes': [],
+    }), encoding='utf-8')
+
+    monitor_state = {
+        'last_validation_cycle_packet_path': str(cycle_path).replace('\\', '/'),
+        'last_validation_cycle_decision': 'go',
+        'last_validation_cycle_event': 'baseline_monitor_cycle',
+        'last_validation_cycle_at_utc': observerctl_module._utc_now(),
+        'last_normal_sample_epoch_s': float(observerctl_module.time.time()),
+    }
+    (control / 'baseline_monitor_state.json').write_text(json.dumps(monitor_state), encoding='utf-8')
+
+    def _legacy_catalog_guard() -> dict:
+        raise AssertionError('legacy chunked catalog should not be consulted')
+
+    monkeypatch.setattr(observerctl_module, '_load_baselines', _legacy_catalog_guard)
+    monkeypatch.setattr(observerctl_module, '_runtime_baseline_monitor_status', lambda max_age_sec=90.0: {
+        'timestamp_utc': observerctl_module._utc_now(),
+        'runtime_cli_surface': 'observerctl',
+        'decision': 'go',
+        'action': 'baseline-monitor-status',
+        'state': 'active',
+        'reason_codes': [],
+        'heartbeat': {'status': 'ok'},
+        'pid': {'value': 2468, 'alive': True},
+        'monitor_state': monitor_state,
+    })
+
+    rc = main(['baseline', 'check', '--json'])
+    assert rc == 0
+
+    payload = json.loads(capsys.readouterr().out)
+    assert payload.get('decision') == 'go'
+    assert payload.get('baseline_type') == 'observer_runtime'
+    assert (payload.get('validation_cycle') or {}).get('exists') is True
+    assert (payload.get('validation_cycle') or {}).get('decision') == 'go'
+
+
 def test_baseline_check_detects_hash_mismatch(tmp_path: Path, monkeypatch) -> None:
     log_dir = tmp_path / 'logs'
     for d in [log_dir / 'health', log_dir / 'data' / 'calamum', log_dir / 'control' / 'calamum']:
@@ -6261,6 +7209,53 @@ def test_ops_runtime_start_delegates_launcher_non_interactive(tmp_path: Path, mo
         '--json',
     ])
     assert rc == 0
+
+
+def test_ops_runtime_start_gui_omits_browser_skip_env(tmp_path: Path, monkeypatch) -> None:
+    log_dir = tmp_path / 'logs'
+    health = log_dir / 'health'
+    health.mkdir(parents=True, exist_ok=True)
+    monkeypatch.setenv('CALAMUM_LOG_DIR', str(log_dir))
+
+    launcher = tmp_path / 'launch_ghost_console.ps1'
+    launcher.write_text('# test launcher\n', encoding='utf-8')
+    monkeypatch.setattr(observerctl_module, '_project_root', lambda: tmp_path)
+
+    captured = {'env': {}}
+
+    class _DummyProc:
+        pid = 12345
+
+    def _fake_popen(cmd, env, cwd, stdin, stdout, stderr, creationflags):
+        captured['env'] = dict(env)
+        (tmp_path / 'calamum_agent.pid').write_text(str(os.getpid()), encoding='utf-8')
+        _touch(health / 'calamum_observer.heartbeat')
+        return _DummyProc()
+
+    monkeypatch.setattr(observerctl_module.subprocess, 'Popen', _fake_popen)
+    monkeypatch.setattr(observerctl_module, '_baseline_monitor_start', lambda **kwargs: {
+        'timestamp_utc': '2026-01-01T00:00:00Z',
+        'runtime_cli_surface': 'observerctl',
+        'decision': 'go',
+        'action': 'baseline-monitor-start',
+        'reason_codes': [],
+        'state': 'active',
+        'pid': {'value': 2468, 'alive': True},
+        'startup_verified': True,
+    })
+
+    rc = main([
+        'ops', 'runtime', 'start',
+        '--source', 'sim',
+        '--mode', 'canary',
+        '--interval-sec', '1.0',
+        '--timeout-sec', '0',
+        '--gui',
+        '--json',
+    ])
+    assert rc == 0
+    assert captured['env'].get('CALAMUM_GUI_AUTOSTART_OBSERVER') == '1'
+    assert 'CALAMUM_SKIP_BROWSER' not in captured['env']
 
 
 def test_ops_runtime_start_fails_closed_when_monitor_start_fails(tmp_path: Path, monkeypatch) -> None:

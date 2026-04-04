@@ -120,10 +120,6 @@ def _require_sandbox_for_live_mint(*, dry_run: bool) -> None:
     Rationale:
     - Policy requires vendor interaction only from a sandbox lane.
     - Prevent accidental host execution that could violate doctrine.
-
-    Overrides:
-    - Set KEYSMITH_SANDBOX=1 inside the sandbox/container.
-    - Set KEYSMITH_ALLOW_UNSANDBOXED=1 for explicit break-glass (NOT recommended).
     """
 
     if dry_run:
@@ -132,12 +128,9 @@ def _require_sandbox_for_live_mint(*, dry_run: bool) -> None:
     if _sandbox_flag():
         return
 
-    if os.environ.get("KEYSMITH_ALLOW_UNSANDBOXED", "").strip() == "1":
-        return
-
     raise KeysmithError(
-        "Refusing non-dry-run KEYSMITH outside sandbox. "
-        "Set KEYSMITH_SANDBOX=1 inside sandbox/container, or set KEYSMITH_ALLOW_UNSANDBOXED=1 for explicit override."
+        "Refusing non-dry-run KEYSMITH outside the KEYSMITH sandbox/container lane. "
+        "Run live mint only with KEYSMITH_SANDBOX=1 inside the container lane."
     )
 
 
