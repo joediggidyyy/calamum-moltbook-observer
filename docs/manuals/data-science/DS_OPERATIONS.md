@@ -90,11 +90,11 @@ The DS lane uses both local run artifacts and tracked reader-facing summaries.
 | --- | --- |
 | local run ledgers such as `run.json` and `run.md` | detailed per-run execution records kept with the generated analysis output |
 | `docs/reports/collections/<collection-alias>/collection/report.md` | tracked collection-level report keyed by the canonical alias shown in the wizard |
-| `docs/reports/collections/<collection-alias>/processing/<stage>/YYYYMMDD.<stage>.md` | dated stage report for each published calculation run under that collection alias |
+| `docs/reports/collections/<collection-alias>/processing/<stage>/YYYYMMDDTHHMMSSffffffZ.<stage>.md` | timestamped stage report for each published calculation run under that collection alias |
 | `docs/reports/aggregates/*.md` | tracked rollups such as latest collections, workflow rollup, and threshold summary |
 | `docs/reports/INDEX.md` | the entry point for the tracked report collection set |
 
-If more than one calculation run is published for the same alias and stage on the same day, the first document keeps the base `YYYYMMDD.<stage>.md` form and later documents receive an ordered suffix.
+Historical stage identity comes from the canonical UTC timestamp token in the filename. The tracked publication lane does not use same-day numeric suffixes for reader-facing stage documents.
 
 ## When to use the wizard instead
 

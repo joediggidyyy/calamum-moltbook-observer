@@ -11445,6 +11445,37 @@ def _ds_artifact_strings(artifact_paths: Mapping[str, Optional[Path]]) -> Dict[s
     return rendered
 
 
+_DS_FINALIZATION_STEP_ORDER = (
+    'report_bundle',
+    'run_index',
+    'librarian_dataset_catalog',
+    'publication_eligibility',
+    'tracked_publication',
+)
+
+
+def _ds_finalization_step(decision: str, *, reason_codes: Optional[List[str]] = None, **details: Any) -> Dict[str, Any]:
+    step: Dict[str, Any] = {
+        'decision': str(decision or '').strip() or 'unknown',
+        'reason_codes': [str(code) for code in list(reason_codes or []) if str(code or '').strip()],
+    }
+    for key, value in details.items():
+        if value is None:
+            continue
+        if isinstance(value, Path):
+            step[str(key)] = str(value).replace('\\', '/')
+            continue
+        step[str(key)] = value
+    return step
+
+
+def _ds_skipped_finalization_steps(reason_code: str) -> Dict[str, Dict[str, Any]]:
+    return {
+        step_name: _ds_finalization_step('skipped', reason_codes=[reason_code])
+        for step_name in _DS_FINALIZATION_STEP_ORDER
+    }
+
+
 def _ds_visual_artifact_paths(visual_state: Mapping[str, Any]) -> Dict[str, Path]:
     artifact_paths: Dict[str, Path] = {}
     if not isinstance(visual_state, Mapping):
@@ -11564,6 +11595,11 @@ def _ds_finalize_run_packet(
     final_packet = dict(packet)
     final_packet['run_id'] = str(bundle.run_id)
     final_packet['artifacts'] = dict(final_packet.get('artifacts', {}))
+    finalization_state: Dict[str, Any] = {
+        'derived_reports_enabled': bool(derived_reports_enabled),
+        'step_order': list(_DS_FINALIZATION_STEP_ORDER),
+        'steps': _ds_skipped_finalization_steps('derived_reports_disabled') if not derived_reports_enabled else {},
+    }
     publication_state = {
         'decision': 'skipped',
         'reason_codes': ['publication_skipped:derived_reports_disabled'],
@@ -11578,25 +11614,61 @@ def _ds_finalize_run_packet(
             context=context or {},
             lineage=lineage or {},
         )
+        finalization_state['steps']['report_bundle'] = _ds_finalization_step(
+            'go',
+            report_json=str(report_bundle['paths'].get('report_json', '') or ''),
+            report_md=str(report_bundle['paths'].get('report_md', '') or ''),
+            manifest_json=str(report_bundle['paths'].get('manifest_json', '') or ''),
+        )
         aggregate_state = append_ds_run_index(
             project_anchor=Path(__file__),
             manifest_payload=report_bundle['manifest'],
+        )
+        finalization_state['steps']['run_index'] = _ds_finalization_step(
+            'go',
+            ledger_path=str(aggregate_state.get('ledger_path', '') or ''),
+            latest_index_path=str(aggregate_state.get('latest_index_path', '') or ''),
         )
         dataset_refresh = refresh_librarian_dataset_catalog_from_run_manifest(
             project_anchor=_project_anchor(),
             manifest_payload=report_bundle['manifest'],
         )
+        finalization_state['steps']['librarian_dataset_catalog'] = _ds_finalization_step(
+            'go',
+            catalog_updated=bool((dataset_refresh or {}).get('catalog_updated', False)) if isinstance(dataset_refresh, dict) else False,
+            snapshot_path=str((dataset_refresh or {}).get('snapshot_path', '') or '') if isinstance(dataset_refresh, dict) else '',
+            catalog_path=str((dataset_refresh or {}).get('catalog_path', '') or '') if isinstance(dataset_refresh, dict) else '',
+        )
+        publication_reason_codes = publication_eligibility_reasons(
+            project_anchor=Path(__file__),
+            manifest_payload=report_bundle['manifest'],
+        )
         publication_state = {
             'decision': 'skipped',
-            'reason_codes': publication_eligibility_reasons(
-                project_anchor=Path(__file__),
-                manifest_payload=report_bundle['manifest'],
-            ),
+            'reason_codes': list(publication_reason_codes),
         }
+        finalization_state['steps']['publication_eligibility'] = _ds_finalization_step(
+            'go' if len(publication_reason_codes) == 0 else 'skipped',
+            reason_codes=publication_reason_codes,
+            eligible=bool(len(publication_reason_codes) == 0),
+        )
         if len(list(publication_state.get('reason_codes', []))) == 0:
             publication_state = refresh_tracked_ds_publication(
                 project_anchor=Path(__file__),
                 current_manifest_payload=report_bundle['manifest'],
+            )
+            current_publication = publication_state.get('current_run', {}) if isinstance(publication_state.get('current_run', {}), dict) else {}
+            finalization_state['steps']['tracked_publication'] = _ds_finalization_step(
+                str(publication_state.get('decision', 'unknown') or 'unknown'),
+                reason_codes=list(publication_state.get('reason_codes', []) or []) if isinstance(publication_state.get('reason_codes', []), list) else [],
+                published_run_count=int(publication_state.get('published_run_count', 0) or 0),
+                current_run_id=str(current_publication.get('run_id', '') or ''),
+                published_run_dir=str(current_publication.get('published_run_dir', '') or ''),
+            )
+        else:
+            finalization_state['steps']['tracked_publication'] = _ds_finalization_step(
+                'skipped',
+                reason_codes=list(publication_state.get('reason_codes', []) or []),
             )
 
         final_packet['artifacts'].update({
@@ -11631,6 +11703,7 @@ def _ds_finalize_run_packet(
                 'published_report_md': str(published_report_paths.get('markdown', '') or ''),
                 'published_report_manifest_json': str(published_report_paths.get('manifest', '') or ''),
             })
+    final_packet['finalization'] = finalization_state
     final_packet['publication'] = publication_state
     return final_packet
 

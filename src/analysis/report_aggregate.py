@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+from datetime import datetime, timezone
 import json
 import os
 import shutil
@@ -16,9 +17,6 @@ from ._util import (
     ds_publication_reference_dir,
     ds_publication_runs_dir,
     ds_publication_validations_dir,
-    ds_published_collection_dir,
-    ds_published_processing_dir,
-    ds_published_run_dir,
     ds_runs_dir,
     find_project_root,
     iter_jsonl,
@@ -33,6 +31,7 @@ PUBLISHED_IMAGE_SUFFIXES = {'.png', '.svg', '.jpg', '.jpeg', '.gif', '.webp'}
 PUBLISHED_HUMAN_PATH_KEYS = (
     'markdown',
     'collection_markdown',
+    'collection_history_markdown',
     'processing_markdown',
 )
 PUBLISHED_INTERNAL_PATH_KEYS = ('json', 'manifest')
@@ -114,7 +113,7 @@ def load_ds_run_manifest_records(*, project_anchor: Path) -> List[Dict[str, Any]
 
     rows.sort(
         key=lambda row: (
-            str((row.get('entry', {}) if isinstance(row.get('entry', {}), dict) else {}).get('timestamp_utc', '')),
+            _publication_sort_key(str((row.get('entry', {}) if isinstance(row.get('entry', {}), dict) else {}).get('timestamp_utc', ''))),
             str((row.get('entry', {}) if isinstance(row.get('entry', {}), dict) else {}).get('run_id', '')),
         ),
         reverse=True,
@@ -152,7 +151,7 @@ def refresh_tracked_ds_publication(
             continue
         publishable.append(candidate)
 
-    publishable.sort(key=lambda candidate: (str(candidate.get('timestamp_utc', '')), str(candidate.get('run_id', ''))))
+    publishable.sort(key=lambda candidate: (_publication_sort_key(str(candidate.get('timestamp_utc', ''))), str(candidate.get('run_id', ''))))
 
     published_runs: List[Dict[str, Any]] = []
     threshold_rows: List[Dict[str, Any]] = []
@@ -323,6 +322,7 @@ def _build_entry(
         'workflow': workflow,
         'timestamp_utc': str(manifest_payload.get('timestamp_utc', '')),
         'run_id': str(manifest_payload.get('run_id', '')),
+        'collection_alias': str(manifest_payload.get('collection_alias', '')),
         'decision': str(manifest_payload.get('decision', '')),
         'summary': str(manifest_payload.get('summary', '')),
         'producer_command': str(manifest_payload.get('producer_command', '')),
@@ -439,30 +439,44 @@ def _collect_figure_sources(manifest_payload: Mapping[str, Any], project_root: P
     sources: List[Path] = []
     seen: set = set()
 
-    artifacts = dict(manifest_payload.get('artifacts', {}) or {}) if isinstance(manifest_payload.get('artifacts', {}), dict) else {}
-    for value in artifacts.values():
-        resolved = _resolve_repo_path(project_root, str(value or '').strip())
+    def _append_source(raw_value: Any) -> bool:
+        resolved = _resolve_repo_path(project_root, str(raw_value or '').strip())
         if resolved is None or not resolved.exists() or not resolved.is_file():
-            continue
+            return False
         if resolved.suffix.lower() not in PUBLISHED_IMAGE_SUFFIXES:
-            continue
+            return False
         key = str(resolved.resolve())
         if key in seen:
-            continue
+            return False
         seen.add(key)
         sources.append(resolved)
+        return True
+
+    result = dict(manifest_payload.get('result', {}) or {}) if isinstance(manifest_payload.get('result', {}), dict) else {}
+    visuals = dict(result.get('visuals', {}) or {}) if isinstance(result.get('visuals', {}), dict) else {}
+    declared_figures = list(visuals.get('figures', []) or [])
+    declared_count = 0
+    for figure in declared_figures:
+        if not isinstance(figure, dict):
+            continue
+        if _append_source(figure.get('path')):
+            declared_count += 1
+    if declared_count:
+        return sources
+
+    artifacts = dict(manifest_payload.get('artifacts', {}) or {}) if isinstance(manifest_payload.get('artifacts', {}), dict) else {}
+    artifact_count = 0
+    for value in artifacts.values():
+        if _append_source(value):
+            artifact_count += 1
+    if artifact_count:
+        return sources
 
     run_root = _resolve_repo_path(project_root, str(manifest_payload.get('run_root', '') or '').strip())
     figures_dir = (run_root / 'figures') if run_root is not None else None
     if figures_dir is not None and figures_dir.exists() and figures_dir.is_dir():
         for path in sorted(figures_dir.rglob('*')):
-            if not path.is_file() or path.suffix.lower() not in PUBLISHED_IMAGE_SUFFIXES:
-                continue
-            key = str(path.resolve())
-            if key in seen:
-                continue
-            seen.add(key)
-            sources.append(path)
+            _append_source(path)
     return sources
 
 
@@ -470,6 +484,7 @@ def _published_report_paths(
     *,
     publication_dir: Path,
     collection_dir: Path,
+    collection_history_report_path: Path,
     processing_report_path: Path,
     internal_dir: Path,
     project_root: Path,
@@ -477,6 +492,7 @@ def _published_report_paths(
     return {
         'markdown': normalize_repo_or_absolute_path(collection_dir / 'report.md', project_root),
         'collection_markdown': normalize_repo_or_absolute_path(collection_dir / 'report.md', project_root),
+        'collection_history_markdown': normalize_repo_or_absolute_path(collection_history_report_path, project_root),
         'processing_markdown': normalize_repo_or_absolute_path(processing_report_path, project_root),
         'json': normalize_repo_or_absolute_path(internal_dir / 'publication_report.json', project_root),
         'manifest': normalize_repo_or_absolute_path(internal_dir / 'publication_manifest.json', project_root),
@@ -567,6 +583,10 @@ def _publish_candidate(candidate: Mapping[str, Any]) -> None:
     if not source_manifest_payload:
         source_manifest_payload = dict(candidate.get('manifest_payload', {}) or {})
 
+    collection_history_report_md_path = _next_collection_report_path(
+        collection_dir=collection_dir,
+        timestamp_utc=str(candidate.get('timestamp_utc', '') or ''),
+    )
     processing_report_md_path = _next_processing_report_path(
         processing_dir=processing_dir,
         timestamp_utc=str(candidate.get('timestamp_utc', '') or ''),
@@ -576,6 +596,7 @@ def _publish_candidate(candidate: Mapping[str, Any]) -> None:
     published_report_paths = _published_report_paths(
         publication_dir=publication_dir,
         collection_dir=collection_dir,
+        collection_history_report_path=collection_history_report_md_path,
         processing_report_path=processing_report_md_path,
         internal_dir=internal_dir,
         project_root=project_root,
@@ -875,6 +896,11 @@ def _published_collection_report_path(summary: Mapping[str, Any]) -> str:
     return str(paths.get('collection_markdown', '') or paths.get('markdown', '') or '')
 
 
+def _published_collection_history_path(summary: Mapping[str, Any]) -> str:
+    paths = dict(summary.get('published_report_paths', {}) or {}) if isinstance(summary.get('published_report_paths', {}), dict) else {}
+    return str(paths.get('collection_history_markdown', '') or paths.get('collection_markdown', '') or paths.get('markdown', '') or '')
+
+
 def _published_collection_references_path(summary: Mapping[str, Any]) -> str:
     return ''
 
@@ -894,10 +920,17 @@ def _human_processing_payload(payload: Mapping[str, Any]) -> Dict[str, Any]:
     return normalized
 
 
-def _collection_report_markdown(collection_alias: str, summaries: List[Dict[str, Any]], project_root: Path, target_path: Path) -> str:
+def _collection_report_markdown(
+    collection_alias: str,
+    summaries: List[Dict[str, Any]],
+    project_root: Path,
+    target_path: Path,
+    *,
+    is_stable_landing: bool,
+) -> str:
     ordered = sorted(
         [dict(summary) for summary in summaries if isinstance(summary, dict)],
-        key=lambda summary: (str(summary.get('timestamp_utc', '')), str(summary.get('run_id', ''))),
+        key=lambda summary: (_publication_sort_key(str(summary.get('timestamp_utc', ''))), str(summary.get('run_id', ''))),
     )
     latest = dict(ordered[-1]) if ordered else {}
     latest_by_workflow: Dict[str, Dict[str, Any]] = {}
@@ -917,11 +950,38 @@ def _collection_report_markdown(collection_alias: str, summaries: List[Dict[str,
             str(latest.get('workflow', '')),
             str(latest.get('timestamp_utc', '')),
         ))
+        if is_stable_landing:
+            latest_snapshot_path = _published_collection_history_path(latest)
+            lines.append('- Latest collection snapshot: {0}'.format(
+                _markdown_link(target_path, project_root, latest_snapshot_path, Path(latest_snapshot_path).name or 'collection snapshot')
+            ))
+        else:
+            lines.append('- Stable collection landing page: {0}'.format(
+                _markdown_link(target_path, project_root, _published_collection_report_path(latest), 'report.md')
+            ))
         lines.append('- Latest stage document: {0}'.format(
             _markdown_link(target_path, project_root, _published_processing_report_path(latest), Path(_published_processing_report_path(latest)).name or 'stage doc')
         ))
     else:
         lines.append('- Latest calculation run: none published yet')
+    if is_stable_landing:
+        lines.append('')
+        lines.append('## Collection snapshots')
+        lines.append('')
+        if ordered:
+            lines.append('| Published (UTC) | Workflow | Run ID | Snapshot | Stage doc |')
+            lines.append('| --- | --- | --- | --- | --- |')
+            for summary in reversed(ordered[-12:]):
+                snapshot_path = _published_collection_history_path(summary)
+                lines.append('| {0} | {1} | `{2}` | {3} | {4} |'.format(
+                    str(summary.get('timestamp_utc', '')),
+                    str(summary.get('workflow', '')),
+                    str(summary.get('run_id', '')),
+                    _markdown_link(target_path, project_root, snapshot_path, Path(snapshot_path).name or 'collection snapshot'),
+                    _markdown_link(target_path, project_root, _published_processing_report_path(summary), Path(_published_processing_report_path(summary)).name or 'stage doc'),
+                ))
+        else:
+            lines.append('No collection snapshots are available yet.')
     lines.append('')
     lines.append('## Latest stage documents')
     lines.append('')
@@ -1046,7 +1106,8 @@ def _generated_report_surfaces_markdown(
     lines.append('docs/reports/')
     lines.append('|- aggregates/')
     lines.append('|- collections/<collection-alias>/collection/report.md')
-    lines.append('|- collections/<collection-alias>/processing/<stage>/YYYYMMDD.<stage>.md')
+    lines.append('|- collections/<collection-alias>/collection/YYYYMMDDTHHMMSSffffffZ.collection.md')
+    lines.append('|- collections/<collection-alias>/processing/<stage>/YYYYMMDDTHHMMSSffffffZ.<stage>.md')
     lines.append('|- reference/')
     lines.append('|- validations/')
     lines.append('`- INDEX.md')
@@ -1070,26 +1131,44 @@ def _published_workflow_doc_token(workflow: str) -> str:
     return 'eval' if token == 'evaluate' else token
 
 
-def _publication_date_token(timestamp_utc: str) -> str:
+def _publication_timestamp_token(timestamp_utc: str) -> str:
     token = str(timestamp_utc or '').strip()
-    if len(token) >= 10 and token[4:5] == '-' and token[7:8] == '-':
-        return token[:10].replace('-', '')
-    digits = ''.join(ch for ch in token if ch.isdigit())
-    return digits[:8] if len(digits) >= 8 else '00000000'
+    if not token:
+        raise ValueError('Missing canonical publication timestamp.')
+    normalized = token[:-1] + '+00:00' if token.endswith('Z') else token
+    try:
+        parsed = datetime.fromisoformat(normalized)
+    except ValueError:
+        digits = ''.join(ch for ch in token if ch.isdigit())
+        if len(digits) < 14:
+            raise ValueError('Invalid canonical publication timestamp: {0}'.format(token))
+        return '{0}T{1}{2}Z'.format(digits[:8], digits[8:14], digits[14:20].ljust(6, '0'))
+    if parsed.tzinfo is None:
+        parsed = parsed.replace(tzinfo=timezone.utc)
+    else:
+        parsed = parsed.astimezone(timezone.utc)
+    return parsed.strftime('%Y%m%dT%H%M%S%fZ')
+
+
+def _publication_sort_key(timestamp_utc: str) -> str:
+    return _publication_timestamp_token(timestamp_utc)
 
 
 def _next_processing_report_path(*, processing_dir: Path, timestamp_utc: str, workflow: str) -> Path:
-    date_token = _publication_date_token(timestamp_utc)
+    timestamp_token = _publication_timestamp_token(timestamp_utc)
     workflow_token = _published_workflow_doc_token(workflow)
-    candidate = processing_dir / '{0}.{1}.md'.format(date_token, workflow_token)
-    if not candidate.exists():
-        return candidate
-    sequence = 2
-    while True:
-        candidate = processing_dir / '{0}.{1:02d}.{2}.md'.format(date_token, sequence, workflow_token)
-        if not candidate.exists():
-            return candidate
-        sequence += 1
+    candidate = processing_dir / '{0}.{1}.md'.format(timestamp_token, workflow_token)
+    if candidate.exists():
+        raise ValueError('Duplicate canonical processing report path: {0}'.format(candidate.as_posix()))
+    return candidate
+
+
+def _next_collection_report_path(*, collection_dir: Path, timestamp_utc: str) -> Path:
+    timestamp_token = _publication_timestamp_token(timestamp_utc)
+    candidate = collection_dir / '{0}.collection.md'.format(timestamp_token)
+    if candidate.exists():
+        raise ValueError('Duplicate canonical collection report path: {0}'.format(candidate.as_posix()))
+    return candidate
 
 
 def _resolve_collection_alias(
@@ -1142,11 +1221,27 @@ def _write_collection_reports(candidates: List[Dict[str, Any]], project_root: Pa
             continue
         grouped.setdefault(alias, []).append(candidate)
     for alias, rows in grouped.items():
-        collection_dir = Path(rows[0]['collection_dir'])
+        ordered_rows = sorted(
+            [dict(row) for row in rows if isinstance(row, dict)],
+            key=lambda row: (_publication_sort_key(str(row.get('timestamp_utc', ''))), str(row.get('run_id', ''))),
+        )
+        collection_dir = Path(ordered_rows[0]['collection_dir'])
         target_path = collection_dir / 'report.md'
-        summaries = [_published_run_summary(row, project_root) for row in rows]
+        summaries = [_published_run_summary(row, project_root) for row in ordered_rows]
         target_path.parent.mkdir(parents=True, exist_ok=True)
-        target_path.write_text(_collection_report_markdown(alias, summaries, project_root, target_path), encoding='utf-8')
+        target_path.write_text(
+            _collection_report_markdown(alias, summaries, project_root, target_path, is_stable_landing=True),
+            encoding='utf-8',
+        )
+        for index, summary in enumerate(summaries):
+            snapshot_path = _resolve_repo_path(project_root, _published_collection_history_path(summary))
+            if snapshot_path is None:
+                continue
+            snapshot_path.parent.mkdir(parents=True, exist_ok=True)
+            snapshot_path.write_text(
+                _collection_report_markdown(alias, summaries[: index + 1], project_root, snapshot_path, is_stable_landing=False),
+                encoding='utf-8',
+            )
 
 
 def _validations_index_markdown(project_root: Path, target_path: Path) -> str:

@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import csv
+from collections.abc import Mapping as MappingABC
 from pathlib import Path
 from typing import Any, Dict, Iterable, List, Mapping, Optional
 
@@ -9,6 +10,78 @@ from apexlab.evaluation.thresholds import select_lower_tail_threshold
 
 ANOMALY_DIRECTION = 'lower-is-more-anomalous'
 DEFAULT_SCORE_COLUMNS = ('score_anomaly', 'score_raw')
+
+
+def _visual_state(
+    *,
+    decision: str,
+    reason_codes: Optional[Iterable[str]] = None,
+    figures: Optional[Iterable[Mapping[str, Any]]] = None,
+    anomaly_direction: str = '',
+    score_column: str = '',
+) -> Dict[str, Any]:
+    normalized_figures = _normalize_figure_records(figures)
+    normalized_reason_codes = _normalize_reason_codes(reason_codes)
+    resolved_decision = str(decision or '').strip().lower() or ('go' if normalized_figures else 'skipped')
+    if resolved_decision == 'go' and not normalized_figures:
+        resolved_decision = 'skipped'
+    return {
+        'decision': resolved_decision,
+        'reason_codes': normalized_reason_codes,
+        'figure_count': int(len(normalized_figures)),
+        'anomaly_direction': str(anomaly_direction or '').strip(),
+        'score_column': str(score_column or '').strip(),
+        'figures': normalized_figures,
+    }
+
+
+def _normalize_reason_codes(reason_codes: Optional[Iterable[str]]) -> List[str]:
+    normalized: List[str] = []
+    for reason_code in list(reason_codes or []):
+        text = str(reason_code or '').strip()
+        if text and text not in normalized:
+            normalized.append(text)
+    return normalized
+
+
+def _normalize_figure_records(figures: Optional[Iterable[Mapping[str, Any]]]) -> List[Dict[str, Any]]:
+    ordered_ids: List[str] = []
+    by_id: Dict[str, Dict[str, Any]] = {}
+    for figure in list(figures or []):
+        normalized = _normalize_figure_record(figure)
+        if normalized is None:
+            continue
+        figure_id = str(normalized.get('id', '') or '')
+        if figure_id in by_id:
+            ordered_ids = [existing for existing in ordered_ids if existing != figure_id]
+        ordered_ids.append(figure_id)
+        by_id[figure_id] = normalized
+    return [dict(by_id[figure_id]) for figure_id in ordered_ids if figure_id in by_id]
+
+
+def _normalize_figure_record(figure: Any) -> Optional[Dict[str, Any]]:
+    if not isinstance(figure, MappingABC):
+        return None
+    figure_id = str(figure.get('id', '') or '').strip()
+    raw_path = figure.get('path')
+    if not figure_id or raw_path in ('', None):
+        return None
+    normalized: Dict[str, Any] = {
+        'id': figure_id,
+        'title': str(figure.get('title', '') or figure_id).strip() or figure_id,
+        'caption': str(figure.get('caption', '') or '').strip(),
+        'path': str(raw_path).replace('\\', '/'),
+        'kind': str(figure.get('kind', '') or 'unknown').strip() or 'unknown',
+    }
+    for key, value in figure.items():
+        text_key = str(key)
+        if text_key in normalized or value in ('', None):
+            continue
+        if isinstance(value, Path):
+            normalized[text_key] = str(value).replace('\\', '/')
+        else:
+            normalized[text_key] = value
+    return normalized
 
 
 def load_score_series(scores_csv: Path) -> Dict[str, Any]:
@@ -142,25 +215,21 @@ def generate_score_visuals(
 ) -> Dict[str, Any]:
     series = load_score_series(scores_csv)
     if str(series.get('decision', '')) != 'go':
-        return {
-            'decision': 'skipped',
-            'reason_codes': list(series.get('reason_codes', []) or []),
-            'figure_count': 0,
-            'score_column': str(series.get('score_column', '') or ''),
-            'anomaly_direction': ANOMALY_DIRECTION,
-            'figures': [],
-        }
+        return _visual_state(
+            decision='skipped',
+            reason_codes=list(series.get('reason_codes', []) or []),
+            anomaly_direction=ANOMALY_DIRECTION,
+            score_column=str(series.get('score_column', '') or ''),
+        )
 
     pyplot = _load_pyplot()
     if pyplot is None:
-        return {
-            'decision': 'skipped',
-            'reason_codes': ['visualization_skipped:matplotlib_unavailable'],
-            'figure_count': 0,
-            'score_column': str(series.get('score_column', '') or ''),
-            'anomaly_direction': ANOMALY_DIRECTION,
-            'figures': [],
-        }
+        return _visual_state(
+            decision='skipped',
+            reason_codes=['visualization_skipped:matplotlib_unavailable'],
+            anomaly_direction=ANOMALY_DIRECTION,
+            score_column=str(series.get('score_column', '') or ''),
+        )
 
     figures_dir.mkdir(parents=True, exist_ok=True)
     scores = list(series.get('scores', []) or [])
@@ -197,14 +266,13 @@ def generate_score_visuals(
             kind='threshold',
         ))
 
-    return {
-        'decision': 'go' if figures else 'skipped',
-        'reason_codes': [] if figures else ['visualization_skipped:no_score_figures_rendered'],
-        'figure_count': int(len(figures)),
-        'score_column': score_column,
-        'anomaly_direction': ANOMALY_DIRECTION,
-        'figures': figures,
-    }
+    return _visual_state(
+        decision='go' if figures else 'skipped',
+        reason_codes=[] if figures else ['visualization_skipped:no_score_figures_rendered'],
+        anomaly_direction=ANOMALY_DIRECTION,
+        score_column=score_column,
+        figures=figures,
+    )
 
 
 def generate_evaluation_visuals(
@@ -219,17 +287,15 @@ def generate_evaluation_visuals(
 ) -> Dict[str, Any]:
     pyplot = _load_pyplot()
     if pyplot is None:
-        return {
-            'decision': 'skipped',
-            'reason_codes': ['visualization_skipped:matplotlib_unavailable'],
-            'figure_count': 0,
-            'figures': [],
-        }
+        return _visual_state(
+            decision='skipped',
+            reason_codes=['visualization_skipped:matplotlib_unavailable'],
+        )
 
     figures_dir.mkdir(parents=True, exist_ok=True)
     figures: List[Dict[str, Any]] = []
-    anomaly_direction = ''
-    score_column = ''
+    anomaly_direction = str((threshold_summary or {}).get('anomaly_direction', '') or '').strip() if isinstance(threshold_summary, MappingABC) else ''
+    score_column = str((threshold_summary or {}).get('score_column', '') or '').strip() if isinstance(threshold_summary, MappingABC) else ''
 
     if _has_confusion_counts(counts):
         confusion_path = figures_dir / 'confusion_matrix.png'
@@ -306,14 +372,13 @@ def generate_evaluation_visuals(
                     kind='threshold',
                 ))
 
-    return {
-        'decision': 'go' if figures else 'skipped',
-        'reason_codes': [] if figures else ['visualization_skipped:no_evaluation_figures_rendered'],
-        'figure_count': int(len(figures)),
-        'anomaly_direction': anomaly_direction,
-        'score_column': score_column,
-        'figures': figures,
-    }
+    return _visual_state(
+        decision='go' if figures else 'skipped',
+        reason_codes=[] if figures else ['visualization_skipped:no_evaluation_figures_rendered'],
+        anomaly_direction=anomaly_direction,
+        score_column=score_column,
+        figures=figures,
+    )
 
 
 def generate_summary_card_visual(
@@ -327,30 +392,24 @@ def generate_summary_card_visual(
 ) -> Dict[str, Any]:
     pyplot = _load_pyplot()
     if pyplot is None:
-        return {
-            'decision': 'skipped',
-            'reason_codes': ['visualization_skipped:matplotlib_unavailable'],
-            'figure_count': 0,
-            'figures': [],
-        }
+        return _visual_state(
+            decision='skipped',
+            reason_codes=['visualization_skipped:matplotlib_unavailable'],
+        )
 
     filtered_rows = [(str(key), value) for key, value in rows.items() if value not in ('', None, [], {})]
     if not filtered_rows:
-        return {
-            'decision': 'skipped',
-            'reason_codes': ['visualization_skipped:no_summary_rows'],
-            'figure_count': 0,
-            'figures': [],
-        }
+        return _visual_state(
+            decision='skipped',
+            reason_codes=['visualization_skipped:no_summary_rows'],
+        )
 
     figures_dir.mkdir(parents=True, exist_ok=True)
     output_path = figures_dir / filename
     _render_summary_card(pyplot, filtered_rows, output_path, title=title)
-    return {
-        'decision': 'go',
-        'reason_codes': [],
-        'figure_count': 1,
-        'figures': [
+    return _visual_state(
+        decision='go',
+        figures=[
             _figure_record(
                 figure_id=figure_id,
                 title=title,
@@ -359,7 +418,7 @@ def generate_summary_card_visual(
                 kind='summary',
             )
         ],
-    }
+    )
 
 
 def merge_visual_states(*states: Mapping[str, Any]) -> Dict[str, Any]:
@@ -368,28 +427,25 @@ def merge_visual_states(*states: Mapping[str, Any]) -> Dict[str, Any]:
     anomaly_direction = ''
     score_column = ''
     for state in states:
-        if not isinstance(state, Mapping):
+        if not isinstance(state, MappingABC):
             continue
         for figure in list(state.get('figures', []) or []):
-            if isinstance(figure, Mapping):
+            if isinstance(figure, MappingABC):
                 figures.append(dict(figure))
-        for reason_code in list(state.get('reason_codes', []) or []):
-            text = str(reason_code or '').strip()
-            if text and text not in reason_codes:
-                reason_codes.append(text)
+        reason_codes.extend(list(state.get('reason_codes', []) or []))
         if not anomaly_direction and str(state.get('anomaly_direction', '') or '').strip():
             anomaly_direction = str(state.get('anomaly_direction', '') or '').strip()
         if not score_column and str(state.get('score_column', '') or '').strip():
             score_column = str(state.get('score_column', '') or '').strip()
 
-    return {
-        'decision': 'go' if figures else 'skipped',
-        'reason_codes': [] if figures else reason_codes,
-        'figure_count': int(len(figures)),
-        'anomaly_direction': anomaly_direction,
-        'score_column': score_column,
-        'figures': figures,
-    }
+    normalized_figures = _normalize_figure_records(figures)
+    return _visual_state(
+        decision='go' if normalized_figures else 'skipped',
+        reason_codes=reason_codes,
+        anomaly_direction=anomaly_direction,
+        score_column=score_column,
+        figures=normalized_figures,
+    )
 
 
 def _threshold_report_json(payload: Mapping[str, Any]) -> str:

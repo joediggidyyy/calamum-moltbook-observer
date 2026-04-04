@@ -24,9 +24,11 @@ Most generated report artifacts remain untracked runtime outputs. The DS lane al
 
 Use the companion report references alongside this document:
 
-- [`../INDEX.md`](../INDEX.md) for curated DS collection packets and aggregate rollups derived from the canonical DS run spine
-- [`../aggregates/PUBLIC_RUN_LEDGER.md`](../aggregates/PUBLIC_RUN_LEDGER.md) for the public register of run families and authoritative evidence surfaces
-- [`../aggregates/AGGREGATE_REPORT.md`](../aggregates/AGGREGATE_REPORT.md) for the current aggregate synthesis and threshold-calibration snapshot
+- [`../INDEX.md`](../INDEX.md) for the public report map
+- [`../aggregates/LATEST_COLLECTIONS.md`](../aggregates/LATEST_COLLECTIONS.md) for the latest tracked collection landing pages
+- [`../aggregates/WORKFLOW_ROLLUP.md`](../aggregates/WORKFLOW_ROLLUP.md) for workflow-aware tracked publication routing
+- [`../aggregates/THRESHOLD_SUMMARY.md`](../aggregates/THRESHOLD_SUMMARY.md) for threshold-bearing tracked packet summaries
+- [`../validations/INDEX.md`](../validations/INDEX.md) for tracked validation-publication routes
 
 When runtime lane data is available, the public reporting surfaces should foreground runtime evidence aggregates before audit-family rollups.
 
@@ -53,6 +55,12 @@ The DS reporting lane now uses a dual-surface publication model:
 
 Tracked DS publication stays reader-facing and derived. It does not replace the canonical untracked DS run bundle or the append-only DS run ledger. Collection packets are keyed by the canonical dataset alias exposed in the wizard, while the dated stage documents under each packet preserve the individual calculation runs.
 
+The tracked packet layout uses one stable collection landing page plus timestamped historical leaves:
+
+- `docs/reports/collections/<collection-alias>/collection/report.md`
+- `docs/reports/collections/<collection-alias>/collection/YYYYMMDDTHHMMSSffffffZ.collection.md`
+- `docs/reports/collections/<collection-alias>/processing/<stage>/YYYYMMDDTHHMMSSffffffZ.<stage>.md`
+
 Immediate guardrails now in force:
 
 - workflow `demo` is excluded from tracked `docs/reports/` publication
@@ -71,12 +79,12 @@ These sources are not long-horizon family ledgers, but they are the highest-valu
 
 ## Threshold calibration coverage
 
-Threshold calibration currently appears as a compact subsection inside [`../aggregates/AGGREGATE_REPORT.md`](../aggregates/AGGREGATE_REPORT.md).
+Threshold-bearing tracked packets are summarized in [`../aggregates/THRESHOLD_SUMMARY.md`](../aggregates/THRESHOLD_SUMMARY.md).
 
 Current public direction:
 
-- publish the threshold, FPR, and score-distribution summary inside [`../aggregates/AGGREGATE_REPORT.md`](../aggregates/AGGREGATE_REPORT.md)
-- treat threshold calibration as part of the aggregate report surface
+- publish the threshold, FPR, and score-distribution summary inside [`../aggregates/THRESHOLD_SUMMARY.md`](../aggregates/THRESHOLD_SUMMARY.md)
+- treat threshold-facing tracked packets as part of the DS aggregate routing surface
 - defer broader model-eval aggregation until the observer has successfully run in each mode and the final pre-ship lockdown lane is complete
 
 ## Generated operational report families
@@ -220,9 +228,10 @@ Example shape:
 ## Related surfaces
 
 - [`../INDEX.md`](../INDEX.md)
-- [`../INDEX.md`](../INDEX.md)
-- [`../aggregates/PUBLIC_RUN_LEDGER.md`](../aggregates/PUBLIC_RUN_LEDGER.md)
-- [`../aggregates/AGGREGATE_REPORT.md`](../aggregates/AGGREGATE_REPORT.md)
+- [`../aggregates/LATEST_COLLECTIONS.md`](../aggregates/LATEST_COLLECTIONS.md)
+- [`../aggregates/WORKFLOW_ROLLUP.md`](../aggregates/WORKFLOW_ROLLUP.md)
+- [`../aggregates/THRESHOLD_SUMMARY.md`](../aggregates/THRESHOLD_SUMMARY.md)
+- [`../validations/INDEX.md`](../validations/INDEX.md)
 - [`../../manuals/INDEX.md`](../../manuals/INDEX.md)
 - [`../../../README.md`](../../../README.md)
 - [`../../../DATA_METHODOLOGY.md`](../../../DATA_METHODOLOGY.md)

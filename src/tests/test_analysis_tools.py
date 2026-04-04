@@ -270,6 +270,90 @@ def test_report_visuals_emit_evaluation_threshold_overlay_when_scores_are_availa
     assert 'threshold_selection' in {figure['id'] for figure in visuals['figures']}
 
 
+def test_report_visuals_skipped_states_preserve_shared_contract_keys(tmp_path: Path, monkeypatch) -> None:
+    import analysis.report_visuals as report_visuals_module
+
+    monkeypatch.setattr(report_visuals_module, '_load_pyplot', lambda: None)
+
+    evaluation_visuals = report_visuals_module.generate_evaluation_visuals(
+        figures_dir=tmp_path / 'evaluation-figures',
+        metrics={},
+        counts={},
+    )
+    summary_visuals = report_visuals_module.generate_summary_card_visual(
+        figures_dir=tmp_path / 'summary-figures',
+        figure_id='workflow_summary',
+        title='Workflow summary',
+        rows={'Records': 10},
+        filename='workflow_summary.png',
+        caption='Demo summary card.',
+    )
+
+    for visuals in (evaluation_visuals, summary_visuals):
+        assert visuals['decision'] == 'skipped'
+        assert visuals['figure_count'] == 0
+        assert visuals['anomaly_direction'] == ''
+        assert visuals['score_column'] == ''
+        assert visuals['figures'] == []
+        assert visuals['reason_codes'] == ['visualization_skipped:matplotlib_unavailable']
+
+
+def test_report_visuals_merge_deduplicates_figure_ids_and_preserves_latest_metadata(tmp_path: Path) -> None:
+    from analysis.report_visuals import merge_visual_states
+
+    merged = merge_visual_states(
+        {
+            'decision': 'go',
+            'reason_codes': ['visualization_skipped:first-state-note'],
+            'figures': [
+                {
+                    'id': 'threshold_selection',
+                    'title': 'Old threshold selection',
+                    'caption': 'Old caption.',
+                    'path': tmp_path / 'threshold_old.png',
+                    'kind': 'threshold',
+                }
+            ],
+        },
+        {
+            'decision': 'go',
+            'reason_codes': ['visualization_skipped:second-state-note'],
+            'anomaly_direction': 'lower-is-more-anomalous',
+            'score_column': 'score_anomaly',
+            'figures': [
+                {
+                    'id': 'threshold_selection',
+                    'title': 'Threshold selection',
+                    'caption': 'Lower-tail threshold overlay.',
+                    'path': tmp_path / 'threshold_latest.png',
+                    'kind': 'threshold',
+                },
+                {
+                    'id': 'metric_comparison',
+                    'title': 'Metric comparison',
+                    'caption': 'Evaluation metric bars.',
+                    'path': tmp_path / 'metric_comparison.png',
+                    'kind': 'metrics',
+                },
+            ],
+        },
+    )
+
+    assert merged['decision'] == 'go'
+    assert merged['figure_count'] == 2
+    assert merged['anomaly_direction'] == 'lower-is-more-anomalous'
+    assert merged['score_column'] == 'score_anomaly'
+    assert [figure['id'] for figure in merged['figures']] == ['threshold_selection', 'metric_comparison']
+    assert merged['figures'][0]['title'] == 'Threshold selection'
+    assert merged['figures'][0]['caption'] == 'Lower-tail threshold overlay.'
+    assert merged['figures'][0]['path'].endswith('threshold_latest.png')
+    assert merged['figures'][0]['kind'] == 'threshold'
+    assert merged['reason_codes'] == [
+        'visualization_skipped:first-state-note',
+        'visualization_skipped:second-state-note',
+    ]
+
+
 def test_report_pack_markdown_uses_codesentinel_style_sections(tmp_path: Path) -> None:
     from analysis.report_pack import prepare_report_bundle, write_report_bundle
 
@@ -309,6 +393,7 @@ def test_report_pack_markdown_uses_codesentinel_style_sections(tmp_path: Path) -
             'runtime_cli_surface': 'observerctl',
             'decision': 'go',
             'action': 'ds-run',
+            'collection_alias': 'can-demo-style',
             'command_family': 'ds',
             'command_path': 'observerctl ds run demo',
             'implementation_state': 'automation-available',
@@ -351,17 +436,75 @@ def test_report_pack_markdown_uses_codesentinel_style_sections(tmp_path: Path) -
 
     report_md = (project_root / bundle_result['paths']['report_md']).read_text(encoding='utf-8')
 
-    assert '**Status**: `go`' in report_md
+    assert '**Decision**: `go`' in report_md
+    assert '**Collection alias**: `can-demo-style`' in report_md
     assert '## Executive summary' in report_md
+    assert '## Why this packet exists' in report_md
     assert '## Run snapshot' in report_md
     assert '## Context' in report_md
+    assert '## What this packet shows' in report_md
     assert '## Result overview' in report_md
     assert '### Counts' in report_md
     assert '### Metrics' in report_md
     assert '### Thresholding' in report_md
     assert '### Workflow steps' in report_md
     assert '### Reason codes' in report_md
+    assert 'composite workflow packet' in report_md
+    assert '## Limits and cautions' in report_md
     assert '## Artifact index' in report_md
     assert '## Provenance' in report_md
     assert '## Report paths' in report_md
+    assert '## Reader next steps' in report_md
+    assert '[Report JSON](report.json)' in report_md
+    assert '[Manifest JSON](manifest.json)' in report_md
+    assert '![Score distribution](../figures/score_distribution.png)' in report_md
     assert '| Field | Value |' in report_md
+
+
+def test_report_pack_markdown_marks_stage_workflows_as_processing_stage_packets(tmp_path: Path) -> None:
+    from analysis.report_pack import prepare_report_bundle, write_report_bundle
+
+    project_root = tmp_path / 'observer_project'
+    anchor = project_root / 'src' / 'observerctl_anchor.py'
+    anchor.parent.mkdir(parents=True, exist_ok=True)
+    anchor.write_text('# anchor\n', encoding='utf-8')
+    (project_root / 'PROJECT_MANIFEST.json').write_text('{}\n', encoding='utf-8')
+
+    bundle = prepare_report_bundle(anchor, 'build', run_id='build-style-001')
+    dataset_dir = bundle.artifact_dirs['dataset']
+    dataset_dir.mkdir(parents=True, exist_ok=True)
+    dataset_manifest = dataset_dir / 'dataset_manifest.json'
+    dataset_manifest.write_text('{}\n', encoding='utf-8')
+
+    bundle_result = write_report_bundle(
+        project_anchor=anchor,
+        bundle=bundle,
+        packet={
+            'timestamp_utc': '2026-04-02T12:30:00Z',
+            'runtime_cli_surface': 'observerctl',
+            'decision': 'go',
+            'action': 'ds-build',
+            'collection_alias': 'can-build-style',
+            'command_family': 'ds',
+            'command_path': 'observerctl ds build',
+            'implementation_state': 'automation-available',
+            'underlying_surface': 'analysis.dataset_builder',
+            'summary': 'Dataset build completed through observerctl ds.',
+            'run_id': bundle.run_id,
+            'counts': {'records_built': 1284},
+            'reason_codes': [],
+            'artifacts': {},
+        },
+        artifact_paths={
+            'dataset_manifest': dataset_manifest,
+        },
+        context={'dataset_seed': 123},
+        lineage={'source_run_root': bundle.run_root},
+    )
+
+    report_md = (project_root / bundle_result['paths']['report_md']).read_text(encoding='utf-8')
+
+    assert 'processing-stage packet' in report_md
+    assert 'composite workflow packet' not in report_md
+    assert '## Why this packet exists' in report_md
+    assert '## Reader next steps' in report_md
