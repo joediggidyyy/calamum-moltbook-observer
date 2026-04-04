@@ -221,3 +221,33 @@ def test_vault_lock_denies_ordinary_dataset_registration(tmp_path: Path) -> None
     assert packet['decision'] == 'no-go'
     assert 'critical_check_failed:librarian_vault_locked' in packet['reason_codes']
 
+
+def test_register_dataset_infers_source_and_mode_from_manifest_inputs(tmp_path: Path) -> None:
+    project_root, anchor = _make_temp_project(tmp_path)
+    dataset_dir = project_root / 'datasets' / 'scope_alpha'
+    dataset_dir.mkdir(parents=True, exist_ok=True)
+    features_csv = dataset_dir / 'features.csv'
+    manifest_path = dataset_dir / 'dataset_manifest.json'
+    features_csv.write_text('record_id,feature\n', encoding='utf-8')
+    manifest_path.write_text(json.dumps({
+        'features_csv': str(features_csv),
+        'total_records': 2,
+        'has_labels': False,
+        'inputs': [
+            {
+                'path': str(project_root / 'logs' / 'data' / 'calamum' / 'archive' / 'resource_real_canary_normal_scope_probe_seg0001.jsonl.gz'),
+                'records': 2,
+            },
+            {
+                'path': str(project_root / 'logs' / 'data' / 'calamum' / 'observer_derived' / 'sim' / 'canary' / 'moltbook_metrics.jsonl'),
+                'records': 1,
+            },
+        ],
+    }), encoding='utf-8')
+
+    packet = register_librarian_dataset_packet(anchor, manifest_path, display_name='Scope Alpha', run_id='scope-alpha')
+
+    assert packet['decision'] == 'go'
+    assert packet['dataset']['source'] == 'real'
+    assert packet['dataset']['mode'] == 'canary'
+

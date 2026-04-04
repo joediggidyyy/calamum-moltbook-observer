@@ -1,0 +1,58 @@
+{
+  "artifacts": {
+    "dataset_manifest": "local_untracked/analysis/runs/build/build_20260404T040910794598Z/dataset/dataset_manifest.json",
+    "features_csv": "local_untracked/analysis/runs/build/build_20260404T040910794598Z/dataset/features.csv",
+    "labels_csv": null,
+    "split_manifest_json": "local_untracked/analysis/runs/build/build_20260404T040910794598Z/dataset/split_manifest.json",
+    "splits_csv": "local_untracked/analysis/runs/build/build_20260404T040910794598Z/dataset/splits.csv"
+  },
+  "command_family": "ds",
+  "command_path": "observerctl ds build",
+  "context": {
+    "output_override": false,
+    "source_materialization": true
+  },
+  "decision": "go",
+  "implementation_state": "command-available",
+  "lineage": {
+    "dataset_manifest": "local_untracked/analysis/datasets/library_canary_corpus_v1/dataset_manifest.json",
+    "source_report_paths": {
+      "json": "local_untracked/analysis/runs/build/build_20260404T040910794598Z/report/report.json",
+      "manifest": "local_untracked/analysis/runs/build/build_20260404T040910794598Z/report/manifest.json",
+      "markdown": "local_untracked/analysis/runs/build/build_20260404T040910794598Z/report/report.md"
+    },
+    "source_run_root": "local_untracked/analysis/runs/build/build_20260404T040910794598Z"
+  },
+  "published_run_dir": "docs/reports/ds/runs/2026/2026-04/build_20260404T040910794598Z",
+  "report_dir": "docs/reports/ds/runs/2026/2026-04/build_20260404T040910794598Z",
+  "report_paths": {
+    "json": "docs/reports/ds/runs/2026/2026-04/build_20260404T040910794598Z/report.json",
+    "manifest": "docs/reports/ds/runs/2026/2026-04/build_20260404T040910794598Z/manifest.json",
+    "markdown": "docs/reports/ds/runs/2026/2026-04/build_20260404T040910794598Z/report.md"
+  },
+  "result": {
+    "has_labels": false,
+    "reason_codes": [],
+    "seed": 42,
+    "split": {
+      "test": 0.15,
+      "train": 0.7,
+      "val": 0.15
+    },
+    "total_records": 412340
+  },
+  "run_id": "build_20260404T040910794598Z",
+  "run_root": "local_untracked/analysis/runs/build/build_20260404T040910794598Z",
+  "runtime_cli_surface": "observerctl",
+  "schema_version": "1.0",
+  "source_report_paths": {
+    "json": "local_untracked/analysis/runs/build/build_20260404T040910794598Z/report/report.json",
+    "manifest": "local_untracked/analysis/runs/build/build_20260404T040910794598Z/report/manifest.json",
+    "markdown": "local_untracked/analysis/runs/build/build_20260404T040910794598Z/report/report.md"
+  },
+  "source_run_root": "local_untracked/analysis/runs/build/build_20260404T040910794598Z",
+  "summary": "Approved dataset materialized through observerctl ds.",
+  "timestamp_utc": "2026-04-04T04:09:10.830569Z",
+  "underlying_surface": "observerctl approved-dataset materialization",
+  "workflow": "build"
+}

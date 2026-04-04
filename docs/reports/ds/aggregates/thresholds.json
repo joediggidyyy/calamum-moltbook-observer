@@ -38,7 +38,19 @@
       "threshold": 0.41126669732265103,
       "timestamp_utc": "2026-03-31T22:14:12.248047Z",
       "workflow": "demo"
+    },
+    {
+      "actual_fpr": null,
+      "flagged_records": null,
+      "published_report_md": "docs/reports/ds/runs/2026/2026-04/evaluate_20260404T042518083074Z/report.md",
+      "records_scored": null,
+      "run_id": "evaluate_20260404T042518083074Z",
+      "source_run_root": "local_untracked/analysis/runs/evaluate/evaluate_20260404T042518083074Z",
+      "target_fpr": 0.01,
+      "threshold": 0.5,
+      "timestamp_utc": "2026-04-04T04:25:20.557276Z",
+      "workflow": "evaluate"
     }
   ],
-  "threshold_run_count": 3
+  "threshold_run_count": 4
 }

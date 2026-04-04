@@ -1,53 +1,99 @@
 # Demo Pipeline Report: demo_20260331T212901782257Z
 
-- Workflow: demo
-- Created (UTC): 2026-03-31T21:29:02.286858Z
-- Decision: go
-- Summary: Demo pipeline completed through observerctl ds.
+**Status**: `go`
+**Workflow**: `demo`
+**Created (UTC)**: `2026-03-31T21:29:02.286858Z`
+**Runtime CLI surface**: `observerctl`
+**Command path**: `observerctl ds run demo`
+
+## Executive summary
+
+Demo pipeline completed through observerctl ds.
+
+## Run snapshot
+
+| Field | Value |
+| --- | --- |
+| Run ID | demo_20260331T212901782257Z |
+| Workflow | demo |
+| Decision | go |
+| Created UTC | 2026-03-31T21:29:02.286858Z |
+| Runtime CLI Surface | observerctl |
+| Command Path | observerctl ds run demo |
 
 ## Context
 
-- dataset_seed: 123
-- max_fpr: 0.01
-- model_seed: 42
-- output_override: False
+| Field | Value |
+| --- | --- |
+| Dataset Seed | 123 |
+| Max FPR | 0.01 |
+| Model Seed | 42 |
+| Output Override | False |
 
-## Result
+## Result overview
 
-- max_fpr: 0.01
-- metrics:
-  - f1: 1.0
-  - fpr: 0.0
-  - precision: 1.0
-  - recall: 1.0
-- reason_codes: []
-- run_mode: demo
-- total_records: 60
-- workflow_steps: ["generate", "build", "train-supervised", "train-unsupervised", "evaluate"]
+| Field | Value |
+| --- | --- |
+| Max FPR | 0.01 |
+| Run Mode | demo |
+| Total Records | 60 |
 
-## Artifacts
+### Metrics
 
-- dataset_manifest: local_untracked/analysis/runs/demo/demo_20260331T212901782257Z/dataset/dataset_manifest.json
-- evaluation_run_json: local_untracked/analysis/runs/demo/demo_20260331T212901782257Z/evaluation/run.json
-- evaluation_run_md: local_untracked/analysis/runs/demo/demo_20260331T212901782257Z/evaluation/run.md
-- features_csv: local_untracked/analysis/runs/demo/demo_20260331T212901782257Z/dataset/features.csv
-- labels_csv: local_untracked/analysis/runs/demo/demo_20260331T212901782257Z/dataset/labels.csv
-- root_dir: local_untracked/analysis/runs/demo/demo_20260331T212901782257Z
-- supervised_model_path: local_untracked/analysis/runs/demo/demo_20260331T212901782257Z/models/supervised/model.pkl
-- supervised_train_manifest: local_untracked/analysis/runs/demo/demo_20260331T212901782257Z/models/supervised/train_manifest.json
-- unsupervised_model_path: local_untracked/analysis/runs/demo/demo_20260331T212901782257Z/models/unsupervised/model.pkl
-- unsupervised_train_manifest: local_untracked/analysis/runs/demo/demo_20260331T212901782257Z/models/unsupervised/train_manifest.json
+| Metric | Value |
+| --- | --- |
+| F1 | 1.0 |
+| FPR | 0.0 |
+| Precision | 1.0 |
+| Recall | 1.0 |
 
-## Lineage
+### Workflow steps
 
-- source_report_paths:
-  - json: local_untracked/analysis/runs/demo/demo_20260331T212901782257Z/report/report.json
-  - manifest: local_untracked/analysis/runs/demo/demo_20260331T212901782257Z/report/manifest.json
-  - markdown: local_untracked/analysis/runs/demo/demo_20260331T212901782257Z/report/report.md
-- source_run_root: local_untracked/analysis/runs/demo/demo_20260331T212901782257Z
+1. `generate`
+2. `build`
+3. `train-supervised`
+4. `train-unsupervised`
+5. `evaluate`
+
+### Reason codes
+
+- none
+
+## Artifact index
+
+| Artifact | Path |
+| --- | --- |
+| Dataset Manifest | `local_untracked/analysis/runs/demo/demo_20260331T212901782257Z/dataset/dataset_manifest.json` |
+| Evaluation Run JSON | `local_untracked/analysis/runs/demo/demo_20260331T212901782257Z/evaluation/run.json` |
+| Evaluation Run MD | `local_untracked/analysis/runs/demo/demo_20260331T212901782257Z/evaluation/run.md` |
+| Features CSV | `local_untracked/analysis/runs/demo/demo_20260331T212901782257Z/dataset/features.csv` |
+| Labels CSV | `local_untracked/analysis/runs/demo/demo_20260331T212901782257Z/dataset/labels.csv` |
+| Root Dir | `local_untracked/analysis/runs/demo/demo_20260331T212901782257Z` |
+| Supervised Model Path | `local_untracked/analysis/runs/demo/demo_20260331T212901782257Z/models/supervised/model.pkl` |
+| Supervised Train Manifest | `local_untracked/analysis/runs/demo/demo_20260331T212901782257Z/models/supervised/train_manifest.json` |
+| Unsupervised Model Path | `local_untracked/analysis/runs/demo/demo_20260331T212901782257Z/models/unsupervised/model.pkl` |
+| Unsupervised Train Manifest | `local_untracked/analysis/runs/demo/demo_20260331T212901782257Z/models/unsupervised/train_manifest.json` |
+
+## Provenance
+
+### Source lineage
+
+| Field | Value |
+| --- | --- |
+| Source Run Root | `local_untracked/analysis/runs/demo/demo_20260331T212901782257Z` |
+
+### Source Report Paths
+
+| Surface | Path |
+| --- | --- |
+| JSON | `local_untracked/analysis/runs/demo/demo_20260331T212901782257Z/report/report.json` |
+| Manifest | `local_untracked/analysis/runs/demo/demo_20260331T212901782257Z/report/manifest.json` |
+| Markdown | `local_untracked/analysis/runs/demo/demo_20260331T212901782257Z/report/report.md` |
 
 ## Report paths
 
-- json: docs/reports/ds/runs/2026/2026-03/demo_20260331T212901782257Z/report.json
-- manifest: docs/reports/ds/runs/2026/2026-03/demo_20260331T212901782257Z/manifest.json
-- markdown: docs/reports/ds/runs/2026/2026-03/demo_20260331T212901782257Z/report.md
+| Surface | Path |
+| --- | --- |
+| JSON | `docs/reports/ds/runs/2026/2026-03/demo_20260331T212901782257Z/report.json` |
+| Manifest | `docs/reports/ds/runs/2026/2026-03/demo_20260331T212901782257Z/manifest.json` |
+| Markdown | `docs/reports/ds/runs/2026/2026-03/demo_20260331T212901782257Z/report.md` |

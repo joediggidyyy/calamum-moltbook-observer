@@ -15,6 +15,7 @@ import hashlib
 import json
 import math
 import os
+import shutil
 import subprocess
 import sys
 import time
@@ -3381,10 +3382,12 @@ def _style_decision_value(value: str) -> str:
 
 def _style_readiness_value(value: str) -> str:
     normalized = str(value or '').strip().lower()
-    if normalized == 'ready':
+    if normalized in ('ready', 'go'):
         return style_text(str(value or ''), 'positive')
     if normalized in ('needs-input', 'blocked'):
         return style_text(str(value or ''), 'advisory')
+    if normalized == 'no-go':
+        return style_text(str(value or ''), 'negative')
     return str(value or '')
 
 
@@ -3404,6 +3407,10 @@ def _style_padded_choice_label(prefix: str, label: str, width: int, role: str = 
     prefix_text = str(prefix or '')
     content = '{0}{1}'.format(prefix_text, style_text(str(label or ''), role))
     return ljust_ansi(content, len(prefix_text) + int(width))
+
+
+def _style_choice_label_with_suffix(prefix: str, label: str, suffix: str, role: str = 'structure') -> str:
+    return '{0}{1}{2}'.format(str(prefix or ''), style_text(str(label or ''), role), str(suffix or ''))
 
 
 def _style_section_line(label: str) -> str:
@@ -6605,17 +6612,15 @@ _DS_WIZARD_WORKFLOWS = (
     'train',
     'evaluate',
     'score',
-    'run-demo',
     'run-pipeline',
 )
 _DS_WIZARD_SECTION_ORDER = ('flow', 'in', 'model', 'eval', 'report', 'cmd', 'check', 'run', 'exit')
 _DS_WIZARD_WORKFLOW_SECTIONS: Dict[str, Tuple[str, ...]] = {
-    'build':        ('flow', 'in', 'model', 'report', 'cmd', 'check', 'run', 'exit'),
+    'build':        ('flow', 'in', 'report', 'cmd', 'check', 'run', 'exit'),
     'train':        ('flow', 'model', 'report', 'cmd', 'check', 'run', 'exit'),
     'evaluate':     ('flow', 'model', 'eval', 'report', 'cmd', 'check', 'run', 'exit'),
     'score':        ('flow', 'model', 'report', 'cmd', 'check', 'run', 'exit'),
-    'run-demo':     ('flow', 'in', 'model', 'eval', 'report', 'cmd', 'check', 'run', 'exit'),
-    'run-pipeline': ('flow', 'in', 'model', 'eval', 'report', 'cmd', 'check', 'run', 'exit'),
+    'run-pipeline': ('flow', 'report', 'cmd', 'check', 'run', 'exit'),
 }
 _DS_WIZARD_LANDING_CHOICES: Tuple[Tuple[str, str], ...] = (
     ('configure', 'guided workflow and configuration'),
@@ -6657,6 +6662,12 @@ class _DSWizardState:
     validation_issues: List[str] = field(default_factory=list)
     transient_view: str = ''
     transient_target: str = ''
+    build_in_stage: str = 'source'
+    build_in_family: str = ''
+    build_in_mode: str = ''
+    build_in_date: str = ''
+    build_in_page: int = 1
+    completed_workflows: Dict[str, Dict[str, Any]] = field(default_factory=dict)
 
 
 @dataclass(frozen=True)
@@ -6679,6 +6690,18 @@ _DS_WIZARD_ADVANCED_EDIT_KEYS = ('run_id', 'out_dir', 'scores_out')
 _DS_WIZARD_ADVANCED_ROUTE_KEYS = ('source', 'mode', 'run_id', 'out_dir', 'scores_out')
 _DS_WIZARD_AUTO_DRAFT_TOKEN = '__auto-slot__'
 _DS_WIZARD_SPLIT_KEYS = ('split_train', 'split_val', 'split_test')
+_DS_WIZARD_BUILD_IN_PAGE_SIZE = 10
+_DS_WIZARD_BUILD_IN_SOURCE_LABELS: Dict[str, str] = {
+    'sim': 'simulation (sim)',
+    'real': 'collected  (real)',
+}
+_DS_WIZARD_BUILD_IN_MODE_CHOICES = ('watch', 'canary', 'live', 'honeypot', 'all')
+_DS_WIZARD_BUILD_IN_MODE_ALIASES: Dict[str, str] = {
+    'watch': 'wat',
+    'canary': 'can',
+    'live': 'liv',
+    'honeypot': 'hon',
+}
 _DS_WIZARD_ENUM_PICKERS: Dict[str, Tuple[str, ...]] = {
     'source': ('sim', 'real'),
     'mode': MODES,
@@ -6690,25 +6713,23 @@ _DS_WIZARD_FIELD_SPECS: Tuple[_DSWizardFieldSpec, ...] = (
     _DSWizardFieldSpec('workflow', 'flow', _DS_WIZARD_WORKFLOWS, required_in=_DS_WIZARD_WORKFLOWS, description='Workflow preset'),
     _DSWizardFieldSpec('source', 'in', _DS_WIZARD_WORKFLOWS, default='sim', choices=('sim', 'real'), description='Observer source axis', artifact_source='latest_context'),
     _DSWizardFieldSpec('mode', 'in', _DS_WIZARD_WORKFLOWS, default='watch', choices=MODES, description='Observer mode', artifact_source='latest_context'),
-    _DSWizardFieldSpec('input_paths', 'in', ('build', 'run-pipeline'), required_in=('build', 'run-pipeline'), flag='--input', value_kind='path-list', path_kind='file', accepts_multiple=True, description='Telemetry JSONL inputs'),
+    _DSWizardFieldSpec('input_paths', 'in', ('build', 'run-pipeline'), required_in=('run-pipeline',), flag='--input', value_kind='path-list', path_kind='file', accepts_multiple=True, description='Telemetry JSONL inputs'),
     _DSWizardFieldSpec('dataset_manifest', 'in', ('train', 'score', 'evaluate', 'run-pipeline', 'build'), required_in=('train', 'score'), flag='--dataset', value_kind='path', path_kind='file', description='Dataset manifest path', artifact_source='dataset_manifest'),
     _DSWizardFieldSpec('features_csv', 'in', ('evaluate',), required_in=('evaluate',), flag='--features-csv', value_kind='path', path_kind='file', description='Features CSV path', artifact_source='dataset_manifest'),
     _DSWizardFieldSpec('labels_csv', 'in', ('evaluate',), flag='--labels-csv', value_kind='path', path_kind='file', description='Labels CSV path', artifact_source='dataset_manifest'),
-    _DSWizardFieldSpec('out_dir', 'report', ('build', 'train', 'evaluate', 'run-demo', 'run-pipeline'), flag='--out-dir', value_kind='path', path_kind='dir', description='Artifact output directory'),
+    _DSWizardFieldSpec('out_dir', 'report', ('build', 'train', 'evaluate', 'run-pipeline'), flag='--out-dir', value_kind='path', path_kind='dir', description='Artifact output directory'),
     _DSWizardFieldSpec('scores_out', 'report', ('score',), flag='--out-file', value_kind='path', path_kind='file-write', description='Scores CSV output path'),
     _DSWizardFieldSpec('model_type', 'model', ('train', 'run-pipeline'), flag='--model-type', default='supervised', choices=('supervised', 'unsupervised'), description='Model family', artifact_source='train_manifest'),
     _DSWizardFieldSpec('seed', 'model', ('build', 'train', 'run-pipeline'), flag='--seed', default=42, value_kind='int', description='Deterministic seed'),
-    _DSWizardFieldSpec('dataset_seed', 'model', ('run-demo',), flag='--dataset-seed', default=123, value_kind='int', description='Demo dataset seed'),
-    _DSWizardFieldSpec('model_seed', 'model', ('run-demo',), flag='--model-seed', default=42, value_kind='int', description='Demo model seed'),
     _DSWizardFieldSpec('split_train', 'model', ('build', 'run-pipeline'), flag='--split-train', default=0.70, value_kind='float', description='train split'),
     _DSWizardFieldSpec('split_val', 'model', ('build', 'run-pipeline'), flag='--split-val', default=0.15, value_kind='float', description='validation split'),
     _DSWizardFieldSpec('split_test', 'model', ('build', 'run-pipeline'), flag='--split-test', default=0.15, value_kind='float', description='test split'),
     _DSWizardFieldSpec('model_path', 'model', ('evaluate', 'score'), required_in=('score',), flag='--model', value_kind='path', path_kind='file', description='Model path', artifact_source='train_manifest'),
     _DSWizardFieldSpec('train_manifest', 'model', ('score',), value_kind='path', path_kind='file', description='Train manifest path', artifact_source='train_manifest'),
-    _DSWizardFieldSpec('max_fpr', 'eval', ('evaluate', 'run-demo', 'run-pipeline'), flag='--max-fpr', default=0.01, value_kind='float', description='Maximum false-positive rate'),
+    _DSWizardFieldSpec('max_fpr', 'eval', ('evaluate', 'run-pipeline'), flag='--max-fpr', default=0.01, value_kind='float', description='Maximum false-positive rate'),
     _DSWizardFieldSpec('run_id', 'model', ('evaluate',), flag='--run-id', value_kind='text', description='Optional name for the evaluation report that will be written'),
-    _DSWizardFieldSpec('baseline_analysis_packet', 'model', ('evaluate', 'run-pipeline', 'run-demo'), value_kind='path', path_kind='file', description='Optional baseline packet to cite in generated reports', artifact_source='baseline_analysis'),
-    _DSWizardFieldSpec('baseline_window_id', 'model', ('evaluate', 'run-pipeline', 'run-demo'), description='Optional baseline window id to include in generated reports', artifact_source='baseline_analysis'),
+    _DSWizardFieldSpec('baseline_analysis_packet', 'model', ('evaluate', 'run-pipeline'), value_kind='path', path_kind='file', description='Optional baseline packet to cite in generated reports', artifact_source='baseline_analysis'),
+    _DSWizardFieldSpec('baseline_window_id', 'model', ('evaluate', 'run-pipeline'), description='Optional baseline window id to include in generated reports', artifact_source='baseline_analysis'),
 )
 
 
@@ -6745,13 +6766,13 @@ _DS_WIZARD_SECTION_HELP: Dict[str, Dict[str, str]] = {
     },
     'check': {
         'label': 'validation blockers',
-        'detail': 'Review readiness against invariant schema rules before submission.',
-        'guidance': 'If blockers remain, type "validate" after making fixes to force a rescan, or "open <section-name>" to navigate directly to the missing parameters.',
+        'detail': 'Validate whether the current workflow can run right now against invariant schema and contract rules.',
+        'guidance': 'Validate is the run gate, not the advance gate. If blockers remain, type "validate" after making fixes to force a rescan, or "open <section-name>" to navigate directly to the missing parameters.',
     },
     'run': {
         'label': 'workflow dispatch',
         'detail': 'Dispatch the pipeline. Execution yields real artifacts against the active system target.',
-        'guidance': 'Execution remains blocked until the validation page clears. When unblocked, type "execute" to launch the payload.',
+        'guidance': 'Execution remains blocked until validate is ready. A successful execute flips status to go only after the expected workflow artifacts exist.',
     },
     'exit': {
         'label': 'leave wizard',
@@ -6799,6 +6820,268 @@ def _ds_wizard_new_state(workflow: str = '') -> _DSWizardState:
     state.values['mode'] = state.mode
     state.values['workflow'] = state.workflow
     return state
+
+
+def _ds_wizard_build_in_reset(state: _DSWizardState) -> _DSWizardState:
+    state.build_in_stage = 'source'
+    state.build_in_family = ''
+    state.build_in_mode = ''
+    state.build_in_date = ''
+    state.build_in_page = 1
+    return state
+
+
+def _ds_wizard_build_in_is_active(state: _DSWizardState) -> bool:
+    return str(state.workflow or '').strip() == 'build' and _ds_wizard_current_section(state) == 'in'
+
+
+def _ds_wizard_build_in_family_label(family: str) -> str:
+    token = _normalize_source(str(family or '').strip() or 'sim')
+    return _DS_WIZARD_BUILD_IN_SOURCE_LABELS.get(token, token)
+
+
+def _ds_wizard_build_in_source_choice_line(index: int, family: str) -> str:
+    token = _normalize_source(str(family or '').strip() or 'sim')
+    label = 'simulation' if token == 'sim' else 'collected'
+    suffix = ' ({0})'.format(token)
+    if token == 'real':
+        suffix = '  ({0})'.format(token)
+    return _style_choice_label_with_suffix('{0}. '.format(int(index)), label, suffix)
+
+
+def _ds_wizard_build_in_mode_choice_line(index: int, mode: str) -> str:
+    return _style_choice_label('{0}. '.format(int(index)), str(mode or '').strip())
+
+
+def _ds_wizard_build_in_footer_line(state: _DSWizardState) -> str:
+    if not _ds_wizard_build_in_is_active(state):
+        return ''
+    if state.build_in_stage == 'mode':
+        return 'navigate: date <yyyy-mm-dd>'
+    if state.build_in_stage == 'records':
+        return 'navigate: < | > | page: <page#> | date: <yyyy-mm-dd>'
+    return ''
+
+
+def _ds_wizard_build_in_alias(entry: Dict[str, Any]) -> str:
+    mode = str(entry.get('mode', '') or '').strip().lower()
+    source = _normalize_source(str(entry.get('source', '') or '').strip() or 'sim')
+    mode_alias = _DS_WIZARD_BUILD_IN_MODE_ALIASES.get(mode, mode[:3] or 'unk')
+    source_alias = 's' if source == 'sim' else 'r'
+    sha_token = str(entry.get('dataset_manifest_sha256', '') or '').strip().lower()
+    if not sha_token:
+        sha_token = hashlib.sha256(
+            str(entry.get('entry_id', '') or entry.get('run_id', '') or entry.get('display_name', '') or '').encode('utf-8')
+        ).hexdigest()
+    return '{0}-{1}{2}'.format(mode_alias, source_alias, sha_token[-4:])
+
+
+def _ds_wizard_dataset_alias(entry: Mapping[str, Any]) -> str:
+    alias = str(entry.get('display_alias', '') or '').strip()
+    if alias:
+        return alias
+    if any(str(entry.get(key, '') or '').strip() for key in ('dataset_manifest_sha256', 'entry_id', 'run_id', 'display_name')):
+        return _ds_wizard_build_in_alias(dict(entry))
+    return ''
+
+
+def _ds_wizard_build_in_filtered_entries(state: _DSWizardState) -> Dict[str, Any]:
+    packet = _librarian_datasets()
+    if str(packet.get('decision', 'no-go')).strip().lower() != 'go':
+        return {
+            'status': 'unavailable',
+            'packet': packet,
+            'entries': [],
+            'current_page': 0,
+            'total_pages': 0,
+            'total_records': 0,
+            'visible_entries': [],
+        }
+
+    entries = [dict(entry) for entry in list(packet.get('selector_entries', []) or []) if isinstance(entry, dict)]
+    family = _normalize_source(str(state.build_in_family or '').strip()) if str(state.build_in_family or '').strip() else ''
+    mode = str(state.build_in_mode or '').strip().lower()
+    date_filter = str(state.build_in_date or '').strip()
+
+    filtered: List[Dict[str, Any]] = []
+    for entry in entries:
+        entry_source = _normalize_source(str(entry.get('source', '') or '').strip() or 'unknown')
+        entry_mode = str(entry.get('mode', '') or '').strip().lower()
+        recorded_at = str(entry.get('recorded_at_utc', '') or '').strip()
+        if family and entry_source != family:
+            continue
+        if mode and mode != 'all' and entry_mode != mode:
+            continue
+        if date_filter and not recorded_at.startswith(date_filter):
+            continue
+        row = dict(entry)
+        row['build_in_alias'] = _ds_wizard_build_in_alias(row)
+        filtered.append(row)
+
+    total_records = len(filtered)
+    total_pages = int(math.ceil(float(total_records) / float(_DS_WIZARD_BUILD_IN_PAGE_SIZE))) if total_records else 0
+    current_page = max(1, min(int(state.build_in_page or 1), total_pages or 1))
+    start = (current_page - 1) * _DS_WIZARD_BUILD_IN_PAGE_SIZE
+    end = start + _DS_WIZARD_BUILD_IN_PAGE_SIZE
+    return {
+        'status': 'ok',
+        'packet': packet,
+        'entries': filtered,
+        'current_page': current_page,
+        'total_pages': total_pages,
+        'total_records': total_records,
+        'visible_entries': filtered[start:end],
+    }
+
+
+def _ds_wizard_build_in_set_source_family(state: _DSWizardState, family: str) -> _DSWizardState:
+    normalized = _normalize_source(str(family or '').strip() or 'sim')
+    if normalized not in SOURCES:
+        raise ValueError('source family is not supported: {0}'.format(family))
+    state.build_in_family = normalized
+    state.build_in_mode = ''
+    state.build_in_page = 1
+    state.build_in_stage = 'mode'
+    state.last_action = 'build-in:source:{0}'.format(normalized)
+    return state
+
+
+def _ds_wizard_build_in_set_mode(state: _DSWizardState, mode: str) -> _DSWizardState:
+    normalized = str(mode or '').strip().lower()
+    if normalized not in _DS_WIZARD_BUILD_IN_MODE_CHOICES:
+        raise ValueError('mode is not supported: {0}'.format(mode))
+    state.build_in_mode = normalized
+    state.build_in_page = 1
+    state.build_in_stage = 'records'
+    state.last_action = 'build-in:mode:{0}'.format(normalized)
+    return state
+
+
+def _ds_wizard_build_in_set_date(state: _DSWizardState, date_text: str) -> _DSWizardState:
+    token = str(date_text or '').strip()
+    if not token:
+        state.build_in_date = ''
+        state.build_in_page = 1
+        state.last_action = 'build-in:date:clear'
+        return state
+    try:
+        datetime.strptime(token, '%Y-%m-%d')
+    except ValueError:
+        raise ValueError('date must use yyyy-mm-dd')
+    state.build_in_date = token
+    state.build_in_page = 1
+    state.last_action = 'build-in:date:{0}'.format(token)
+    return state
+
+
+def _ds_wizard_build_in_set_page(state: _DSWizardState, page_number: int) -> _DSWizardState:
+    summary = _ds_wizard_build_in_filtered_entries(state)
+    total_pages = int(summary.get('total_pages', 0) or 0)
+    if total_pages <= 0:
+        state.build_in_page = 1
+        return state
+    state.build_in_page = max(1, min(int(page_number or 1), total_pages))
+    state.last_action = 'build-in:page:{0}'.format(state.build_in_page)
+    return state
+
+
+def _ds_wizard_build_in_select_dataset(state: _DSWizardState, selector: str) -> _DSWizardState:
+    summary = _ds_wizard_build_in_filtered_entries(state)
+    if int(summary.get('total_records', 0) or 0) <= 0:
+        _ds_wizard_set_transient_lines(
+            state,
+            [
+                'no approved datasets matched the current filters.',
+                'register with: observerctl librarian dataset register <path>',
+            ],
+        )
+        return state
+
+    token = str(selector or '').strip()
+    selected_entry: Optional[Dict[str, Any]] = None
+    if token.isdigit():
+        idx = int(token)
+        visible_entries = list(summary.get('visible_entries', []) or [])
+        if 1 <= idx <= len(visible_entries):
+            selected_entry = dict(visible_entries[idx - 1])
+        else:
+            _ds_wizard_set_transient_lines(state, ['page selection out of range: {0}'.format(token)])
+            return state
+    else:
+        lowered = token.lower()
+        matches = [
+            dict(entry)
+            for entry in list(summary.get('entries', []) or [])
+            if str(entry.get('build_in_alias', '') or '').strip().lower() == lowered
+        ]
+        if len(matches) != 1:
+            if len(matches) > 1:
+                _ds_wizard_set_transient_lines(state, ['alias is ambiguous: {0}'.format(token)])
+            else:
+                _ds_wizard_set_transient_lines(state, ['alias not found: {0}'.format(token)])
+            return state
+        selected_entry = matches[0]
+
+    selector_token = str(selected_entry.get('entry_id', '') or selected_entry.get('run_id', '') or '').strip()
+    if not selector_token:
+        _ds_wizard_set_transient_lines(state, ['selected dataset is missing a librarian selector token'])
+        return state
+    try:
+        return _ds_wizard_hydrate_dataset_reference(state, selector_token)
+    except Exception as exc:
+        _ds_wizard_set_transient_lines(state, ['guided dataset load failed: {0}'.format(str(exc) or selector_token)])
+        return state
+
+
+def _ds_wizard_build_in_lines(state: _DSWizardState) -> List[str]:
+    lines: List[str] = [_style_section_line('load data')]
+    if state.build_in_stage == 'mode':
+        family_label = _ds_wizard_build_in_family_label(state.build_in_family)
+        if family_label.endswith('(sim)'):
+            lines.append(_style_choice_label_with_suffix('', 'simulation', ' (sim)'))
+        elif family_label.endswith('(real)'):
+            lines.append(_style_choice_label_with_suffix('', 'collected', '  (real)'))
+        else:
+            lines.append(family_label)
+        lines.append(_ds_wizard_build_in_mode_choice_line(1, 'watch'))
+        lines.append(_ds_wizard_build_in_mode_choice_line(2, 'canary'))
+        lines.append(_ds_wizard_build_in_mode_choice_line(3, 'live'))
+        lines.append(_ds_wizard_build_in_mode_choice_line(4, 'honeypot'))
+        lines.append(_ds_wizard_build_in_mode_choice_line(5, 'all'))
+        return lines
+    if state.build_in_stage == 'records':
+        summary = _ds_wizard_build_in_filtered_entries(state)
+        lines.append('[ {0} | {1} ]'.format(str(state.build_in_family or 'sim').strip() or 'sim', str(state.build_in_mode or 'watch').strip() or 'watch'))
+        lines.append(
+            'page: {0} of {1}         total: {2}'.format(
+                int(summary.get('current_page', 0) or 0),
+                int(summary.get('total_pages', 0) or 0),
+                int(summary.get('total_records', 0) or 0),
+            )
+        )
+        visible_entries = list(summary.get('visible_entries', []) or [])
+        if visible_entries:
+            for idx, entry in enumerate(visible_entries, start=1):
+                lines.append(
+                    '{0:<4}{1:<13}  {2:<15}  {3}'.format(
+                        '{0}.'.format(idx),
+                        str(entry.get('build_in_alias', '') or '').strip(),
+                        str(entry.get('workflow', '') or '').strip(),
+                        str(entry.get('recorded_at_utc', '') or '').strip()[:10],
+                    ).rstrip()
+                )
+        else:
+            if str(summary.get('status', '') or '').strip().lower() == 'unavailable':
+                lines.append('approved datasets are unavailable')
+                for reason in list((summary.get('packet', {}) if isinstance(summary.get('packet', {}), dict) else {}).get('reason_codes', []) or []):
+                    lines.append(str(reason).strip())
+            else:
+                lines.append('no approved datasets matched the current filters')
+                lines.append('register with: observerctl librarian dataset register <path>')
+        return lines
+    lines.append(_ds_wizard_build_in_source_choice_line(1, 'sim'))
+    lines.append(_ds_wizard_build_in_source_choice_line(2, 'real'))
+    return lines
 
 
 def _ds_wizard_workflow_label(workflow: str) -> str:
@@ -7176,7 +7459,7 @@ def _ds_wizard_dataset_picker_status(state: _DSWizardState) -> str:
         return 'missing'
     if workflow == 'evaluate' and not features_set:
         return 'missing'
-    return 'set' if dataset_manifest_set or features_set else 'optional'
+    return 'set' if dataset_manifest_set or features_set else ''
 
 
 def _ds_wizard_dataset_picker_current(state: _DSWizardState) -> str:
@@ -7262,16 +7545,24 @@ def _ds_wizard_menu_items(state: _DSWizardState, section: Optional[str] = None) 
             ),
         ]
     if current_section == 'in':
-        if workflow in ('build', 'run-pipeline'):
+        if workflow == 'build':
             items.extend([
                 _DSWizardMenuItem(
                     'picker',
                     'draft-load',
                     'load saved draft',
                     '',
-                    _ds_wizard_draft_picker_current(state),
-                    'restore saved workflow state before revisiting the current input context',
-                )
+                    '',
+                    '',
+                ),
+                _DSWizardMenuItem(
+                    'picker',
+                    'dataset',
+                    'load saved data',
+                    '',
+                    '',
+                    '',
+                ),
             ])
         elif workflow in ('train', 'evaluate', 'score'):
             items.append(
@@ -7287,14 +7578,12 @@ def _ds_wizard_menu_items(state: _DSWizardState, section: Optional[str] = None) 
         for spec in _ds_wizard_fields_for_section(state, current_section):
             if spec.key in ('input_paths', 'dataset_manifest'):
                 continue
-            if workflow == 'run-demo' and spec.key not in ('source', 'mode'):
-                continue
             if workflow in ('build', 'run-pipeline') and spec.key in _DS_WIZARD_ADVANCED_ROUTE_KEYS:
                 continue
             items.append(_field_item(spec))
         return items
     if current_section == 'model':
-        if workflow in ('evaluate', 'run-demo', 'run-pipeline'):
+        if workflow == 'evaluate':
             baseline_status = 'set' if _ds_wizard_has_value(state.values.get('baseline_analysis_packet')) or _ds_wizard_has_value(state.values.get('baseline_window_id')) else 'optional'
             items.append(
                 _DSWizardMenuItem(
@@ -7304,6 +7593,17 @@ def _ds_wizard_menu_items(state: _DSWizardState, section: Optional[str] = None) 
                     baseline_status,
                     _ds_wizard_baseline_picker_current(state),
                     'attach saved baseline context',
+                )
+            )
+        if workflow == 'train':
+            items.append(
+                _DSWizardMenuItem(
+                    'picker',
+                    'train',
+                    'load previous train',
+                    'set' if _ds_wizard_has_value(state.values.get('train_manifest')) else 'optional',
+                    _ds_wizard_train_picker_current(state),
+                    'inspect or hydrate prior hyper-parameter runs',
                 )
             )
         if workflow == 'evaluate':
@@ -7329,18 +7629,7 @@ def _ds_wizard_menu_items(state: _DSWizardState, section: Optional[str] = None) 
                     'load approved saved model context',
                 )
             )
-        if workflow in ('train', 'evaluate', 'score'):
-            items.append(
-                _DSWizardMenuItem(
-                    'picker',
-                    'dataset',
-                    'dataset artifact',
-                    _ds_wizard_dataset_picker_status(state),
-                    _ds_wizard_dataset_picker_current(state),
-                    'load dataset, feature, and label context',
-                )
-            )
-        if workflow in ('train', 'run-pipeline'):
+        if workflow == 'train':
             model_spec = field_map.get('model_type')
             if model_spec is not None:
                 items.append(
@@ -7365,24 +7654,7 @@ def _ds_wizard_menu_items(state: _DSWizardState, section: Optional[str] = None) 
     if current_section == 'report':
         return []
     if current_section == 'cmd':
-        return [
-            _DSWizardMenuItem(
-                'picker',
-                'draft-load',
-                'load saved draft',
-                '',
-                _ds_wizard_draft_picker_current(state),
-                'restore saved workflow state from a canonical draft slot',
-            ),
-            _DSWizardMenuItem(
-                'action',
-                'latest-context',
-                'latest saved context',
-                '',
-                '{0} / {1}'.format(str(state.source or 'sim'), str(state.mode or 'watch')),
-                'hydrate source, mode, and the latest saved baseline context',
-            ),
-        ]
+        return []
     return items
 
 
@@ -7391,25 +7663,22 @@ def _ds_wizard_partition_menu_lines(state: _DSWizardState, section: str, lines: 
     workflow = str(state.workflow or '').strip()
     if not lines:
         return []
-    if current_section == 'in' and workflow in ('build', 'run-pipeline'):
-        grouped = [_style_section_line('load configs'), lines[0]]
-        if len(lines) > 1:
-            grouped.extend([
-                '',
-                _style_section_line('load data'),
-                *lines[1:],
-            ])
+    if current_section == 'in' and workflow == 'build':
+        grouped: List[str] = []
+        for idx, line in enumerate(lines):
+            if idx > 0:
+                grouped.append('')
+            grouped.append(line)
         return grouped
     if current_section == 'model' and workflow == 'evaluate':
         grouped: List[str] = [_style_section_line('load configs')]
-        grouped.extend(lines[:2])
-        if len(lines) > 2:
+        grouped.extend(lines[:3])
+        grouped.append('')
+        grouped.append(_style_section_line('load data'))
+        grouped.append('dataset is displayed in header only; no dataset loader here')
+        if len(lines) > 3:
             grouped.append('')
-            grouped.append(_style_section_line('load data'))
-            grouped.extend(lines[2:4])
-        if len(lines) > 4:
-            grouped.append('')
-            grouped.extend(lines[4:])
+            grouped.extend(lines[3:])
         return grouped
     return lines
 
@@ -7422,7 +7691,6 @@ def _ds_wizard_render_menu_items(state: _DSWizardState, section: Optional[str] =
 
     def _row(label_prefix: str, label: str, status: str, current: str = '', detail: str = '', current_width: int = 0) -> str:
         label_block = _style_padded_choice_label(label_prefix, label, 22)
-        status_block = ljust_ansi(str(status or ''), 9)
         current_text = str(current or '').strip()
         detail_text = str(detail or '').strip()
         if current_text and detail_text:
@@ -7432,7 +7700,7 @@ def _ds_wizard_render_menu_items(state: _DSWizardState, section: Optional[str] =
             tail = current_text
         else:
             tail = detail_text
-        return '{0} {1} {2}'.format(label_block, status_block, tail).rstrip()
+        return '{0} {1}'.format(label_block, tail).rstrip()
 
     start_idx = len(_DS_WIZARD_WORKFLOWS) + 1 if current_section == 'flow' else 1
     current_width = 0
@@ -7455,11 +7723,12 @@ def _ds_wizard_render_menu_items(state: _DSWizardState, section: Optional[str] =
             lines.append(line.rstrip())
             continue
         if item.item_type == 'field' and item.target == 'split_train' and _ds_wizard_split_is_relevant(state):
+            continuation_prefix = ' ' * len('{0}. '.format(idx))
             field_map = _ds_wizard_field_map()
             split_rows = [
                 ('{0}. '.format(idx), _ds_wizard_ui_label('split_train'), field_map['split_train']),
-                ('', '', field_map['split_val']),
-                ('', '', field_map['split_test']),
+                (continuation_prefix, '', field_map['split_val']),
+                (continuation_prefix, '', field_map['split_test']),
             ]
             for prefix, label, spec in split_rows:
                 lines.append(
@@ -7512,7 +7781,7 @@ def _ds_wizard_render_direct_field_lines(state: _DSWizardState, section: Optiona
     lines: List[str] = []
     for idx, spec in enumerate(fields, start=start_idx):
         current = _ds_wizard_render_field_current(state, spec)
-        lines.append('{0} {1:<9} {2}'.format(_style_padded_choice_label('{0}. '.format(idx), _ds_wizard_ui_label(spec.key), 22), _ds_wizard_status_token(state, spec), current).rstrip())
+        lines.append('{0} {1}'.format(_style_padded_choice_label('{0}. '.format(idx), _ds_wizard_ui_label(spec.key), 22), current).rstrip())
     return lines
 
 
@@ -7546,7 +7815,7 @@ def _ds_wizard_advanced_item_rows(state: _DSWizardState) -> List[Tuple[str, str,
     workflow = str(state.workflow or '').strip()
     if workflow == 'score':
         rows.append(('power outputs', 'scores_out', 'scores output override'))
-    elif workflow in ('build', 'train', 'evaluate', 'run-demo', 'run-pipeline'):
+    elif workflow in ('build', 'train', 'evaluate', 'run-pipeline'):
         rows.append(('power outputs', 'out_dir', 'run root override'))
     return rows
 
@@ -7760,18 +8029,14 @@ def _ds_wizard_set_value(state: _DSWizardState, key: str, value: Any) -> _DSWiza
         if normalized_workflow not in _DS_WIZARD_WORKFLOWS:
             normalized_workflow = _ds_wizard_default_workflow()
         state.workflow = normalized_workflow
+        if state.workflow != 'build':
+            _ds_wizard_build_in_reset(state)
         state.values['workflow'] = state.workflow
         state.last_action = 'set:workflow'
         if state.active_section not in _ds_wizard_visible_sections(state):
             state.active_section = 'flow'
             _ds_wizard_sync_page_from_section(state)
-        _ds_wizard_set_transient_lines(
-            state,
-            [
-                'workflow set: {0}'.format(state.workflow or 'unset'),
-                'use the left menu or next/prev to continue the guided workflow',
-            ],
-        )
+        _ds_wizard_clear_transient_view(state)
         return state
     if key == 'source':
         normalized_source = _normalize_source(str(coerced or state.source or 'sim'))
@@ -7898,7 +8163,7 @@ def _ds_wizard_scope_help_lines(state: _DSWizardState) -> List[str]:
     if state.active_page == 'landing':
         lines = [_style_section_line('help')]
         lines.append('  configure opens the workflow-specific pages and shared section rail.')
-        lines.append('  review and run stays read-only until validation clears.')
+        lines.append('  review and run keeps validate and status separate: validate answers can-run-now, status answers can-advance.')
         lines.append('  command and utilities explains the CLI preview plus save/load/hydrate helpers.')
         lines.append('  exit closes the wizard without dispatching a workflow.')
         lines.append('')
@@ -7913,7 +8178,7 @@ def _ds_wizard_scope_help_lines(state: _DSWizardState) -> List[str]:
     workflow = str(state.workflow or '').strip()
     detail = str(info.get('detail', '')).strip()
     guidance = str(info.get('guidance', '')).strip()
-    if current_section == 'in' and workflow in ('build', 'run-demo', 'run-pipeline'):
+    if current_section == 'in' and workflow == 'build':
         detail = 'Restore saved workflow state or review the bounded observer context for this workflow.'
         guidance = 'Source and mode here frame the current observer context only. Use CLI seeding or a prepared draft for raw build input files.'
     
@@ -7926,6 +8191,16 @@ def _ds_wizard_scope_help_lines(state: _DSWizardState) -> List[str]:
         lines.append('')
         lines.append(_style_section_line('guidance'))
         lines.append('  {0}'.format(guidance))
+
+    if current_section in ('check', 'run'):
+        lines.append('')
+        lines.append(_style_section_line('lifecycle'))
+        if current_section == 'check':
+            lines.append('  validate answers whether this workflow can run now.')
+            lines.append('  status stays no-go until execute succeeds and the expected artifacts exist.')
+        else:
+            lines.append('  status answers whether you can advance to the next workflow.')
+            lines.append('  validate must be ready before execute, but validate alone does not flip status to go.')
         
     section_fields = _ds_wizard_fields_for_section(state, current_section)
     if current_section == 'eval':
@@ -7957,6 +8232,8 @@ def _ds_wizard_scope_help_lines(state: _DSWizardState) -> List[str]:
 
 def _ds_wizard_set_transient_lines(state: _DSWizardState, lines: List[str], view: str = 'educational') -> _DSWizardState:
     payload = [str(line).strip() for line in lines if str(line).strip()]
+    if view == 'educational' and payload:
+        payload = [payload[0]]
     state.transient_view = view
     state.transient_target = '\n'.join(payload)
     return state
@@ -8165,6 +8442,15 @@ def _ds_wizard_item_peek_lines(state: _DSWizardState, target: str) -> List[str]:
     token = _ds_wizard_resolve_field_alias(str(target or '').strip().lower())
     if not token:
         return ['peek: no target provided']
+    if token == 'status':
+        advance_status = _ds_wizard_advance_status(state)
+        return [
+            'peek: status',
+            'status is the advance gate for the current workflow.',
+            'current: {0}'.format(advance_status),
+            'go means this workflow completed successfully and you can advance.',
+            'validate is separate: it answers whether this workflow can run now.',
+        ]
     if token == 'current':
         token = 'landing' if state.active_page == 'landing' else state.active_section
     if token == 'landing':
@@ -8252,37 +8538,15 @@ def _ds_wizard_inline_guidance_lines(state: _DSWizardState, section: str) -> Lis
     if current_section == 'flow':
         return []
     if current_section == 'in':
-        if workflow in ('build', 'run-demo', 'run-pipeline'):
-            return [
-                'Use load configs for draft restore, then adjust the bounded source/mode context on this page.',
-            ]
+        if workflow == 'build':
+            return []
         return [
             'Choose the approved dataset item by number to load dataset, feature, and label context.',
         ]
     if current_section == 'model':
-        if workflow == 'evaluate':
-            return [
-                'Use load configs for saved baseline or prior evaluation context, then load data for model and dataset artifacts.',
-            ]
-        if workflow == 'train':
-            return [
-                'Choose the approved dataset item first, then set model family and retained training controls.',
-            ]
-        if workflow == 'score':
-            return [
-                'Choose the saved model/train item and dataset artifact before scoring.',
-            ]
-        if workflow == 'run-pipeline':
-            return [
-                'Choose model family by number; seed and split controls stay on this page.',
-            ]
-        return [
-            'Choose the saved baseline item or retained model controls that apply to this workflow.',
-        ]
+        return []
     if current_section == 'report':
-        return [
-            'Review the canonical run root, report bundle, and artifact targets before executing.',
-        ]
+        return []
     if current_section == 'eval':
         return [
             'Type 1 to edit max_fpr, or use set max_fpr <value>.',
@@ -8348,32 +8612,17 @@ def _ds_wizard_hydrate_dataset_reference(state: _DSWizardState, dataset_ref: str
             state.hydrated_from[key] = 'librarian_dataset'
 
     dataset_meta = packet.get('dataset', {}) if isinstance(packet.get('dataset', {}), dict) else {}
+    dataset_alias = _ds_wizard_dataset_alias(dataset_meta)
+    if dataset_alias:
+        state.values['dataset_alias'] = dataset_alias
     _ds_wizard_apply_context_metadata(
         state,
         dataset_meta.get('source', packet.get('source', '')),
         dataset_meta.get('mode', packet.get('mode', '')),
         hydrated_from='librarian_dataset',
     )
-    dataset_label = str(dataset_meta.get('display_name', '') or dataset_meta.get('entry_id', '') or token).strip()
-    access_class = str(packet.get('release_mode', dataset_meta.get('access_class', 'local')) or 'local').strip()
-    lines = [
-        'approved dataset ready: {0}'.format(dataset_label),
-        '- selector: {0}'.format(str(dataset_meta.get('run_id', '') or dataset_meta.get('entry_id', '') or token).strip()),
-        '- access: {0}'.format(access_class),
-        '- manifest: {0}'.format(_ds_wizard_short_path(str(manifest_path))),
-        '- fields: dataset_manifest, features_csv, labels_csv',
-    ]
-    if access_class == 'protected-source':
-        lines.append('- delegated release receipts were recorded for this hydration')
-        receipt_path = str(((packet.get('artifacts', {}) if isinstance(packet.get('artifacts', {}), dict) else {}).get('dataset_access_release_receipt_json', '')) or '').strip()
-        if receipt_path:
-            lines.append('- release receipt: {0}'.format(_ds_wizard_short_path(receipt_path)))
-    else:
-        lines.append('- delegated release not required for this approved local dataset')
-    lines.append('next: validate now or continue filling the remaining wizard fields.')
-
     state.last_action = 'hydrate:librarian_dataset'
-    _ds_wizard_set_transient_lines(state, lines)
+    _ds_wizard_set_transient_lines(state, ['dataset loaded'])
     return state
 
 
@@ -8382,6 +8631,7 @@ def _ds_wizard_hydrate_dataset_manifest(state: _DSWizardState, manifest_path: Pa
     if not isinstance(payload, dict):
         raise ValueError('dataset manifest is not a JSON object')
     _ds_wizard_clear_context_display(state)
+    state.values['dataset_alias'] = ''
     state.values['dataset_manifest'] = str(manifest_path)
     features_ref = str(payload.get('features_csv', '') or '').strip()
     if features_ref:
@@ -8395,13 +8645,7 @@ def _ds_wizard_hydrate_dataset_manifest(state: _DSWizardState, manifest_path: Pa
         state.hydrated_from['labels_csv'] = 'dataset_manifest'
     state.hydrated_from['dataset_manifest'] = 'dataset_manifest'
     state.last_action = 'hydrate:dataset_manifest'
-    _ds_wizard_set_transient_lines(
-        state,
-        [
-            'hydrated from dataset manifest: {0}'.format(_ds_wizard_short_path(str(manifest_path))),
-            'loaded fields: dataset_manifest, features_csv, labels_csv',
-        ],
-    )
+    _ds_wizard_set_transient_lines(state, ['dataset loaded'])
     return state
 
 
@@ -8543,6 +8787,12 @@ def _ds_wizard_draft_payload(state: _DSWizardState) -> Dict[str, Any]:
         'values': dict(state.values),
         'hydrated_from': dict(state.hydrated_from),
         'run_ledger_path': str(state.run_ledger_path or ''),
+        'build_in_stage': str(state.build_in_stage or 'source'),
+        'build_in_family': str(state.build_in_family or ''),
+        'build_in_mode': str(state.build_in_mode or ''),
+        'build_in_date': str(state.build_in_date or ''),
+        'build_in_page': int(state.build_in_page or 1),
+        'completed_workflows': dict(state.completed_workflows),
     }
 
 
@@ -8786,8 +9036,19 @@ def _ds_wizard_load_draft(draft_path: Path) -> _DSWizardState:
 
     hydrated_from = payload.get('hydrated_from', {}) if isinstance(payload.get('hydrated_from', {}), dict) else {}
     state.hydrated_from = {str(key): str(value) for key, value in hydrated_from.items() if str(key).strip()}
+    completed_workflows = payload.get('completed_workflows', {}) if isinstance(payload.get('completed_workflows', {}), dict) else {}
+    state.completed_workflows = {
+        str(key): dict(value)
+        for key, value in completed_workflows.items()
+        if str(key).strip() and isinstance(value, dict)
+    }
     state.run_ledger_path = str(payload.get('run_ledger_path', '') or '').strip()
     state.draft_path = str(draft_path)
+    state.build_in_stage = str(payload.get('build_in_stage', 'source') or 'source').strip().lower() or 'source'
+    state.build_in_family = _normalize_source(str(payload.get('build_in_family', '') or '').strip()) if str(payload.get('build_in_family', '') or '').strip() else ''
+    state.build_in_mode = str(payload.get('build_in_mode', '') or '').strip().lower()
+    state.build_in_date = str(payload.get('build_in_date', '') or '').strip()
+    state.build_in_page = max(1, int(payload.get('build_in_page', 1) or 1))
 
     active_section = str(payload.get('active_section', 'flow') or 'flow').strip().lower()
     if active_section in _ds_wizard_visible_sections(state):
@@ -8855,6 +9116,68 @@ def _ds_wizard_hydrate_latest_context(state: _DSWizardState) -> _DSWizardState:
     return state
 
 
+def _ds_wizard_train_dataset_contract_issues(state: _DSWizardState) -> List[str]:
+    manifest_text = str(state.values.get('dataset_manifest', '') or '').strip()
+    manifest_path = _resolve_existing_project_path(manifest_text)
+    if manifest_path is None:
+        return []
+
+    try:
+        payload = json.loads(manifest_path.read_text(encoding='utf-8'))
+    except Exception:
+        return ['train dataset manifest is not valid JSON']
+
+    if not isinstance(payload, dict):
+        return ['train dataset manifest is not a JSON object']
+
+    issues: List[str] = []
+    required_fields = ['features_csv', 'splits_csv', 'feature_columns']
+    if str(state.values.get('model_type', 'supervised') or 'supervised').strip() == 'supervised':
+        required_fields.append('labels_csv')
+
+    for field in required_fields:
+        value = payload.get(field, '')
+        if field == 'feature_columns':
+            if not isinstance(value, list) or not any(str(item).strip() for item in value):
+                issues.append('train dataset manifest missing required field: feature_columns')
+            continue
+        text = str(value or '').strip()
+        if not text:
+            issues.append('train dataset manifest missing required field: {0}'.format(field))
+            continue
+        if _resolve_existing_reference_path(text, manifest_path.parent) is None:
+            issues.append('train dataset manifest path missing: {0}'.format(field))
+
+    return issues
+
+
+def _ds_wizard_build_dataset_contract_issues(state: _DSWizardState) -> List[str]:
+    manifest_text = str(state.values.get('dataset_manifest', '') or '').strip()
+    manifest_path = _resolve_existing_project_path(manifest_text)
+    if manifest_path is None:
+        return []
+
+    try:
+        payload = json.loads(manifest_path.read_text(encoding='utf-8'))
+    except Exception:
+        return ['build dataset manifest is not valid JSON']
+
+    if not isinstance(payload, dict):
+        return ['build dataset manifest is not a JSON object']
+
+    issues: List[str] = []
+    required_fields = ['features_csv', 'splits_csv', 'split_manifest_json']
+    for field in required_fields:
+        text = str(payload.get(field, '') or '').strip()
+        if not text:
+            issues.append('build dataset manifest missing required field: {0}'.format(field))
+            continue
+        if _resolve_existing_reference_path(text, manifest_path.parent) is None:
+            issues.append('build dataset manifest path missing: {0}'.format(field))
+
+    return issues
+
+
 def _ds_wizard_validation_issues(state: _DSWizardState) -> List[str]:
     issues: List[str] = []
     workflow = str(state.workflow or '').strip()
@@ -8878,6 +9201,13 @@ def _ds_wizard_validation_issues(state: _DSWizardState) -> List[str]:
                     issues.append('{0} does not exist: {1}'.format(spec.key, raw))
         if spec.choices and str(value) not in spec.choices:
             issues.append('{0} must be one of: {1}'.format(spec.key, ', '.join(spec.choices)))
+    if workflow == 'build':
+        has_input_paths = _ds_wizard_has_value(state.values.get('input_paths'))
+        has_dataset_manifest = _ds_wizard_has_value(state.values.get('dataset_manifest'))
+        if not has_input_paths and not has_dataset_manifest:
+            issues.append('approved dataset selection is required')
+        elif has_dataset_manifest and not has_input_paths:
+            issues.extend(_ds_wizard_build_dataset_contract_issues(state))
     if workflow in ('build', 'run-pipeline'):
         split_present = _ds_wizard_split_values_present(state)
         split_complete = _ds_wizard_split_values_complete(state)
@@ -8890,12 +9220,133 @@ def _ds_wizard_validation_issues(state: _DSWizardState) -> List[str]:
                     issues.append('split ratios must sum to 1.0')
             except (TypeError, ValueError):
                 issues.append('split ratios must be numeric')
+    if workflow == 'train':
+        issues.extend(_ds_wizard_train_dataset_contract_issues(state))
     state.validation_issues = issues
     return issues
 
 
+def _ds_wizard_run_gate_issues(state: _DSWizardState) -> List[str]:
+    return list(_ds_wizard_validation_issues(state))
+
+
+def _ds_wizard_completion_required_artifact_keys(workflow: str) -> Tuple[str, ...]:
+    token = str(workflow or '').strip()
+    if token == 'build':
+        return ('dataset_manifest', 'features_csv', 'splits_csv', 'split_manifest_json')
+    if token == 'train':
+        return ('train_manifest', 'model_path', 'metrics_path')
+    if token == 'evaluate':
+        return ('run_json', 'run_md')
+    if token == 'score':
+        return ('scores_csv',)
+    if token == 'run-pipeline':
+        return ('dataset_manifest', 'train_manifest', 'model_path', 'run_json', 'run_md')
+    return ()
+
+
+def _ds_wizard_packet_artifact_text(packet: Dict[str, Any], key: str) -> str:
+    artifacts = packet.get('artifacts', {}) if isinstance(packet.get('artifacts', {}), dict) else {}
+    return str(artifacts.get(key, '') or '').strip()
+
+
+def _ds_wizard_completion_missing_artifacts(record: Dict[str, Any]) -> List[str]:
+    artifacts = record.get('artifacts', {}) if isinstance(record.get('artifacts', {}), dict) else {}
+    required_keys = record.get('required_artifact_keys', []) if isinstance(record.get('required_artifact_keys', []), list) else []
+    missing: List[str] = []
+    for key in required_keys:
+        artifact_key = str(key or '').strip()
+        if not artifact_key:
+            continue
+        if _resolve_existing_reference_path(str(artifacts.get(artifact_key, '') or '').strip()) is None:
+            missing.append(artifact_key)
+    return missing
+
+
+def _ds_wizard_advance_status(state: _DSWizardState) -> str:
+    workflow = str(state.workflow or '').strip()
+    if workflow not in _DS_WIZARD_WORKFLOWS:
+        return 'no-go'
+    record = state.completed_workflows.get(workflow, {}) if isinstance(state.completed_workflows, dict) else {}
+    if not isinstance(record, dict) or not record:
+        return 'no-go'
+    executed_preview = str(record.get('command_preview', '') or '').strip()
+    current_preview = _ds_wizard_command_preview(state)
+    if not executed_preview or executed_preview != current_preview:
+        return 'no-go'
+    if _ds_wizard_completion_missing_artifacts(record):
+        return 'no-go'
+    return 'go'
+
+
+def _ds_wizard_record_workflow_completion(state: _DSWizardState, packet: Dict[str, Any], command_preview: str) -> List[str]:
+    workflow = str(state.workflow or '').strip()
+    required_keys = list(_ds_wizard_completion_required_artifact_keys(workflow))
+    record = {
+        'completed_at_utc': str(packet.get('timestamp_utc', '') or _utc_now()),
+        'run_id': str(packet.get('run_id', '') or '').strip(),
+        'command_preview': str(command_preview or '').strip(),
+        'required_artifact_keys': required_keys,
+        'artifacts': {
+            key: _ds_wizard_packet_artifact_text(packet, key)
+            for key in required_keys
+        },
+    }
+    missing = _ds_wizard_completion_missing_artifacts(record)
+    if missing:
+        return missing
+    state.completed_workflows[workflow] = record
+    return []
+
+
+def _ds_wizard_sync_execution_artifacts(state: _DSWizardState, packet: Dict[str, Any]) -> _DSWizardState:
+    workflow = str(state.workflow or '').strip()
+    if workflow == 'build':
+        manifest_path = _resolve_existing_reference_path(_ds_wizard_packet_artifact_text(packet, 'dataset_manifest'))
+        if manifest_path is not None:
+            dataset_alias = str(state.values.get('dataset_alias', '') or '').strip()
+            state = _ds_wizard_hydrate_dataset_manifest(state, manifest_path)
+            if dataset_alias:
+                state.values['dataset_alias'] = dataset_alias
+            for key in ('dataset_manifest', 'features_csv', 'labels_csv'):
+                if key in state.hydrated_from:
+                    state.hydrated_from[key] = 'wizard_execute'
+        return state
+    if workflow == 'train':
+        train_manifest_path = _resolve_existing_reference_path(_ds_wizard_packet_artifact_text(packet, 'train_manifest'))
+        if train_manifest_path is not None:
+            state = _ds_wizard_hydrate_train_manifest(state, train_manifest_path)
+            for key in ('train_manifest', 'dataset_manifest', 'model_path', 'model_type'):
+                if key in state.hydrated_from:
+                    state.hydrated_from[key] = 'wizard_execute'
+        return state
+    if workflow == 'evaluate':
+        run_json_path = _resolve_existing_reference_path(_ds_wizard_packet_artifact_text(packet, 'run_json'))
+        if run_json_path is not None:
+            state.run_ledger_path = str(run_json_path)
+        return state
+    if workflow == 'run-pipeline':
+        dataset_manifest_path = _resolve_existing_reference_path(_ds_wizard_packet_artifact_text(packet, 'dataset_manifest'))
+        if dataset_manifest_path is not None:
+            state = _ds_wizard_hydrate_dataset_manifest(state, dataset_manifest_path)
+            for key in ('dataset_manifest', 'features_csv', 'labels_csv'):
+                if key in state.hydrated_from:
+                    state.hydrated_from[key] = 'wizard_execute'
+        train_manifest_path = _resolve_existing_reference_path(_ds_wizard_packet_artifact_text(packet, 'train_manifest'))
+        if train_manifest_path is not None:
+            state = _ds_wizard_hydrate_train_manifest(state, train_manifest_path)
+            for key in ('train_manifest', 'dataset_manifest', 'model_path', 'model_type'):
+                if key in state.hydrated_from:
+                    state.hydrated_from[key] = 'wizard_execute'
+        run_json_path = _resolve_existing_reference_path(_ds_wizard_packet_artifact_text(packet, 'run_json'))
+        if run_json_path is not None:
+            state.run_ledger_path = str(run_json_path)
+        return state
+    return state
+
+
 def _ds_wizard_decision_state(state: _DSWizardState) -> str:
-    return 'ready' if len(_ds_wizard_validation_issues(state)) == 0 else 'needs-input'
+    return 'ready' if len(_ds_wizard_run_gate_issues(state)) == 0 else 'needs-input'
 
 
 def _ds_wizard_preview_run_id(state: _DSWizardState) -> str:
@@ -9012,50 +9463,200 @@ def _ds_wizard_output_preview(state: _DSWizardState) -> Dict[str, Any]:
     return preview
 
 
+def _ds_wizard_report_row_labels(workflow: str) -> List[str]:
+    if not str(workflow or '').strip():
+        return []
+    return [
+        'report json',
+        'report md',
+        'dataset manifest',
+        'features csv',
+        'labels csv',
+        'train manifest',
+        'model artifact',
+        'metrics json',
+        'run json',
+        'run md',
+        'scores csv',
+        'threshold report json',
+        'threshold report md',
+    ]
+
+
+def _ds_wizard_report_filename(path_text: Any) -> str:
+    text = str(path_text or '').strip()
+    if not text:
+        return ''
+    return Path(text).name or text
+
+
+def _ds_wizard_report_render_rows(
+    rows: List[Tuple[str, Any]],
+    min_label_width: int = 12,
+    max_label_width: int = 28,
+    indent: str = '',
+) -> List[str]:
+    cleaned: List[Tuple[str, str]] = []
+    for label, value in rows:
+        label_text = str(label or '').strip()
+        if not label_text:
+            continue
+        cleaned.append((label_text, str(value or '').strip()))
+    if not cleaned:
+        return []
+    label_width = max(min_label_width, min(max_label_width, max(len(label) for label, _ in cleaned)))
+    return [
+        '{0}{1:<{2}} {3}'.format(indent, label_text + ':', label_width + 1, value_text).rstrip()
+        for label_text, value_text in cleaned
+    ]
+
+
+def _ds_wizard_saved_artifacts_for_path(path_text: Any) -> Dict[str, str]:
+    target_path = _resolve_existing_project_path(str(path_text or '').strip())
+    if target_path is None:
+        return {}
+    try:
+        target_key = str(target_path.resolve())
+    except Exception:
+        target_key = str(target_path)
+
+    for record in _ds_saved_manifest_records():
+        manifest = dict(record.get('manifest_payload', {}) or {}) if isinstance(record.get('manifest_payload', {}), dict) else {}
+        artifacts = dict(manifest.get('artifacts', {}) or {}) if isinstance(manifest.get('artifacts', {}), dict) else {}
+        for artifact_value in artifacts.values():
+            candidate_path = _resolve_existing_project_path(str(artifact_value or '').strip())
+            if candidate_path is None:
+                continue
+            try:
+                candidate_key = str(candidate_path.resolve())
+            except Exception:
+                candidate_key = str(candidate_path)
+            if candidate_key == target_key:
+                return {str(key): str(value or '').strip() for key, value in artifacts.items() if str(key).strip()}
+    return {}
+
+
+def _ds_wizard_apply_report_artifact(values: Dict[str, str], label: str, path_text: Any) -> None:
+    filename = _ds_wizard_report_filename(path_text)
+    if filename:
+        values[str(label)] = filename
+
+
+def _ds_wizard_apply_saved_artifact_names(values: Dict[str, str], artifacts: Dict[str, str]) -> None:
+    if not isinstance(artifacts, dict):
+        return
+    artifact_map = {
+        'report_json': 'report json',
+        'report_md': 'report md',
+        'dataset_manifest': 'dataset manifest',
+        'features_csv': 'features csv',
+        'labels_csv': 'labels csv',
+        'train_manifest': 'train manifest',
+        'supervised_train_manifest': 'train manifest',
+        'unsupervised_train_manifest': 'train manifest',
+        'model_path': 'model artifact',
+        'supervised_model_path': 'model artifact',
+        'unsupervised_model_path': 'model artifact',
+        'metrics_path': 'metrics json',
+        'run_json': 'run json',
+        'evaluation_run_json': 'run json',
+        'run_md': 'run md',
+        'evaluation_run_md': 'run md',
+        'scores_csv': 'scores csv',
+        'threshold_report_json': 'threshold report json',
+        'threshold_report_md': 'threshold report md',
+    }
+    for artifact_key, label in artifact_map.items():
+        _ds_wizard_apply_report_artifact(values, label, artifacts.get(artifact_key, ''))
+
+
+def _ds_wizard_dataset_manifest_report_values(manifest_path: Path) -> Dict[str, str]:
+    values: Dict[str, str] = {}
+    _ds_wizard_apply_report_artifact(values, 'dataset manifest', str(manifest_path))
+    payload = _load_json_file(manifest_path, {}) if manifest_path.exists() else {}
+    if not isinstance(payload, dict):
+        return values
+    _ds_wizard_apply_report_artifact(values, 'features csv', payload.get('features_csv', ''))
+    _ds_wizard_apply_report_artifact(values, 'labels csv', payload.get('labels_csv', ''))
+    _ds_wizard_apply_report_artifact(values, 'split manifest', payload.get('split_manifest_json', ''))
+    return values
+
+
+def _ds_wizard_report_values(state: _DSWizardState) -> Dict[str, str]:
+    values: Dict[str, str] = {}
+
+    run_source = str(state.hydrated_from.get('run_id', '') or '').strip().lower()
+    if str(state.run_ledger_path or '').strip() and run_source in ('run_ledger', 'saved_run'):
+        run_json_path = _resolve_existing_project_path(str(state.run_ledger_path).strip())
+        if run_json_path is not None:
+            _ds_wizard_apply_report_artifact(values, 'run json', str(run_json_path))
+            _ds_wizard_apply_saved_artifact_names(values, _ds_wizard_saved_artifacts_for_path(str(run_json_path)))
+            payload = _load_json_file(run_json_path, {}) if run_json_path.exists() else {}
+            if isinstance(payload, dict):
+                data = dict(payload.get('data', {}) or {}) if isinstance(payload.get('data', {}), dict) else {}
+                model = dict(payload.get('model', {}) or {}) if isinstance(payload.get('model', {}), dict) else {}
+                dataset_manifest_ref = str(data.get('dataset_manifest', '') or '').strip()
+                if dataset_manifest_ref:
+                    dataset_manifest_path = _resolve_existing_project_path(dataset_manifest_ref)
+                    if dataset_manifest_path is not None:
+                        values.update(_ds_wizard_dataset_manifest_report_values(dataset_manifest_path))
+                else:
+                    _ds_wizard_apply_report_artifact(values, 'features csv', data.get('features_csv', ''))
+                    _ds_wizard_apply_report_artifact(values, 'labels csv', data.get('labels_csv', ''))
+                _ds_wizard_apply_report_artifact(values, 'model artifact', model.get('source', '') or model.get('model_path', ''))
+            return values
+
+    train_source = str(state.hydrated_from.get('train_manifest', '') or '').strip().lower()
+    if _ds_wizard_has_value(state.values.get('train_manifest')) and train_source in ('train_manifest', 'saved_train', 'wizard_execute'):
+        train_manifest_path = _resolve_existing_project_path(str(state.values.get('train_manifest', '') or '').strip())
+        if train_manifest_path is not None:
+            _ds_wizard_apply_report_artifact(values, 'train manifest', str(train_manifest_path))
+            _ds_wizard_apply_saved_artifact_names(values, _ds_wizard_saved_artifacts_for_path(str(train_manifest_path)))
+            payload = _load_json_file(train_manifest_path, {}) if train_manifest_path.exists() else {}
+            if isinstance(payload, dict):
+                dataset_manifest_ref = str(payload.get('dataset_manifest_path', '') or '').strip()
+                if dataset_manifest_ref:
+                    dataset_manifest_path = _resolve_existing_project_path(dataset_manifest_ref)
+                    if dataset_manifest_path is not None:
+                        values.update(_ds_wizard_dataset_manifest_report_values(dataset_manifest_path))
+                _ds_wizard_apply_report_artifact(values, 'model artifact', payload.get('model_path', ''))
+            return values
+
+    dataset_source = str(state.hydrated_from.get('dataset_manifest', '') or '').strip().lower()
+    if _ds_wizard_has_value(state.values.get('dataset_manifest')) and dataset_source in ('dataset_manifest', 'librarian_dataset', 'saved_run', 'saved_train', 'run_ledger', 'wizard_execute'):
+        dataset_manifest_path = _resolve_existing_project_path(str(state.values.get('dataset_manifest', '') or '').strip())
+        if dataset_manifest_path is not None:
+            values.update(_ds_wizard_dataset_manifest_report_values(dataset_manifest_path))
+            _ds_wizard_apply_saved_artifact_names(values, _ds_wizard_saved_artifacts_for_path(str(dataset_manifest_path)))
+    return values
+
+
 def _ds_wizard_output_preview_lines(state: _DSWizardState) -> List[str]:
     workflow = str(state.workflow or '').strip()
-    dataset_manifest = state.values.get('dataset_manifest')
-    has_dataset = _ds_wizard_has_value(dataset_manifest)
-    has_inputs = bool(state.values.get('input_paths'))
-
-    preview = _ds_wizard_output_preview(state)
-    if not preview:
-        return ['choose a workflow first to preview the canonical DS output layout.']
-
-    lines = _render_human_kv_rows(
-        [
-            ('Run root mode', 'power override' if preview.get('effective_policy') == 'power-override' else 'canonical'),
-            ('Canonical run root', str(preview.get('canonical_run_root', ''))),
-            ('Effective run root', str(preview.get('effective_run_root', ''))),
-            ('Report JSON', str(preview.get('report_json', ''))),
-            ('Report MD', str(preview.get('report_md', ''))),
-        ],
+    if not workflow:
+        return []
+    labels = _ds_wizard_report_row_labels(workflow)
+    if not labels:
+        return []
+    values = _ds_wizard_report_values(state)
+    return _ds_wizard_report_render_rows(
+        [(label, values.get(label, '')) for label in labels],
         min_label_width=18,
         max_label_width=20,
         indent='  ',
     )
-    override_value = str(preview.get('override_value', '') or '').strip()
-    if override_value:
-        lines.extend(_render_human_kv_rows([('Active override', override_value)], min_label_width=18, max_label_width=20, indent='  '))
-    for label, value in preview.get('artifact_targets', []) if isinstance(preview.get('artifact_targets', []), list) else []:
-        lines.extend(_render_human_kv_rows([(label, value)], min_label_width=18, max_label_width=20, indent='  '))
-    if workflow in ('build', 'run-pipeline') and not has_inputs:
-        lines.extend(_render_human_kv_rows([('Input status', 'choose telemetry inputs before execute.')], min_label_width=18, max_label_width=20, indent='  '))
-    if workflow in ('train', 'evaluate', 'score') and not has_dataset:
-        lines.extend(_render_human_kv_rows([('Dataset status', 'choose approved dataset before execute.')], min_label_width=18, max_label_width=20, indent='  '))
-    if override_value:
-        lines.extend(_render_human_kv_rows([('Override note', 'clear the override field to return to the canonical DS run/report spine.')], min_label_width=18, max_label_width=20, indent='  '))
-    else:
-        lines.extend(_render_human_kv_rows([('Override note', 'set out_dir <folder> or set scores_out <file> only when intentionally bypassing the canonical report lane.')], min_label_width=18, max_label_width=20, indent='  '))
-    return lines
 
 
 def _ds_wizard_command_preview(state: _DSWizardState) -> str:
     workflow = str(state.workflow or '').strip()
     if workflow == 'build':
         parts = ['observerctl', 'ds', 'build']
-        for item in state.values.get('input_paths', []):
-            parts.extend(['--input', str(item)])
+        input_paths = state.values.get('input_paths', []) if isinstance(state.values.get('input_paths', []), list) else []
+        if input_paths:
+            for item in input_paths:
+                parts.extend(['--input', str(item)])
+        elif _ds_wizard_has_value(state.values.get('dataset_manifest')):
+            parts.extend(['--dataset', str(state.values.get('dataset_manifest', ''))])
         if _ds_wizard_has_value(state.values.get('out_dir')):
             parts.extend(['--out-dir', str(state.values.get('out_dir'))])
         parts.extend(['--seed', str(state.values.get('seed', 42))])
@@ -9092,12 +9693,6 @@ def _ds_wizard_command_preview(state: _DSWizardState) -> str:
         if _ds_wizard_has_value(state.values.get('scores_out')):
             parts.extend(['--out-file', str(state.values.get('scores_out'))])
         return ' '.join(parts)
-    if workflow == 'run-demo':
-        parts = ['observerctl', 'ds', 'run', 'demo']
-        if _ds_wizard_has_value(state.values.get('out_dir')):
-            parts.extend(['--out-dir', str(state.values.get('out_dir'))])
-        parts.extend(['--dataset-seed', str(state.values.get('dataset_seed', 123)), '--model-seed', str(state.values.get('model_seed', 42)), '--max-fpr', str(state.values.get('max_fpr', 0.01))])
-        return ' '.join(parts)
     if workflow == 'run-pipeline':
         parts = ['observerctl', 'ds', 'run', 'pipeline']
         for item in state.values.get('input_paths', []):
@@ -9114,16 +9709,48 @@ def _ds_wizard_command_preview(state: _DSWizardState) -> str:
     return 'observerctl ds <choose-workflow>'
 
 
+def _ds_wizard_display_command_preview(state: _DSWizardState) -> str:
+    preview = _ds_wizard_command_preview(state)
+    replacements: List[Tuple[str, str]] = []
+
+    def _add_replacement(value: Any, placeholder: str) -> None:
+        text = str(value or '').strip()
+        if text:
+            replacements.append((text, placeholder))
+
+    for input_path in state.values.get('input_paths', []) if isinstance(state.values.get('input_paths', []), list) else []:
+        _add_replacement(input_path, '<path to input.jsonl>')
+    _add_replacement(state.values.get('dataset_manifest', ''), '<path to dataset_manifest.json>')
+    _add_replacement(state.values.get('features_csv', ''), '<path to features.csv>')
+    _add_replacement(state.values.get('labels_csv', ''), '<path to labels.csv>')
+    _add_replacement(state.values.get('train_manifest', ''), '<path to train_manifest.json>')
+    _add_replacement(state.values.get('model_path', ''), '<path to model artifact>')
+    _add_replacement(state.values.get('scores_out', ''), '<path to scores.csv>')
+    _add_replacement(state.values.get('out_dir', ''), '<path to output directory>')
+
+    for raw_value, placeholder in sorted(replacements, key=lambda item: len(item[0]), reverse=True):
+        preview = preview.replace(raw_value, placeholder)
+    return preview
+
+
 def _ds_wizard_command_context_lines(state: _DSWizardState) -> List[str]:
     workflow = str(state.workflow or '').strip()
     if not workflow:
         return ['choose a workflow first to explain the command surface.']
 
-    preview = _ds_wizard_output_preview(state)
-    issues = _ds_wizard_validation_issues(state)
+    issues = _ds_wizard_run_gate_issues(state)
+    advance_status = _ds_wizard_advance_status(state)
     lines: List[str] = ['workflow lane: {0}'.format(workflow)]
+    lines.append('status: {0}'.format('go (can advance)' if advance_status == 'go' else 'no-go (run this workflow to advance)'))
 
-    if workflow in ('build', 'run-pipeline'):
+    if workflow == 'build':
+        input_count = len(state.values.get('input_paths', []) if isinstance(state.values.get('input_paths', []), list) else [])
+        has_dataset_manifest = _ds_wizard_has_value(state.values.get('dataset_manifest'))
+        if has_dataset_manifest and input_count == 0:
+            lines.append('build source: approved dataset selector will materialize dataset artifacts for this run')
+        else:
+            lines.append('data staging: {0} telemetry input{1} currently seed the command preview'.format(input_count, '' if input_count == 1 else 's'))
+    elif workflow == 'run-pipeline':
         input_count = len(state.values.get('input_paths', []) if isinstance(state.values.get('input_paths', []), list) else [])
         lines.append('data staging: {0} telemetry input{1} currently seed the command preview'.format(input_count, '' if input_count == 1 else 's'))
     elif workflow in ('train', 'evaluate', 'score'):
@@ -9136,51 +9763,43 @@ def _ds_wizard_command_context_lines(state: _DSWizardState) -> List[str]:
     elif workflow in ('train', 'run-pipeline'):
         lines.append('model family: {0}'.format(str(state.values.get('model_type', 'supervised') or 'supervised')))
 
-    if workflow in ('evaluate', 'run-demo', 'run-pipeline'):
+    if workflow in ('evaluate', 'run-pipeline'):
         lines.append('evaluation guard: max_fpr = {0}'.format(_ds_wizard_stringify_value(state.values.get('max_fpr', 0.01))))
 
-    if preview:
-        lines.append('report lane: {0}'.format('power override' if preview.get('effective_policy') == 'power-override' else 'canonical'))
-        lines.append('run root: {0}'.format(str(preview.get('effective_run_root', ''))))
-
-    lines.append('validation: {0}'.format('blocked until check passes' if issues else 'ready for execute after review'))
+    lines.append('validate: {0}'.format('blocked until check passes' if issues else 'ready to run now'))
     return lines
 
 
 def _ds_wizard_left_rail_rows(state: _DSWizardState) -> List[str]:
-    model_type = str(state.values.get('model_type', '') or '').strip()
-    family_label = model_type if model_type else 'none'
+    has_dataset = _ds_wizard_has_value(state.values.get('dataset_manifest'))
+    model_type = str(state.values.get('model_type', '') or '').strip() if has_dataset else ''
+    family_label = model_type
     return [
         'workflow: {0}'.format(_ds_wizard_workflow_label(state.workflow)),
-        'status: {0}'.format(_style_readiness_value(_ds_wizard_decision_state(state))),
+        'status: {0}'.format(_style_readiness_value(_ds_wizard_advance_status(state))),
         'family: {0}'.format(family_label),
     ]
 
 
 def _ds_wizard_right_pane_ops_rows(state: _DSWizardState) -> List[str]:
     dataset_manifest = state.values.get('dataset_manifest')
-    if _ds_wizard_has_value(dataset_manifest):
-        run_id = str(state.values.get('run_id', '') or '').strip()
-        display_alias = _generate_short_alias(run_id) if run_id else ''
+    has_dataset = _ds_wizard_has_value(dataset_manifest)
+    if has_dataset:
+        display_alias = str(state.values.get('dataset_alias', '') or '').strip()
+        if not display_alias:
+            run_id = str(state.values.get('run_id', '') or '').strip()
+            display_alias = _generate_short_alias(run_id) if run_id else ''
         dataset_label = display_alias if display_alias else _ds_wizard_short_path(str(dataset_manifest))
     else:
         dataset_label = 'none'
-
-    rows = ['dataset: {0}'.format(dataset_label)]
-    if dataset_label != 'none':
-        source = str(state.source or 'sim').strip()
-        mode = str(state.mode or 'watch').strip()
-        max_fpr = state.values.get('max_fpr', 0.01)
-        fpr_label = '{0:.2f}'.format(float(max_fpr)) if max_fpr is not None else '0.01'
-        rows.extend([
-            'state: {0}'.format(source),
-            'mode: {0}'.format(mode),
-            'FPR: {0}'.format(fpr_label),
-        ])
-    else:
-        rows.extend(['', '', ''])
-
-    return rows
+    source_label = str(state.source or '').strip() if has_dataset else ''
+    mode_label = str(state.mode or '').strip() if has_dataset else ''
+    label_width = 7
+    return [
+        '{0:<9} {1}'.format('dataset:', dataset_label),
+        '{0:<9} {1}'.format('source:', source_label),
+        '{0:<9} {1}'.format('mode:', mode_label),
+    ]
 
 
 def _ds_wizard_summary_rows(state: _DSWizardState) -> List[str]:
@@ -9216,16 +9835,7 @@ def _ds_wizard_summary_rows(state: _DSWizardState) -> List[str]:
 
 
 def _ds_wizard_landing_summary_rows(state: _DSWizardState) -> List[str]:
-    rows = list(_ds_wizard_left_rail_rows(state))
-    if not state.workflow:
-        rows.append('summary: open configure to begin the guided workflow')
-        return rows
-    if len(_ds_wizard_validation_issues(state)) == 0:
-        rows.append('summary: configuration is ready for review and run')
-    else:
-        rows.append('summary: configuration still has blockers before review and run')
-    rows.append('guided workflow: configure opens the flow section and full left-hand menu')
-    return rows
+    return list(_ds_wizard_left_rail_rows(state))
 
 
 def _ds_wizard_path_label(state: _DSWizardState) -> str:
@@ -9322,13 +9932,7 @@ def _ds_wizard_build_pane(state: _DSWizardState) -> List[str]:
         menu_lines = _ds_wizard_render_menu_items(state, 'flow')
         if menu_lines:
             lines.extend(menu_lines)
-        lines.append('')
-        if not state.workflow:
-            lines.append('next step: choose a workflow, then move through the left menu.')
-        else:
-            lines.append('next step: use the left menu or next/prev to edit the fields used by {0}.'.format(state.workflow))
-        lines.append('')
-        lines.extend(_ds_wizard_inline_guidance_lines(state, current_section))
+        return lines
     elif current_section in ('cmd', 'check', 'run', 'exit'):
         if current_section == 'cmd':
             lines.append(_style_section_line('command preview'))
@@ -9336,7 +9940,7 @@ def _ds_wizard_build_pane(state: _DSWizardState) -> List[str]:
             if menu_lines:
                 lines.extend(menu_lines)
                 lines.append('')
-            cmd_preview = _ds_wizard_command_preview(state)
+            cmd_preview = _ds_wizard_display_command_preview(state)
             if len(cmd_preview) > 80:
                 from textwrap import wrap
                 lines.extend(wrap(cmd_preview, width=80, subsequent_indent='  '))
@@ -9347,23 +9951,17 @@ def _ds_wizard_build_pane(state: _DSWizardState) -> List[str]:
             lines.extend(_ds_wizard_command_context_lines(state))
         elif current_section == 'check':
             lines.append(_style_section_line('validation'))
-            issues = _ds_wizard_validation_issues(state)
+            issues = _ds_wizard_run_gate_issues(state)
             if not issues:
                 lines.append('  {0}'.format(style_text('ready', 'positive')))
-                lines.append('next step: open run and type execute to start the workflow.')
             else:
                 for issue in issues:
                     lines.append('  - {0}'.format(issue))
-                lines.append('next step: resolve the blockers above or hydrate saved context.')
         elif current_section == 'run':
             lines.append(_style_section_line('execute'))
-            lines.append(_ds_wizard_command_preview(state))
-            blocked = len(_ds_wizard_validation_issues(state)) > 0
+            lines.append(_ds_wizard_display_command_preview(state))
+            blocked = len(_ds_wizard_run_gate_issues(state)) > 0
             lines.append('blocked: {0}'.format(_style_blocked_value(blocked)))
-            if blocked:
-                lines.append('next step: type validate or open check before execute.')
-            else:
-                lines.append('next step: type execute to run now. A completion summary will print after the run.')
         else:
             lines.append('type exit to leave the wizard')
         guidance_lines = _ds_wizard_inline_guidance_lines(state, current_section)
@@ -9371,12 +9969,17 @@ def _ds_wizard_build_pane(state: _DSWizardState) -> List[str]:
             lines.append('')
             lines.extend(guidance_lines)
     else:
+        if current_section == 'in' and str(state.workflow or '').strip() == 'build':
+            return _ds_wizard_build_in_lines(state)
         menu_lines = _ds_wizard_render_menu_items(state, current_section)
         if current_section == 'report':
             lines.append(_style_section_line('report'))
             lines.extend(_ds_wizard_output_preview_lines(state))
         elif current_section == 'in':
-            lines.append(_style_section_line('inputs and sources'))
+            if str(state.workflow or '').strip() == 'build':
+                lines.append(_style_section_line('load data'))
+            else:
+                lines.append(_style_section_line('inputs and sources'))
         elif current_section == 'model':
             lines.append(_style_section_line('model context'))
         elif current_section == 'eval':
@@ -9431,6 +10034,11 @@ def _ds_wizard_render_wide(state: _DSWizardState, width: int) -> List[str]:
         l = left_lines[i] if i < len(left_lines) else ''
         r = right_lines[i] if i < len(right_lines) else ''
         lines.append('{0} {1}'.format(ljust_ansi(l, left_rail_width), r).rstrip())
+
+    footer_line = _ds_wizard_build_in_footer_line(state)
+    if footer_line:
+        lines.append('')
+        lines.append(footer_line)
     
     action_line = _ds_wizard_action_line(state)
     lines.append('')
@@ -9465,6 +10073,10 @@ def _ds_wizard_render_stacked(state: _DSWizardState) -> List[str]:
         lines.extend(_ds_wizard_right_pane_ops_rows(state))
         lines.append('')
         lines.extend(_ds_wizard_build_pane(state))
+        footer_line = _ds_wizard_build_in_footer_line(state)
+        if footer_line:
+            lines.append('')
+            lines.append(footer_line)
         lines.append('')
         action_line = _ds_wizard_action_line(state)
         if action_line:
@@ -9474,11 +10086,9 @@ def _ds_wizard_render_stacked(state: _DSWizardState) -> List[str]:
     return lines
 
 def _ds_wizard_attempt_execute(state: _DSWizardState) -> Dict[str, Any]:
-    issues = _ds_wizard_validation_issues(state)
+    issues = _ds_wizard_run_gate_issues(state)
     if issues:
         return {
-            'timestamp_utc': _utc_now(),
-            'runtime_cli_surface': 'observerctl',
             'decision': 'no-go',
             'action': 'ds-wizard-execute',
             'command_family': 'ds',
@@ -9493,16 +10103,24 @@ def _ds_wizard_attempt_execute(state: _DSWizardState) -> Dict[str, Any]:
     workflow = str(state.workflow or '').strip()
     try:
         if workflow == 'build':
-            split_train, split_val, split_test = _ds_wizard_resolved_split_values(state)
-            packet = _ds_build(
-                input_paths=[Path(str(item)) for item in state.values.get('input_paths', [])],
-                out_dir=str(state.values.get('out_dir', '')),
-                seed=int(state.values.get('seed', 42)),
-                split_train=split_train,
-                split_val=split_val,
-                split_test=split_test,
-                max_lines_per_file=None,
-            )
+            build_input_paths = [Path(str(item)) for item in state.values.get('input_paths', [])]
+            if build_input_paths:
+                split_train, split_val, split_test = _ds_wizard_resolved_split_values(state)
+                packet = _ds_build(
+                    input_paths=build_input_paths,
+                    out_dir=str(state.values.get('out_dir', '')),
+                    seed=int(state.values.get('seed', 42)),
+                    split_train=split_train,
+                    split_val=split_val,
+                    split_test=split_test,
+                    max_lines_per_file=None,
+                )
+            else:
+                packet = _ds_build_from_dataset_manifest(
+                    dataset_manifest=str(state.values.get('dataset_manifest', '')),
+                    out_dir=str(state.values.get('out_dir', '')),
+                    seed=int(state.values.get('seed', 42)),
+                )
         elif workflow == 'train':
             packet = _ds_train(
                 dataset=str(state.values.get('dataset_manifest', '')),
@@ -9525,13 +10143,6 @@ def _ds_wizard_attempt_execute(state: _DSWizardState) -> Dict[str, Any]:
                 dataset=str(state.values.get('dataset_manifest', '')),
                 model=str(state.values.get('train_manifest') or state.values.get('model_path', '')),
                 out_file=str(state.values.get('scores_out', '')),
-            )
-        elif workflow == 'run-demo':
-            packet = _ds_run_demo(
-                out_dir=str(state.values.get('out_dir', '')),
-                dataset_seed=int(state.values.get('dataset_seed', 123)),
-                model_seed=int(state.values.get('model_seed', 42)),
-                max_fpr=float(state.values.get('max_fpr', 0.01)),
             )
         elif workflow == 'run-pipeline':
             split_train, split_val, split_test = _ds_wizard_resolved_split_values(state)
@@ -9590,7 +10201,7 @@ def _ds_wizard_attempt_execute(state: _DSWizardState) -> Dict[str, Any]:
 
 
 def _ds_wizard_packet(state: _DSWizardState, interactive: bool = False) -> Dict[str, Any]:
-    issues = _ds_wizard_validation_issues(state)
+    issues = _ds_wizard_run_gate_issues(state)
     return {
         'timestamp_utc': _utc_now(),
         'runtime_cli_surface': 'observerctl',
@@ -9606,6 +10217,7 @@ def _ds_wizard_packet(state: _DSWizardState, interactive: bool = False) -> Dict[
         'current_section': str(state.active_section or 'flow'),
         'visible_sections': _ds_wizard_visible_sections(state),
         'execution_state': 'blocked' if issues else 'ready',
+        'advance_state': _ds_wizard_advance_status(state),
         'validation_issues': issues,
         'command_preview': _ds_wizard_command_preview(state),
         'hydrated_from': dict(state.hydrated_from),
@@ -9669,6 +10281,68 @@ def _ds_wizard_handle_command(state: _DSWizardState, command: str) -> Tuple[_DSW
         return _ds_wizard_open_item_peek(state, _ds_wizard_resolve_field_alias(text.split(' ', 1)[1])), None, False
     if lowered in ('close', 'dismiss'):
         return _ds_wizard_clear_transient_view(state), None, False
+    if _ds_wizard_build_in_is_active(state) and str(state.transient_view or '').strip() == '':
+        if lowered in ('prev', 'back'):
+            if state.build_in_stage == 'records':
+                state.build_in_stage = 'mode'
+                state.last_action = 'build-in:prev:mode'
+                return state, None, False
+            if state.build_in_stage == 'mode':
+                state.build_in_stage = 'source'
+                state.last_action = 'build-in:prev:source'
+                return state, None, False
+        if lowered == 'next':
+            if state.build_in_stage == 'source' and str(state.build_in_family or '').strip():
+                state.build_in_stage = 'mode'
+                state.last_action = 'build-in:next:mode'
+                return state, None, False
+            if state.build_in_stage == 'mode' and str(state.build_in_mode or '').strip():
+                state.build_in_stage = 'records'
+                state.last_action = 'build-in:next:records'
+                return state, None, False
+        if lowered.startswith('date ') and state.build_in_stage in ('mode', 'records'):
+            try:
+                return _ds_wizard_build_in_set_date(state, text.split(' ', 1)[1]), None, False
+            except ValueError as exc:
+                _ds_wizard_set_transient_lines(state, [str(exc)])
+                return state, None, False
+        if state.build_in_stage == 'source':
+            if lowered in ('1', 'simulation', 'simulation (sim)', 'sim'):
+                return _ds_wizard_build_in_set_source_family(state, 'sim'), None, False
+            if lowered in ('2', 'collected', 'collected (real)', 'real'):
+                return _ds_wizard_build_in_set_source_family(state, 'real'), None, False
+        elif state.build_in_stage == 'mode':
+            mode_map = {
+                '1': 'watch',
+                '2': 'canary',
+                '3': 'live',
+                '4': 'honeypot',
+                '5': 'all',
+                'watch': 'watch',
+                'canary': 'canary',
+                'live': 'live',
+                'honeypot': 'honeypot',
+                'all': 'all',
+            }
+            if lowered in mode_map:
+                return _ds_wizard_build_in_set_mode(state, mode_map[lowered]), None, False
+        elif state.build_in_stage == 'records':
+            if lowered == '<':
+                return _ds_wizard_build_in_set_page(state, int(state.build_in_page or 1) - 1), None, False
+            if lowered == '>':
+                return _ds_wizard_build_in_set_page(state, int(state.build_in_page or 1) + 1), None, False
+            if lowered.startswith('page '):
+                page_token = text.split(' ', 1)[1].strip()
+                if page_token.isdigit():
+                    return _ds_wizard_build_in_set_page(state, int(page_token)), None, False
+                _ds_wizard_set_transient_lines(state, ['page requires a number'])
+                return state, None, False
+            build_in_summary = _ds_wizard_build_in_filtered_entries(state)
+            if text.isdigit() or any(
+                str(entry.get('build_in_alias', '') or '').strip().lower() == lowered
+                for entry in list(build_in_summary.get('entries', []) or [])
+            ):
+                return _ds_wizard_build_in_select_dataset(state, text), None, False
     if lowered == 'next':
         return _ds_wizard_move_section(state, 'next'), None, False
     if lowered in ('prev', 'back'):
@@ -9676,14 +10350,14 @@ def _ds_wizard_handle_command(state: _DSWizardState, command: str) -> Tuple[_DSW
     if lowered in ('home', 'landing'):
         return _ds_wizard_open_landing(state), None, False
     if lowered in ('validate', 'test'):
-        issues = _ds_wizard_validation_issues(state)
+        issues = _ds_wizard_run_gate_issues(state)
         if issues:
             _ds_wizard_set_transient_lines(
                 state,
                 ['validation: blocked'] + ['- {0}'.format(issue) for issue in issues] + ['Use configure or hydrate commands to resolve the blockers.'],
             )
         else:
-            _ds_wizard_set_transient_lines(state, ['validation: ready', 'Open run and type execute to start the workflow.'])
+            _ds_wizard_set_transient_lines(state, ['validation: ready', 'status remains no-go until execute succeeds.', 'Open run and type execute to start the workflow.'])
         return state, None, False
     if lowered == 'open':
         _ds_wizard_set_transient_lines(state, ["Use 'open <section>' to navigate to a section (for example: open run)."])
@@ -9722,13 +10396,29 @@ def _ds_wizard_handle_command(state: _DSWizardState, command: str) -> Tuple[_DSW
     if lowered == 'execute':
         packet = _ds_wizard_attempt_execute(state)
         if str(packet.get('decision', 'no-go')).strip().lower() != 'go':
-            issues = packet.get('validation_issues', []) if isinstance(packet.get('validation_issues', []), list) else []
+            _ds_wizard_set_transient_lines(state, ['execute blocked: validate this workflow first'])
+            return state, None, False
+        state = _ds_wizard_sync_execution_artifacts(state, packet)
+        command_preview = _ds_wizard_command_preview(state)
+        missing_artifacts = _ds_wizard_record_workflow_completion(state, packet, command_preview)
+        if missing_artifacts:
             _ds_wizard_set_transient_lines(
                 state,
-                ['executing blocked:'] + ['- {0}'.format(issue) for issue in issues] + ['Open check or configure to resolve the blockers, then try execute again.'],
+                [
+                    'execute complete, but status stays no-go: missing expected artifacts',
+                    '- {0}'.format(', '.join(missing_artifacts)),
+                ],
             )
-            return state, None, False
-        return state, packet, True
+        else:
+            _ds_wizard_set_transient_lines(
+                state,
+                [
+                    'execute complete: {0}'.format(str(state.workflow or '').strip()),
+                    'status: go (you can advance when ready)',
+                ],
+            )
+        state.last_action = 'execute:{0}'.format(str(state.workflow or '').strip() or 'unknown')
+        return state, None, False
     if lowered in ('exit', 'q', 'quit'):
         return state, _ds_wizard_exit_packet(state, 'command'), True
     if lowered in _DS_WIZARD_WORKFLOWS:
@@ -10159,6 +10849,92 @@ def _ds_build(
         },
         lineage={
             'input_paths': list(input_paths),
+        },
+    )
+
+
+def _ds_stage_dataset_manifest(source_manifest_path: Path, target_dataset_dir: Path) -> Dict[str, Any]:
+    payload = json.loads(source_manifest_path.read_text(encoding='utf-8'))
+    if not isinstance(payload, dict):
+        raise ValueError('dataset manifest is not a JSON object')
+
+    target_dataset_dir.mkdir(parents=True, exist_ok=True)
+
+    def _copy_required_artifact(key: str, target_name: str, *, required: bool) -> str:
+        text = str(payload.get(key, '') or '').strip()
+        if not text:
+            if required:
+                raise ValueError('dataset manifest missing required field: {0}'.format(key))
+            return ''
+        source_path = _resolve_existing_reference_path(text, source_manifest_path.parent)
+        if source_path is None:
+            if required:
+                raise FileNotFoundError('dataset manifest path missing: {0}'.format(key))
+            return ''
+        target_path = target_dataset_dir / target_name
+        if str(source_path.resolve()) != str(target_path.resolve()):
+            shutil.copy2(source_path, target_path)
+        return str(target_path)
+
+    features_csv = _copy_required_artifact('features_csv', 'features.csv', required=True)
+    labels_csv = _copy_required_artifact('labels_csv', 'labels.csv', required=False)
+    splits_csv = _copy_required_artifact('splits_csv', 'splits.csv', required=True)
+    split_manifest_json = _copy_required_artifact('split_manifest_json', 'split_manifest.json', required=True)
+
+    staged_payload = dict(payload)
+    staged_payload['features_csv'] = features_csv
+    staged_payload['labels_csv'] = labels_csv or None
+    staged_payload['splits_csv'] = splits_csv
+    staged_payload['split_manifest_json'] = split_manifest_json
+
+    staged_manifest_path = target_dataset_dir / 'dataset_manifest.json'
+    staged_manifest_path.write_text(json.dumps(staged_payload, indent=2, sort_keys=True), encoding='utf-8')
+    return {
+        'manifest_payload': staged_payload,
+        'artifact_paths': {
+            'dataset_manifest': staged_manifest_path,
+            'features_csv': Path(features_csv),
+            'labels_csv': Path(labels_csv) if labels_csv else None,
+            'splits_csv': Path(splits_csv),
+            'split_manifest_json': Path(split_manifest_json),
+        },
+    }
+
+
+def _ds_build_from_dataset_manifest(dataset_manifest: str, out_dir: str, seed: int) -> Dict[str, Any]:
+    bundle, target_out_dir = _ds_prepare_bundle_for_artifact('build', out_dir, 'dataset', ['datasets'])
+    source_manifest_path = Path(str(dataset_manifest)).resolve()
+    staged = _ds_stage_dataset_manifest(source_manifest_path, target_out_dir)
+    payload = dict(staged.get('manifest_payload', {}) or {})
+    artifact_paths = dict(staged.get('artifact_paths', {}) or {})
+    packet = {
+        'timestamp_utc': _utc_now(),
+        'runtime_cli_surface': 'observerctl',
+        'decision': 'go',
+        'action': 'ds-build',
+        'command_family': 'ds',
+        'command_path': 'observerctl ds build',
+        'implementation_state': _DS_RUNTIME_STATE_COMMAND,
+        'underlying_surface': 'observerctl approved-dataset materialization',
+        'summary': 'Approved dataset materialized through observerctl ds.',
+        'run_id': bundle.run_id,
+        'seed': int(payload.get('seed', seed) or seed),
+        'split': dict(payload.get('split', {})) if isinstance(payload.get('split', {}), dict) else {},
+        'total_records': int(payload.get('total_records', 0) or 0),
+        'has_labels': bool(payload.get('has_labels', False)),
+        'artifacts': _ds_artifact_strings(artifact_paths),
+        'reason_codes': [],
+    }
+    return _ds_finalize_run_packet(
+        packet,
+        bundle=bundle,
+        artifact_paths=artifact_paths,
+        context={
+            'output_override': bool(str(out_dir).strip()),
+            'source_materialization': True,
+        },
+        lineage={
+            'dataset_manifest': source_manifest_path,
         },
     )
 
@@ -10952,6 +11728,43 @@ def _dispatch(args: argparse.Namespace) -> Dict[str, Any]:
 
     if cmd == 'ds':
         if args.ds_cmd == 'build':
+            if str(getattr(args, 'dataset', '') or '').strip():
+                _build_release = _librarian_dataset_release(args.dataset, 'observerctl-ds-build', 'ds-build')
+                if str(_build_release.get('decision', 'no-go')).strip().lower() != 'go':
+                    _build_summary = str(_build_release.get('summary', '') or '').strip()
+                    return {
+                        'timestamp_utc': _utc_now(),
+                        'runtime_cli_surface': 'observerctl',
+                        'decision': 'no-go',
+                        'action': 'ds-build',
+                        'command_family': 'ds',
+                        'command_path': 'observerctl ds build',
+                        'summary': _build_summary or (
+                            'dataset token could not be resolved via the librarian; '
+                            'raw filesystem paths are not accepted -- '
+                            'register the dataset first with: observerctl librarian dataset register <manifest>'
+                        ),
+                        'reason_codes': ['critical_check_failed:librarian_dataset_not_resolved'],
+                    }
+                _build_dataset_path = _resolve_existing_project_path(
+                    str(_build_release.get('dataset_manifest_path', '') or '').strip()
+                )
+                if _build_dataset_path is None:
+                    return {
+                        'timestamp_utc': _utc_now(),
+                        'runtime_cli_surface': 'observerctl',
+                        'decision': 'no-go',
+                        'action': 'ds-build',
+                        'command_family': 'ds',
+                        'command_path': 'observerctl ds build',
+                        'summary': 'resolved dataset manifest path is missing or does not exist',
+                        'reason_codes': ['critical_check_failed:librarian_dataset_manifest_missing'],
+                    }
+                return _ds_build_from_dataset_manifest(
+                    dataset_manifest=str(_build_dataset_path),
+                    out_dir=args.out_dir,
+                    seed=args.seed,
+                )
             return _ds_build(
                 input_paths=args.input,
                 out_dir=args.out_dir,
@@ -11335,7 +12148,9 @@ def _build_parser() -> argparse.ArgumentParser:
     ds = sub.add_parser('ds', help='Data-science operations namespace')
     ds_sub = ds.add_subparsers(dest='ds_cmd', required=True)
     ds_build = ds_sub.add_parser('build', help='Build a dataset from observer telemetry inputs')
-    ds_build.add_argument('--input', action='append', required=True, type=Path, help='JSONL input path (repeatable)')
+    ds_build_source = ds_build.add_mutually_exclusive_group(required=True)
+    ds_build_source.add_argument('--input', action='append', type=Path, help='JSONL input path (repeatable)')
+    ds_build_source.add_argument('--dataset', default='', help='Approved dataset selector (index, run_id, display name, or entry_id)')
     ds_build.add_argument('--out-dir', default='', help='Output dataset directory')
     ds_build.add_argument('--seed', type=int, default=1337, help='Deterministic split seed')
     ds_build.add_argument('--split-train', type=float, default=0.7)

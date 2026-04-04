@@ -1,0 +1,65 @@
+{
+  "action": "ds-train",
+  "analysis_root": "local_untracked/analysis",
+  "artifact_dirs": {
+    "model": "local_untracked/analysis/runs/train/train_20260404T041211146010Z/model"
+  },
+  "artifacts": {
+    "metrics_path": "local_untracked/analysis/runs/train/train_20260404T041211146010Z/model/metrics.json",
+    "model_path": "local_untracked/analysis/runs/train/train_20260404T041211146010Z/model/model.pkl",
+    "train_manifest": "local_untracked/analysis/runs/train/train_20260404T041211146010Z/model/train_manifest.json"
+  },
+  "category": "model-train",
+  "context": {
+    "output_override": false,
+    "seed": 42
+  },
+  "decision": "go",
+  "family_id": "ds_run",
+  "git": {
+    "branch": "main",
+    "head": "a11391b9ac0136e617175e70e881426b29f83cd8",
+    "is_dirty": true
+  },
+  "implementation_state": "command-available",
+  "indexes_dir": "local_untracked/analysis/indexes",
+  "kind": "run",
+  "lineage": {
+    "dataset_manifest": "local_untracked/analysis/runs/build/build_20260404T040910794598Z/dataset/dataset_manifest.json",
+    "source_report_paths": {
+      "json": "local_untracked/analysis/runs/train/train_20260404T041211146010Z/report/report.json",
+      "manifest": "local_untracked/analysis/runs/train/train_20260404T041211146010Z/report/manifest.json",
+      "markdown": "local_untracked/analysis/runs/train/train_20260404T041211146010Z/report/report.md"
+    },
+    "source_run_root": "local_untracked/analysis/runs/train/train_20260404T041211146010Z"
+  },
+  "producer_command": "observerctl ds train",
+  "producer_entrypoint": "projects/calamum-moltbook-observer/src/observerctl.py",
+  "published_run_dir": "docs/reports/ds/runs/2026/2026-04/train_20260404T041211146010Z",
+  "report_dir": "docs/reports/ds/runs/2026/2026-04/train_20260404T041211146010Z",
+  "report_paths": {
+    "json": "docs/reports/ds/runs/2026/2026-04/train_20260404T041211146010Z/report.json",
+    "manifest": "docs/reports/ds/runs/2026/2026-04/train_20260404T041211146010Z/manifest.json",
+    "markdown": "docs/reports/ds/runs/2026/2026-04/train_20260404T041211146010Z/report.md"
+  },
+  "result": {
+    "metrics": {},
+    "model_type": "unsupervised",
+    "reason_codes": []
+  },
+  "run_id": "train_20260404T041211146010Z",
+  "run_root": "local_untracked/analysis/runs/train/train_20260404T041211146010Z",
+  "run_root_policy": "canonical",
+  "runtime_cli_surface": "observerctl",
+  "schema_version": "1.0",
+  "source_report_paths": {
+    "json": "local_untracked/analysis/runs/train/train_20260404T041211146010Z/report/report.json",
+    "manifest": "local_untracked/analysis/runs/train/train_20260404T041211146010Z/report/manifest.json",
+    "markdown": "local_untracked/analysis/runs/train/train_20260404T041211146010Z/report/report.md"
+  },
+  "source_run_root": "local_untracked/analysis/runs/train/train_20260404T041211146010Z",
+  "summary": "Model training completed through observerctl ds.",
+  "timestamp_utc": "2026-04-04T04:13:49.828933Z",
+  "underlying_surface": "analysis.train_model",
+  "workflow": "train"
+}

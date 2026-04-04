@@ -4,6 +4,7 @@
 **Workflow**: `demo`
 **Created (UTC)**: `2026-03-31T22:12:20.857168Z`
 **Runtime CLI surface**: `observerctl`
+**Command path**: `observerctl ds run demo`
 
 ## Executive summary
 
@@ -17,7 +18,8 @@ Demo pipeline completed through observerctl ds.
 | Workflow | demo |
 | Decision | go |
 | Created UTC | 2026-03-31T22:12:20.857168Z |
-| Runtime CLI surface | observerctl |
+| Runtime CLI Surface | observerctl |
+| Command Path | observerctl ds run demo |
 
 ## Context
 
@@ -40,7 +42,7 @@ Demo pipeline completed through observerctl ds.
 
 ### Counts
 
-| TP | FP | TN | FN |
+| Tp | Fp | Tn | Fn |
 | ---: | ---: | ---: | ---: |
 | 10 | 0 | 50 | 0 |
 
@@ -64,7 +66,6 @@ Demo pipeline completed through observerctl ds.
 | Flag Rule | `score <= threshold` |
 | Flagged Records | `2` |
 | Invalid Rows | `0` |
-| Reason Codes | `[]` |
 | Records Scored | `60` |
 | Report JSON | `local_untracked/analysis/runs/demo/demo_20260331T221217647010Z/scoring/threshold_report.json` |
 | Report MD | `local_untracked/analysis/runs/demo/demo_20260331T221217647010Z/scoring/threshold_report.md` |

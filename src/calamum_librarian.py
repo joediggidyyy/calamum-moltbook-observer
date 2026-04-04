@@ -67,6 +67,86 @@ VAULT_BASELINE_KIND = 'librarian_vault_checksum'
 VAULT_CONTROL_KIND = 'librarian_vault_control_state'
 VAULT_AUDIT_KIND = 'librarian_vault_audit'
 
+_DATASET_SCOPE_SOURCE_PATTERNS = {
+    'real': (
+        ('resource_real_', 8),
+        ('source=real', 8),
+        ('source:real', 7),
+        ('"source":"real"', 8),
+        ("'source': 'real'", 8),
+        ('\\real\\', 4),
+        ('/real/', 4),
+        ('_real_', 4),
+        ('(real)', 3),
+        (' real ', 2),
+        ('real-', 2),
+        ('real_', 2),
+        ('collected', 2),
+    ),
+    'sim': (
+        ('resource_sim_', 8),
+        ('source=sim', 8),
+        ('source:sim', 7),
+        ('"source":"sim"', 8),
+        ("'source': 'sim'", 8),
+        ('\\sim\\', 4),
+        ('/sim/', 4),
+        ('_sim_', 4),
+        ('(sim)', 3),
+        (' sim ', 2),
+        ('sim-', 2),
+        ('sim_', 2),
+        ('simulation', 2),
+    ),
+}
+
+_DATASET_SCOPE_MODE_PATTERNS = {
+    'watch': (
+        ('resource_real_watch_', 8),
+        ('resource_sim_watch_', 8),
+        ('\\watch\\', 4),
+        ('/watch/', 4),
+        ('_watch_', 4),
+        ('(watch)', 3),
+        (' watch ', 2),
+        ('watch-', 2),
+        ('watch_', 2),
+    ),
+    'canary': (
+        ('resource_real_canary_', 8),
+        ('resource_sim_canary_', 8),
+        ('\\canary\\', 4),
+        ('/canary/', 4),
+        ('_canary_', 4),
+        ('(canary)', 3),
+        (' canary ', 2),
+        ('canary-', 2),
+        ('canary_', 2),
+    ),
+    'live': (
+        ('resource_real_live_', 8),
+        ('resource_sim_live_', 8),
+        ('\\live\\', 4),
+        ('/live/', 4),
+        ('_live_', 4),
+        ('(live)', 3),
+        (' live ', 2),
+        ('live-', 2),
+        ('live_', 2),
+    ),
+    'honeypot': (
+        ('resource_real_honeypot_', 8),
+        ('resource_sim_honeypot_', 8),
+        ('\\honeypot\\', 4),
+        ('/honeypot/', 4),
+        ('_honeypot_', 4),
+        ('(honeypot)', 3),
+        (' honeypot ', 2),
+        ('honeypot-', 2),
+        ('honeypot_', 2),
+    ),
+}
+
 
 def _utc_now_iso() -> str:
     return datetime.now(timezone.utc).isoformat().replace('+00:00', 'Z')
@@ -614,6 +694,136 @@ def _resolve_catalog_ref(project_root: Path, ref: str) -> Path:
     return path.resolve()
 
 
+def _dataset_scope_token(value: str, allowed: Tuple[str, ...]) -> str:
+    token = str(value or '').strip().lower()
+    return token if token in allowed else 'unknown'
+
+
+def _dataset_scope_candidate_texts(
+    manifest_path: Path,
+    payload: Dict[str, Any],
+    *,
+    display_name: str = '',
+    run_id: str = '',
+    source_binding: str = '',
+) -> List[str]:
+    texts: List[str] = [
+        str(manifest_path),
+        str(display_name or ''),
+        str(run_id or ''),
+        str(source_binding or ''),
+        str(payload.get('features_csv', '') or ''),
+        str(payload.get('labels_csv', '') or ''),
+        str(payload.get('splits_csv', '') or ''),
+        str(payload.get('split_manifest_json', '') or ''),
+    ]
+    for item in list(payload.get('inputs', []) or []):
+        if isinstance(item, dict):
+            texts.append(str(item.get('path', '') or ''))
+            texts.append(str(item.get('source', '') or ''))
+            texts.append(str(item.get('mode', '') or ''))
+            texts.append(str(item.get('profile', '') or ''))
+            texts.append(str(item.get('stream_type', '') or ''))
+        else:
+            texts.append(str(item or ''))
+    return [str(text).strip().lower() for text in texts if str(text or '').strip()]
+
+
+def _infer_dataset_scope_token(texts: List[str], patterns_by_token: Dict[str, Tuple[Tuple[str, int], ...]]) -> str:
+    scores: Dict[str, int] = {}
+    for token, patterns in patterns_by_token.items():
+        score = 0
+        for text in texts:
+            for pattern, weight in patterns:
+                if pattern in text:
+                    score += int(weight)
+        scores[token] = score
+
+    if not scores:
+        return 'unknown'
+    best_score = max(scores.values())
+    if best_score <= 0:
+        return 'unknown'
+    winners = [token for token, score in scores.items() if score == best_score]
+    return winners[0] if len(winners) == 1 else 'unknown'
+
+
+def _infer_dataset_scope(
+    manifest_path: Path,
+    payload: Dict[str, Any],
+    *,
+    source: str = '',
+    mode: str = '',
+    display_name: str = '',
+    run_id: str = '',
+    source_binding: str = '',
+) -> Tuple[str, str]:
+    resolved_source = _dataset_scope_token(source, ('sim', 'real'))
+    resolved_mode = _dataset_scope_token(mode, ('watch', 'canary', 'live', 'honeypot'))
+    if resolved_source != 'unknown' and resolved_mode != 'unknown':
+        return resolved_source, resolved_mode
+
+    texts = _dataset_scope_candidate_texts(
+        manifest_path,
+        payload,
+        display_name=display_name,
+        run_id=run_id,
+        source_binding=source_binding,
+    )
+    if resolved_source == 'unknown':
+        resolved_source = _infer_dataset_scope_token(texts, _DATASET_SCOPE_SOURCE_PATTERNS)
+    if resolved_mode == 'unknown':
+        resolved_mode = _infer_dataset_scope_token(texts, _DATASET_SCOPE_MODE_PATTERNS)
+    return resolved_source, resolved_mode
+
+
+def _normalize_dataset_scope_entry(paths: Dict[str, Path], entry: Dict[str, Any]) -> Dict[str, Any]:
+    row = dict(entry or {})
+    source = _dataset_scope_token(str(row.get('source', '') or ''), ('sim', 'real'))
+    mode = _dataset_scope_token(str(row.get('mode', '') or ''), ('watch', 'canary', 'live', 'honeypot'))
+    if source != 'unknown' and mode != 'unknown':
+        row['source'] = source
+        row['mode'] = mode
+        return row
+
+    resolver = dict(row.get('resolver', {}) or {}) if isinstance(row.get('resolver', {}), dict) else {}
+    manifest_ref = str(resolver.get('dataset_manifest_path', '') or '').strip()
+    if not manifest_ref:
+        row['source'] = source
+        row['mode'] = mode
+        return row
+
+    try:
+        manifest_path = _resolve_catalog_ref(paths['project_root'], manifest_ref)
+    except Exception:
+        row['source'] = source
+        row['mode'] = mode
+        return row
+    if not manifest_path.exists():
+        row['source'] = source
+        row['mode'] = mode
+        return row
+
+    payload = _read_json_dict(manifest_path, default={})
+    if not payload:
+        row['source'] = source
+        row['mode'] = mode
+        return row
+
+    inferred_source, inferred_mode = _infer_dataset_scope(
+        manifest_path,
+        payload,
+        source=source,
+        mode=mode,
+        display_name=str(row.get('display_name', '') or '').strip(),
+        run_id=str(row.get('run_id', '') or '').strip(),
+        source_binding=str(row.get('source_binding', '') or '').strip(),
+    )
+    row['source'] = inferred_source
+    row['mode'] = inferred_mode
+    return row
+
+
 def _utc_after_seconds(seconds: int) -> str:
     return (datetime.now(timezone.utc) + timedelta(seconds=int(seconds))).isoformat().replace('+00:00', 'Z')
 
@@ -641,6 +851,7 @@ def _sorted_dataset_entries(entries: List[Dict[str, Any]]) -> List[Dict[str, Any
 
 
 def _dataset_selector_entry(entry: Dict[str, Any], index: int) -> Dict[str, Any]:
+    resolver = dict(entry.get('resolver', {}) or {}) if isinstance(entry.get('resolver', {}), dict) else {}
     return {
         'index': int(index),
         'entry_id': str(entry.get('entry_id', '')),
@@ -657,6 +868,7 @@ def _dataset_selector_entry(entry: Dict[str, Any], index: int) -> Dict[str, Any]
         'requires_librarian_attestation': bool(entry.get('requires_librarian_attestation', False)),
         'source': str(entry.get('source', 'unknown') or 'unknown'),
         'mode': str(entry.get('mode', 'unknown') or 'unknown'),
+        'dataset_manifest_sha256': str(resolver.get('dataset_manifest_sha256', '') or '').strip(),
     }
 
 
@@ -665,7 +877,9 @@ def _load_dataset_snapshot(paths: Dict[str, Path]) -> List[Dict[str, Any]]:
     payload = _read_json_dict(paths['authority_snapshot_path'], default={})
     entries = payload.get('entries', []) if isinstance(payload.get('entries', []), list) else []
     if entries:
-        return _sorted_dataset_entries([entry for entry in entries if isinstance(entry, dict)])
+        return _sorted_dataset_entries(
+            [_normalize_dataset_scope_entry(paths, entry) for entry in entries if isinstance(entry, dict)]
+        )
 
     entries = []
     if paths['authority_catalog_path'].exists():
@@ -678,7 +892,7 @@ def _load_dataset_snapshot(paths: Dict[str, Path]) -> List[Dict[str, Any]]:
             except Exception:
                 continue
             if isinstance(row, dict):
-                entries.append(row)
+                entries.append(_normalize_dataset_scope_entry(paths, row))
     return _sorted_dataset_entries(entries)
 
 
@@ -774,6 +988,15 @@ def _build_dataset_entry(
     status = 'approved' if readiness == 'ready' else 'held'
     resolved_binding = str(source_binding or 'dataset_manifest_sha256:{0}'.format(manifest_sha)).strip()
     display = str(display_name or entry_run_id or manifest_path.parent.name or manifest_path.stem).strip()
+    resolved_source, resolved_mode = _infer_dataset_scope(
+        manifest_path,
+        payload,
+        source=source,
+        mode=mode,
+        display_name=display,
+        run_id=entry_run_id,
+        source_binding=resolved_binding,
+    )
 
     resolver = {
         'dataset_manifest_path': normalize_repo_or_absolute_path(manifest_path, project_root),
@@ -797,8 +1020,8 @@ def _build_dataset_entry(
         'readiness_issues': readiness_issues,
         'access_class': access_token,
         'requires_librarian_attestation': bool(access_token == DATASET_ACCESS_CLASS_PROTECTED),
-        'source': str(source or 'unknown') or 'unknown',
-        'mode': str(mode or 'unknown') or 'unknown',
+        'source': resolved_source,
+        'mode': resolved_mode,
         'source_binding': resolved_binding,
         'report_manifest_ref': str(report_manifest_ref or '').strip(),
         'registration_kind': str(registration_kind or 'manual').strip() or 'manual',
