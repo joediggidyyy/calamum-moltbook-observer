@@ -1237,6 +1237,215 @@ def list_librarian_datasets_packet(project_anchor: Path) -> Dict[str, Any]:
     }
 
 
+def _report_store_paths(project_anchor: Path) -> Dict[str, Path]:
+    project_root = find_project_root(project_anchor)
+    repo_root = project_root.parent.parent if project_root.parent.name == 'projects' else project_root.parent
+    reports_root = project_root / 'docs' / 'reports'
+    collections_root = reports_root / 'collections'
+    archive_parent = repo_root / 'quarantine_legacy_archive' / project_root.name
+    return {
+        'project_root': project_root,
+        'repo_root': repo_root,
+        'reports_root': reports_root,
+        'collections_root': collections_root,
+        'archive_parent': archive_parent,
+    }
+
+
+def _report_store_collection_rows(paths: Dict[str, Path]) -> List[Dict[str, Any]]:
+    rows: List[Dict[str, Any]] = []
+    collections_root = paths['collections_root']
+    project_root = paths['project_root']
+    if not collections_root.exists():
+        return rows
+
+    for alias_dir in sorted(candidate for candidate in collections_root.iterdir() if candidate.is_dir()):
+        collection_dir = alias_dir / 'collection'
+        processing_dir = alias_dir / 'processing'
+        collection_packets = sorted(collection_dir.glob('*.collection.md')) if collection_dir.exists() else []
+        processing_packets = sorted(path for path in processing_dir.rglob('*.md')) if processing_dir.exists() else []
+        stale_report_path = collection_dir / 'report.md'
+        rows.append(
+            {
+                'collection_alias': alias_dir.name,
+                'path': normalize_repo_or_absolute_path(alias_dir, project_root),
+                'collection_packet_count': int(len(collection_packets)),
+                'processing_packet_count': int(len(processing_packets)),
+                'stale_report_md_present': bool(stale_report_path.exists()),
+                'stale_report_md_path': normalize_repo_or_absolute_path(stale_report_path, project_root) if stale_report_path.exists() else '',
+                'latest_collection_packet': normalize_repo_or_absolute_path(collection_packets[-1], project_root) if collection_packets else '',
+                'latest_processing_packet': normalize_repo_or_absolute_path(processing_packets[-1], project_root) if processing_packets else '',
+            }
+        )
+    return rows
+
+
+def _report_store_archive_manifest(
+    paths: Dict[str, Path],
+    *,
+    action: str,
+    reason: str,
+    archive_root: Path,
+    archived_paths: List[Path],
+    live_target: Path,
+) -> Dict[str, Any]:
+    project_root = paths['project_root']
+    manifest = {
+        'action': str(action or '').strip(),
+        'reason': str(reason or '').strip(),
+        'project_root': str(project_root),
+        'archive_root': str(archive_root),
+        'live_target': str(live_target),
+        'archived_paths': [str(path) for path in archived_paths],
+        'archived_aliases': [path.name for path in archived_paths],
+        'archived_alias_count': int(len(archived_paths)),
+        'archived_at_utc': utc_now_iso(),
+    }
+    archive_root.mkdir(parents=True, exist_ok=True)
+    (archive_root / 'archive_manifest.json').write_text(json.dumps(manifest, indent=2, sort_keys=True), encoding='utf-8')
+    return manifest
+
+
+def librarian_report_store_packet(
+    project_anchor: Path,
+    *,
+    show: bool = False,
+    purge: bool = False,
+    delete_alias: str = '',
+) -> Dict[str, Any]:
+    paths = _report_store_paths(project_anchor)
+    project_root = paths['project_root']
+    collections_root = paths['collections_root']
+    reports_root = paths['reports_root']
+    archive_parent = paths['archive_parent']
+
+    delete_token = str(delete_alias or '').strip()
+    if not show and not purge and not delete_token:
+        show = True
+
+    action_count = int(bool(show)) + int(bool(purge)) + int(bool(delete_token))
+    if action_count != 1:
+        return {
+            'timestamp_utc': utc_now_iso(),
+            'runtime_cli_surface': 'observerctl',
+            'decision': 'no-go',
+            'action': 'librarian-store-reports',
+            'summary': 'Choose exactly one report-store action: --show, --purge, or --delete <wizard-alias>.',
+            'reason_codes': ['policy_denied:librarian_store_reports_action_conflict'],
+            'artifacts': {
+                'reports_root': normalize_repo_or_absolute_path(reports_root, project_root),
+                'collections_root': normalize_repo_or_absolute_path(collections_root, project_root),
+                'archive_parent': normalize_repo_or_absolute_path(archive_parent, project_root),
+            },
+        }
+
+    if show:
+        rows = _report_store_collection_rows(paths)
+        stale_count = int(sum(1 for row in rows if bool(row.get('stale_report_md_present', False))))
+        return {
+            'timestamp_utc': utc_now_iso(),
+            'runtime_cli_surface': 'observerctl',
+            'decision': 'go',
+            'action': 'librarian-store-reports-show',
+            'summary': 'Tracked report collection aliases enumerated.' if rows else 'No tracked report collection aliases are materialized.',
+            'count': int(len(rows)),
+            'stale_report_md_count': stale_count,
+            'report_collections': rows,
+            'reason_codes': [],
+            'artifacts': {
+                'reports_root': normalize_repo_or_absolute_path(reports_root, project_root),
+                'collections_root': normalize_repo_or_absolute_path(collections_root, project_root),
+                'archive_parent': normalize_repo_or_absolute_path(archive_parent, project_root),
+            },
+        }
+
+    stamp = datetime.now(timezone.utc).strftime('%Y%m%dT%H%M%SZ')
+    archive_parent.mkdir(parents=True, exist_ok=True)
+
+    if purge:
+        archived_paths: List[Path] = []
+        archive_root = archive_parent / 'report_collections_reset_{0}'.format(stamp)
+        destination_dir = archive_root / 'collections'
+        if collections_root.exists():
+            archived_paths = sorted(path for path in collections_root.iterdir() if path.exists())
+            shutil.move(str(collections_root), str(destination_dir))
+        collections_root.mkdir(parents=True, exist_ok=True)
+        manifest = _report_store_archive_manifest(
+            paths,
+            action='archive-and-reset-report-collections',
+            reason='reset tracked report collections before rerun from full collection pipeline',
+            archive_root=archive_root,
+            archived_paths=archived_paths,
+            live_target=collections_root,
+        )
+        return {
+            'timestamp_utc': utc_now_iso(),
+            'runtime_cli_surface': 'observerctl',
+            'decision': 'go',
+            'action': 'librarian-store-reports-purge',
+            'summary': 'Tracked report collection tree archived and recreated empty.',
+            'archived_aliases': list(manifest.get('archived_aliases', []) or []),
+            'archived_alias_count': int(manifest.get('archived_alias_count', 0) or 0),
+            'report_collections': _report_store_collection_rows(paths),
+            'reason_codes': [],
+            'artifacts': {
+                'reports_root': normalize_repo_or_absolute_path(reports_root, project_root),
+                'collections_root': normalize_repo_or_absolute_path(collections_root, project_root),
+                'archive_root': normalize_repo_or_absolute_path(archive_root, project_root),
+                'archive_manifest_json': normalize_repo_or_absolute_path(archive_root / 'archive_manifest.json', project_root),
+            },
+        }
+
+    alias_dir = collections_root / delete_token
+    if not alias_dir.exists() or not alias_dir.is_dir():
+        return {
+            'timestamp_utc': utc_now_iso(),
+            'runtime_cli_surface': 'observerctl',
+            'decision': 'no-go',
+            'action': 'librarian-store-reports-delete',
+            'summary': 'Tracked report collection alias could not be resolved for archive-first delete.',
+            'reason_codes': ['critical_check_failed:librarian_report_collection_not_found'],
+            'delete_alias': delete_token,
+            'report_collections': _report_store_collection_rows(paths),
+            'artifacts': {
+                'reports_root': normalize_repo_or_absolute_path(reports_root, project_root),
+                'collections_root': normalize_repo_or_absolute_path(collections_root, project_root),
+                'archive_parent': normalize_repo_or_absolute_path(archive_parent, project_root),
+            },
+        }
+
+    archive_root = archive_parent / 'report_collection_delete_{0}_{1}'.format(sanitize_run_id(delete_token) or 'collection', stamp)
+    destination_dir = archive_root / 'collections' / alias_dir.name
+    shutil.move(str(alias_dir), str(destination_dir))
+    manifest = _report_store_archive_manifest(
+        paths,
+        action='archive-and-delete-report-collection',
+        reason='archive-first removal of one tracked report collection alias',
+        archive_root=archive_root,
+        archived_paths=[destination_dir],
+        live_target=collections_root,
+    )
+    collections_root.mkdir(parents=True, exist_ok=True)
+    return {
+        'timestamp_utc': utc_now_iso(),
+        'runtime_cli_surface': 'observerctl',
+        'decision': 'go',
+        'action': 'librarian-store-reports-delete',
+        'summary': 'Tracked report collection alias archived out of the live report tree.',
+        'delete_alias': delete_token,
+        'archived_aliases': list(manifest.get('archived_aliases', []) or []),
+        'archived_alias_count': int(manifest.get('archived_alias_count', 0) or 0),
+        'report_collections': _report_store_collection_rows(paths),
+        'reason_codes': [],
+        'artifacts': {
+            'reports_root': normalize_repo_or_absolute_path(reports_root, project_root),
+            'collections_root': normalize_repo_or_absolute_path(collections_root, project_root),
+            'archive_root': normalize_repo_or_absolute_path(archive_root, project_root),
+            'archive_manifest_json': normalize_repo_or_absolute_path(archive_root / 'archive_manifest.json', project_root),
+        },
+    }
+
+
 def _write_signed_access_packet(path: Path, payload: Dict[str, Any], *, role: str, purpose: str) -> Dict[str, Any]:
     document = {
         'schema_version': DATASET_SELECTOR_SCHEMA_VERSION,

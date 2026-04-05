@@ -11,7 +11,7 @@
 <p align="center">
   <img src="assets/branding/calamum_logo_color.png" alt="Calamum Logo" width="400">
   <br>
-  <em>Secure / In-Memory / Ephemeral</em>
+  <em>Ethical Security</em>
 </p>
 
 ## Purpose

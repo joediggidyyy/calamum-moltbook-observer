@@ -33,8 +33,8 @@ For the architectural runtime model behind those principles, see [`docs/manuals/
 
 | Version | Supported | Notes |
 | ------- | ------------------ | ------------------------------------------------ |
-| 1.0.x   | :white_check_mark: | Current supported public release line |
-| 0.9.x   | :x: | Unsupported |
+| 1.2.x   | :white_check_mark: | Current supported public release line |
+
 
 ## Security principles
 

@@ -16,12 +16,16 @@ Prereq: Docker Desktop installed + running
 [CmdletBinding()]
 param(
     [switch]$DryRun,
-    [string]$BaseUrl = $(if ($env:MOLTBOOK_HOST) { $env:MOLTBOOK_HOST } else { "https://api.moltbook.com/v1" }),
+    [string]$BaseUrl = $(if ($env:MOLTBOOK_HOST) { $env:MOLTBOOK_HOST } else { "https://www.moltbook.com/api/v1" }),
     [string]$RegisterPath = $(if ($env:MOLTBOOK_KEYSMITH_REGISTER_PATH) { $env:MOLTBOOK_KEYSMITH_REGISTER_PATH } else { "agents/register" }),
-    [string[]]$AllowHost = @("api.moltbook.com", "moltbook.com"),
+    [string[]]$AllowHost = @("www.moltbook.com"),
     [string]$AgentMetadataJson = "",
     [string]$OutputDir = ""
 )
+
+if ($BaseUrl -eq 'https://api.moltbook.com/v1' -or $BaseUrl -eq 'https://moltbook.com/api/v1') {
+    $BaseUrl = 'https://www.moltbook.com/api/v1'
+}
 
 $projectRoot = (Resolve-Path (Join-Path $PSScriptRoot "..\.."))
 $localUntracked = Join-Path $projectRoot "local_untracked"
@@ -33,6 +37,8 @@ if ([string]::IsNullOrWhiteSpace($OutputDir)) {
 
 # Ensure host output directory exists (gitignored by project policy).
 New-Item -ItemType Directory -Force -Path $OutputDir | Out-Null
+$OutputDir = (Resolve-Path $OutputDir).Path
+$localUntracked = (Resolve-Path $localUntracked).Path
 
 $imageName = "calamum-keysmith:local"
 $dockerfile = Join-Path $projectRoot "deployment\keysmith\Dockerfile"
@@ -49,12 +55,23 @@ if ($LASTEXITCODE -ne 0) {
 
 # Map local_untracked into container so artifacts persist on host.
 $volumeArg = "${localUntracked}:/app/local_untracked"
+$sandboxOutputRoot = "/app/local_untracked/keysmith_exports"
 
-$containerOutputDir = $OutputDir.Replace($localUntracked, "/app/local_untracked").Replace("\\", "/")
+if (-not $OutputDir.StartsWith($localUntracked, [System.StringComparison]::OrdinalIgnoreCase)) {
+    throw "OutputDir must be under local_untracked"
+}
+
+$relativeOutputDir = $OutputDir.Substring($localUntracked.Length).TrimStart("\", "/")
+if ([string]::IsNullOrWhiteSpace($relativeOutputDir)) {
+    $containerOutputDir = "/app/local_untracked"
+} else {
+    $containerOutputDir = "/app/local_untracked/$($relativeOutputDir.Replace("\", "/"))"
+}
 
 $args = @(
     "run", "--rm",
     "-e", "KEYSMITH_SANDBOX=1",
+    "-e", "KEYSMITH_SANDBOX_OUTPUT_ROOT=$sandboxOutputRoot",
     "-v", $volumeArg,
     $imageName,
     "mint",

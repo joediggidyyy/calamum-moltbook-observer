@@ -168,6 +168,256 @@ def _resolve_keysmith_venue(venue: str, action: str) -> Tuple[str, Optional[Dict
     }
 
 
+def _keysmith_sandbox_runner_path() -> Path:
+    return _project_root() / 'tools' / 'windows' / 'Invoke-KeysmithSandbox.ps1'
+
+
+def _keysmith_shell_path() -> str:
+    candidates: List[str] = []
+    if os.name == 'nt':
+        candidates.extend(['powershell.exe', 'pwsh.exe', 'pwsh'])
+    else:
+        candidates.extend(['pwsh', 'powershell'])
+    for candidate in candidates:
+        resolved = shutil.which(candidate)
+        if resolved:
+            return str(resolved)
+    return ''
+
+
+def _keysmith_expected_artifact_paths(output_dir_path: Path) -> Dict[str, str]:
+    return {
+        'output_dir': str(output_dir_path.as_posix()),
+        'claim_url_path': str((output_dir_path / 'claim_url.txt').as_posix()),
+        'sealed_drop_path': str((output_dir_path / 'sealed_drop.bin').as_posix()),
+        'audit_path': str((output_dir_path / 'keysmith_audit.jsonl').as_posix()),
+        'result_json': str((output_dir_path / 'keysmith_result.json').as_posix()),
+    }
+
+
+def _keysmith_preflight_summary(packet: Dict[str, Any]) -> Dict[str, Any]:
+    if not isinstance(packet, dict):
+        return {}
+    return {
+        'decision': str(packet.get('decision', '') or '').strip(),
+        'summary': str(packet.get('summary', '') or '').strip(),
+        'reason_codes': list(packet.get('reason_codes', [])) if isinstance(packet.get('reason_codes', []), list) else [],
+        'live_mint_ready': bool(packet.get('live_mint_ready', False)),
+        'live_mint_authority': str(packet.get('live_mint_authority', '') or 'sandbox-only').strip() or 'sandbox-only',
+        'dry_run_authority': str(packet.get('dry_run_authority', '') or 'host-or-sandbox').strip() or 'host-or-sandbox',
+    }
+
+
+def _ops_keysmith_mint_failure_packet(
+    *,
+    summary: str,
+    reason_codes: List[str],
+    venue: str,
+    dry_run: bool,
+    output_dir_path: Path,
+    preflight_packet: Dict[str, Any],
+    docker_present: Optional[bool] = None,
+    runner_path: str = '',
+    execution_lane: str = 'host',
+) -> Dict[str, Any]:
+    packet = {
+        'timestamp_utc': _utc_now(),
+        'runtime_cli_surface': 'observerctl',
+        'decision': 'no-go',
+        'action': 'ops-keysmith-mint',
+        'summary': str(summary or '').strip(),
+        'reason_codes': list(reason_codes or []),
+        'venue': str(venue or 'moltbook').strip() or 'moltbook',
+        'dry_run': bool(dry_run),
+        'sandbox': False,
+        'live_mint_authority': 'sandbox-only',
+        'output_dir': str(output_dir_path.as_posix()),
+        'execution_lane': str(execution_lane or 'host'),
+        'preflight': _keysmith_preflight_summary(preflight_packet),
+    }
+    if docker_present is not None or runner_path:
+        packet['runner'] = {
+            'docker_present': bool(docker_present),
+            'path': str(runner_path or '').strip(),
+        }
+    return packet
+
+
+def _ops_keysmith_mint_orchestrated(
+    venue: str,
+    dry_run: bool,
+    output_dir: str,
+    base_url: str,
+    register_path: str,
+    allow_hosts: List[str],
+    agent_metadata_json: str,
+    timeout_sec: int,
+) -> Dict[str, Any]:
+    resolved_venue, venue_denial = _resolve_keysmith_venue(venue, 'ops-keysmith-mint')
+    if venue_denial is not None:
+        return venue_denial
+
+    preflight_packet = _ops_keysmith_status(resolved_venue)
+
+    try:
+        import keysmith as keysmith_module
+    except Exception:
+        return _ops_keysmith_mint_failure_packet(
+            summary='KEYSMITH mint could not begin because the KEYSMITH module import failed.',
+            reason_codes=['critical_check_failed:keysmith_import_failed'],
+            venue=resolved_venue,
+            dry_run=bool(dry_run),
+            output_dir_path=Path(str(output_dir).strip()) if str(output_dir).strip() else _project_root() / 'local_untracked' / 'keysmith_exports' / _utc_compact_stamp(),
+            preflight_packet=preflight_packet,
+        )
+
+    output_dir_path = Path(str(output_dir).strip()) if str(output_dir).strip() else keysmith_module._default_output_dir()
+    sandbox_active = bool(keysmith_module._sandbox_flag())
+
+    if bool(dry_run) or sandbox_active:
+        packet = _ops_keysmith_mint(
+            venue=resolved_venue,
+            dry_run=bool(dry_run),
+            output_dir=str(output_dir_path),
+            base_url=base_url,
+            register_path=register_path,
+            allow_hosts=allow_hosts,
+            agent_metadata_json=agent_metadata_json,
+            timeout_sec=timeout_sec,
+        )
+        packet['preflight'] = _keysmith_preflight_summary(preflight_packet)
+        packet['execution_lane'] = 'sandbox' if sandbox_active and not bool(dry_run) else ('host-dry-run' if bool(dry_run) else 'host')
+        if str(packet.get('decision', 'no-go') or 'no-go').strip().lower() == 'go':
+            if bool(dry_run):
+                packet['summary'] = 'KEYSMITH mint completed through the existing host dry-run path.'
+            elif sandbox_active:
+                packet['summary'] = 'KEYSMITH mint completed through the existing sandbox path.'
+        return packet
+
+    shell_path = _keysmith_shell_path()
+    runner_path = _keysmith_sandbox_runner_path()
+    docker_present = bool(shutil.which('docker'))
+
+    if not shell_path:
+        return _ops_keysmith_mint_failure_packet(
+            summary='KEYSMITH mint could not launch the sandbox runner because no PowerShell-compatible shell was found.',
+            reason_codes=['critical_check_failed:keysmith_shell_missing'],
+            venue=resolved_venue,
+            dry_run=False,
+            output_dir_path=output_dir_path,
+            preflight_packet=preflight_packet,
+            docker_present=docker_present,
+            runner_path=str(runner_path.as_posix()),
+            execution_lane='sandbox-runner',
+        )
+
+    if not runner_path.exists():
+        return _ops_keysmith_mint_failure_packet(
+            summary='KEYSMITH mint could not launch the sandbox runner because the runner surface is missing.',
+            reason_codes=['critical_check_failed:keysmith_sandbox_runner_missing'],
+            venue=resolved_venue,
+            dry_run=False,
+            output_dir_path=output_dir_path,
+            preflight_packet=preflight_packet,
+            docker_present=docker_present,
+            runner_path=str(runner_path.as_posix()),
+            execution_lane='sandbox-runner',
+        )
+
+    allowlist = [str(item).strip() for item in (allow_hosts or []) if str(item).strip()]
+    if len(allowlist) == 0:
+        allowlist = list(keysmith_module._default_allowed_hosts())
+
+    base_url_text = str(base_url).strip() or str(keysmith_module._default_base_url())
+    register_path_text = str(register_path).strip() or str(keysmith_module._default_register_path())
+
+    command = [shell_path, '-NoProfile']
+    if os.name == 'nt' and shell_path.lower().endswith('powershell.exe'):
+        command.extend(['-ExecutionPolicy', 'Bypass'])
+    command.extend(['-File', str(runner_path), '-OutputDir', str(output_dir_path), '-BaseUrl', base_url_text, '-RegisterPath', register_path_text])
+    if allowlist:
+        command.append('-AllowHost')
+        command.extend(allowlist)
+    if str(agent_metadata_json).strip():
+        command.extend(['-AgentMetadataJson', str(agent_metadata_json).strip()])
+
+    completed = subprocess.run(
+        command,
+        cwd=str(_project_root()),
+        capture_output=True,
+        text=True,
+        check=False,
+    )
+
+    combined_output = '\n'.join([
+        str(completed.stdout or '').strip(),
+        str(completed.stderr or '').strip(),
+    ]).lower()
+    if completed.returncode != 0:
+        reason_codes = ['critical_check_failed:keysmith_mint_pipeline_failed']
+        summary = 'KEYSMITH mint could not complete through the sandbox runner.'
+        if not docker_present:
+            reason_codes.append('critical_check_failed:docker_missing')
+            summary = 'KEYSMITH mint could not complete because Docker is not available for the sandbox/container lane.'
+        elif 'status_code=429' in combined_output:
+            reason_codes.append('environment_blocked:moltbook_rate_limited')
+            summary = 'KEYSMITH mint reached the current Moltbook registration rate limit; wait for the vendor window to reset, then rerun.'
+        elif ('docker api' in combined_output or 'dockerdesktoplinuxengine' in combined_output or 'docker build failed' in combined_output):
+            reason_codes.append('environment_blocked:docker_engine_unavailable')
+            summary = 'KEYSMITH mint could not complete because the Docker sandbox/container lane is not ready.'
+        elif 'sandbox run failed' in combined_output:
+            reason_codes.append('critical_check_failed:keysmith_sandbox_runner_failed')
+        return _ops_keysmith_mint_failure_packet(
+            summary=summary,
+            reason_codes=reason_codes,
+            venue=resolved_venue,
+            dry_run=False,
+            output_dir_path=output_dir_path,
+            preflight_packet=preflight_packet,
+            docker_present=docker_present,
+            runner_path=str(runner_path.as_posix()),
+            execution_lane='sandbox-runner',
+        )
+
+    artifacts = _keysmith_expected_artifact_paths(output_dir_path)
+    missing = [
+        key for key, value in artifacts.items()
+        if key != 'output_dir' and not Path(str(value)).exists()
+    ]
+    if missing:
+        return _ops_keysmith_mint_failure_packet(
+            summary='KEYSMITH mint finished the sandbox runner but the expected names-only artifacts were incomplete.',
+            reason_codes=['critical_check_failed:keysmith_artifact_missing'],
+            venue=resolved_venue,
+            dry_run=False,
+            output_dir_path=output_dir_path,
+            preflight_packet=preflight_packet,
+            docker_present=docker_present,
+            runner_path=str(runner_path.as_posix()),
+            execution_lane='sandbox-runner',
+        )
+
+    return {
+        'timestamp_utc': _utc_now(),
+        'runtime_cli_surface': 'observerctl',
+        'decision': 'go',
+        'action': 'ops-keysmith-mint',
+        'summary': 'KEYSMITH mint completed through the sandbox runner.',
+        'reason_codes': [],
+        'venue': resolved_venue,
+        'dry_run': False,
+        'sandbox': True,
+        'live_mint_authority': 'sandbox-only',
+        'execution_lane': 'sandbox-runner',
+        'preflight': _keysmith_preflight_summary(preflight_packet),
+        'runner': {
+            'docker_present': docker_present,
+            'path': str(runner_path.as_posix()),
+        },
+        **artifacts,
+    }
+
+
 def _ops_keysmith_status(venue: str = 'moltbook') -> Dict[str, Any]:
     resolved_venue, venue_denial = _resolve_keysmith_venue(venue, 'ops-keysmith')
     if venue_denial is not None:
@@ -3699,6 +3949,103 @@ def _render_librarian_stores_human(packet: Dict[str, Any]) -> List[str]:
     return lines
 
 
+def _render_librarian_store_reports_human(packet: Dict[str, Any]) -> List[str]:
+    action = str(packet.get('action', '') or '').strip().lower()
+    title = {
+        'librarian-store-reports-show': 'Librarian store reports',
+        'librarian-store-reports-delete': 'Librarian store reports delete',
+        'librarian-store-reports-purge': 'Librarian store reports purge',
+    }.get(action, 'Librarian store reports')
+
+    lines: List[str] = [_style_section_title(title)]
+    ts = str(packet.get('timestamp_utc', '') or '').strip()
+    if ts:
+        lines.append('generated_at_utc: {0}'.format(ts))
+    decision = str(packet.get('decision', '') or '').strip().lower()
+    summary = str(packet.get('summary', '') or '').strip()
+    if decision or summary:
+        if summary:
+            lines.append('decision: {0} - {1}'.format(_style_decision_value(decision or 'go'), summary))
+        else:
+            lines.append('decision: {0}'.format(_style_decision_value(decision)))
+
+    _append_human_section(
+        lines,
+        'Summary',
+        _render_human_kv_rows(
+            [
+                ('Collections', str(int(packet.get('count', len(packet.get('report_collections', []) if isinstance(packet.get('report_collections', []), list) else [])) or 0))),
+                ('Archived aliases', str(int(packet.get('archived_alias_count', 0) or 0))),
+                ('Stale report.md', str(int(packet.get('stale_report_md_count', 0) or 0))),
+                ('Delete target', str(packet.get('delete_alias', '') or '').strip()),
+            ],
+            indent='  ',
+        ),
+    )
+
+    rows = packet.get('report_collections', []) if isinstance(packet.get('report_collections', []), list) else []
+    collection_lines: List[str] = []
+    if rows:
+        for row in rows:
+            if not isinstance(row, dict):
+                continue
+            if collection_lines:
+                collection_lines.append('')
+            collection_lines.append('  {0}'.format(_style_structural_label(str(row.get('collection_alias', '') or 'collection'))))
+            collection_lines.extend(
+                _render_human_kv_rows(
+                    [
+                        ('Collection packets', str(int(row.get('collection_packet_count', 0) or 0))),
+                        ('Processing packets', str(int(row.get('processing_packet_count', 0) or 0))),
+                        ('Stale report.md', _yes_no_text(bool(row.get('stale_report_md_present', False)))),
+                        ('Latest collection', _render_human_path_tail(row.get('latest_collection_packet', ''))),
+                        ('Latest processing', _render_human_path_tail(row.get('latest_processing_packet', ''))),
+                    ],
+                    indent='    ',
+                    min_label_width=17,
+                    max_label_width=19,
+                )
+            )
+    else:
+        collection_lines.append('  No tracked report collection aliases are materialized.')
+    _append_human_section(lines, 'Collections', collection_lines)
+
+    artifacts = packet.get('artifacts', {}) if isinstance(packet.get('artifacts', {}), dict) else {}
+    evidence_lines: List[str] = []
+    for label, key in (
+        ('Reports root', 'reports_root'),
+        ('Collections root', 'collections_root'),
+        ('Archive root', 'archive_root'),
+        ('Archive parent', 'archive_parent'),
+        ('Archive manifest', 'archive_manifest_json'),
+    ):
+        value = _render_human_path_tail(artifacts.get(key, ''))
+        if value:
+            evidence_lines.extend(_render_human_kv_rows([(label, value)], indent='  ', min_label_width=16, max_label_width=18))
+    _append_human_section(lines, 'Evidence', evidence_lines)
+
+    reason_codes = packet.get('reason_codes', []) if isinstance(packet.get('reason_codes', []), list) else []
+    if reason_codes:
+        _append_human_section(lines, 'Reasons', ['  {0}'.format(reason) for reason in reason_codes])
+
+    guidance: List[str] = []
+    if action == 'librarian-store-reports-show':
+        guidance = [
+            'Next: use observerctl librarian store reports --delete <wizard-alias> for one alias or --purge to archive the full live collection tree.',
+        ]
+    elif action == 'librarian-store-reports-delete':
+        guidance = [
+            'Next: rerun observerctl librarian store reports --show to confirm the live collection tree, then regenerate tracked publication only if you intentionally want the alias back.',
+        ]
+    elif action == 'librarian-store-reports-purge':
+        guidance = [
+            'Next: rerun observerctl librarian store reports --show to confirm zero-state, then regenerate tracked publication only from the canonical lane you want to keep.',
+        ]
+    if guidance:
+        _append_human_section(lines, 'Guidance', ['  {0}'.format(line) for line in guidance])
+    return lines
+
+
 def _style_structural_label(text: str) -> str:
     return style_text(str(text or ''), 'structure')
 
@@ -4341,20 +4688,27 @@ def _render_keysmith_guidance_lines(packet: Dict[str, Any]) -> List[str]:
     dry_run = bool(packet.get('dry_run', False))
     sandbox = bool(packet.get('sandbox', False))
     summary = str(packet.get('summary', '') or '').strip().lower()
+    reason_codes = packet.get('reason_codes', []) if isinstance(packet.get('reason_codes', []), list) else []
     if action == 'ops-keysmith':
         return [
-            'Dry-run may be executed from the host shell or the KEYSMITH sandbox lane.',
+            'Use `observerctl ops keysmith mint --dry-run` for host preflight validation.',
+            'Use `observerctl ops keysmith mint` for the KEYSMITH orchestration path.',
             'Live mint is authorized only from the KEYSMITH sandbox/container lane.',
+        ]
+    if any(str(code).strip().lower() == 'environment_blocked:docker_engine_unavailable' for code in reason_codes):
+        return [
+            'Start the Docker daemon/backend for the active context, then rerun `observerctl ops keysmith mint`.',
+            'Use `observerctl ops keysmith --json` to confirm the shipped KEYSMITH surfaces remain present.',
         ]
     if decision != 'go' and 'sandbox' in summary:
         return [
-            'Run live mint inside the KEYSMITH sandbox/container lane.',
+            'Run `observerctl ops keysmith mint` to let the existing KEYSMITH pipeline orchestrate the sandbox/container lane.',
             'Use --dry-run from the host shell only for preflight validation.',
         ]
     if decision == 'go' and dry_run and not sandbox:
         return [
             'Review the names-only artifact paths created by dry-run.',
-            'Run live mint only from the KEYSMITH sandbox/container lane.',
+            'Run `observerctl ops keysmith mint` for the sandbox/container-lane live path.',
         ]
     if decision == 'go' and sandbox:
         return [
@@ -4447,7 +4801,7 @@ def _render_keysmith_mint_human(packet: Dict[str, Any]) -> List[str]:
 
     sandbox = bool(packet.get('sandbox', False))
     dry_run = bool(packet.get('dry_run', False))
-    execution_lane = 'sandbox' if sandbox else ('host-dry-run' if dry_run else 'host')
+    execution_lane = str(packet.get('execution_lane', '') or '').strip() or ('sandbox' if sandbox else ('host-dry-run' if dry_run else 'host'))
     _append_human_section(
         lines,
         'Summary',
@@ -4574,6 +4928,8 @@ def _render_human_known_packet(packet: Dict[str, Any]) -> Optional[List[str]]:
         return _render_ds_human(packet)
     if action.startswith('librarian-vault-'):
         return _render_librarian_vault_human(packet)
+    if action.startswith('librarian-store-reports'):
+        return _render_librarian_store_reports_human(packet)
     if action == 'librarian-datasets':
         return _render_librarian_datasets_human(packet)
     if action in ('librarian-dataset-register', 'librarian-dataset-release'):
@@ -6360,6 +6716,17 @@ def _librarian_stores() -> Dict[str, Any]:
             'retention_state': packet['retention_state'],
         })
     return {'timestamp_utc': _utc_now(), 'runtime_cli_surface': 'observerctl', 'stores': stores}
+
+
+def _librarian_store_reports(show: bool = False, purge: bool = False, delete_alias: str = '') -> Dict[str, Any]:
+    from calamum_librarian import librarian_report_store_packet
+
+    return librarian_report_store_packet(
+        _project_anchor(),
+        show=bool(show),
+        purge=bool(purge),
+        delete_alias=str(delete_alias or '').strip(),
+    )
 
 
 def _librarian_datasets() -> Dict[str, Any]:
@@ -11689,6 +12056,10 @@ def _ds_finalize_run_packet(
             current_publication = publication_state.get('current_run', {}) if isinstance(publication_state.get('current_run', {}), dict) else {}
             final_packet['artifacts'].update({
                 'tracked_ds_index_md': str(aggregate_paths.get('index_md', '') or ''),
+                'tracked_ds_aggregate_report_json': str(aggregate_paths.get('aggregate_report_json', '') or ''),
+                'tracked_ds_aggregate_report_md': str(aggregate_paths.get('aggregate_report_md', '') or ''),
+                'tracked_ds_public_run_ledger_json': str(aggregate_paths.get('public_run_ledger_json', '') or ''),
+                'tracked_ds_public_run_ledger_md': str(aggregate_paths.get('public_run_ledger_md', '') or ''),
                 'tracked_ds_latest_json': str(aggregate_paths.get('latest_json', '') or ''),
                 'tracked_ds_latest_md': str(aggregate_paths.get('latest_md', '') or ''),
                 'tracked_ds_by_workflow_json': str(aggregate_paths.get('by_workflow_json', '') or ''),
@@ -12489,7 +12860,7 @@ def _dispatch(args: argparse.Namespace) -> Dict[str, Any]:
         if args.ops_cmd == 'keysmith':
             return _ops_keysmith_status(args.venue)
         if args.ops_cmd == 'keysmith-mint':
-            return _ops_keysmith_mint(
+            return _ops_keysmith_mint_orchestrated(
                 venue=args.venue,
                 dry_run=args.dry_run,
                 output_dir=args.output_dir,
@@ -12686,6 +13057,8 @@ def _dispatch(args: argparse.Namespace) -> Dict[str, Any]:
             return _librarian_stats()
         if args.lib_cmd == 'stores':
             return _librarian_stores()
+        if args.lib_cmd == 'store-reports':
+            return _librarian_store_reports(show=args.reports_show, purge=args.reports_purge, delete_alias=args.reports_delete)
         if args.lib_cmd == 'datasets':
             return _librarian_datasets()
         if args.lib_cmd == 'dataset-register':
@@ -13100,6 +13473,11 @@ def _build_parser() -> argparse.ArgumentParser:
     lib_store_rotate_nested.add_argument('--mode', choices=list(MODES), required=True)
     lib_store_compact_nested = lib_store_sub.add_parser('compact')
     lib_store_compact_nested.add_argument('--mode', choices=list(MODES), required=True)
+    lib_store_reports = lib_store_sub.add_parser('reports', help='Inspect or archive-first mutate tracked report collection aliases')
+    lib_store_reports_action = lib_store_reports.add_mutually_exclusive_group(required=False)
+    lib_store_reports_action.add_argument('--show', dest='reports_show', action='store_true', help='Show the live docs/reports/collections alias inventory')
+    lib_store_reports_action.add_argument('--purge', dest='reports_purge', action='store_true', help='Archive and recreate the full docs/reports/collections tree empty')
+    lib_store_reports_action.add_argument('--delete', dest='reports_delete', default='', metavar='wizard-alias', help='Archive one live collection alias from docs/reports/collections/<wizard-alias>')
 
     lib_dataset = librarian_sub.add_parser('dataset', help='Approved dataset authority surface')
     lib_dataset_sub = lib_dataset.add_subparsers(dest='lib_dataset_cmd', required=True)
@@ -13276,6 +13654,10 @@ def _normalize_nested_aliases(args: argparse.Namespace) -> argparse.Namespace:
             args.lib_cmd = 'rotate'
         elif args.lib_store_cmd == 'compact':
             args.lib_cmd = 'compact'
+        elif args.lib_store_cmd == 'reports':
+            args.lib_cmd = 'store-reports'
+            if not bool(getattr(args, 'reports_show', False)) and not bool(getattr(args, 'reports_purge', False)) and not str(getattr(args, 'reports_delete', '') or '').strip():
+                args.reports_show = True
     if args.command == 'librarian' and args.lib_cmd == 'dataset':
         if args.lib_dataset_cmd == 'list':
             args.lib_cmd = 'datasets'

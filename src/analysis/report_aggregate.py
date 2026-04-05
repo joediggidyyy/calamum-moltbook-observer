@@ -154,20 +154,19 @@ def refresh_tracked_ds_publication(
     publishable.sort(key=lambda candidate: (_publication_sort_key(str(candidate.get('timestamp_utc', ''))), str(candidate.get('run_id', ''))))
 
     published_runs: List[Dict[str, Any]] = []
-    threshold_rows: List[Dict[str, Any]] = []
     for candidate in publishable:
         _publish_candidate(candidate)
         published_summary = _published_run_summary(candidate, project_root)
         published_runs.append(published_summary)
-        threshold_row = _threshold_summary_row(candidate, published_summary)
-        if threshold_row is not None:
-            threshold_rows.append(threshold_row)
 
     _write_collection_reports(publishable, project_root)
 
+    threshold_rows = _threshold_summary_rows(published_runs)
     latest_payload = _latest_publication_payload(project_root, published_runs, publication_root)
     by_workflow_payload = _by_workflow_publication_payload(project_root, published_runs, publication_root)
     thresholds_payload = _thresholds_publication_payload(project_root, threshold_rows, publication_root)
+    public_run_ledger_payload = _public_run_ledger_payload(project_root, published_runs, threshold_rows, publication_root)
+    aggregate_report_payload = _aggregate_report_payload(project_root, published_runs, threshold_rows, publication_root)
 
     latest_json_path = internal_aggregates_root / 'latest.json'
     latest_md_path = aggregates_root / 'LATEST_COLLECTIONS.md'
@@ -175,6 +174,10 @@ def refresh_tracked_ds_publication(
     by_workflow_md_path = aggregates_root / 'WORKFLOW_ROLLUP.md'
     thresholds_json_path = internal_aggregates_root / 'threshold_summary.json'
     thresholds_md_path = aggregates_root / 'THRESHOLD_SUMMARY.md'
+    public_run_ledger_json_path = internal_aggregates_root / 'public_run_ledger.json'
+    public_run_ledger_md_path = aggregates_root / 'PUBLIC_RUN_LEDGER.md'
+    aggregate_report_json_path = internal_aggregates_root / 'aggregate_report.json'
+    aggregate_report_md_path = aggregates_root / 'AGGREGATE_REPORT.md'
     index_md_path = publication_root / 'INDEX.md'
     generated_surfaces_md_path = reference_root / 'GENERATED_REPORT_SURFACES.md'
     validations_index_md_path = validations_root / 'INDEX.md'
@@ -185,10 +188,38 @@ def refresh_tracked_ds_publication(
     by_workflow_md_path.write_text(_by_workflow_publication_markdown(project_root, by_workflow_md_path, by_workflow_payload), encoding='utf-8')
     thresholds_json_path.write_text(json.dumps(thresholds_payload, indent=2, sort_keys=True), encoding='utf-8')
     thresholds_md_path.write_text(_thresholds_publication_markdown(project_root, thresholds_md_path, thresholds_payload), encoding='utf-8')
+    public_run_ledger_json_path.write_text(json.dumps(public_run_ledger_payload, indent=2, sort_keys=True), encoding='utf-8')
+    public_run_ledger_md_path.write_text(
+        _public_run_ledger_markdown(
+            project_root,
+            public_run_ledger_md_path,
+            public_run_ledger_payload,
+            aggregate_report_md_path,
+            latest_md_path,
+            by_workflow_md_path,
+            thresholds_md_path,
+        ),
+        encoding='utf-8',
+    )
+    aggregate_report_json_path.write_text(json.dumps(aggregate_report_payload, indent=2, sort_keys=True), encoding='utf-8')
+    aggregate_report_md_path.write_text(
+        _aggregate_report_markdown(
+            project_root,
+            aggregate_report_md_path,
+            aggregate_report_payload,
+            public_run_ledger_md_path,
+            latest_md_path,
+            by_workflow_md_path,
+            thresholds_md_path,
+        ),
+        encoding='utf-8',
+    )
     index_md_path.write_text(
         _ds_publication_index_markdown(
             project_root,
             index_md_path,
+            aggregate_report_md_path,
+            public_run_ledger_md_path,
             latest_payload,
             by_workflow_payload,
             thresholds_payload,
@@ -200,6 +231,8 @@ def refresh_tracked_ds_publication(
         _generated_report_surfaces_markdown(
             project_root,
             generated_surfaces_md_path,
+            aggregate_report_md_path,
+            public_run_ledger_md_path,
             latest_md_path,
             by_workflow_md_path,
             thresholds_md_path,
@@ -236,6 +269,10 @@ def refresh_tracked_ds_publication(
         'current_run': current_run,
         'aggregate_paths': {
             'index_md': normalize_repo_or_absolute_path(index_md_path, project_root),
+            'aggregate_report_json': normalize_repo_or_absolute_path(aggregate_report_json_path, project_root),
+            'aggregate_report_md': normalize_repo_or_absolute_path(aggregate_report_md_path, project_root),
+            'public_run_ledger_json': normalize_repo_or_absolute_path(public_run_ledger_json_path, project_root),
+            'public_run_ledger_md': normalize_repo_or_absolute_path(public_run_ledger_md_path, project_root),
             'latest_json': normalize_repo_or_absolute_path(latest_json_path, project_root),
             'latest_md': normalize_repo_or_absolute_path(latest_md_path, project_root),
             'by_workflow_json': normalize_repo_or_absolute_path(by_workflow_json_path, project_root),
@@ -490,8 +527,8 @@ def _published_report_paths(
     project_root: Path,
 ) -> Dict[str, str]:
     return {
-        'markdown': normalize_repo_or_absolute_path(collection_dir / 'report.md', project_root),
-        'collection_markdown': normalize_repo_or_absolute_path(collection_dir / 'report.md', project_root),
+        'markdown': normalize_repo_or_absolute_path(collection_history_report_path, project_root),
+        'collection_markdown': normalize_repo_or_absolute_path(collection_history_report_path, project_root),
         'collection_history_markdown': normalize_repo_or_absolute_path(collection_history_report_path, project_root),
         'processing_markdown': normalize_repo_or_absolute_path(processing_report_path, project_root),
         'json': normalize_repo_or_absolute_path(internal_dir / 'publication_report.json', project_root),
@@ -615,7 +652,6 @@ def _publish_candidate(candidate: Mapping[str, Any]) -> None:
     published_report_payload = _build_published_payload(source_report_payload, candidate, project_root=project_root)
     published_manifest_payload = _build_published_payload(source_manifest_payload, candidate, project_root=project_root)
 
-    collection_report_md_path = collection_dir / 'report.md'
     report_json_path = internal_dir / 'publication_report.json'
     manifest_json_path = internal_dir / 'publication_manifest.json'
 
@@ -677,7 +713,16 @@ def _published_run_summary(candidate: Mapping[str, Any], project_root: Path) -> 
     }
 
 
-def _threshold_summary_row(candidate: Mapping[str, Any], published_summary: Mapping[str, Any]) -> Optional[Dict[str, Any]]:
+def _threshold_summary_row(published_summary: Mapping[str, Any], paired_score_summary: Optional[Mapping[str, Any]] = None) -> Optional[Dict[str, Any]]:
+    workflow = canonical_ds_workflow_name(str(published_summary.get('workflow', '')))
+    if workflow != 'evaluate':
+        return None
+
+    collection_alias = str(published_summary.get('collection_alias', '') or '').strip()
+    published_eval_path = str(_published_processing_report_path(published_summary) or '')
+    if not collection_alias or not published_eval_path:
+        return None
+
     result = dict(published_summary.get('result', {}) or {})
     context = dict(published_summary.get('context', {}) or {})
     thresholding = dict(result.get('thresholding', {}) or {}) if isinstance(result.get('thresholding', {}), dict) else {}
@@ -690,16 +735,28 @@ def _threshold_summary_row(candidate: Mapping[str, Any], published_summary: Mapp
     if threshold_value in ('', None) and target_fpr in ('', None) and actual_fpr in ('', None) and flagged_records in ('', None):
         return None
 
+    paired_score_path = ''
+    if isinstance(paired_score_summary, Mapping):
+        paired_run_id = str(paired_score_summary.get('run_id', '') or '')
+        paired_score_report_path = str(_published_processing_report_path(paired_score_summary) or '')
+        if paired_run_id and paired_run_id != str(published_summary.get('run_id', '') or '') and paired_score_report_path:
+            paired_score_path = paired_score_report_path
+
     return {
+        'collection_alias': collection_alias,
         'workflow': str(published_summary.get('workflow', '')),
         'run_id': str(published_summary.get('run_id', '')),
         'timestamp_utc': str(published_summary.get('timestamp_utc', '')),
+        'evaluation_date_utc': str(published_summary.get('timestamp_utc', '')),
         'threshold': threshold_value,
         'target_fpr': target_fpr,
         'actual_fpr': actual_fpr,
         'flagged_records': flagged_records,
         'records_scored': records_scored,
-        'published_report_md': str(_published_processing_report_path(published_summary) or _published_collection_report_path(published_summary) or ''),
+        'flagged_share': _threshold_flagged_share(actual_fpr, flagged_records, records_scored),
+        'anomaly_direction': str(thresholding.get('anomaly_direction', result.get('anomaly_direction', context.get('anomaly_direction', ''))) or ''),
+        'published_report_md': published_eval_path,
+        'paired_score_report_md': paired_score_path,
         'source_run_root': str(published_summary.get('source_run_root', '')),
     }
 
@@ -713,6 +770,7 @@ def _latest_publication_payload(project_root: Path, published_runs: List[Dict[st
         'published_at_utc': str(latest_run.get('timestamp_utc', '')),
         'published_run_count': int(len(published_runs)),
         'latest_run': latest_run,
+        'collection_rows': _collection_overview_rows(published_runs),
     }
 
 
@@ -742,18 +800,185 @@ def _thresholds_publication_payload(project_root: Path, threshold_rows: List[Dic
     }
 
 
+def _collection_overview_rows(published_runs: List[Dict[str, Any]]) -> List[Dict[str, Any]]:
+    grouped: Dict[str, List[Dict[str, Any]]] = {}
+    for summary in published_runs:
+        alias = str(summary.get('collection_alias', '') or '').strip()
+        if not alias:
+            continue
+        grouped.setdefault(alias, []).append(dict(summary))
+
+    rows: List[Dict[str, Any]] = []
+    for alias, summaries in grouped.items():
+        ordered = sorted(
+            summaries,
+            key=lambda summary: (_publication_sort_key(str(summary.get('timestamp_utc', ''))), str(summary.get('run_id', ''))),
+        )
+        latest = dict(ordered[-1]) if ordered else {}
+        latest_by_workflow: Dict[str, Dict[str, Any]] = {}
+        for summary in ordered:
+            latest_by_workflow[str(summary.get('workflow', ''))] = dict(summary)
+        context = dict(latest.get('context', {}) or {}) if isinstance(latest.get('context', {}), dict) else {}
+        rows.append(
+            {
+                'collection_alias': alias,
+                'published_run_count': int(len(ordered)),
+                'latest_timestamp_utc': str(latest.get('timestamp_utc', '')),
+                'latest_run': latest,
+                'source': str(context.get('source', '') or ''),
+                'mode': str(context.get('mode', '') or ''),
+                'latest_stage_labels': ', '.join(sorted(latest_by_workflow.keys())),
+                'reason_to_open': _collection_reason_to_open(latest),
+            }
+        )
+    rows.sort(key=lambda row: (_publication_sort_key(str(row.get('latest_timestamp_utc', ''))), str(row.get('collection_alias', ''))), reverse=True)
+    return rows
+
+
+def _collection_reason_to_open(summary: Mapping[str, Any]) -> str:
+    result = dict(summary.get('result', {}) or {}) if isinstance(summary.get('result', {}), dict) else {}
+    thresholding = dict(result.get('thresholding', {}) or {}) if isinstance(result.get('thresholding', {}), dict) else {}
+    if thresholding or result.get('threshold') not in ('', None):
+        return 'Threshold-bearing packet with current guardrail output.'
+    workflow = canonical_ds_workflow_name(str(summary.get('workflow', '')))
+    if workflow == 'pipeline':
+        return 'End-to-end packet showing the current combined run outcome.'
+    if workflow == 'build':
+        return 'Dataset-build packet for the latest materialized collection.'
+    if workflow == 'train':
+        return 'Training packet for the latest model-building lane.'
+    if workflow == 'evaluate':
+        return 'Evaluation packet with the latest validation signal.'
+    if workflow == 'score':
+        return 'Scoring packet with the latest anomaly output.'
+    return 'Latest published packet for this collection.'
+
+
+def _workflow_contribution_note(workflow: str) -> str:
+    token = canonical_ds_workflow_name(workflow)
+    if token == 'build':
+        return 'Defines the dataset packet baseline.'
+    if token == 'train':
+        return 'Carries the latest model-training outcome.'
+    if token == 'evaluate':
+        return 'Captures validation and threshold interpretation.'
+    if token == 'score':
+        return 'Captures scored anomaly output for reader follow-through.'
+    if token == 'pipeline':
+        return 'Shows the combined end-to-end execution lane.'
+    return 'Maintains a current packet lane for this workflow family.'
+
+
+def _threshold_summary_rows(published_runs: List[Dict[str, Any]]) -> List[Dict[str, Any]]:
+    latest_score_by_alias: Dict[str, Dict[str, Any]] = {}
+    for summary in sorted(
+        [dict(summary) for summary in published_runs if isinstance(summary, dict)],
+        key=lambda summary: (_publication_sort_key(str(summary.get('timestamp_utc', ''))), str(summary.get('run_id', ''))),
+    ):
+        if canonical_ds_workflow_name(str(summary.get('workflow', ''))) == 'score':
+            alias = str(summary.get('collection_alias', '') or '').strip()
+            if alias:
+                latest_score_by_alias[alias] = dict(summary)
+
+    rows: List[Dict[str, Any]] = []
+    for summary in published_runs:
+        alias = str(summary.get('collection_alias', '') or '').strip()
+        row = _threshold_summary_row(summary, latest_score_by_alias.get(alias))
+        if row is not None:
+            rows.append(row)
+    rows.sort(key=lambda row: (_publication_sort_key(str(row.get('timestamp_utc', ''))), str(row.get('run_id', ''))), reverse=True)
+    return rows
+
+
+def _public_run_ledger_payload(
+    project_root: Path,
+    published_runs: List[Dict[str, Any]],
+    threshold_rows: List[Dict[str, Any]],
+    publication_root: Path,
+) -> Dict[str, Any]:
+    collection_rows = _collection_overview_rows(published_runs)
+    source_mode_counts: Dict[str, int] = {}
+    for summary in published_runs:
+        context = dict(summary.get('context', {}) or {}) if isinstance(summary.get('context', {}), dict) else {}
+        source = str(context.get('source', '') or 'unspecified')
+        mode = str(context.get('mode', '') or 'unspecified')
+        key = '{0}|{1}'.format(source, mode)
+        source_mode_counts[key] = int(source_mode_counts.get(key, 0)) + 1
+
+    source_mode_rows = []
+    for key in sorted(source_mode_counts.keys()):
+        source, mode = key.split('|', 1)
+        source_mode_rows.append({'source': source, 'mode': mode, 'count': int(source_mode_counts[key])})
+
+    workflows = _by_workflow_publication_payload(project_root, published_runs, publication_root).get('workflows', {})
+    return {
+        'schema_version': '1.0',
+        'family_id': 'ds_publication',
+        'publish_root': normalize_repo_or_absolute_path(publication_root, project_root),
+        'published_run_count': int(len(published_runs)),
+        'collection_count': int(len(collection_rows)),
+        'workflow_count': int(len(workflows)),
+        'threshold_run_count': int(len(threshold_rows)),
+        'latest_run': dict(published_runs[-1]) if published_runs else {},
+        'workflow_rows': [
+            {
+                'workflow': workflow,
+                'published_run_count': int((row if isinstance(row, dict) else {}).get('count', 0) or 0),
+                'latest_run': dict((row if isinstance(row, dict) else {}).get('latest_run', {}) or {}),
+            }
+            for workflow, row in sorted(dict(workflows).items())
+        ],
+        'collection_rows': collection_rows,
+        'source_mode_rows': source_mode_rows,
+    }
+
+
+def _aggregate_report_payload(
+    project_root: Path,
+    published_runs: List[Dict[str, Any]],
+    threshold_rows: List[Dict[str, Any]],
+    publication_root: Path,
+) -> Dict[str, Any]:
+    collection_rows = _collection_overview_rows(published_runs)
+    workflows = _by_workflow_publication_payload(project_root, published_runs, publication_root).get('workflows', {})
+    return {
+        'schema_version': '1.0',
+        'family_id': 'ds_publication',
+        'publish_root': normalize_repo_or_absolute_path(publication_root, project_root),
+        'published_run_count': int(len(published_runs)),
+        'collection_count': int(len(collection_rows)),
+        'workflow_count': int(len(workflows)),
+        'threshold_run_count': int(len(threshold_rows)),
+        'latest_run': dict(published_runs[-1]) if published_runs else {},
+        'collection_rows': collection_rows,
+        'threshold_rows': list(threshold_rows[:10]),
+        'workflow_rows': [
+            {
+                'workflow': workflow,
+                'published_run_count': int((row if isinstance(row, dict) else {}).get('count', 0) or 0),
+                'latest_run': dict((row if isinstance(row, dict) else {}).get('latest_run', {}) or {}),
+                'note': _workflow_contribution_note(workflow),
+            }
+            for workflow, row in sorted(dict(workflows).items())
+        ],
+    }
+
+
 def _latest_publication_markdown(project_root: Path, target_path: Path, payload: Mapping[str, Any]) -> str:
     latest_run = dict(payload.get('latest_run', {}) or {}) if isinstance(payload.get('latest_run', {}), dict) else {}
+    collection_route_path = _aggregate_collection_route_path(latest_run)
     lines = ['# Latest Collections', '']
+    lines.append('Use this surface to open the current collection packets first, without having to reverse-engineer the report tree.')
+    lines.append('')
     lines.append('- Publish root: `{0}`'.format(str(payload.get('publish_root', ''))))
     lines.append('- Published runs: {0}'.format(int(payload.get('published_run_count', 0) or 0)))
     if not latest_run:
         lines.append('- Latest run: none published yet')
         return '\n'.join(lines).rstrip() + '\n'
 
-    lines.append('- Latest collection: {0}'.format(_markdown_link(target_path, project_root, _published_collection_report_path(latest_run), str(latest_run.get('collection_alias', '')) or 'collection')))
+    lines.append('- Latest collection: {0}'.format(_markdown_link(target_path, project_root, collection_route_path, str(latest_run.get('collection_alias', '')) or 'collection')))
     lines.append('')
-    lines.append('## Collection summary')
+    lines.append('## Current front-door packet')
     lines.append('')
     lines.append('- Collection alias: `{0}`'.format(str(latest_run.get('collection_alias', ''))))
     lines.append('- Workflow: {0}'.format(str(latest_run.get('workflow', ''))))
@@ -762,32 +987,52 @@ def _latest_publication_markdown(project_root: Path, target_path: Path, payload:
     lines.append('- Summary: {0}'.format(str(latest_run.get('summary', ''))))
     lines.append('- Source run root: `{0}`'.format(str(latest_run.get('source_run_root', ''))))
     lines.append('- Latest stage report: {0}'.format(_markdown_link(target_path, project_root, _published_processing_report_path(latest_run), Path(_published_processing_report_path(latest_run)).name or 'stage report')))
+    lines.append('')
+    lines.append('## Collection packets to open first')
+    lines.append('')
+    lines.append('| Collection alias | Source / mode | Current packet date | Latest relevant stage(s) | Why open it | Collection packet |')
+    lines.append('|---|---|---|---|---|---|')
+    collection_rows = list(payload.get('collection_rows', []) or []) if isinstance(payload.get('collection_rows', []), list) else []
+    if not collection_rows:
+        collection_rows = _collection_overview_rows([latest_run])
+    for row in collection_rows[:12]:
+        latest_summary = dict(row.get('latest_run', {}) or {}) if isinstance(row.get('latest_run', {}), dict) else {}
+        lines.append('| `{0}` | {1} | {2} | {3} | {4} | {5} |'.format(
+            str(row.get('collection_alias', '')),
+            _source_mode_label(str(row.get('source', '')), str(row.get('mode', ''))),
+            str(row.get('latest_timestamp_utc', '')),
+            str(row.get('latest_stage_labels', '')),
+            str(row.get('reason_to_open', '')),
+            _markdown_link(target_path, project_root, _aggregate_collection_route_path(latest_summary), 'collection packet'),
+        ))
     return '\n'.join(lines).rstrip() + '\n'
 
 
 def _by_workflow_publication_markdown(project_root: Path, target_path: Path, payload: Mapping[str, Any]) -> str:
     workflows = dict(payload.get('workflows', {}) or {}) if isinstance(payload.get('workflows', {}), dict) else {}
     lines = ['# Workflow Rollup', '']
+    lines.append('Use this surface to understand what each workflow family currently contributes and where its latest human-facing packet lives.')
+    lines.append('')
     lines.append('- Publish root: `{0}`'.format(str(payload.get('publish_root', ''))))
     lines.append('- Published runs: {0}'.format(int(payload.get('published_run_count', 0) or 0)))
     lines.append('')
     if not workflows:
         lines.append('No published collections are available yet.')
         return '\n'.join(lines).rstrip() + '\n'
-    lines.append('| Workflow | Published runs | Collection alias | Latest run | Collection | Latest stage doc |')
+    lines.append('| Workflow | Published runs | Latest collection alias | Latest collection packet | Latest dated stage doc | Current contribution |')
     lines.append('|---|---:|---|---|---|---|')
     for workflow in sorted(workflows.keys()):
         row = workflows[workflow]
         latest_run = dict(row.get('latest_run', {}) or {}) if isinstance(row.get('latest_run', {}), dict) else {}
-        collection_link = _markdown_link(target_path, project_root, _published_collection_report_path(latest_run), 'collection')
+        collection_link = _markdown_link(target_path, project_root, _aggregate_collection_route_path(latest_run), 'collection packet')
         processing_link = _markdown_link(target_path, project_root, _published_processing_report_path(latest_run), Path(_published_processing_report_path(latest_run)).name or 'stage doc')
-        lines.append('| {0} | {1} | `{2}` | `{3}` | {4} | {5} |'.format(
+        lines.append('| {0} | {1} | `{2}` | {3} | {4} | {5} |'.format(
             workflow,
             int(row.get('count', 0) or 0),
             str(latest_run.get('collection_alias', '')),
-            str(latest_run.get('run_id', '')),
             collection_link,
             processing_link,
+            _workflow_contribution_note(workflow),
         ))
     return '\n'.join(lines).rstrip() + '\n'
 
@@ -795,26 +1040,29 @@ def _by_workflow_publication_markdown(project_root: Path, target_path: Path, pay
 def _thresholds_publication_markdown(project_root: Path, target_path: Path, payload: Mapping[str, Any]) -> str:
     rows = list(payload.get('threshold_rows', []) or []) if isinstance(payload.get('threshold_rows', []), list) else []
     lines = ['# Threshold Summary', '']
+    lines.append('This surface covers threshold-bearing packets and routes readers to the dated packet leaves that actually carry the threshold interpretation.')
+    lines.append('')
     lines.append('- Publish root: `{0}`'.format(str(payload.get('publish_root', ''))))
     lines.append('- Threshold-bearing runs: {0}'.format(int(payload.get('threshold_run_count', 0) or 0)))
     lines.append('')
     if not rows:
         lines.append('No published threshold-bearing collections are available yet.')
         return '\n'.join(lines).rstrip() + '\n'
-    lines.append('| Workflow | Collection alias | Run ID | Threshold | Target FPR | Actual FPR | Flagged | Records | Report |')
-    lines.append('|---|---|---|---:|---:|---:|---:|---:|---|')
+    lines.append('| Collection alias | Evaluation date (UTC) | Evaluation run ID | Threshold | Anomaly direction | Target guardrail | Realized flagged share | Eval packet | Paired score packet |')
+    lines.append('|---|---|---|---:|---|---:|---:|---|---|')
     for row in rows:
-        report_link = _markdown_link(target_path, project_root, str(row.get('published_report_md', '')), 'report') if str(row.get('published_report_md', '')) else ''
-        lines.append('| {0} | `{1}` | `{2}` | {3} | {4} | {5} | {6} | {7} | {8} |'.format(
-            str(row.get('workflow', '')),
+        report_link = _markdown_link(target_path, project_root, str(row.get('published_report_md', '')), 'eval packet') if str(row.get('published_report_md', '')) else ''
+        paired_score_link = _markdown_link(target_path, project_root, str(row.get('paired_score_report_md', '')), 'score packet') if str(row.get('paired_score_report_md', '')) else ''
+        lines.append('| `{0}` | {1} | `{2}` | {3} | {4} | {5} | {6} | {7} | {8} |'.format(
             str(row.get('collection_alias', '')),
+            str(row.get('evaluation_date_utc', '') or row.get('timestamp_utc', '')),
             str(row.get('run_id', '')),
             _markdown_number(row.get('threshold')),
+            str(row.get('anomaly_direction', '')),
             _markdown_number(row.get('target_fpr')),
-            _markdown_number(row.get('actual_fpr')),
-            _markdown_int(row.get('flagged_records')),
-            _markdown_int(row.get('records_scored')),
+            _markdown_number(row.get('flagged_share')),
             report_link,
+            paired_score_link,
         ))
     return '\n'.join(lines).rstrip() + '\n'
 
@@ -822,6 +1070,8 @@ def _thresholds_publication_markdown(project_root: Path, target_path: Path, payl
 def _ds_publication_index_markdown(
     project_root: Path,
     target_path: Path,
+    aggregate_report_md_path: Path,
+    public_run_ledger_md_path: Path,
     latest_payload: Mapping[str, Any],
     by_workflow_payload: Mapping[str, Any],
     thresholds_payload: Mapping[str, Any],
@@ -836,19 +1086,23 @@ def _ds_publication_index_markdown(
     lines.append('## Summary')
     lines.append('')
     lines.append('- Published runs: {0}'.format(int(len(published_runs))))
+    lines.append('- Aggregate report: {0}'.format(_markdown_link(target_path, project_root, normalize_repo_or_absolute_path(aggregate_report_md_path, project_root), 'AGGREGATE_REPORT.md')))
+    lines.append('- Public run ledger: {0}'.format(_markdown_link(target_path, project_root, normalize_repo_or_absolute_path(public_run_ledger_md_path, project_root), 'PUBLIC_RUN_LEDGER.md')))
     lines.append('- Latest collections: {0}'.format(_markdown_link(target_path, project_root, 'docs/reports/aggregates/LATEST_COLLECTIONS.md', 'LATEST_COLLECTIONS.md')))
     lines.append('- Workflow rollup: {0}'.format(_markdown_link(target_path, project_root, 'docs/reports/aggregates/WORKFLOW_ROLLUP.md', 'WORKFLOW_ROLLUP.md')))
     lines.append('- Threshold summary: {0}'.format(_markdown_link(target_path, project_root, 'docs/reports/aggregates/THRESHOLD_SUMMARY.md', 'THRESHOLD_SUMMARY.md')))
     lines.append('- Generated-report reference: {0}'.format(_markdown_link(target_path, project_root, 'docs/reports/reference/GENERATED_REPORT_SURFACES.md', 'GENERATED_REPORT_SURFACES.md')))
+    lines.append('- Validation index: {0}'.format(_markdown_link(target_path, project_root, 'docs/reports/validations/INDEX.md', 'validations/INDEX.md')))
     lines.append('')
     lines.append('## Latest collection')
     lines.append('')
     if latest_run:
+        collection_route_path = _aggregate_collection_route_path(latest_run)
         lines.append('- Collection alias: `{0}`'.format(str(latest_run.get('collection_alias', ''))))
         lines.append('- Run ID: `{0}`'.format(str(latest_run.get('run_id', ''))))
         lines.append('- Workflow: {0}'.format(str(latest_run.get('workflow', ''))))
         lines.append('- Timestamp (UTC): {0}'.format(str(latest_run.get('timestamp_utc', ''))))
-        lines.append('- Collection report: {0}'.format(_markdown_link(target_path, project_root, _published_collection_report_path(latest_run), 'report.md')))
+        lines.append('- Collection packet: {0}'.format(_markdown_link(target_path, project_root, collection_route_path, Path(collection_route_path).name or 'collection packet')))
         lines.append('- Latest stage report: {0}'.format(_markdown_link(target_path, project_root, _published_processing_report_path(latest_run), Path(_published_processing_report_path(latest_run)).name or 'stage doc')))
     else:
         lines.append('No published collections are available yet.')
@@ -856,7 +1110,7 @@ def _ds_publication_index_markdown(
     lines.append('## Workflow latest')
     lines.append('')
     if workflows:
-        lines.append('| Workflow | Published runs | Collection alias | Latest run | Collection | Latest stage doc |')
+        lines.append('| Workflow | Published runs | Collection alias | Latest run | Collection packet | Latest stage doc |')
         lines.append('|---|---:|---|---|---|---|')
         for workflow in sorted(workflows.keys()):
             row = workflows[workflow]
@@ -866,7 +1120,7 @@ def _ds_publication_index_markdown(
                 int(row.get('count', 0) or 0),
                 str(latest_row.get('collection_alias', '')),
                 str(latest_row.get('run_id', '')),
-                _markdown_link(target_path, project_root, _published_collection_report_path(latest_row), 'collection'),
+                _markdown_link(target_path, project_root, _aggregate_collection_route_path(latest_row), 'collection packet'),
                 _markdown_link(target_path, project_root, _published_processing_report_path(latest_row), Path(_published_processing_report_path(latest_row)).name or 'stage doc'),
             ))
     else:
@@ -875,7 +1129,7 @@ def _ds_publication_index_markdown(
     lines.append('## Recent collections')
     lines.append('')
     if published_runs:
-        lines.append('| Timestamp (UTC) | Workflow | Collection alias | Run ID | Collection | Stage doc |')
+        lines.append('| Timestamp (UTC) | Workflow | Collection alias | Run ID | Collection packet | Stage doc |')
         lines.append('|---|---|---|---|---|---|')
         for summary in list(reversed(published_runs[-10:])):
             lines.append('| {0} | {1} | `{2}` | `{3}` | {4} | {5} |'.format(
@@ -883,7 +1137,7 @@ def _ds_publication_index_markdown(
                 str(summary.get('workflow', '')),
                 str(summary.get('collection_alias', '')),
                 str(summary.get('run_id', '')),
-                _markdown_link(target_path, project_root, _published_collection_report_path(summary), 'collection'),
+                _markdown_link(target_path, project_root, _aggregate_collection_route_path(summary), 'collection packet'),
                 _markdown_link(target_path, project_root, _published_processing_report_path(summary), Path(_published_processing_report_path(summary)).name or 'stage doc'),
             ))
     else:
@@ -891,14 +1145,229 @@ def _ds_publication_index_markdown(
     return '\n'.join(lines).rstrip() + '\n'
 
 
+def _public_run_ledger_markdown(
+    project_root: Path,
+    target_path: Path,
+    payload: Mapping[str, Any],
+    aggregate_report_md_path: Path,
+    latest_md_path: Path,
+    by_workflow_md_path: Path,
+    thresholds_md_path: Path,
+) -> str:
+    latest_run = dict(payload.get('latest_run', {}) or {}) if isinstance(payload.get('latest_run', {}), dict) else {}
+    workflow_rows = list(payload.get('workflow_rows', []) or []) if isinstance(payload.get('workflow_rows', []), list) else []
+    collection_rows = list(payload.get('collection_rows', []) or []) if isinstance(payload.get('collection_rows', []), list) else []
+    source_mode_rows = list(payload.get('source_mode_rows', []) or []) if isinstance(payload.get('source_mode_rows', []), list) else []
+    lines = ['# Public Run Ledger', '']
+    lines.append('This ledger defines the current public reporting population and provides a runtime-safe census of the tracked report family.')
+    lines.append('')
+    lines.append('## Purpose')
+    lines.append('')
+    lines.append('- Count what currently exists in the tracked report family.')
+    lines.append('- Keep the reader-facing population separate from the machine-authoritative run ledger.')
+    lines.append('- Route readers to synthesis and packet-entry surfaces without pretending this ledger is the authority plane.')
+    lines.append('')
+    lines.append('## How to read this ledger')
+    lines.append('')
+    lines.append('- Use `AGGREGATE_REPORT.md` for the flagship synthesis narrative.')
+    lines.append('- Use `LATEST_COLLECTIONS.md` when you need the fastest packet-entry route.')
+    lines.append('- Use `WORKFLOW_ROLLUP.md` and `THRESHOLD_SUMMARY.md` when you need family-specific rollups.')
+    lines.append('')
+    lines.append('## Current runtime-safe headline')
+    lines.append('')
+    lines.append('- Publish root: `{0}`'.format(str(payload.get('publish_root', ''))))
+    lines.append('- Published runs: {0}'.format(int(payload.get('published_run_count', 0) or 0)))
+    lines.append('- Collection aliases represented: {0}'.format(int(payload.get('collection_count', 0) or 0)))
+    lines.append('- Workflow families represented: {0}'.format(int(payload.get('workflow_count', 0) or 0)))
+    lines.append('- Threshold-bearing packets: {0}'.format(int(payload.get('threshold_run_count', 0) or 0)))
+    if latest_run:
+        lines.append('- Latest packet: {0}'.format(_markdown_link(target_path, project_root, _aggregate_collection_route_path(latest_run), str(latest_run.get('collection_alias', '')) or 'collection packet')))
+    lines.append('')
+    lines.append('## Current lane census')
+    lines.append('')
+    if workflow_rows:
+        lines.append('| Workflow | Published packets | Latest collection | Latest packet |')
+        lines.append('|---|---:|---|---|')
+        for row in workflow_rows:
+            latest_row = dict(row.get('latest_run', {}) or {}) if isinstance(row.get('latest_run', {}), dict) else {}
+            lines.append('| {0} | {1} | `{2}` | {3} |'.format(
+                str(row.get('workflow', '')),
+                int(row.get('published_run_count', 0) or 0),
+                str(latest_row.get('collection_alias', '')),
+                _markdown_link(target_path, project_root, _published_processing_report_path(latest_row), Path(_published_processing_report_path(latest_row)).name or 'stage doc'),
+            ))
+    else:
+        lines.append('No workflow families are published yet.')
+    lines.append('')
+    lines.append('## Publication-family census')
+    lines.append('')
+    if collection_rows:
+        lines.append('| Collection alias | Source / mode | Published packets | Latest packet date | Latest stages | Collection packet |')
+        lines.append('|---|---|---:|---|---|---|')
+        for row in collection_rows[:15]:
+            latest_row = dict(row.get('latest_run', {}) or {}) if isinstance(row.get('latest_run', {}), dict) else {}
+            lines.append('| `{0}` | {1} | {2} | {3} | {4} | {5} |'.format(
+                str(row.get('collection_alias', '')),
+                _source_mode_label(str(row.get('source', '')), str(row.get('mode', ''))),
+                int(row.get('published_run_count', 0) or 0),
+                str(row.get('latest_timestamp_utc', '')),
+                str(row.get('latest_stage_labels', '')),
+                _markdown_link(target_path, project_root, _aggregate_collection_route_path(latest_row), 'collection packet'),
+            ))
+    else:
+        lines.append('No collection packets are published yet.')
+    if source_mode_rows:
+        lines.append('')
+        lines.append('## Publication-source census')
+        lines.append('')
+        lines.append('| Source | Mode | Published packets |')
+        lines.append('|---|---|---:|')
+        for row in source_mode_rows:
+            lines.append('| {0} | {1} | {2} |'.format(str(row.get('source', '')), str(row.get('mode', '')), int(row.get('count', 0) or 0)))
+    lines.append('')
+    lines.append('## Interpretive notes')
+    lines.append('')
+    lines.append('- This ledger is deliberately derived and runtime-safe; it summarizes the tracked publication family without replacing the canonical machine-readable run records.')
+    lines.append('- Absence here means the packet did not enter the tracked publication family; it does not imply the underlying machine artifacts do not exist.')
+    lines.append('')
+    lines.append('## Provenance')
+    lines.append('')
+    lines.append('- Machine-readable authority remains outside `docs/reports/`.')
+    lines.append('- The tracked report family is rebuilt from the canonical untracked DS run spine and packetized collection surfaces.')
+    lines.append('')
+    lines.append('## Related surfaces')
+    lines.append('')
+    lines.append('- Aggregate report: {0}'.format(_markdown_link(target_path, project_root, normalize_repo_or_absolute_path(aggregate_report_md_path, project_root), 'AGGREGATE_REPORT.md')))
+    lines.append('- Latest collections: {0}'.format(_markdown_link(target_path, project_root, normalize_repo_or_absolute_path(latest_md_path, project_root), 'LATEST_COLLECTIONS.md')))
+    lines.append('- Workflow rollup: {0}'.format(_markdown_link(target_path, project_root, normalize_repo_or_absolute_path(by_workflow_md_path, project_root), 'WORKFLOW_ROLLUP.md')))
+    lines.append('- Threshold summary: {0}'.format(_markdown_link(target_path, project_root, normalize_repo_or_absolute_path(thresholds_md_path, project_root), 'THRESHOLD_SUMMARY.md')))
+    return '\n'.join(lines).rstrip() + '\n'
+
+
+def _aggregate_report_markdown(
+    project_root: Path,
+    target_path: Path,
+    payload: Mapping[str, Any],
+    public_run_ledger_md_path: Path,
+    latest_md_path: Path,
+    by_workflow_md_path: Path,
+    thresholds_md_path: Path,
+) -> str:
+    latest_run = dict(payload.get('latest_run', {}) or {}) if isinstance(payload.get('latest_run', {}), dict) else {}
+    collection_rows = list(payload.get('collection_rows', []) or []) if isinstance(payload.get('collection_rows', []), list) else []
+    workflow_rows = list(payload.get('workflow_rows', []) or []) if isinstance(payload.get('workflow_rows', []), list) else []
+    threshold_rows = list(payload.get('threshold_rows', []) or []) if isinstance(payload.get('threshold_rows', []), list) else []
+    lines = ['# Aggregate Report', '']
+    lines.append('This synthesis page summarizes the strongest current reader-facing conclusions across the tracked report family.')
+    lines.append('')
+    lines.append('## Executive summary')
+    lines.append('')
+    lines.append('- Published packets: {0}'.format(int(payload.get('published_run_count', 0) or 0)))
+    lines.append('- Collection aliases represented: {0}'.format(int(payload.get('collection_count', 0) or 0)))
+    lines.append('- Workflow families represented: {0}'.format(int(payload.get('workflow_count', 0) or 0)))
+    lines.append('- Threshold-bearing packets: {0}'.format(int(payload.get('threshold_run_count', 0) or 0)))
+    if latest_run:
+        lines.append('- Current front-door packet: {0}'.format(_markdown_link(target_path, project_root, _aggregate_collection_route_path(latest_run), str(latest_run.get('collection_alias', '')) or 'collection packet')))
+    lines.append('')
+    lines.append('## Why this aggregate exists')
+    lines.append('')
+    lines.append('The tracked report family now has multiple reader roles: packet entry, workflow rollup, threshold interpretation, population census, and synthesis. This page provides the flagship narrative view over that family.')
+    lines.append('')
+    lines.append('## Runtime-safe current picture')
+    lines.append('')
+    if latest_run:
+        lines.append('- Latest published workflow: {0}'.format(str(latest_run.get('workflow', ''))))
+        lines.append('- Latest packet timestamp (UTC): {0}'.format(str(latest_run.get('timestamp_utc', ''))))
+        lines.append('- Latest packet summary: {0}'.format(str(latest_run.get('summary', ''))))
+    else:
+        lines.append('- No published packets are available yet.')
+    lines.append('')
+    lines.append('## Aggregate cohort at a glance')
+    lines.append('')
+    if collection_rows:
+        lines.append('| Collection alias | Current packet date | Latest stages | Why it matters now | Collection packet |')
+        lines.append('|---|---|---|---|---|')
+        for row in collection_rows[:8]:
+            latest_row = dict(row.get('latest_run', {}) or {}) if isinstance(row.get('latest_run', {}), dict) else {}
+            lines.append('| `{0}` | {1} | {2} | {3} | {4} |'.format(
+                str(row.get('collection_alias', '')),
+                str(row.get('latest_timestamp_utc', '')),
+                str(row.get('latest_stage_labels', '')),
+                str(row.get('reason_to_open', '')),
+                _markdown_link(target_path, project_root, _aggregate_collection_route_path(latest_row), 'collection packet'),
+            ))
+    else:
+        lines.append('No collection packets are published yet.')
+    lines.append('')
+    lines.append('## Strongest findings')
+    lines.append('')
+    if collection_rows:
+        lines.append('- The tracked report family is now organized around {0} collection aliases instead of a single cache-shaped run list.'.format(int(payload.get('collection_count', 0) or 0)))
+    if workflow_rows:
+        lines.append('- Workflow coverage is currently spread across {0}.'.format(', '.join('`{0}`'.format(str(row.get('workflow', ''))) for row in workflow_rows)))
+    if threshold_rows:
+        lines.append('- Threshold-bearing packets remain visible as dated packet leaves, with the latest threshold summary routed through `THRESHOLD_SUMMARY.md`.')
+    else:
+        lines.append('- No threshold-bearing packets are currently present in the tracked family.')
+    lines.append('')
+    lines.append('## Threshold, workflow, and packet synthesis')
+    lines.append('')
+    if workflow_rows:
+        lines.append('| Workflow family | Published packets | Latest collection | Current contribution |')
+        lines.append('|---|---:|---|---|')
+        for row in workflow_rows:
+            latest_row = dict(row.get('latest_run', {}) or {}) if isinstance(row.get('latest_run', {}), dict) else {}
+            lines.append('| {0} | {1} | `{2}` | {3} |'.format(
+                str(row.get('workflow', '')),
+                int(row.get('published_run_count', 0) or 0),
+                str(latest_row.get('collection_alias', '')),
+                str(row.get('note', '')),
+            ))
+    if threshold_rows:
+        lines.append('')
+        lines.append('| Threshold-bearing packet | Threshold | Target guardrail | Eval packet |')
+        lines.append('|---|---:|---:|---|')
+        for row in threshold_rows[:6]:
+            lines.append('| `{0}` / `{1}` | {2} | {3} | {4} |'.format(
+                str(row.get('collection_alias', '')),
+                str(row.get('run_id', '')),
+                _markdown_number(row.get('threshold')),
+                _markdown_number(row.get('target_fpr')),
+                _markdown_link(target_path, project_root, str(row.get('published_report_md', '')), 'eval packet') if str(row.get('published_report_md', '')) else '',
+            ))
+    lines.append('')
+    lines.append('## Limits and caution notes')
+    lines.append('')
+    lines.append('- This page is derived and reader-facing; it does not replace the machine-readable authority surfaces.')
+    lines.append('- Row-completeness and deeper truthfulness audits remain a downstream concern when packet content needs further repair.')
+    lines.append('- Missing links fail closed rather than inventing synthetic packet routes.')
+    lines.append('')
+    lines.append('## Related authority and lineage')
+    lines.append('')
+    lines.append('- Publish root: `{0}`'.format(str(payload.get('publish_root', ''))))
+    lines.append('- Public run ledger: {0}'.format(_markdown_link(target_path, project_root, normalize_repo_or_absolute_path(public_run_ledger_md_path, project_root), 'PUBLIC_RUN_LEDGER.md')))
+    lines.append('- Generated report surfaces: {0}'.format(_markdown_link(target_path, project_root, 'docs/reports/reference/GENERATED_REPORT_SURFACES.md', 'GENERATED_REPORT_SURFACES.md')))
+    lines.append('')
+    lines.append('## Reader next steps')
+    lines.append('')
+    lines.append('- Open {0} for the fastest packet-entry lane.'.format(_markdown_link(target_path, project_root, normalize_repo_or_absolute_path(latest_md_path, project_root), 'LATEST_COLLECTIONS.md')))
+    lines.append('- Open {0} for workflow-family routing.'.format(_markdown_link(target_path, project_root, normalize_repo_or_absolute_path(by_workflow_md_path, project_root), 'WORKFLOW_ROLLUP.md')))
+    lines.append('- Open {0} for threshold-bearing packet follow-through.'.format(_markdown_link(target_path, project_root, normalize_repo_or_absolute_path(thresholds_md_path, project_root), 'THRESHOLD_SUMMARY.md')))
+    return '\n'.join(lines).rstrip() + '\n'
+
+
 def _published_collection_report_path(summary: Mapping[str, Any]) -> str:
     paths = dict(summary.get('published_report_paths', {}) or {}) if isinstance(summary.get('published_report_paths', {}), dict) else {}
-    return str(paths.get('collection_markdown', '') or paths.get('markdown', '') or '')
+    return str(paths.get('collection_history_markdown', '') or paths.get('collection_markdown', '') or paths.get('markdown', '') or '')
 
 
 def _published_collection_history_path(summary: Mapping[str, Any]) -> str:
     paths = dict(summary.get('published_report_paths', {}) or {}) if isinstance(summary.get('published_report_paths', {}), dict) else {}
     return str(paths.get('collection_history_markdown', '') or paths.get('collection_markdown', '') or paths.get('markdown', '') or '')
+
+
+def _aggregate_collection_route_path(summary: Mapping[str, Any]) -> str:
+    return str(_published_collection_history_path(summary) or '')
 
 
 def _published_collection_references_path(summary: Mapping[str, Any]) -> str:
@@ -925,8 +1394,6 @@ def _collection_report_markdown(
     summaries: List[Dict[str, Any]],
     project_root: Path,
     target_path: Path,
-    *,
-    is_stable_landing: bool,
 ) -> str:
     ordered = sorted(
         [dict(summary) for summary in summaries if isinstance(summary, dict)],
@@ -937,7 +1404,7 @@ def _collection_report_markdown(
     for summary in ordered:
         latest_by_workflow[str(summary.get('workflow', ''))] = dict(summary)
 
-    lines = ['# Collection Report: {0}'.format(str(collection_alias or 'collection')), '']
+    lines = ['# Collection Packet: {0}'.format(str(collection_alias or 'collection')), '']
     lines.append('This collection packet groups the tracked stage documents published for the selected collection alias.')
     lines.append('')
     lines.append('## Summary')
@@ -950,38 +1417,32 @@ def _collection_report_markdown(
             str(latest.get('workflow', '')),
             str(latest.get('timestamp_utc', '')),
         ))
-        if is_stable_landing:
-            latest_snapshot_path = _published_collection_history_path(latest)
-            lines.append('- Latest collection snapshot: {0}'.format(
-                _markdown_link(target_path, project_root, latest_snapshot_path, Path(latest_snapshot_path).name or 'collection snapshot')
-            ))
-        else:
-            lines.append('- Stable collection landing page: {0}'.format(
-                _markdown_link(target_path, project_root, _published_collection_report_path(latest), 'report.md')
-            ))
+        latest_snapshot_path = _published_collection_history_path(latest)
+        lines.append('- Current collection packet: {0}'.format(
+            _markdown_link(target_path, project_root, latest_snapshot_path, Path(latest_snapshot_path).name or 'collection packet')
+        ))
         lines.append('- Latest stage document: {0}'.format(
             _markdown_link(target_path, project_root, _published_processing_report_path(latest), Path(_published_processing_report_path(latest)).name or 'stage doc')
         ))
     else:
         lines.append('- Latest calculation run: none published yet')
-    if is_stable_landing:
-        lines.append('')
-        lines.append('## Collection snapshots')
-        lines.append('')
-        if ordered:
-            lines.append('| Published (UTC) | Workflow | Run ID | Snapshot | Stage doc |')
-            lines.append('| --- | --- | --- | --- | --- |')
-            for summary in reversed(ordered[-12:]):
-                snapshot_path = _published_collection_history_path(summary)
-                lines.append('| {0} | {1} | `{2}` | {3} | {4} |'.format(
-                    str(summary.get('timestamp_utc', '')),
-                    str(summary.get('workflow', '')),
-                    str(summary.get('run_id', '')),
-                    _markdown_link(target_path, project_root, snapshot_path, Path(snapshot_path).name or 'collection snapshot'),
-                    _markdown_link(target_path, project_root, _published_processing_report_path(summary), Path(_published_processing_report_path(summary)).name or 'stage doc'),
-                ))
-        else:
-            lines.append('No collection snapshots are available yet.')
+    lines.append('')
+    lines.append('## Collection packet history')
+    lines.append('')
+    if ordered:
+        lines.append('| Published (UTC) | Workflow | Run ID | Collection packet | Stage doc |')
+        lines.append('| --- | --- | --- | --- | --- |')
+        for summary in reversed(ordered[-12:]):
+            snapshot_path = _published_collection_history_path(summary)
+            lines.append('| {0} | {1} | `{2}` | {3} | {4} |'.format(
+                str(summary.get('timestamp_utc', '')),
+                str(summary.get('workflow', '')),
+                str(summary.get('run_id', '')),
+                _markdown_link(target_path, project_root, snapshot_path, Path(snapshot_path).name or 'collection packet'),
+                _markdown_link(target_path, project_root, _published_processing_report_path(summary), Path(_published_processing_report_path(summary)).name or 'stage doc'),
+            ))
+    else:
+        lines.append('No collection packets are available yet.')
     lines.append('')
     lines.append('## Latest stage documents')
     lines.append('')
@@ -1035,8 +1496,8 @@ def _collection_references_markdown(candidate: Mapping[str, Any], project_root: 
     lines.append('')
     lines.append('| Surface | Path |')
     lines.append('|---|---|')
-    lines.append('| Collection report | {0} |'.format(_markdown_link(target_path, project_root, str(report_paths.get('collection_markdown', '') or report_paths.get('markdown', '') or ''), 'report.md')))
-    lines.append('| Processing report | {0} |'.format(_markdown_link(target_path, project_root, str(report_paths.get('processing_markdown', '') or ''), 'report.md')))
+    lines.append('| Collection packet | {0} |'.format(_markdown_link(target_path, project_root, str(report_paths.get('collection_history_markdown', '') or report_paths.get('collection_markdown', '') or report_paths.get('markdown', '') or ''), 'collection packet')))
+    lines.append('| Processing packet | {0} |'.format(_markdown_link(target_path, project_root, str(report_paths.get('processing_markdown', '') or ''), 'stage doc')))
     lines.append('| Processing references | {0} |'.format(_markdown_link(target_path, project_root, str(report_paths.get('processing_references_markdown', '') or ''), 'REFERENCES.md')))
     lines.append('')
     lines.append('## Authority pointers')
@@ -1087,6 +1548,8 @@ def _processing_references_markdown(candidate: Mapping[str, Any], project_root: 
 def _generated_report_surfaces_markdown(
     project_root: Path,
     target_path: Path,
+    aggregate_report_md_path: Path,
+    public_run_ledger_md_path: Path,
     latest_md_path: Path,
     by_workflow_md_path: Path,
     thresholds_md_path: Path,
@@ -1098,26 +1561,58 @@ def _generated_report_surfaces_markdown(
     lines.append('')
     lines.append('- All Markdown inside `docs/reports/` is human-facing.')
     lines.append('- Machine-readable authority remains outside this tree and is referenced from these reader surfaces rather than duplicated here.')
-    lines.append('- Published runs are rendered under `docs/reports/collections/<collection-alias>/`.')
+    lines.append('- When published runs exist, they are rendered under `docs/reports/collections/<collection-alias>/`.')
+    lines.append('- Zero-state publication may leave `docs/reports/collections/` present but empty until a fresh canonical publication pass materializes collection packets.')
+    lines.append('- Aggregate-facing collection routes use the dated collection packet leaf under `docs/reports/collections/<collection-alias>/collection/YYYYMMDDTHHMMSSffffffZ.collection.md` when that packet family exists.')
+    lines.append('- No stable `collection/report.md` landing page is part of the current tracked packet contract.')
     lines.append('')
     lines.append('## Layout')
     lines.append('')
     lines.append('```text')
     lines.append('docs/reports/')
-    lines.append('|- aggregates/')
-    lines.append('|- collections/<collection-alias>/collection/report.md')
-    lines.append('|- collections/<collection-alias>/collection/YYYYMMDDTHHMMSSffffffZ.collection.md')
-    lines.append('|- collections/<collection-alias>/processing/<stage>/YYYYMMDDTHHMMSSffffffZ.<stage>.md')
+    lines.append('|- aggregates/AGGREGATE_REPORT.md')
+    lines.append('|- aggregates/PUBLIC_RUN_LEDGER.md')
+    lines.append('|- aggregates/LATEST_COLLECTIONS.md')
+    lines.append('|- aggregates/WORKFLOW_ROLLUP.md')
+    lines.append('|- aggregates/THRESHOLD_SUMMARY.md')
+    lines.append('|- collections/                         # may be empty at zero-state')
+    lines.append('|  `- <collection-alias>/              # materialized only when published packets exist')
+    lines.append('|     |- collection/YYYYMMDDTHHMMSSffffffZ.collection.md')
+    lines.append('|     `- processing/<stage>/YYYYMMDDTHHMMSSffffffZ.<stage>.md')
     lines.append('|- reference/')
     lines.append('|- validations/')
     lines.append('`- INDEX.md')
     lines.append('```')
     lines.append('')
+    lines.append('## Aggregate report family')
+    lines.append('')
+    lines.append('- `docs/reports/aggregates/AGGREGATE_REPORT.md`')
+    lines.append('- `docs/reports/aggregates/PUBLIC_RUN_LEDGER.md`')
+    lines.append('- `docs/reports/aggregates/LATEST_COLLECTIONS.md`')
+    lines.append('- `docs/reports/aggregates/WORKFLOW_ROLLUP.md`')
+    lines.append('- `docs/reports/aggregates/THRESHOLD_SUMMARY.md`')
+    lines.append('')
+    lines.append('## Tracked packet family')
+    lines.append('')
+    lines.append('When collection packets are materialized:')
+    lines.append('')
+    lines.append('- `docs/reports/collections/<collection-alias>/collection/YYYYMMDDTHHMMSSffffffZ.collection.md`')
+    lines.append('- `docs/reports/collections/<collection-alias>/processing/<stage>/YYYYMMDDTHHMMSSffffffZ.<stage>.md`')
+    lines.append('')
     lines.append('## Reader routes')
     lines.append('')
+    lines.append('- Aggregate report: {0}'.format(_markdown_link(target_path, project_root, normalize_repo_or_absolute_path(aggregate_report_md_path, project_root), 'AGGREGATE_REPORT.md')))
+    lines.append('- Public run ledger: {0}'.format(_markdown_link(target_path, project_root, normalize_repo_or_absolute_path(public_run_ledger_md_path, project_root), 'PUBLIC_RUN_LEDGER.md')))
     lines.append('- Latest collections: {0}'.format(_markdown_link(target_path, project_root, normalize_repo_or_absolute_path(latest_md_path, project_root), 'LATEST_COLLECTIONS.md')))
     lines.append('- Workflow rollup: {0}'.format(_markdown_link(target_path, project_root, normalize_repo_or_absolute_path(by_workflow_md_path, project_root), 'WORKFLOW_ROLLUP.md')))
     lines.append('- Threshold summary: {0}'.format(_markdown_link(target_path, project_root, normalize_repo_or_absolute_path(thresholds_md_path, project_root), 'THRESHOLD_SUMMARY.md')))
+    lines.append('- Validation index: {0}'.format(_markdown_link(target_path, project_root, 'docs/reports/validations/INDEX.md', 'validations/INDEX.md')))
+    lines.append('')
+    lines.append('## Aggregate-consumer route authority')
+    lines.append('')
+    lines.append('- `LATEST_COLLECTIONS.md` and aggregate-facing collection links should target the dated collection packet leaf directly whenever packet families are materialized.')
+    lines.append('- Workflow and threshold routes should target real dated processing packet leaves and fail closed when those packet routes are missing.')
+    lines.append('- Zero-state publication should remain honest: keep the aggregate family readable while leaving packet-route sections empty rather than implying packet leaves that do not yet exist.')
     return '\n'.join(lines).rstrip() + '\n'
 
 
@@ -1226,20 +1721,14 @@ def _write_collection_reports(candidates: List[Dict[str, Any]], project_root: Pa
             key=lambda row: (_publication_sort_key(str(row.get('timestamp_utc', ''))), str(row.get('run_id', ''))),
         )
         collection_dir = Path(ordered_rows[0]['collection_dir'])
-        target_path = collection_dir / 'report.md'
         summaries = [_published_run_summary(row, project_root) for row in ordered_rows]
-        target_path.parent.mkdir(parents=True, exist_ok=True)
-        target_path.write_text(
-            _collection_report_markdown(alias, summaries, project_root, target_path, is_stable_landing=True),
-            encoding='utf-8',
-        )
         for index, summary in enumerate(summaries):
             snapshot_path = _resolve_repo_path(project_root, _published_collection_history_path(summary))
             if snapshot_path is None:
                 continue
             snapshot_path.parent.mkdir(parents=True, exist_ok=True)
             snapshot_path.write_text(
-                _collection_report_markdown(alias, summaries[: index + 1], project_root, snapshot_path, is_stable_landing=False),
+                _collection_report_markdown(alias, summaries[: index + 1], project_root, snapshot_path),
                 encoding='utf-8',
             )
 
@@ -1282,3 +1771,28 @@ def _markdown_int(value: Any) -> str:
         return str(int(value))
     except (TypeError, ValueError):
         return str(value)
+
+
+def _source_mode_label(source: str, mode: str) -> str:
+    source_text = str(source or '').strip()
+    mode_text = str(mode or '').strip()
+    if source_text and mode_text:
+        return '{0} / {1}'.format(source_text, mode_text)
+    if source_text:
+        return source_text
+    if mode_text:
+        return mode_text
+    return 'runtime-unspecified'
+
+
+def _threshold_flagged_share(actual_fpr: Any, flagged_records: Any, records_scored: Any) -> Any:
+    if actual_fpr not in ('', None):
+        return actual_fpr
+    try:
+        flagged = float(flagged_records)
+        scored = float(records_scored)
+    except (TypeError, ValueError):
+        return None
+    if scored <= 0:
+        return None
+    return flagged / scored

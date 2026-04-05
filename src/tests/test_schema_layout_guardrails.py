@@ -63,6 +63,8 @@ def test_manifest_authoritative_root_alignment() -> None:
     assert "tools/" in content_roots, "tools/ must remain a public content root"
     assert "local_untracked/" not in content_roots, "local_untracked/ must not appear as a public content root"
 
+    assert "docs/reports/aggregates/AGGREGATE_REPORT.md" in public_reports, "Aggregate report must remain declared as a public report"
+    assert "docs/reports/aggregates/PUBLIC_RUN_LEDGER.md" in public_reports, "Public run ledger must remain declared as a public report"
     assert "docs/reports/aggregates/LATEST_COLLECTIONS.md" in public_reports, "Latest collections aggregate must remain declared as a public report"
     assert "docs/reports/aggregates/WORKFLOW_ROLLUP.md" in public_reports, "Workflow rollup must remain declared as a public report"
     assert "docs/reports/aggregates/THRESHOLD_SUMMARY.md" in public_reports, "Threshold summary must remain declared as a public report"
@@ -84,12 +86,26 @@ def test_stale_tracked_seed_report_surfaces_remain_absent() -> None:
     assert not (root / "docs" / "reports" / "collections" / "sample").exists(), "docs/reports/collections/sample/ must stay absent until a fresh sample packet is regenerated"
 
 
+def test_stale_collection_report_landing_pages_remain_absent() -> None:
+    root = _project_root()
+    collection_reports_root = root / "docs" / "reports" / "collections"
+    stale_report_paths = sorted(
+        path.relative_to(root).as_posix()
+        for path in collection_reports_root.glob("**/report.md")
+        if path.is_file()
+    )
+
+    assert not stale_report_paths, f"Stale tracked collection landing pages found: {stale_report_paths}"
+
+
 def test_reports_index_and_generated_surfaces_follow_current_public_report_contract() -> None:
     root = _project_root()
     reports_index = (root / "docs" / "reports" / "INDEX.md").read_text(encoding="utf-8")
     generated_surfaces = (root / "docs" / "reports" / "reference" / "GENERATED_REPORT_SURFACES.md").read_text(encoding="utf-8")
 
     for expected in (
+        "aggregates/AGGREGATE_REPORT.md",
+        "aggregates/PUBLIC_RUN_LEDGER.md",
         "aggregates/LATEST_COLLECTIONS.md",
         "aggregates/WORKFLOW_ROLLUP.md",
         "aggregates/THRESHOLD_SUMMARY.md",
@@ -98,17 +114,29 @@ def test_reports_index_and_generated_surfaces_follow_current_public_report_contr
     ):
         assert expected in reports_index, f"Current report index must reference {expected}"
 
+    assert "collection/report.md" not in reports_index, "Aggregate-facing report index routes must not continue to privilege the stable collection landing page"
+
     for forbidden in (
         "ds/INDEX.md",
-        "PUBLIC_RUN_LEDGER.md",
-        "AGGREGATE_REPORT.md",
+        "docs/reports/PUBLIC_RUN_LEDGER.md",
+        "docs/reports/AGGREGATE_REPORT.md",
     ):
         assert forbidden not in reports_index, f"Legacy report index reference must not remain: {forbidden}"
 
     for expected in (
-        "docs/reports/collections/<collection-alias>/collection/report.md",
+        "docs/reports/aggregates/AGGREGATE_REPORT.md",
+        "docs/reports/aggregates/PUBLIC_RUN_LEDGER.md",
         "docs/reports/collections/<collection-alias>/collection/YYYYMMDDTHHMMSSffffffZ.collection.md",
         "docs/reports/collections/<collection-alias>/processing/<stage>/YYYYMMDDTHHMMSSffffffZ.<stage>.md",
+        "When published runs exist, they are rendered under `docs/reports/collections/<collection-alias>/`.",
+        "Zero-state publication may leave `docs/reports/collections/` present but empty",
+        "Aggregate-facing collection routes use the dated collection packet leaf",
+        "No stable `collection/report.md` landing page is part of the current tracked packet contract.",
+        "Aggregate-consumer route authority",
+        "whenever packet families are materialized",
+        "Zero-state publication should remain honest",
+        "AGGREGATE_REPORT.md",
+        "PUBLIC_RUN_LEDGER.md",
         "LATEST_COLLECTIONS.md",
         "WORKFLOW_ROLLUP.md",
         "THRESHOLD_SUMMARY.md",
@@ -118,7 +146,8 @@ def test_reports_index_and_generated_surfaces_follow_current_public_report_contr
 
     for forbidden in (
         "docs/reports/ds",
-        "PUBLIC_RUN_LEDGER.md",
-        "AGGREGATE_REPORT.md",
+        "docs/reports/PUBLIC_RUN_LEDGER.md",
+        "docs/reports/AGGREGATE_REPORT.md",
+        "Published runs are rendered under `docs/reports/collections/<collection-alias>/`.",
     ):
         assert forbidden not in generated_surfaces, f"Legacy generated-surface reference must not remain: {forbidden}"

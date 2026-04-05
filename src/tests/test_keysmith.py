@@ -1,6 +1,7 @@
 import subprocess
 import sys
 import tempfile
+import types
 from pathlib import Path
 
 import pytest
@@ -110,3 +111,84 @@ def test_keysmith_sandbox_rejects_output_outside_sandbox_root(monkeypatch):
             keysmith.run_keysmith(cfg)
 
         assert "sandbox_output_root" in str(e.value).lower() or "sandbox" in str(e.value).lower()
+
+
+def test_moltbook_register_accepts_nested_agent_response(monkeypatch) -> None:
+    class _FakeResponse:
+        def raise_for_status(self) -> None:
+            return None
+
+        def json(self):
+            return {
+                "agent": {
+                    "api_key": "moltbook_test_key",
+                    "claim_url": "https://www.moltbook.com/claim/moltbook_claim_test",
+                    "verification_code": "reef-X4B2",
+                },
+                "important": "SAVE YOUR API KEY",
+            }
+
+    fake_requests = types.SimpleNamespace(
+        post=lambda url, json, timeout: _FakeResponse(),
+    )
+
+    monkeypatch.setitem(sys.modules, "requests", fake_requests)
+
+    claim_url, api_key = keysmith.moltbook_register(
+        base_url="https://www.moltbook.com/api/v1",
+        register_path="agents/register",
+        agent_metadata={"name": "calamum-keysmith", "description": "test"},
+        timeout_sec=20,
+    )
+
+    assert claim_url == "https://www.moltbook.com/claim/moltbook_claim_test"
+    assert api_key == "moltbook_test_key"
+
+
+def test_moltbook_register_retries_default_name_on_conflict(monkeypatch) -> None:
+    captured_payloads = []
+
+    class _FakeResponse:
+        def __init__(self, status_code, payload):
+            self.status_code = status_code
+            self._payload = payload
+
+        def raise_for_status(self) -> None:
+            if self.status_code >= 400:
+                raise RuntimeError(f"status={self.status_code}")
+
+        def json(self):
+            return self._payload
+
+    def _fake_post(url, json, timeout):
+        captured_payloads.append(dict(json))
+        if len(captured_payloads) == 1:
+            return _FakeResponse(
+                409,
+                {"statusCode": 409, "message": "Agent name already taken"},
+            )
+        return _FakeResponse(
+            201,
+            {
+                "agent": {
+                    "api_key": "moltbook_test_key_retry",
+                    "claim_url": "https://www.moltbook.com/claim/moltbook_claim_retry",
+                }
+            },
+        )
+
+    fake_requests = types.SimpleNamespace(post=_fake_post)
+    monkeypatch.setitem(sys.modules, "requests", fake_requests)
+
+    claim_url, api_key = keysmith.moltbook_register(
+        base_url="https://www.moltbook.com/api/v1",
+        register_path="agents/register",
+        agent_metadata=keysmith._default_agent_metadata(),
+        timeout_sec=20,
+    )
+
+    assert claim_url == "https://www.moltbook.com/claim/moltbook_claim_retry"
+    assert api_key == "moltbook_test_key_retry"
+    assert captured_payloads[0]["name"] == keysmith.DEFAULT_AGENT_NAME
+    assert captured_payloads[1]["name"].startswith(f"{keysmith.DEFAULT_AGENT_NAME}-")
+    assert captured_payloads[1]["name"] != captured_payloads[0]["name"]

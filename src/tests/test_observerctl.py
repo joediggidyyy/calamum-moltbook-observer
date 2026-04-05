@@ -344,20 +344,57 @@ def test_ops_keysmith_mint_dry_run_delegates_and_keeps_output_names_only(tmp_pat
 def test_ops_keysmith_mint_non_dry_run_requires_sandbox(tmp_path: Path, monkeypatch, capsys) -> None:
     monkeypatch.delenv('KEYSMITH_SANDBOX', raising=False)
     monkeypatch.delenv('KEYSMITH_ALLOW_UNSANDBOXED', raising=False)
+    runner_path = tmp_path / 'Invoke-KeysmithSandbox.ps1'
+    runner_path.write_text('# runner\n', encoding='utf-8')
+
+    monkeypatch.setattr(observerctl_module, '_keysmith_shell_path', lambda: 'powershell.exe')
+    monkeypatch.setattr(observerctl_module, '_keysmith_sandbox_runner_path', lambda: runner_path)
+
+    def _fake_run(*args, **kwargs):
+        out_dir = tmp_path / 'live_keysmith'
+        out_dir.mkdir(parents=True, exist_ok=True)
+        for name in ('claim_url.txt', 'sealed_drop.bin', 'keysmith_audit.jsonl', 'keysmith_result.json'):
+            (out_dir / name).write_text('ok\n', encoding='utf-8')
+
+        class _Completed:
+            returncode = 0
+            stdout = ''
+            stderr = ''
+
+        return _Completed()
+
+    monkeypatch.setattr(observerctl_module.subprocess, 'run', _fake_run)
 
     rc = main(['ops', 'keysmith', 'mint', '--output-dir', str(tmp_path / 'live_keysmith'), '--json'])
 
-    assert rc == 2
+    assert rc == 0
     payload = json.loads(capsys.readouterr().out)
     assert payload['action'] == 'ops-keysmith-mint'
-    assert payload['decision'] == 'no-go'
-    assert 'critical_check_failed:keysmith_mint_failed' in payload['reason_codes']
-    assert 'sandbox' in payload['summary'].lower()
+    assert payload['decision'] == 'go'
+    assert payload['execution_lane'] == 'sandbox-runner'
+    assert payload['sandbox'] is True
+    assert Path(payload['claim_url_path']).exists()
+    assert Path(payload['sealed_drop_path']).exists()
 
 
-def test_ops_keysmith_mint_non_dry_run_ignores_legacy_unsandboxed_override(tmp_path: Path, monkeypatch, capsys) -> None:
+def test_ops_keysmith_mint_non_dry_run_reports_docker_lane_blocker(tmp_path: Path, monkeypatch, capsys) -> None:
     monkeypatch.delenv('KEYSMITH_SANDBOX', raising=False)
-    monkeypatch.setenv('KEYSMITH_ALLOW_UNSANDBOXED', '1')
+    runner_path = tmp_path / 'Invoke-KeysmithSandbox.ps1'
+    runner_path.write_text('# runner\n', encoding='utf-8')
+
+    monkeypatch.setattr(observerctl_module, '_keysmith_shell_path', lambda: 'powershell.exe')
+    monkeypatch.setattr(observerctl_module, '_keysmith_sandbox_runner_path', lambda: runner_path)
+    monkeypatch.setattr(observerctl_module.shutil, 'which', lambda name: '' if name == 'docker' else 'powershell.exe')
+
+    def _fake_run(*args, **kwargs):
+        class _Completed:
+            returncode = 1
+            stdout = ''
+            stderr = 'docker build failed'
+
+        return _Completed()
+
+    monkeypatch.setattr(observerctl_module.subprocess, 'run', _fake_run)
 
     rc = main(['ops', 'keysmith', 'mint', '--output-dir', str(tmp_path / 'live_keysmith'), '--json'])
 
@@ -365,8 +402,37 @@ def test_ops_keysmith_mint_non_dry_run_ignores_legacy_unsandboxed_override(tmp_p
     payload = json.loads(capsys.readouterr().out)
     assert payload['action'] == 'ops-keysmith-mint'
     assert payload['decision'] == 'no-go'
-    assert 'critical_check_failed:keysmith_mint_failed' in payload['reason_codes']
-    assert 'sandbox/container lane' in payload['summary'].lower()
+    assert 'critical_check_failed:docker_missing' in payload['reason_codes']
+    assert 'docker' in payload['summary'].lower()
+
+
+def test_ops_keysmith_mint_non_dry_run_reports_vendor_rate_limit(tmp_path: Path, monkeypatch, capsys) -> None:
+    monkeypatch.delenv('KEYSMITH_SANDBOX', raising=False)
+    runner_path = tmp_path / 'Invoke-KeysmithSandbox.ps1'
+    runner_path.write_text('# runner\n', encoding='utf-8')
+
+    monkeypatch.setattr(observerctl_module, '_keysmith_shell_path', lambda: 'powershell.exe')
+    monkeypatch.setattr(observerctl_module, '_keysmith_sandbox_runner_path', lambda: runner_path)
+    monkeypatch.setattr(observerctl_module.shutil, 'which', lambda name: 'docker.exe' if name == 'docker' else 'powershell.exe')
+
+    def _fake_run(*args, **kwargs):
+        class _Completed:
+            returncode = 1
+            stdout = ''
+            stderr = 'Registration request failed: url=https://www.moltbook.com/api/v1/agents/register status_code=429'
+
+        return _Completed()
+
+    monkeypatch.setattr(observerctl_module.subprocess, 'run', _fake_run)
+
+    rc = main(['ops', 'keysmith', 'mint', '--output-dir', str(tmp_path / 'live_keysmith'), '--json'])
+
+    assert rc == 2
+    payload = json.loads(capsys.readouterr().out)
+    assert payload['action'] == 'ops-keysmith-mint'
+    assert payload['decision'] == 'no-go'
+    assert 'environment_blocked:moltbook_rate_limited' in payload['reason_codes']
+    assert 'rate limit' in payload['summary'].lower()
 
 
 def test_ops_keysmith_status_human_render_uses_sectioned_operator_layout(monkeypatch, tmp_path: Path, capsys) -> None:
@@ -385,6 +451,7 @@ def test_ops_keysmith_status_human_render_uses_sectioned_operator_layout(monkeyp
     assert 'Evidence' in rendered
     assert 'Guidance' in rendered
     assert any('Live mint authority:' in line and 'sandbox-only' in line for line in rendered)
+    assert any('observerctl ops keysmith mint' in line for line in rendered)
 
 
 def test_ops_keysmith_mint_human_denial_requires_container_lane(tmp_path: Path, monkeypatch, capsys) -> None:
@@ -1753,6 +1820,80 @@ def test_librarian_nested_cli_dataset_and_vault_commands(monkeypatch, tmp_path: 
     payload = json.loads(capsys.readouterr().out)
     assert payload['action'] == 'librarian-vault-verify'
     assert payload['decision'] == 'go'
+
+
+def test_librarian_store_reports_show_delete_and_purge(monkeypatch, tmp_path: Path, capsys) -> None:
+    project_root, anchor = _make_temp_observer_project(tmp_path)
+    collections_root = project_root / 'docs' / 'reports' / 'collections'
+
+    can_alpha_collection = collections_root / 'can-alpha' / 'collection'
+    can_alpha_processing = collections_root / 'can-alpha' / 'processing' / 'build'
+    can_beta_collection = collections_root / 'can-beta' / 'collection'
+    can_beta_processing = collections_root / 'can-beta' / 'processing' / 'eval'
+
+    can_alpha_collection.mkdir(parents=True, exist_ok=True)
+    can_alpha_processing.mkdir(parents=True, exist_ok=True)
+    can_beta_collection.mkdir(parents=True, exist_ok=True)
+    can_beta_processing.mkdir(parents=True, exist_ok=True)
+
+    (can_alpha_collection / '20260405T010101000000Z.collection.md').write_text('# alpha\n', encoding='utf-8')
+    (can_alpha_processing / '20260405T010101000000Z.build.md').write_text('# alpha build\n', encoding='utf-8')
+    (can_beta_collection / '20260405T020202000000Z.collection.md').write_text('# beta\n', encoding='utf-8')
+    (can_beta_collection / 'report.md').write_text('# stale beta landing\n', encoding='utf-8')
+    (can_beta_processing / '20260405T020202000000Z.eval.md').write_text('# beta eval\n', encoding='utf-8')
+
+    monkeypatch.setattr(observerctl_module, '_project_root', lambda: project_root)
+    monkeypatch.setattr(observerctl_module, '_project_anchor', lambda: anchor)
+
+    rc = main(['librarian', 'store', 'reports', '--json'])
+    assert rc == 0
+    payload = json.loads(capsys.readouterr().out)
+    assert payload['action'] == 'librarian-store-reports-show'
+    assert payload['count'] == 2
+    assert payload['stale_report_md_count'] == 1
+    assert {row['collection_alias'] for row in payload['report_collections']} == {'can-alpha', 'can-beta'}
+
+    rc = main(['librarian', 'store', 'reports', '--delete', 'can-alpha', '--json'])
+    assert rc == 0
+    payload = json.loads(capsys.readouterr().out)
+    assert payload['action'] == 'librarian-store-reports-delete'
+    assert payload['delete_alias'] == 'can-alpha'
+    assert payload['archived_alias_count'] == 1
+    assert not (collections_root / 'can-alpha').exists()
+    assert (collections_root / 'can-beta').exists()
+    assert Path(payload['artifacts']['archive_manifest_json']).exists()
+
+    rc = main(['librarian', 'store', 'reports', '--purge', '--json'])
+    assert rc == 0
+    payload = json.loads(capsys.readouterr().out)
+    assert payload['action'] == 'librarian-store-reports-purge'
+    assert payload['archived_alias_count'] == 1
+    assert payload['report_collections'] == []
+    assert collections_root.exists()
+    assert list(collections_root.iterdir()) == []
+
+
+def test_librarian_store_reports_human_show_surfaces_sections(monkeypatch, tmp_path: Path, capsys) -> None:
+    project_root, anchor = _make_temp_observer_project(tmp_path)
+    collection_dir = project_root / 'docs' / 'reports' / 'collections' / 'can-human' / 'collection'
+    processing_dir = project_root / 'docs' / 'reports' / 'collections' / 'can-human' / 'processing' / 'score'
+    collection_dir.mkdir(parents=True, exist_ok=True)
+    processing_dir.mkdir(parents=True, exist_ok=True)
+    (collection_dir / '20260405T030303000000Z.collection.md').write_text('# human\n', encoding='utf-8')
+    (processing_dir / '20260405T030303000000Z.score.md').write_text('# human score\n', encoding='utf-8')
+
+    monkeypatch.setattr(observerctl_module, '_project_root', lambda: project_root)
+    monkeypatch.setattr(observerctl_module, '_project_anchor', lambda: anchor)
+
+    rc = main(['librarian', 'store', 'reports', '--show'])
+    assert rc == 0
+    rendered = capsys.readouterr().out.splitlines()
+    assert rendered[0] == 'Librarian store reports'
+    assert 'Summary' in rendered
+    assert 'Collections' in rendered
+    assert any('can-human' in line for line in rendered)
+    assert 'Evidence' in rendered
+    assert 'Guidance' in rendered
 
 
 def test_ds_wizard_command_surface_supports_run_hydration_and_draft_round_trip(tmp_path: Path) -> None:
@@ -3295,7 +3436,8 @@ def test_ds_finalize_run_packet_exposes_explicit_finalization_order(tmp_path: Pa
                 'published_run_dir': 'docs/reports/collections/can-frame1-order',
                 'published_report_paths': {
                     'json': 'docs/reports/internal/runs/frame1-order-build/publication_report.json',
-                    'markdown': 'docs/reports/collections/can-frame1-order/collection/report.md',
+                    'markdown': 'docs/reports/collections/can-frame1-order/collection/20260404T120000000000Z.collection.md',
+                    'collection_history_markdown': 'docs/reports/collections/can-frame1-order/collection/20260404T120000000000Z.collection.md',
                     'manifest': 'docs/reports/internal/runs/frame1-order-build/publication_manifest.json',
                 },
             },
@@ -3669,6 +3811,10 @@ def test_ds_report_publication_requires_canonical_run_root(tmp_path: Path) -> No
     assert publication['published_run_count'] == 2
     assert publication['current_run']['run_id'] == 'score-canonical'
     assert (project_root / publication['aggregate_paths']['index_md']).exists()
+    assert (project_root / publication['aggregate_paths']['aggregate_report_json']).exists()
+    assert (project_root / publication['aggregate_paths']['aggregate_report_md']).exists()
+    assert (project_root / publication['aggregate_paths']['public_run_ledger_json']).exists()
+    assert (project_root / publication['aggregate_paths']['public_run_ledger_md']).exists()
     assert (project_root / publication['aggregate_paths']['latest_json']).exists()
     assert (project_root / publication['aggregate_paths']['thresholds_json']).exists()
     assert (project_root / publication['current_run']['published_report_paths']['markdown']).exists()
@@ -4067,6 +4213,12 @@ def test_ds_report_publication_groups_multiple_stage_runs_under_one_collection_a
     collection_report = project_root / publication['current_run']['published_report_paths']['markdown']
     first_collection_doc = project_root / 'docs' / 'reports' / 'collections' / 'can-r1a2b' / 'collection' / '20260331T120500000000Z.collection.md'
     second_collection_doc = project_root / publication['current_run']['published_report_paths']['collection_history_markdown']
+    latest_collections_md = project_root / publication['aggregate_paths']['latest_md']
+    workflow_rollup_md = project_root / publication['aggregate_paths']['by_workflow_md']
+    aggregate_report_md = project_root / publication['aggregate_paths']['aggregate_report_md']
+    public_run_ledger_md = project_root / publication['aggregate_paths']['public_run_ledger_md']
+    reports_index_md = project_root / publication['aggregate_paths']['index_md']
+    generated_surfaces_md = project_root / publication['aggregate_paths']['generated_surfaces_md']
 
     assert publication['decision'] == 'go'
     assert publication['published_run_count'] == 2
@@ -4077,11 +4229,177 @@ def test_ds_report_publication_groups_multiple_stage_runs_under_one_collection_a
     assert second_stage_doc.name == '20260331T120500123456Z.eval.md'
     assert second_collection_doc.name == '20260331T120500123456Z.collection.md'
     assert collection_report.exists()
+    assert collection_report.name.endswith('.collection.md')
     collection_report_text = collection_report.read_text(encoding='utf-8')
+    latest_collections_text = latest_collections_md.read_text(encoding='utf-8')
+    workflow_rollup_text = workflow_rollup_md.read_text(encoding='utf-8')
+    aggregate_report_text = aggregate_report_md.read_text(encoding='utf-8')
+    public_run_ledger_text = public_run_ledger_md.read_text(encoding='utf-8')
+    reports_index_text = reports_index_md.read_text(encoding='utf-8')
+    generated_surfaces_text = generated_surfaces_md.read_text(encoding='utf-8')
     assert '20260331T120500000000Z.collection.md' in collection_report_text
     assert '20260331T120500123456Z.collection.md' in collection_report_text
     assert '20260331T120500000000Z.eval.md' in collection_report_text
     assert '20260331T120500123456Z.eval.md' in collection_report_text
+    assert 'collection/report.md' not in latest_collections_text
+    assert 'collection/report.md' not in workflow_rollup_text
+    assert 'collection/report.md' not in reports_index_text
+    assert '# Aggregate Report' in aggregate_report_text
+    assert '# Public Run Ledger' in public_run_ledger_text
+    assert 'AGGREGATE_REPORT.md' in public_run_ledger_text
+    assert 'PUBLIC_RUN_LEDGER.md' in aggregate_report_text
+    assert '20260331T120500123456Z.collection.md' in aggregate_report_text
+    assert '20260331T120500123456Z.collection.md' in latest_collections_text
+    assert '20260331T120500123456Z.collection.md' in workflow_rollup_text
+    assert '20260331T120500123456Z.collection.md' in reports_index_text
+    assert 'AGGREGATE_REPORT.md' in reports_index_text
+    assert 'PUBLIC_RUN_LEDGER.md' in reports_index_text
+    assert '`can-r1a2b`' in latest_collections_text
+    assert '| `can-r1a2b` |' in public_run_ledger_text
+    assert 'AGGREGATE_REPORT.md' in generated_surfaces_text
+    assert 'PUBLIC_RUN_LEDGER.md' in generated_surfaces_text
+    assert 'Aggregate-facing collection routes use the dated collection packet leaf' in generated_surfaces_text
+    assert 'No stable `collection/report.md` landing page is part of the current tracked packet contract.' in generated_surfaces_text
+
+
+def test_ds_report_publication_threshold_summary_only_uses_evaluate_packets_and_pairs_scores_by_alias(tmp_path: Path) -> None:
+    from analysis.report_aggregate import append_ds_run_index, refresh_tracked_ds_publication
+    from analysis.report_pack import prepare_report_bundle, write_report_bundle
+
+    project_root = tmp_path / 'observer_project'
+    anchor = project_root / 'src' / 'observerctl_anchor.py'
+    anchor.parent.mkdir(parents=True, exist_ok=True)
+    anchor.write_text('# anchor\n', encoding='utf-8')
+    (project_root / 'PROJECT_MANIFEST.json').write_text('{}\n', encoding='utf-8')
+
+    evaluate_bundle = prepare_report_bundle(anchor, 'evaluate', run_id='eval-threshold')
+    evaluation_dir = evaluate_bundle.artifact_dirs['evaluation']
+    evaluation_dir.mkdir(parents=True, exist_ok=True)
+    eval_run_json = evaluation_dir / 'run.json'
+    eval_run_md = evaluation_dir / 'run.md'
+    eval_run_json.write_text('{}\n', encoding='utf-8')
+    eval_run_md.write_text('# eval threshold\n', encoding='utf-8')
+    evaluate_report_bundle = write_report_bundle(
+        project_anchor=anchor,
+        bundle=evaluate_bundle,
+        packet={
+            'timestamp_utc': '2026-03-31T12:00:00Z',
+            'runtime_cli_surface': 'observerctl',
+            'decision': 'go',
+            'action': 'ds-evaluate',
+            'command_family': 'ds',
+            'command_path': 'observerctl ds evaluate',
+            'implementation_state': 'command-available',
+            'underlying_surface': 'analysis.evaluation_harness',
+            'summary': 'Evaluation completed through observerctl ds.',
+            'run_id': evaluate_bundle.run_id,
+            'collection_alias': 'can-thresh',
+            'threshold': 0.42,
+            'anomaly_direction': 'lower-is-more-anomalous',
+            'artifacts': {},
+            'reason_codes': [],
+        },
+        artifact_paths={
+            'run_json': eval_run_json,
+            'run_md': eval_run_md,
+        },
+        context={'max_fpr': 0.01},
+    )
+    append_ds_run_index(project_anchor=anchor, manifest_payload=evaluate_report_bundle['manifest'])
+
+    score_bundle = prepare_report_bundle(anchor, 'score', run_id='score-threshold')
+    scoring_dir = score_bundle.artifact_dirs['scoring']
+    scoring_dir.mkdir(parents=True, exist_ok=True)
+    scores_csv = scoring_dir / 'scores.csv'
+    scores_csv.write_text('record_id,score_anomaly\na,0.1\nb,0.9\n', encoding='utf-8')
+    score_report_bundle = write_report_bundle(
+        project_anchor=anchor,
+        bundle=score_bundle,
+        packet={
+            'timestamp_utc': '2026-03-31T12:05:00Z',
+            'runtime_cli_surface': 'observerctl',
+            'decision': 'go',
+            'action': 'ds-score',
+            'command_family': 'ds',
+            'command_path': 'observerctl ds score',
+            'implementation_state': 'command-available',
+            'underlying_surface': 'analysis.score_unsupervised',
+            'summary': 'Unsupervised scoring completed through observerctl ds.',
+            'run_id': score_bundle.run_id,
+            'collection_alias': 'can-thresh',
+            'records_scored': 2,
+            'artifacts': {},
+            'reason_codes': [],
+        },
+        artifact_paths={
+            'scores_csv': scores_csv,
+        },
+        context={'output_override': False},
+    )
+    append_ds_run_index(project_anchor=anchor, manifest_payload=score_report_bundle['manifest'])
+
+    pipeline_bundle = prepare_report_bundle(anchor, 'pipeline', run_id='pipeline-threshold')
+    pipeline_report_bundle = write_report_bundle(
+        project_anchor=anchor,
+        bundle=pipeline_bundle,
+        packet={
+            'timestamp_utc': '2026-03-31T12:10:00Z',
+            'runtime_cli_surface': 'observerctl',
+            'decision': 'go',
+            'action': 'ds-run',
+            'command_family': 'ds',
+            'command_path': 'observerctl ds run pipeline',
+            'implementation_state': 'command-available',
+            'underlying_surface': 'analysis.run_pipeline',
+            'summary': 'Pipeline completed through observerctl ds.',
+            'run_id': pipeline_bundle.run_id,
+            'collection_alias': 'can-thresh',
+            'threshold': 0.51,
+            'anomaly_direction': 'lower-is-more-anomalous',
+            'artifacts': {},
+            'reason_codes': [],
+        },
+        artifact_paths={'root_dir': pipeline_bundle.run_root},
+        context={'max_fpr': 0.01},
+    )
+    append_ds_run_index(project_anchor=anchor, manifest_payload=pipeline_report_bundle['manifest'])
+
+    publication = refresh_tracked_ds_publication(project_anchor=anchor, current_manifest_payload=score_report_bundle['manifest'])
+    thresholds_payload = json.loads((project_root / publication['aggregate_paths']['thresholds_json']).read_text(encoding='utf-8'))
+    threshold_summary_md = (project_root / publication['aggregate_paths']['thresholds_md']).read_text(encoding='utf-8')
+
+    assert publication['decision'] == 'go'
+    assert thresholds_payload['threshold_run_count'] == 1
+    assert len(thresholds_payload['threshold_rows']) == 1
+    row = thresholds_payload['threshold_rows'][0]
+    assert row['collection_alias'] == 'can-thresh'
+    assert row['run_id'] == 'eval-threshold'
+    assert row['workflow'] == 'evaluate'
+    assert row['published_report_md'].endswith('20260331T120000000000Z.eval.md')
+    assert row['paired_score_report_md'].endswith('20260331T120500000000Z.score.md')
+    assert 'Packet workflow' not in threshold_summary_md
+    assert '`pipeline-threshold`' not in threshold_summary_md
+
+
+def test_ds_report_publication_zero_state_generated_surfaces_remains_truthful(tmp_path: Path) -> None:
+    from analysis.report_aggregate import refresh_tracked_ds_publication
+
+    project_root = tmp_path / 'observer_project'
+    anchor = project_root / 'src' / 'observerctl_anchor.py'
+    anchor.parent.mkdir(parents=True, exist_ok=True)
+    anchor.write_text('# anchor\n', encoding='utf-8')
+    (project_root / 'PROJECT_MANIFEST.json').write_text('{}\n', encoding='utf-8')
+
+    publication = refresh_tracked_ds_publication(project_anchor=anchor)
+    generated_surfaces_text = (project_root / publication['aggregate_paths']['generated_surfaces_md']).read_text(encoding='utf-8')
+
+    assert publication['decision'] == 'go'
+    assert publication['published_run_count'] == 0
+    assert 'When published runs exist, they are rendered under `docs/reports/collections/<collection-alias>/`.' in generated_surfaces_text
+    assert 'Zero-state publication may leave `docs/reports/collections/` present but empty' in generated_surfaces_text
+    assert 'whenever packet families are materialized' in generated_surfaces_text
+    assert 'Zero-state publication should remain honest' in generated_surfaces_text
+    assert 'Published runs are rendered under `docs/reports/collections/<collection-alias>/`.' not in generated_surfaces_text
 
 
 def test_ds_report_publication_excludes_demo_workflow_and_resets_cache(tmp_path: Path) -> None:

@@ -26,6 +26,13 @@ from urllib.parse import urlparse
 
 
 KEYSMITH_VERSION = "1.0.0"
+MOLTBOOK_CANONICAL_BASE_URL = "https://www.moltbook.com/api/v1"
+MOLTBOOK_STALE_BASE_URLS = (
+    "https://api.moltbook.com/v1",
+    "https://moltbook.com/api/v1",
+)
+DEFAULT_AGENT_NAME = "calamum-keysmith"
+DEFAULT_AGENT_DESCRIPTION = "Sandboxed Moltbook registration utility for ORACL-Prime."
 
 
 class KeysmithError(RuntimeError):
@@ -182,14 +189,20 @@ def _seal_drop_write(path: Path, secret_value: str) -> int:
 
 def _default_allowed_hosts() -> Tuple[str, ...]:
     # Conservative by default; can be extended via CLI flags.
-    return (
-        "api.moltbook.com",
-        "moltbook.com",
-    ) # Note: be kind to others
+    return ("www.moltbook.com",)
+
+
+def _normalize_base_url(value: Optional[str]) -> str:
+    raw = str(value or "").strip().rstrip("/")
+    if not raw:
+        return MOLTBOOK_CANONICAL_BASE_URL
+    if raw in MOLTBOOK_STALE_BASE_URLS:
+        return MOLTBOOK_CANONICAL_BASE_URL
+    return raw
 
 
 def _default_base_url() -> str:
-    return os.environ.get("MOLTBOOK_HOST", "https://api.moltbook.com/v1")
+    return _normalize_base_url(os.environ.get("MOLTBOOK_HOST", MOLTBOOK_CANONICAL_BASE_URL))
 
 
 def _default_register_path() -> str:
@@ -248,6 +261,55 @@ def _render_persist_user_env_ps1(sealed_drop_path: Path) -> str:
     )
 
 
+def _extract_registration_credentials(payload: Any) -> Tuple[str, str]:
+    if not isinstance(payload, dict):
+        raise KeysmithError("Registration response was not a JSON object")
+
+    candidates = [payload]
+
+    data_block = payload.get("data")
+    if isinstance(data_block, dict):
+        candidates.append(data_block)
+
+    agent_block = payload.get("agent")
+    if isinstance(agent_block, dict):
+        candidates.append(agent_block)
+
+    if isinstance(data_block, dict):
+        nested_agent = data_block.get("agent")
+        if isinstance(nested_agent, dict):
+            candidates.append(nested_agent)
+
+    for candidate in candidates:
+        claim_url = candidate.get("claim_url")
+        api_key = candidate.get("api_key")
+        if isinstance(claim_url, str) and claim_url.strip() and isinstance(api_key, str) and api_key.strip():
+            return claim_url.strip(), api_key.strip()
+
+    raise KeysmithError("Registration response missing claim_url or api_key")
+
+
+def _default_agent_metadata() -> Dict[str, Any]:
+    return {
+        "name": DEFAULT_AGENT_NAME,
+        "description": DEFAULT_AGENT_DESCRIPTION,
+    }
+
+
+def _registration_payload_candidates(agent_metadata: Dict[str, Any]) -> Tuple[Dict[str, Any], ...]:
+    primary = dict(agent_metadata)
+    candidates = [primary]
+
+    name = str(primary.get("name", "") or "").strip()
+    description = str(primary.get("description", "") or "").strip()
+    if name == DEFAULT_AGENT_NAME and description == DEFAULT_AGENT_DESCRIPTION:
+        retry_payload = dict(primary)
+        retry_payload["name"] = f"{DEFAULT_AGENT_NAME}-{secrets.token_hex(3)}"
+        candidates.append(retry_payload)
+
+    return tuple(candidates)
+
+
 def moltbook_register(
     *,
     base_url: str,
@@ -273,22 +335,30 @@ def moltbook_register(
     url = f"{base}/{path}"
 
     # DO NOT include secrets in metadata; metadata is names-only.
-    try:
-        resp = requests.post(url, json=agent_metadata, timeout=timeout_sec)
-        resp.raise_for_status()
-        data = resp.json()
-    except Exception as e:
-        # Never include response body; it may contain secrets.
-        raise KeysmithError(f"Registration request failed: url={url}") from e
+    last_error: Optional[Exception] = None
+    payload_candidates = _registration_payload_candidates(agent_metadata)
+    last_index = len(payload_candidates) - 1
+    for index, payload in enumerate(payload_candidates):
+        resp = None
+        try:
+            resp = requests.post(url, json=payload, timeout=timeout_sec)
+            status_code = getattr(resp, "status_code", None)
+            if status_code == 409 and index < last_index:
+                continue
+            resp.raise_for_status()
+            data = resp.json()
+            return _extract_registration_credentials(data)
+        except Exception as e:
+            last_error = e
+            status_code = getattr(resp, "status_code", None)
+            if status_code == 409 and index < last_index:
+                continue
+            message = f"Registration request failed: url={url}"
+            if status_code is not None:
+                message += f" status_code={status_code}"
+            raise KeysmithError(message) from e
 
-    claim_url = data.get("claim_url")
-    api_key = data.get("api_key")
-    if not isinstance(claim_url, str) or not claim_url.strip():
-        raise KeysmithError("Registration response missing claim_url")
-    if not isinstance(api_key, str) or not api_key.strip():
-        raise KeysmithError("Registration response missing api_key")
-
-    return claim_url.strip(), api_key
+    raise KeysmithError(f"Registration request failed: url={url}") from last_error
 
 
 def run_keysmith(config: KeysmithConfig) -> KeysmithArtifacts:
@@ -404,11 +474,7 @@ def run_keysmith(config: KeysmithConfig) -> KeysmithArtifacts:
 
 def _parse_agent_metadata_json(path: Optional[str]) -> Dict[str, Any]:
     if not path:
-        return {
-            "agent_name": "calamum-keysmith",
-            "purpose": "moltbook_agent_registration",
-            "operator": "ORACL-Prime",
-        }
+        return _default_agent_metadata()
 
     p = Path(path)
     try:
