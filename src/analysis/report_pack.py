@@ -3,6 +3,7 @@ from __future__ import annotations
 from collections.abc import Mapping as MappingABC
 import os
 import json
+import re
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Any, Dict, Mapping, Optional
@@ -78,6 +79,30 @@ WORKFLOW_NEXT_STEP_HINTS = {
     'pipeline': 'Use the machine-readable companions and listed artifacts to drill into the stage-specific outputs that the composite pipeline produced.',
 }
 STAGE_WORKFLOWS = {'build', 'train', 'evaluate', 'score'}
+STAGE_SECTION_TITLES = {
+    'build': 'Build',
+    'train': 'Training',
+    'evaluate': 'Evaluation',
+    'score': 'Score',
+}
+STAGE_ROLE_SUMMARIES = {
+    'build': 'first processing packet that turns the approved collection evidence into the run-local dataset bundle consumed by later stages',
+    'train': 'model-publication packet that turns the current dataset bundle into the trained artifact consumed by downstream evaluation and scoring',
+    'evaluate': 'threshold-publication packet that explains how the current model and score surface were turned into downstream review posture',
+    'score': 'score-surface packet that shows the full anomaly distribution the paired evaluation threshold is selecting from',
+}
+STAGE_PRIMARY_SECTION_TITLES = {
+    'build': 'Dataset materialization summary',
+    'train': 'Model publication summary',
+    'evaluate': 'Threshold publication summary',
+    'score': 'Score surface summary',
+}
+STAGE_SECONDARY_SECTION_TITLES = {
+    'build': 'Split and schema summary',
+    'train': 'Feature contract summary',
+    'evaluate': 'Review-set summary',
+    'score': 'Distribution summary',
+}
 PACKET_RESULT_EXCLUDED_FIELDS = {
     'timestamp_utc',
     'runtime_cli_surface',
@@ -387,7 +412,7 @@ def _composite_report_markdown(report_payload: Mapping[str, Any], *, project_roo
 def _stage_report_markdown(report_payload: Mapping[str, Any], *, project_root: Path, report_md_path: Path) -> str:
     workflow = str(report_payload.get('workflow', 'run'))
     title = WORKFLOW_TITLES.get(workflow, workflow.replace('-', ' ').title())
-    packet_role = WORKFLOW_PACKET_ROLES.get(workflow, 'analysis packet')
+    stage_label = STAGE_SECTION_TITLES.get(workflow, title)
     result_payload = report_payload.get('result', {}) if isinstance(report_payload.get('result', {}), MappingABC) else {}
     decision = str(report_payload.get('decision', '') or '').strip()
     runtime_cli_surface = str(report_payload.get('runtime_cli_surface', '') or '').strip()
@@ -407,36 +432,455 @@ def _stage_report_markdown(report_payload: Mapping[str, Any], *, project_root: P
         lines.append('**Runtime CLI surface**: `{0}`'.format(runtime_cli_surface))
     if command_path:
         lines.append('**Command path**: `{0}`'.format(command_path))
-    lines.extend([
-        '',
-        '## Executive summary',
-        '',
-        summary or 'No summary was recorded for this run.',
-        '',
-    ])
-    _append_narrative_section(lines, 'Stage purpose', _workflow_purpose_text(workflow, collection_alias))
-    _append_scalar_table(
+    lines.append('')
+    _append_scalar_table(lines, '{0} identity'.format(stage_label), _workflow_identity_mapping(workflow, report_payload, result_payload))
+    _append_code_summary_section(lines, 'Run summary', _workflow_run_summary_mapping(workflow, report_payload, result_payload))
+    run_summary_text = _workflow_run_summary_text(workflow, report_payload, result_payload)
+    if run_summary_text:
+        lines.append(run_summary_text)
+        lines.append('')
+    handoff_map = _workflow_handoff_map_markdown(workflow, report_payload, result_payload)
+    if handoff_map:
+        lines.append('## {0} handoff map'.format(stage_label))
+        lines.append('')
+        lines.append('```mermaid')
+        lines.extend(handoff_map.splitlines())
+        lines.append('```')
+        lines.append('')
+    lines.append('## {0} method'.format(stage_label))
+    lines.append('')
+    lines.append(_workflow_method_summary_text(workflow, report_payload, result_payload))
+    lines.append('')
+    _append_code_summary_section(lines, '', _workflow_method_reference_mapping(workflow, report_payload, result_payload))
+    _append_code_summary_section(
         lines,
-        'Stage identity',
-        {
-            'collection_alias': collection_alias,
-            'run_id': report_payload.get('run_id', ''),
-            'workflow': workflow,
-            'packet_role': packet_role,
-            'decision': decision,
-            'created_utc': report_payload.get('timestamp_utc', ''),
-        },
+        STAGE_PRIMARY_SECTION_TITLES.get(workflow, 'Stage summary'),
+        _workflow_primary_summary_mapping(workflow, report_payload, result_payload),
     )
-    _append_bullet_section(lines, 'Inputs used', _workflow_input_items(workflow, report_payload))
-    _append_narrative_section(lines, 'Method summary', _workflow_method_summary_text(workflow, report_payload, result_payload))
-    _append_stage_key_results(lines, workflow, report_payload, result_payload)
-    _append_narrative_section(lines, 'Interpretation', _workflow_interpretation_text(workflow, report_payload, result_payload))
+    _append_code_summary_section(
+        lines,
+        STAGE_SECONDARY_SECTION_TITLES.get(workflow, 'Stage evidence summary'),
+        _workflow_secondary_summary_mapping(workflow, report_payload, result_payload),
+    )
+    interpretation_text = _workflow_interpretation_text(workflow, report_payload, result_payload)
+    if interpretation_text:
+        lines.append(interpretation_text)
+        lines.append('')
     _append_stage_visual_surfaces(lines, workflow, result_payload, project_root=project_root, report_md_path=report_md_path)
-    _append_bullet_section(lines, 'Risks, limits, and non-claims', _workflow_limit_items(workflow, decision, result_payload))
-    _append_narrative_section(lines, 'What follows from this stage', _workflow_stage_handoff_text(workflow, report_payload, result_payload))
+    _append_code_summary_section(lines, 'Run implications', _workflow_run_implication_mapping(workflow, report_payload, result_payload))
+    handoff_text = _workflow_stage_handoff_text(workflow, report_payload, result_payload)
+    if handoff_text:
+        lines.append(handoff_text)
+        lines.append('')
+    _append_bullet_section(lines, 'Limits', _workflow_limit_items(workflow, decision, result_payload))
     _append_related_surfaces_section(lines, report_payload, project_root=project_root, report_md_path=report_md_path)
-    _append_provenance_section(lines, report_payload.get('lineage', {}))
     return '\n'.join(lines).rstrip() + '\n'
+
+
+def _workflow_identity_mapping(
+    workflow: str,
+    report_payload: Mapping[str, Any],
+    result_payload: Mapping[str, Any],
+) -> Dict[str, Any]:
+    context = report_payload.get('context', {}) if isinstance(report_payload.get('context', {}), MappingABC) else {}
+    artifacts = report_payload.get('artifacts', {}) if isinstance(report_payload.get('artifacts', {}), MappingABC) else {}
+    mapping: Dict[str, Any] = {}
+    _maybe_add(mapping, 'Collection alias', report_payload.get('collection_alias', ''))
+    source_scope = _source_scope_text(context)
+    _maybe_add(mapping, 'Source scope', source_scope)
+    _maybe_add(mapping, 'Calculation run', report_payload.get('run_id', ''))
+
+    build_lineage = _first_nonempty_run_token(
+        artifacts.get('dataset_manifest', ''),
+        artifacts.get('features_csv', ''),
+        artifacts.get('labels_csv', ''),
+    )
+    model_lineage = _first_nonempty_run_token(
+        artifacts.get('model_path', ''),
+        artifacts.get('model_pickle', ''),
+        artifacts.get('resolved_model_path', ''),
+        artifacts.get('train_manifest', ''),
+    )
+    if workflow in {'train', 'evaluate', 'score'}:
+        _maybe_add(mapping, 'Build lineage', build_lineage if str(build_lineage).startswith('build_') else '')
+    if workflow in {'evaluate', 'score'}:
+        _maybe_add(mapping, 'Model lineage', model_lineage if str(model_lineage).startswith('train_') else '')
+
+    mapping['Reader posture'] = 'curated, public-safe, names-only'
+    mapping['Role in the report spine'] = STAGE_ROLE_SUMMARIES.get(
+        workflow,
+        'reader-facing stage packet for the current workflow lane',
+    )
+    return mapping
+
+
+def _workflow_run_summary_mapping(
+    workflow: str,
+    report_payload: Mapping[str, Any],
+    result_payload: Mapping[str, Any],
+) -> Dict[str, Any]:
+    context = report_payload.get('context', {}) if isinstance(report_payload.get('context', {}), MappingABC) else {}
+    counts = result_payload.get('counts', {}) if isinstance(result_payload.get('counts', {}), MappingABC) else {}
+    metrics = result_payload.get('metrics', {}) if isinstance(result_payload.get('metrics', {}), MappingABC) else {}
+    thresholding = result_payload.get('thresholding', {}) if isinstance(result_payload.get('thresholding', {}), MappingABC) else {}
+    visuals = result_payload.get('visuals', {}) if isinstance(result_payload.get('visuals', {}), MappingABC) else {}
+    mapping: Dict[str, Any] = {'decision': report_payload.get('decision', '') or 'unknown'}
+
+    if workflow == 'build':
+        _maybe_add(mapping, 'source materialization', True)
+        _maybe_add(mapping, 'total records', _first_present(result_payload, 'records_built') or _first_present(counts, 'records_built'))
+        _maybe_add(mapping, 'labels present', _boolish_text(_first_present(result_payload, 'has_labels')))
+        _maybe_add(mapping, 'seed', _first_present(context, 'dataset_seed', 'seed'))
+        _maybe_add(mapping, 'feature columns', _feature_column_summary(result_payload))
+    elif workflow == 'train':
+        _maybe_add(mapping, 'model type', _first_present(result_payload, 'model_type'))
+        _maybe_add(mapping, 'seed', _first_present(context, 'dataset_seed', 'seed'))
+        _maybe_add(mapping, 'lineage records', _first_present(counts, 'records_built', 'records_scored', 'records_evaluated'))
+        _maybe_add(mapping, 'feature columns', _feature_column_summary(result_payload))
+        _maybe_add(mapping, 'metrics emitted', _nonempty_mapping_count(metrics), allow_empty_zero=True)
+        _maybe_add(mapping, 'local figures', int(visuals.get('figure_count', 0) or 0), allow_empty_zero=True)
+    elif workflow == 'evaluate':
+        _maybe_add(mapping, 'threshold', _first_present(thresholding, 'threshold') or _first_present(result_payload, 'threshold'))
+        _maybe_add(mapping, 'max FPR constraint', _first_present(thresholding, 'target_fpr') or _first_present(context, 'max_fpr'))
+        _maybe_add(mapping, 'score direction', _first_present(thresholding, 'anomaly_direction') or _first_present(result_payload, 'anomaly_direction'))
+        _maybe_add(mapping, 'score column', _first_present(thresholding, 'score_column') or _first_present(result_payload, 'score_column'))
+        _maybe_add(mapping, 'records evaluated', _first_present(thresholding, 'records_evaluated', 'records_scored') or _first_present(result_payload, 'records_evaluated', 'records_scored'))
+        _maybe_add(mapping, 'flagged records', _first_present(thresholding, 'flagged_records') or _first_present(result_payload, 'flagged_records'))
+        _maybe_add(mapping, 'flag rate', _flag_rate_text(thresholding, result_payload))
+        _maybe_add(mapping, 'labels present', _boolish_text(_first_present(result_payload, 'has_labels')))
+        _maybe_add(mapping, 'local figures', int(visuals.get('figure_count', 0) or 0), allow_empty_zero=True)
+    elif workflow == 'score':
+        _maybe_add(mapping, 'records scored', _first_present(thresholding, 'records_scored') or _first_present(result_payload, 'records_scored'))
+        _maybe_add(mapping, 'score column', _first_present(result_payload, 'score_column') or _first_present(thresholding, 'score_column'))
+        _maybe_add(mapping, 'score direction', _first_present(result_payload, 'anomaly_direction') or _first_present(thresholding, 'anomaly_direction'))
+        _maybe_add(mapping, 'paired threshold', _first_present(thresholding, 'threshold'))
+        _maybe_add(mapping, 'local figures', int(visuals.get('figure_count', 0) or 0), allow_empty_zero=True)
+
+    return {key: value for key, value in mapping.items() if value not in ('', None, [], {}, ())}
+
+
+def _workflow_run_summary_text(
+    workflow: str,
+    report_payload: Mapping[str, Any],
+    result_payload: Mapping[str, Any],
+) -> str:
+    summary = str(report_payload.get('summary', '') or '').strip()
+    if workflow == 'build':
+        return 'This run reads as a materialization pass rather than a model-quality claim. {0}'.format(
+            summary or 'The packet focuses on the dataset handoff that later stages will consume.'
+        )
+    if workflow == 'train':
+        return 'This run reads as artifact publication rather than as a metric-heavy training story. {0}'.format(
+            summary or 'The packet exists to show that the approved dataset bundle was converted into a reusable model handoff.'
+        )
+    if workflow == 'evaluate':
+        return 'This run publishes threshold posture and review-volume evidence instead of claiming labeled certainty. {0}'.format(
+            summary or 'The packet exists to show the operating point that the paired score surface should be read through.'
+        )
+    if workflow == 'score':
+        return 'This run publishes the full score surface for the current lineage rather than a standalone flagged-case verdict. {0}'.format(
+            summary or 'The packet exists to make the paired evaluation threshold legible at collection scale.'
+        )
+    return summary
+
+
+def _workflow_handoff_map_markdown(
+    workflow: str,
+    report_payload: Mapping[str, Any],
+    result_payload: Mapping[str, Any],
+) -> str:
+    run_id = str(report_payload.get('run_id', '') or 'current-run')
+    collection_alias = str(report_payload.get('collection_alias', '') or 'collection')
+    context = report_payload.get('context', {}) if isinstance(report_payload.get('context', {}), MappingABC) else {}
+    source_scope = _source_scope_text(context) or collection_alias
+    artifacts = report_payload.get('artifacts', {}) if isinstance(report_payload.get('artifacts', {}), MappingABC) else {}
+    thresholding = result_payload.get('thresholding', {}) if isinstance(result_payload.get('thresholding', {}), MappingABC) else {}
+    build_lineage = _first_nonempty_run_token(
+        artifacts.get('dataset_manifest', ''),
+        artifacts.get('features_csv', ''),
+        collection_alias,
+    ) or 'build-lineage'
+    model_lineage = _first_nonempty_run_token(
+        artifacts.get('model_path', ''),
+        artifacts.get('model_pickle', ''),
+        artifacts.get('resolved_model_path', ''),
+        artifacts.get('train_manifest', ''),
+    ) or 'trained-model'
+
+    if workflow == 'build':
+        return '\n'.join([
+            'flowchart LR',
+            '\tA[Collection packet<br/>{0}] --> B[Build run<br/>{1}]'.format(source_scope, run_id),
+            '\tB --> C[Run-local dataset bundle<br/>manifest + features + splits]',
+            '\tC --> D[Train / Eval / Score]',
+        ])
+    if workflow == 'train':
+        return '\n'.join([
+            'flowchart LR',
+            '\tA[Dataset bundle<br/>{0}] --> B[Training run<br/>{1}]'.format(build_lineage, run_id),
+            '\tB --> C[Model bundle<br/>model + manifest + metrics]',
+            '\tC --> D[Evaluation packet]',
+            '\tC --> E[Score packet]',
+        ])
+    if workflow == 'evaluate':
+        threshold_value = _summary_value_text(_first_present(thresholding, 'threshold') or _first_present(result_payload, 'threshold')) or 'current threshold'
+        flagged = _summary_value_text(_first_present(thresholding, 'flagged_records') or _first_present(result_payload, 'flagged_records')) or 'flagged set'
+        return '\n'.join([
+            'flowchart LR',
+            '\tA[Build dataset<br/>{0}] --> B[Trained model<br/>{1}]'.format(build_lineage, model_lineage),
+            '\tB --> C[Evaluation run<br/>{0}]'.format(run_id),
+            '\tC --> D[Published threshold<br/>{0}]'.format(threshold_value),
+            '\tD --> E[Score review set<br/>{0}]'.format(flagged),
+        ])
+    if workflow == 'score':
+        return '\n'.join([
+            'flowchart LR',
+            '\tA[Build dataset<br/>{0}] --> B[Trained model<br/>{1}]'.format(build_lineage, model_lineage),
+            '\tB --> C[Score run<br/>{0}]'.format(run_id),
+            '\tC --> D[Full score surface<br/>scores.csv + figures]',
+            '\tD --> E[Threshold-aware reading<br/>paired evaluation packet]',
+        ])
+    return ''
+
+
+def _workflow_method_reference_mapping(
+    workflow: str,
+    report_payload: Mapping[str, Any],
+    result_payload: Mapping[str, Any],
+) -> Dict[str, Any]:
+    report_paths = report_payload.get('report_paths', {}) if isinstance(report_payload.get('report_paths', {}), MappingABC) else {}
+    artifacts = report_payload.get('artifacts', {}) if isinstance(report_payload.get('artifacts', {}), MappingABC) else {}
+    thresholding = result_payload.get('thresholding', {}) if isinstance(result_payload.get('thresholding', {}), MappingABC) else {}
+    mapping: Dict[str, Any] = {}
+    _maybe_add(mapping, 'command surface', report_payload.get('command_path', ''))
+    _maybe_add(mapping, 'runtime report json', report_paths.get('json', ''))
+    _maybe_add(mapping, 'runtime report manifest', report_paths.get('manifest', ''))
+    _maybe_add(mapping, 'runtime report markdown', report_paths.get('markdown', ''))
+
+    if workflow == 'build':
+        _maybe_add(mapping, 'run-local dataset', artifacts.get('dataset_manifest', ''))
+        _maybe_add(mapping, 'feature table', artifacts.get('features_csv', ''))
+        _maybe_add(mapping, 'labels table', artifacts.get('labels_csv', ''))
+    elif workflow == 'train':
+        _maybe_add(mapping, 'dataset lineage', artifacts.get('dataset_manifest', ''))
+        _maybe_add(mapping, 'model bundle', _first_present(artifacts, 'model_path', 'model_pickle', 'resolved_model_path'))
+        _maybe_add(mapping, 'train manifest', artifacts.get('train_manifest', ''))
+    elif workflow == 'evaluate':
+        _maybe_add(mapping, 'dataset lineage', artifacts.get('dataset_manifest', ''))
+        _maybe_add(mapping, 'model reference', _first_present(artifacts, 'model_path', 'model_pickle', 'resolved_model_path'))
+        _maybe_add(mapping, 'evaluation ledger', _first_present(artifacts, 'evaluation_run_json', 'run_json'))
+        _maybe_add(mapping, 'score surface', _first_present(thresholding, 'scores_csv') or artifacts.get('scores_csv', ''))
+    elif workflow == 'score':
+        _maybe_add(mapping, 'model reference', _first_present(artifacts, 'model_path', 'model_pickle', 'resolved_model_path'))
+        _maybe_add(mapping, 'score surface', _first_present(thresholding, 'scores_csv') or artifacts.get('scores_csv', ''))
+        _maybe_add(mapping, 'threshold context', _first_present(thresholding, 'report_md', 'report_json'))
+
+    return mapping
+
+
+def _workflow_primary_summary_mapping(
+    workflow: str,
+    report_payload: Mapping[str, Any],
+    result_payload: Mapping[str, Any],
+) -> Dict[str, Any]:
+    context = report_payload.get('context', {}) if isinstance(report_payload.get('context', {}), MappingABC) else {}
+    metrics = result_payload.get('metrics', {}) if isinstance(result_payload.get('metrics', {}), MappingABC) else {}
+    thresholding = result_payload.get('thresholding', {}) if isinstance(result_payload.get('thresholding', {}), MappingABC) else {}
+    visuals = result_payload.get('visuals', {}) if isinstance(result_payload.get('visuals', {}), MappingABC) else {}
+    mapping: Dict[str, Any] = {}
+    if workflow == 'build':
+        _maybe_add(mapping, 'underlying surface', report_payload.get('underlying_surface', ''))
+        _maybe_add(mapping, 'output override', _boolish_text(_first_present(context, 'output_override')))
+        _maybe_add(mapping, 'feature columns', _feature_column_summary(result_payload))
+        _maybe_add(mapping, 'seed', _first_present(context, 'dataset_seed', 'seed'))
+    elif workflow == 'train':
+        _maybe_add(mapping, 'published model type', _first_present(result_payload, 'model_type'))
+        _maybe_add(mapping, 'output override', _boolish_text(_first_present(context, 'output_override')))
+        _maybe_add(mapping, 'metrics payload', _nonempty_mapping_count(metrics), allow_empty_zero=True)
+        _maybe_add(mapping, 'local figures', int(visuals.get('figure_count', 0) or 0), allow_empty_zero=True)
+    elif workflow == 'evaluate':
+        _maybe_add(mapping, 'published threshold', _first_present(thresholding, 'threshold') or _first_present(result_payload, 'threshold'))
+        _maybe_add(mapping, 'constraint type', 'max_fpr')
+        _maybe_add(mapping, 'constraint value', _first_present(thresholding, 'target_fpr') or _first_present(context, 'max_fpr'))
+        _maybe_add(mapping, 'score direction', _first_present(thresholding, 'anomaly_direction') or _first_present(result_payload, 'anomaly_direction'))
+        _maybe_add(mapping, 'score column', _first_present(thresholding, 'score_column') or _first_present(result_payload, 'score_column'))
+        _maybe_add(mapping, 'local figures', int(visuals.get('figure_count', 0) or 0), allow_empty_zero=True)
+    elif workflow == 'score':
+        _maybe_add(mapping, 'records scored', _first_present(thresholding, 'records_scored') or _first_present(result_payload, 'records_scored'))
+        _maybe_add(mapping, 'output override', _boolish_text(_first_present(context, 'output_override')))
+        _maybe_add(mapping, 'score column', _first_present(result_payload, 'score_column') or _first_present(thresholding, 'score_column'))
+        _maybe_add(mapping, 'anomaly direction', _first_present(result_payload, 'anomaly_direction') or _first_present(thresholding, 'anomaly_direction'))
+        _maybe_add(mapping, 'reason codes', _reason_code_text(result_payload.get('reason_codes', [])))
+    return mapping
+
+
+def _workflow_secondary_summary_mapping(
+    workflow: str,
+    report_payload: Mapping[str, Any],
+    result_payload: Mapping[str, Any],
+) -> Dict[str, Any]:
+    context = report_payload.get('context', {}) if isinstance(report_payload.get('context', {}), MappingABC) else {}
+    counts = result_payload.get('counts', {}) if isinstance(result_payload.get('counts', {}), MappingABC) else {}
+    thresholding = result_payload.get('thresholding', {}) if isinstance(result_payload.get('thresholding', {}), MappingABC) else {}
+    visuals = result_payload.get('visuals', {}) if isinstance(result_payload.get('visuals', {}), MappingABC) else {}
+    mapping: Dict[str, Any] = {}
+    if workflow == 'build':
+        _maybe_add(mapping, 'records built', _first_present(result_payload, 'records_built') or _first_present(counts, 'records_built'))
+        _maybe_add(mapping, 'labels present', _boolish_text(_first_present(result_payload, 'has_labels')))
+        _maybe_add(mapping, 'feature columns', _feature_column_summary(result_payload))
+        _maybe_add(mapping, 'split authority', _first_present(report_payload.get('artifacts', {}) if isinstance(report_payload.get('artifacts', {}), MappingABC) else {}, 'split_manifest_json', 'splits_csv'))
+    elif workflow == 'train':
+        _maybe_add(mapping, 'feature columns', _feature_column_summary(result_payload))
+        _maybe_add(mapping, 'labels present', _boolish_text(_first_present(result_payload, 'has_labels')))
+        _maybe_add(mapping, 'metrics emitted', _nonempty_mapping_count(result_payload.get('metrics', {}) if isinstance(result_payload.get('metrics', {}), MappingABC) else {}), allow_empty_zero=True)
+        _maybe_add(mapping, 'figure count', int(visuals.get('figure_count', 0) or 0), allow_empty_zero=True)
+    elif workflow == 'evaluate':
+        _maybe_add(mapping, 'records evaluated', _first_present(thresholding, 'records_evaluated', 'records_scored') or _first_present(result_payload, 'records_evaluated', 'records_scored'))
+        _maybe_add(mapping, 'flagged records', _first_present(thresholding, 'flagged_records') or _first_present(result_payload, 'flagged_records'))
+        _maybe_add(mapping, 'flagged share', _flag_rate_text(thresholding, result_payload))
+        _maybe_add(mapping, 'labels present', _boolish_text(_first_present(result_payload, 'has_labels')))
+    elif workflow == 'score':
+        _maybe_add(mapping, 'paired eval threshold', _first_present(thresholding, 'threshold'))
+        _maybe_add(mapping, 'score direction', _first_present(result_payload, 'anomaly_direction') or _first_present(thresholding, 'anomaly_direction'))
+        _maybe_add(mapping, 'figure count', int(visuals.get('figure_count', 0) or 0), allow_empty_zero=True)
+        _maybe_add(mapping, 'reader message', _workflow_stage_handoff_text(workflow, report_payload, result_payload))
+    return mapping
+
+
+def _workflow_run_implication_mapping(
+    workflow: str,
+    report_payload: Mapping[str, Any],
+    result_payload: Mapping[str, Any],
+) -> Dict[str, Any]:
+    ready = 'ready' if str(report_payload.get('decision', '') or '').strip().lower() == 'go' else 'conditional'
+    mapping: Dict[str, Any] = {}
+    if workflow == 'build':
+        mapping['train handoff posture'] = ready
+        mapping['main value'] = 'stable custody, explicit schema, reusable dataset bundle'
+        mapping['reader caution'] = 'do not treat a build packet as model-quality evidence on its own'
+    elif workflow == 'train':
+        mapping['eval handoff posture'] = ready
+        mapping['score handoff posture'] = ready
+        mapping['main value'] = 'reusable model custody with explicit lineage'
+        mapping['reader caution'] = 'training posture still needs downstream evaluation before it becomes a readiness signal'
+    elif workflow == 'evaluate':
+        mapping['score handoff posture'] = ready
+        mapping['main value'] = 'explicit operating threshold tied to a concrete review volume'
+        mapping['reader caution'] = 'do not read the max-FPR setting as labeled certainty when labels are absent'
+    elif workflow == 'score':
+        mapping['review handoff posture'] = ready
+        mapping['main value'] = 'full score surface that makes the paired threshold interpretable'
+        mapping['reader caution'] = 'scoring emits the distribution; threshold selection and final review posture live elsewhere'
+    return mapping
+
+
+def _append_code_summary_section(lines: list[str], title: str, mapping: Mapping[str, Any]) -> None:
+    if not isinstance(mapping, MappingABC) or not mapping:
+        return
+    rows = [(str(key), value) for key, value in mapping.items() if value not in ('', None, [], {}, ())]
+    if not rows:
+        return
+    if str(title or '').strip():
+        lines.append('## {0}'.format(title))
+        lines.append('')
+    width = max(len(key) for key, _ in rows)
+    lines.append('```')
+    for key, value in rows:
+        lines.append('{0:<{1}} : {2}'.format(key, width, _summary_value_text(value)))
+    lines.append('```')
+    lines.append('')
+
+
+def _summary_value_text(value: Any) -> str:
+    if value in ('', None):
+        return 'n/a'
+    if isinstance(value, bool):
+        return 'yes' if value else 'no'
+    if isinstance(value, int):
+        return '{0:,}'.format(value)
+    if isinstance(value, float):
+        if value.is_integer():
+            return '{0:,}'.format(int(value))
+        return '{0:.6g}'.format(value)
+    if isinstance(value, (list, tuple, set)):
+        return ', '.join(str(item) for item in value)
+    return str(value)
+
+
+def _source_scope_text(context: Mapping[str, Any]) -> str:
+    source = str(context.get('source', '') or '').strip()
+    mode = str(context.get('mode', '') or '').strip()
+    if source and mode:
+        return '{0}:{1}'.format(source, mode)
+    if source:
+        return source
+    if mode:
+        return mode
+    return ''
+
+
+def _boolish_text(value: Any) -> str:
+    if value in ('', None):
+        return ''
+    if isinstance(value, str):
+        text = value.strip().lower()
+        if text in {'true', 'yes', '1'}:
+            return 'yes'
+        if text in {'false', 'no', '0'}:
+            return 'no'
+        return value
+    return 'yes' if bool(value) else 'no'
+
+
+def _feature_column_summary(result_payload: Mapping[str, Any]) -> Any:
+    feature_columns = result_payload.get('feature_columns') if isinstance(result_payload, MappingABC) else None
+    if isinstance(feature_columns, (list, tuple, set)):
+        return len(feature_columns)
+    return feature_columns
+
+
+def _flag_rate_text(thresholding: Mapping[str, Any], result_payload: Mapping[str, Any]) -> str:
+    actual_fpr = _first_present(thresholding, 'actual_fpr')
+    if actual_fpr not in ('', None):
+        try:
+            return '{0:.3%}'.format(float(actual_fpr))
+        except (TypeError, ValueError):
+            return str(actual_fpr)
+    flagged = _first_present(thresholding, 'flagged_records') or _first_present(result_payload, 'flagged_records')
+    total = _first_present(thresholding, 'records_evaluated', 'records_scored') or _first_present(result_payload, 'records_evaluated', 'records_scored')
+    try:
+        flagged_value = float(flagged)
+        total_value = float(total)
+    except (TypeError, ValueError):
+        return ''
+    if total_value <= 0:
+        return ''
+    return '{0:.3%}'.format(flagged_value / total_value)
+
+
+def _reason_code_text(values: Any) -> str:
+    normalized = _normalized_strings(values)
+    if not normalized:
+        return 'none'
+    return ', '.join(normalized)
+
+
+def _first_nonempty_run_token(*values: Any) -> str:
+    for value in values:
+        token = _extract_run_token(value)
+        if token:
+            return token
+    return ''
+
+
+def _extract_run_token(value: Any) -> str:
+    text = str(value or '').strip()
+    if not text:
+        return ''
+    match = re.search(r'(?:build|train|evaluate|score|demo|pipeline)_[0-9T]+Z', text)
+    if match is not None:
+        return match.group(0)
+    return ''
 
 
 def _workflow_input_items(workflow: str, report_payload: Mapping[str, Any]) -> list[str]:
@@ -639,19 +1083,21 @@ def _append_stage_visual_surfaces(
 
     lines.append('## Visual surfaces')
     lines.append('')
+    visual_summary = {
+        'figure count': int(visuals.get('figure_count', len(figures)) or len(figures)),
+        'lead figure': str(((figures[0] if figures else {}) if figures else {}).get('title', '') or ((figures[0] if figures else {}) if figures else {}).get('id', '') or 'none emitted'),
+        'score direction': str(visuals.get('anomaly_direction', '') or '').strip(),
+        'score column': str(visuals.get('score_column', '') or '').strip(),
+    }
     if not figures:
+        _append_code_summary_section(lines, '', visual_summary)
         lines.append(_workflow_missing_visual_note(workflow, result_payload))
         lines.append('')
         return
 
+    _append_code_summary_section(lines, '', visual_summary)
     lines.append('These figures are declared by the packet itself, so the visual evidence stays tied to the same run contract as the narrative summary and companion JSON surfaces.')
     lines.append('')
-    visual_summary = {
-        'anomaly_direction': str(visuals.get('anomaly_direction', '') or '').strip(),
-        'score_column': str(visuals.get('score_column', '') or '').strip(),
-        'figure_count': int(visuals.get('figure_count', len(figures)) or len(figures)),
-    }
-    _append_key_value_table(lines, 'Visual summary', visual_summary, key_label='Field')
     for figure in figures:
         if not isinstance(figure, MappingABC):
             continue

@@ -16,6 +16,7 @@ This directory contains **privacy-preserving** dataset and evaluation tooling fo
 3. Produce deterministic train/val/test splits.
 4. Train supervised (Random Forest) or unsupervised (Isolation Forest) models.
 5. Evaluate models and emit run-ledger artifacts (`run.json` + `run.md`).
+6. Publish human-facing build / train / evaluate / score packet families and their figures into the tracked `docs/reports/` lane.
 
 ## Where inputs come from
 
@@ -35,7 +36,11 @@ Outputs default to project-local ignored storage:
 
 - `local_untracked/analysis/`
 
-This is gitignored by design.
+Tracked public report publication is then rebuilt from that canonical run spine into:
+
+- `docs/reports/`
+
+The canonical local analysis spine is gitignored by design; the rebuilt `docs/reports/` publication lane is tracked and reader-facing.
 
 ## Entry points
 
@@ -43,6 +48,9 @@ This is gitignored by design.
 - `dataset_builder.py` - build features + manifest + deterministic splits
 - `train_model.py` - train ApexLab models (Supervised or Unsupervised)
 - `evaluation_harness.py` - evaluate models and generate run ledgers
+- `report_pack.py` - write DS report bundles and stage packet markdown/json
+- `report_aggregate.py` - rebuild tracked public report collections and aggregates
+- `report_visuals.py` - generate score, evaluation, summary, and build visuals
 
 ## Current migration note
 
@@ -59,6 +67,7 @@ Use these tracked docs when you want the public-facing command and reporting rou
 - `../../docs/manuals/data-science/DS_OPERATIONS.md`
 - `../../docs/manuals/data-science/DS_WIZARD.md`
 - `../../docs/reports/INDEX.md`
+- `../../docs/reports/reference/GENERATED_REPORT_SURFACES.md`
 
 Historical planning context remains available in:
 

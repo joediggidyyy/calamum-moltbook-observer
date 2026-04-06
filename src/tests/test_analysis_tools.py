@@ -328,6 +328,92 @@ def test_report_visuals_emit_evaluation_threshold_overlay_when_scores_are_availa
     assert 'threshold_selection' in {figure['id'] for figure in visuals['figures']}
 
 
+def test_report_visuals_emit_build_figures_from_dataset_metadata(tmp_path: Path) -> None:
+    from analysis.report_visuals import generate_build_visuals
+
+    input_a = tmp_path / 'slice_a.jsonl'
+    input_b = tmp_path / 'slice_b.jsonl'
+    records_a = []
+    for index in range(6):
+        records_a.append(Obfuscator.sign_record({
+            'timestamp': '2026-02-10T00:00:{0:02d}Z'.format(index),
+            'type': 'post',
+            'author_hash': 'a{0:015d}'.format(index),
+            'content_length': 32,
+            'content_length_words': 6,
+            'has_code_block': bool(index % 2),
+            'code_block_count': 1 if index % 2 else 0,
+            'has_link': bool(index % 3 == 0),
+            'link_count': 1 if index % 3 == 0 else 0,
+            'tags_count': 1,
+            'mentions_count': 0,
+            'line_count': 2,
+            'question_count': 0,
+            'exclamation_count': 1,
+            'contains_ignore_previous': False,
+            'contains_system_prompt_reference': False,
+            'contains_developer_message_reference': False,
+            'contains_env_var_reference': False,
+            'prompt_injection_score': 0,
+            'matched_pattern_count': 0,
+            'f_complexity': 0.2,
+            'f_code_density': 0.1,
+            'f_toxicity': 0,
+            'f_timestamp_epoch': float(index),
+            'tv_id': 'TV-0',
+        }))
+    records_b = []
+    for index in range(3):
+        records_b.append(Obfuscator.sign_record({
+            'timestamp': '2026-02-10T00:01:{0:02d}Z'.format(index),
+            'type': 'mention',
+            'author_hash': 'b{0:015d}'.format(index),
+            'content_length': 180,
+            'content_length_words': 24,
+            'has_code_block': True,
+            'code_block_count': 2,
+            'has_link': True,
+            'link_count': 1,
+            'tags_count': 2,
+            'mentions_count': 3,
+            'line_count': 5,
+            'question_count': 1,
+            'exclamation_count': 0,
+            'contains_ignore_previous': True,
+            'contains_system_prompt_reference': True,
+            'contains_developer_message_reference': False,
+            'contains_env_var_reference': True,
+            'prompt_injection_score': 2,
+            'matched_pattern_count': 2,
+            'f_complexity': 0.7,
+            'f_code_density': 0.3,
+            'f_toxicity': 1,
+            'f_timestamp_epoch': float(100 + index),
+            'tv_id': 'TV-3',
+        }))
+
+    _write_jsonl(input_a, records_a)
+    _write_jsonl(input_b, records_b)
+
+    out_dir = tmp_path / 'dataset'
+    manifest = build_dataset([input_a, input_b], out_dir=out_dir, seed=42)
+    visuals = generate_build_visuals(
+        figures_dir=tmp_path / 'figures',
+        dataset_manifest_path=Path(out_dir / 'dataset_manifest.json'),
+        split_manifest_path=Path(manifest.split_manifest_json),
+    )
+
+    assert visuals['decision'] == 'go'
+    assert visuals['figure_count'] == 3
+    assert {figure['id'] for figure in visuals['figures']} == {
+        'split_balance',
+        'input_slice_volume',
+        'feature_family_breakdown',
+    }
+    for figure in visuals['figures']:
+        assert Path(figure['path']).exists()
+
+
 def test_report_visuals_skipped_states_preserve_shared_contract_keys(tmp_path: Path, monkeypatch) -> None:
     import analysis.report_visuals as report_visuals_module
 
@@ -562,20 +648,20 @@ def test_report_pack_markdown_marks_stage_workflows_as_processing_stage_packets(
 
     report_md = (project_root / bundle_result['paths']['report_md']).read_text(encoding='utf-8')
 
-    assert 'processing-stage packet' in report_md
+    assert 'Role In The Report Spine' in report_md
+    assert 'first processing packet' in report_md
     assert 'composite workflow packet' not in report_md
-    assert '## Stage purpose' in report_md
-    assert '## Stage identity' in report_md
-    assert '## Inputs used' in report_md
-    assert '## Method summary' in report_md
-    assert '## Key results' in report_md
-    assert '## Interpretation' in report_md
+    assert '## Build identity' in report_md
+    assert '## Run summary' in report_md
+    assert '## Build handoff map' in report_md
+    assert '## Build method' in report_md
+    assert '## Dataset materialization summary' in report_md
+    assert '## Split and schema summary' in report_md
     assert '## Visual surfaces' in report_md
     assert 'No declared figures were emitted for this packet.' in report_md
-    assert '## Risks, limits, and non-claims' in report_md
-    assert '## What follows from this stage' in report_md
+    assert '## Run implications' in report_md
+    assert '## Limits' in report_md
     assert '## Related surfaces' in report_md
-    assert '## Provenance' in report_md
     assert '## Artifact index' not in report_md
     assert '## Report paths' not in report_md
     assert '## Reader next steps' not in report_md
@@ -651,9 +737,16 @@ def test_report_pack_stage_markdown_keeps_visual_links_and_compact_related_surfa
 
     report_md = (project_root / bundle_result['paths']['report_md']).read_text(encoding='utf-8')
 
+    assert '## Score identity' in report_md
+    assert '## Run summary' in report_md
+    assert '## Score handoff map' in report_md
+    assert '## Score method' in report_md
+    assert '## Score surface summary' in report_md
+    assert '## Distribution summary' in report_md
     assert '## Visual surfaces' in report_md
     assert '## Related surfaces' in report_md
-    assert '## What follows from this stage' in report_md
+    assert '## Run implications' in report_md
+    assert '## Limits' in report_md
     assert 'This stage exposes the score surface rather than making a semantic case judgment about the ranked records.' in report_md
     assert '[Report JSON](report.json)' in report_md
     assert '[Manifest JSON](manifest.json)' in report_md

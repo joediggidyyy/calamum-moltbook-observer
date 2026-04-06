@@ -13313,6 +13313,7 @@ def _ds_build(
     from dataclasses import asdict
 
     from analysis.dataset_builder import build_dataset
+    from analysis.report_visuals import generate_build_visuals
 
     bundle, target_out_dir = _ds_prepare_bundle_for_artifact('build', out_dir, 'dataset', ['datasets'])
     manifest = build_dataset(
@@ -13334,6 +13335,12 @@ def _ds_build(
         'splits_csv': target_out_dir / 'splits.csv',
         'split_manifest_json': target_out_dir / 'split_manifest.json',
     }
+    visual_state = generate_build_visuals(
+        figures_dir=bundle.run_root / 'figures',
+        dataset_manifest_path=artifact_paths['dataset_manifest'],
+        split_manifest_path=artifact_paths['split_manifest_json'],
+    )
+    artifact_paths.update(_ds_visual_artifact_paths(visual_state))
     packet = {
         'timestamp_utc': _utc_now(),
         'runtime_cli_surface': 'observerctl',
@@ -13349,6 +13356,7 @@ def _ds_build(
         'split': dict(manifest_dict.get('split', {})),
         'total_records': int(manifest_dict.get('total_records', 0)),
         'has_labels': bool(manifest_dict.get('has_labels', False)),
+        'visuals': visual_state,
         'artifacts': _ds_artifact_strings(artifact_paths),
         'reason_codes': [],
     }
@@ -13414,11 +13422,19 @@ def _ds_stage_dataset_manifest(source_manifest_path: Path, target_dataset_dir: P
 
 
 def _ds_build_from_dataset_manifest(dataset_manifest: str, out_dir: str, seed: int) -> Dict[str, Any]:
+    from analysis.report_visuals import generate_build_visuals
+
     bundle, target_out_dir = _ds_prepare_bundle_for_artifact('build', out_dir, 'dataset', ['datasets'])
     source_manifest_path = Path(str(dataset_manifest)).resolve()
     staged = _ds_stage_dataset_manifest(source_manifest_path, target_out_dir)
     payload = dict(staged.get('manifest_payload', {}) or {})
     artifact_paths = dict(staged.get('artifact_paths', {}) or {})
+    visual_state = generate_build_visuals(
+        figures_dir=bundle.run_root / 'figures',
+        dataset_manifest_path=artifact_paths.get('dataset_manifest'),
+        split_manifest_path=artifact_paths.get('split_manifest_json'),
+    )
+    artifact_paths.update(_ds_visual_artifact_paths(visual_state))
     packet = {
         'timestamp_utc': _utc_now(),
         'runtime_cli_surface': 'observerctl',
@@ -13434,6 +13450,7 @@ def _ds_build_from_dataset_manifest(dataset_manifest: str, out_dir: str, seed: i
         'split': dict(payload.get('split', {})) if isinstance(payload.get('split', {}), dict) else {},
         'total_records': int(payload.get('total_records', 0) or 0),
         'has_labels': bool(payload.get('has_labels', False)),
+        'visuals': visual_state,
         'artifacts': _ds_artifact_strings(artifact_paths),
         'reason_codes': [],
     }

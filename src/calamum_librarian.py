@@ -941,7 +941,18 @@ def _dataset_entry_display_alias(entry: Dict[str, Any], resolver: Dict[str, Any]
     source = str(entry.get('source', '') or '').strip().lower()
     mode = str(entry.get('mode', '') or '').strip().lower()
     manifest_sha = str(resolver.get('dataset_manifest_sha256', '') or '').strip().lower()
-    return _dataset_display_alias_from_scope(source, mode, manifest_sha)
+    scoped_alias = _dataset_display_alias_from_scope(source, mode, manifest_sha)
+    if scoped_alias:
+        return scoped_alias
+    for candidate in (
+        entry.get('run_id', ''),
+        entry.get('display_name', ''),
+        entry.get('entry_id', ''),
+    ):
+        text = str(candidate or '').strip()
+        if text:
+            return sanitize_run_id(text) or text
+    return ''
 
 
 def _dataset_display_alias_from_scope(source: str, mode: str, manifest_sha: str) -> str:

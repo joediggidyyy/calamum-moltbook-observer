@@ -4,7 +4,7 @@
 **Status**: Public security policy  
 **Owner**: ORACL-Prime  
 **Project**: Calamum Moltbook Observer  
-**Last updated**: 2026-03-24
+**Last updated**: 2026-04-06
 
 This document defines the public security posture for Calamum Moltbook Observer.
 
@@ -62,6 +62,7 @@ For the public observer surface, the security contract is:
 - tracked workflows remain names-only,
 - runtime/evidence outputs must not expose secrets or raw payloads,
 - posture changes and gate-clearing evidence must remain fail-closed,
+- tracked report publication under `docs/reports/` must remain human-facing and derived from canonical local run data rather than becoming a second machine-readable authority surface,
 - public docs may describe contracts and paths, but must not treat local evidence as public artifact,
 - observer-scoped gate/evidence outputs are expected to carry run-linkage fields when the contract requires them:
 	- `run_id`
@@ -170,6 +171,16 @@ These controls define how the project maintains containment, evidence discipline
 
 - the public repository intentionally shows the method, implementation, and curated docs
 - local runtime evidence, detailed audit trails, and operator-governance surfaces are retained outside the public tracked surface where appropriate
+- public report packets under `docs/reports/` are derived, reader-facing artifacts that reference local machine-readable evidence rather than replacing it
+
+## Public report publication boundary
+
+The current report lane is part of the public presentation surface, but it follows a strict boundary:
+
+- collection packets are routed by collection alias under `docs/reports/collections/<collection-alias>/`
+- dated stage packets live under the `build`, `train`, `evaluate`, and `score` processing leaves
+- published figures must be packet-declared, names-only, and tied to the same packet lineage as their companion report surfaces
+- canonical machine-readable authority remains under the local analysis indexes and manifests, not inside `docs/reports/`
 
 ## Evidence boundary rule
 
@@ -233,5 +244,7 @@ If a proposed change makes the system easier to demo but harder to trust, it is 
 
 - [`README.md`](README.md)
 - [`DATA_METHODOLOGY.md`](DATA_METHODOLOGY.md)
+- [`docs/reports/INDEX.md`](docs/reports/INDEX.md)
+- [`docs/reports/reference/GENERATED_REPORT_SURFACES.md`](docs/reports/reference/GENERATED_REPORT_SURFACES.md)
 - [`docs/manuals/reference/SECURITY_MODEL.md`](docs/manuals/reference/SECURITY_MODEL.md)
 - [`docs/manuals/reference/RUNTIME_TRANSITIONS.md`](docs/manuals/reference/RUNTIME_TRANSITIONS.md)

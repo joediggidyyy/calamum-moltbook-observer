@@ -700,12 +700,15 @@ def _build_published_payload(payload: Mapping[str, Any], candidate: Mapping[str,
     source_report_paths = dict(candidate.get('normalized_source_report_paths', {}) or {})
     published_run_dir = str(candidate.get('published_run_dir', '') or '')
     published_report_paths = dict(candidate.get('published_report_paths', {}) or {})
+    collection_alias = str(candidate.get('collection_alias', '') or rewritten_payload.get('collection_alias', '') or '').strip()
 
     rewritten_payload['report_dir'] = published_run_dir
     rewritten_payload['report_paths'] = dict(published_report_paths)
     rewritten_payload['source_run_root'] = source_run_root
     rewritten_payload['source_report_paths'] = dict(source_report_paths)
     rewritten_payload['published_run_dir'] = published_run_dir
+    if collection_alias:
+        rewritten_payload['collection_alias'] = collection_alias
 
     lineage = dict(rewritten_payload.get('lineage', {}) or {})
     lineage.setdefault('source_run_root', source_run_root)
@@ -1677,81 +1680,141 @@ def _collection_report_markdown(
     figure_bearing_count = sum(1 for summary in ordered if _summary_figure_count(summary) > 0)
     threshold_bearing_count = sum(1 for summary in ordered if _summary_has_threshold(summary))
     latest_stage_labels = ', '.join(sorted(latest_by_workflow.keys()))
+    collection_window = _collection_window_text(ordered)
+    baseline_window_id = str(latest_context.get('baseline_window_id', '') or '').strip()
+    baseline_packet = str(latest_context.get('baseline_analysis_packet', '') or '').strip()
+    latest_collection_path = _published_collection_history_path(latest)
+    latest_stage_path = _published_processing_report_path(latest)
 
     lines = ['# Collection Packet: {0}'.format(str(collection_alias or 'collection')), '']
-    lines.append('This collection packet explains what is currently published for the selected collection alias and which dated stage packets carry the next reader-facing interpretation.')
-    lines.append('')
-    lines.append('## Collection purpose')
-    lines.append('')
-    lines.append('Use this surface to understand the current packet family for `{0}` before dropping into individual stage packets or deeper machine-authority surfaces.'.format(str(collection_alias or 'collection')))
+    lines.append('This collection packet is the entry surface for the current alias before later processing packets are interpreted.')
     lines.append('')
     lines.append('## Collection identity')
     lines.append('')
-    lines.append('- Collection alias: `{0}`'.format(str(collection_alias or '')))
-    lines.append('- Published stage documents: {0}'.format(int(len(ordered))))
-    lines.append('- Workflow families currently visible: {0}'.format(latest_stage_labels or 'none yet'))
-    lines.append('- Source / mode: {0}'.format(_source_mode_label(str(latest_context.get('source', '')), str(latest_context.get('mode', '')))))
-    if latest:
-        lines.append('- Latest calculation run: `{0}` ({1}, {2})'.format(
-            str(latest.get('run_id', '')),
-            str(latest.get('workflow', '')),
-            str(latest.get('timestamp_utc', '')),
-        ))
-        lines.append('- Current focus: {0}'.format(_collection_current_focus(latest)))
-    else:
-        lines.append('- Latest calculation run: none published yet')
+    lines.append('| Field | Value |')
+    lines.append('| --- | --- |')
+    lines.append('| Collection alias | `{0}` |'.format(str(collection_alias or '')))
+    lines.append('| Source scope | `{0}` |'.format(_source_mode_label(str(latest_context.get('source', '')), str(latest_context.get('mode', ''))) or 'runtime-unspecified'))
+    lines.append('| Collection window | `{0}` |'.format(collection_window or 'not yet established'))
+    lines.append('| Reader posture | `curated, public-safe, names-only` |')
+    lines.append('| Role in the report spine | entry packet for this specific collection alias before later processing is interpreted |')
     lines.append('')
-    lines.append('## Current packet summary')
-    lines.append('')
-    if latest:
-        lines.append('- Latest stage document: {0}'.format(
-            _markdown_link(target_path, project_root, _published_processing_report_path(latest), Path(_published_processing_report_path(latest)).name or 'stage doc')
-        ))
-        lines.append('- Current packet summary: {0}'.format(str(latest.get('summary', '')) or 'No summary recorded.'))
-        lines.append('- Why open this collection now: {0}'.format(_collection_reason_to_open(latest)))
-    else:
-        lines.append('No collection packet is published yet for this alias.')
-    lines.append('')
-    lines.append('## Collection evidence at a glance')
-    lines.append('')
+    _append_collection_code_summary(
+        lines,
+        'Run summary',
+        {
+            'published packets': int(len(ordered)),
+            'workflow families visible': latest_stage_labels or 'none yet',
+            'latest packet date': str(latest.get('timestamp_utc', '')) or 'none yet',
+            'latest stage focus': _collection_current_focus(latest) if latest else 'none yet',
+            'figure-bearing packets': int(figure_bearing_count),
+            'threshold-bearing packets': int(threshold_bearing_count),
+            'baseline link present': 'yes' if baseline_window_id or baseline_packet else 'no',
+        },
+    )
     if ordered:
-        lines.append('| Signal | Current value |')
-        lines.append('| --- | --- |')
-        lines.append('| Latest packet date | {0} |'.format(str(latest.get('timestamp_utc', ''))))
-        lines.append('| Current workflow focus | {0} |'.format(str(latest.get('workflow', ''))))
-        lines.append('| Stage families currently visible | {0} |'.format(latest_stage_labels or 'none yet'))
-        lines.append('| Figure-bearing packets | {0} |'.format(int(figure_bearing_count)))
-        lines.append('| Threshold-bearing packets | {0} |'.format(int(threshold_bearing_count)))
-        lines.append('| Canonical source run root | `{0}` |'.format(str(latest.get('source_run_root', ''))))
-    else:
-        lines.append('No collection evidence is available yet.')
-    lines.append('')
-    lines.append('## Latest stage contributions')
-    lines.append('')
-    if latest_by_workflow:
-        lines.append('| Workflow | Published (UTC) | Current contribution | Stage doc |')
-        lines.append('| --- | --- | --- | --- |')
-        for workflow in sorted(latest_by_workflow.keys()):
-            summary = latest_by_workflow[workflow]
-            report_path = _published_processing_report_path(summary)
-            lines.append('| {0} | {1} | {2} | {3} |'.format(
-                workflow,
-                str(summary.get('timestamp_utc', '')),
-                _collection_stage_contribution(summary),
-                _markdown_link(target_path, project_root, report_path, Path(report_path).name or 'stage doc'),
-            ))
-    else:
-        lines.append('No stage documents are published for this collection yet.')
-    lines.append('')
-    lines.append('## Interpretation')
-    lines.append('')
-    if ordered:
-        for line in _collection_interpretation_lines(collection_alias, ordered, latest, latest_by_workflow):
-            lines.append('- {0}'.format(line))
+        lines.append(' '.join(_collection_interpretation_lines(collection_alias, ordered, latest, latest_by_workflow)))
     else:
         lines.append('No collection interpretation is available yet because no packets are published.')
     lines.append('')
-    lines.append('## Historical packet trail')
+    handoff_map = _collection_handoff_map_markdown(collection_alias, latest_by_workflow)
+    if handoff_map:
+        lines.append('## Collection handoff map')
+        lines.append('')
+        lines.append('```mermaid')
+        lines.extend(handoff_map.splitlines())
+        lines.append('```')
+        lines.append('')
+    lines.append('## Collection method')
+    lines.append('')
+    lines.append('This packet is assembled from the currently published stage leaves for the alias, the aggregate routing surfaces, and the canonical source-run pointers carried by the tracked publication spine.')
+    lines.append('')
+    _append_collection_code_summary(
+        lines,
+        '',
+        {
+            'collection packet': latest_collection_path,
+            'latest stage packet': latest_stage_path,
+            'aggregate report': 'docs/reports/aggregates/AGGREGATE_REPORT.md',
+            'latest collections': 'docs/reports/aggregates/LATEST_COLLECTIONS.md',
+            'workflow rollup': 'docs/reports/aggregates/WORKFLOW_ROLLUP.md',
+            'threshold summary': 'docs/reports/aggregates/THRESHOLD_SUMMARY.md',
+            'source run root': str(latest.get('source_run_root', '') or ''),
+        },
+    )
+    _append_collection_code_summary(
+        lines,
+        'Retention summary',
+        {
+            'published packets retained': int(len(ordered)),
+            'first published packet': str(ordered[0].get('timestamp_utc', '')) if ordered else 'none yet',
+            'latest published packet': str(latest.get('timestamp_utc', '')) if latest else 'none yet',
+            'stage families visible': latest_stage_labels or 'none yet',
+            'packet replay posture': 'ready' if ordered else 'not ready',
+        },
+    )
+    _append_collection_code_summary(
+        lines,
+        'Baseline readiness summary',
+        {
+            'baseline window id': baseline_window_id or 'not surfaced',
+            'baseline packet ref': baseline_packet or 'not surfaced',
+            'threshold-bearing packets': int(threshold_bearing_count),
+            'figure-bearing packets': int(figure_bearing_count),
+            'publication posture': 'ready' if ordered else 'not ready',
+        },
+    )
+    _append_collection_code_summary(
+        lines,
+        'Watchdog telemetry summary',
+        {
+            'source scope': _source_mode_label(str(latest_context.get('source', '')), str(latest_context.get('mode', ''))) or 'runtime-unspecified',
+            'latest workflow': str(latest.get('workflow', '')) or 'none yet',
+            'latest run id': str(latest.get('run_id', '')) or 'none yet',
+            'current focus': _collection_current_focus(latest) if latest else 'none yet',
+        },
+    )
+    _append_collection_code_summary(
+        lines,
+        'Librarian accountability summary',
+        {
+            'collection alias': str(collection_alias or ''),
+            'aggregate visibility': 'readable',
+            'collection packet route': 'present' if latest_collection_path else 'absent',
+            'stage packet count': int(len(ordered)),
+        },
+    )
+    _append_collection_code_summary(
+        lines,
+        'Security linkage summary',
+        {
+            'source run root': 'present' if str(latest.get('source_run_root', '') or '').strip() else 'not surfaced',
+            'source manifest path': 'present' if str(latest.get('source_manifest_path', '') or '').strip() else 'not surfaced',
+            'machine authority': 'outside docs/reports',
+            'collection alias stability': 'alias-first',
+        },
+    )
+    lines.append('Security linkage is intact when the collection packet, dated stage leaves, and source-run pointers all agree on the same alias-first route.')
+    lines.append('')
+    _append_collection_code_summary(
+        lines,
+        'Run implications',
+        {
+            'packet to open first': _collection_reason_to_open(latest) if latest else 'none yet',
+            'threshold follow-through': 'available' if threshold_bearing_count else 'not currently present',
+            'figure-backed evidence': 'available' if figure_bearing_count else 'not currently present',
+            'reader caution': 'run IDs remain lineage context; the collection alias is the public packet identity',
+        },
+    )
+    lines.append('Run IDs remain lineage context for `{0}`; the collection alias is the reader-facing packet identity.'.format(str(collection_alias or 'collection')))
+    lines.append('')
+    lines.append('## Limits')
+    lines.append('')
+    lines.append('- This collection packet is interpretive; canonical machine-readable authority remains outside `docs/reports/`.')
+    lines.append('- Absence of a workflow family here means it is not currently in the tracked publication lane; it does not imply the underlying machine artifacts do not exist.')
+    lines.append('- A collection alias may accumulate multiple dated stage leaves over time, so this packet should be read as the entry surface rather than as the only historical record.')
+    lines.append('')
+    lines.append('## Processing run ledger')
     lines.append('')
     if ordered:
         lines.append('| Published (UTC) | Workflow | Run ID | Collection packet | Stage doc |')
@@ -1767,26 +1830,67 @@ def _collection_report_markdown(
                 _markdown_link(target_path, project_root, report_path, Path(report_path).name or 'stage doc'),
             ))
     else:
-        lines.append('No historical packet trail is available yet.')
-    lines.append('')
-    lines.append('## Limits and lineage')
-    lines.append('')
-    if latest:
-        lines.append('- Machine-readable authority remains outside `docs/reports/` and is referenced from these reader-facing packet surfaces rather than duplicated here.')
-        lines.append('- Canonical source run root: `{0}`'.format(str(latest.get('source_run_root', ''))))
-        lines.append('- Latest canonical report JSON: `{0}`'.format(str(((latest.get('source_report_paths', {}) if isinstance(latest.get('source_report_paths', {}), dict) else {}).get('json', '')) or '')))
-        lines.append('- Absence of a workflow family here means it is not currently in the tracked publication lane; it does not imply the underlying machine artifacts do not exist.')
-    else:
-        lines.append('- Machine-readable authority remains outside `docs/reports/`.')
-    lines.append('')
-    lines.append('## Related surfaces')
-    lines.append('')
-    lines.append('- Aggregate report: {0}'.format(_markdown_link(target_path, project_root, 'docs/reports/aggregates/AGGREGATE_REPORT.md', 'AGGREGATE_REPORT.md')))
-    lines.append('- Latest collections: {0}'.format(_markdown_link(target_path, project_root, 'docs/reports/aggregates/LATEST_COLLECTIONS.md', 'LATEST_COLLECTIONS.md')))
-    lines.append('- Workflow rollup: {0}'.format(_markdown_link(target_path, project_root, 'docs/reports/aggregates/WORKFLOW_ROLLUP.md', 'WORKFLOW_ROLLUP.md')))
-    lines.append('- Threshold summary: {0}'.format(_markdown_link(target_path, project_root, 'docs/reports/aggregates/THRESHOLD_SUMMARY.md', 'THRESHOLD_SUMMARY.md')))
-    lines.append('- Generated report surfaces: {0}'.format(_markdown_link(target_path, project_root, 'docs/reports/reference/GENERATED_REPORT_SURFACES.md', 'GENERATED_REPORT_SURFACES.md')))
+        lines.append('No processing packets are published for this collection yet.')
     return '\n'.join(lines).rstrip() + '\n'
+
+
+def _append_collection_code_summary(lines: List[str], title: str, mapping: Mapping[str, Any]) -> None:
+    if not isinstance(mapping, Mapping) or not mapping:
+        return
+    rows = [(str(key), value) for key, value in mapping.items() if value not in ('', None, [], {}, ())]
+    if not rows:
+        return
+    if str(title or '').strip():
+        lines.append('## {0}'.format(title))
+        lines.append('')
+    width = max(len(key) for key, _ in rows)
+    lines.append('```')
+    for key, value in rows:
+        lines.append('{0:<{1}} : {2}'.format(key, width, _collection_summary_value_text(value)))
+    lines.append('```')
+    lines.append('')
+
+
+def _collection_summary_value_text(value: Any) -> str:
+    if value in ('', None):
+        return 'n/a'
+    if isinstance(value, bool):
+        return 'yes' if value else 'no'
+    if isinstance(value, int):
+        return '{0:,}'.format(value)
+    if isinstance(value, float):
+        if value.is_integer():
+            return '{0:,}'.format(int(value))
+        return '{0:.6g}'.format(value)
+    return str(value)
+
+
+def _collection_window_text(ordered: List[Dict[str, Any]]) -> str:
+    if not ordered:
+        return ''
+    first = str(ordered[0].get('timestamp_utc', '') or '').strip()
+    latest = str(ordered[-1].get('timestamp_utc', '') or '').strip()
+    if first and latest and first != latest:
+        return '{0} -> {1}'.format(first, latest)
+    return latest or first
+
+
+def _collection_handoff_map_markdown(collection_alias: str, latest_by_workflow: Mapping[str, Dict[str, Any]]) -> str:
+    ordered_workflows = [workflow for workflow in ('build', 'train', 'evaluate', 'score') if workflow in latest_by_workflow]
+    if not ordered_workflows:
+        return ''
+    lines = ['flowchart LR']
+    previous_node = 'A'
+    lines.append('\tA[Collection alias<br/>{0}]'.format(str(collection_alias or 'collection')))
+    node_ord = ord('B')
+    for workflow in ordered_workflows:
+        node = chr(node_ord)
+        summary = latest_by_workflow[workflow]
+        lines.append('\t{0}[{1} packet<br/>{2}]'.format(node, workflow.capitalize(), str(summary.get('run_id', '')) or 'current-run'))
+        lines.append('\t{0} --> {1}'.format(previous_node, node))
+        previous_node = node
+        node_ord += 1
+    return '\n'.join(lines)
 
 
 def _collection_references_markdown(candidate: Mapping[str, Any], project_root: Path, target_path: Path) -> str:
@@ -1873,15 +1977,20 @@ def _generated_report_surfaces_markdown(
     lines.append('')
     lines.append('```text')
     lines.append('docs/reports/')
-    lines.append('|- aggregates/AGGREGATE_REPORT.md')
-    lines.append('|- aggregates/PUBLIC_RUN_LEDGER.md')
-    lines.append('|- aggregates/LATEST_COLLECTIONS.md')
-    lines.append('|- aggregates/WORKFLOW_ROLLUP.md')
-    lines.append('|- aggregates/THRESHOLD_SUMMARY.md')
-    lines.append('|- collections/                         # may be empty at zero-state')
-    lines.append('|  `- <collection-alias>/              # materialized only when published packets exist')
-    lines.append('|     |- collection/YYYYMMDDTHHMMSSffffffZ.collection.md')
-    lines.append('|     `- processing/<stage>/YYYYMMDDTHHMMSSffffffZ.<stage>.md')
+    lines.append('|- aggregates/')
+    lines.append('|- collections/')
+    lines.append('|  `- <collection-alias>/')
+    lines.append('|     |- collection/')
+    lines.append('|     |  `- YYYYMMDDTHHMMSSffffffZ.collection.md')
+    lines.append('|     `- processing/')
+    lines.append('|        |- build/')
+    lines.append('|        |  `- YYYYMMDDTHHMMSSffffffZ.build.md')
+    lines.append('|        |- eval/')
+    lines.append('|        |  `- YYYYMMDDTHHMMSSffffffZ.eval.md')
+    lines.append('|        |- score/')
+    lines.append('|        |  `- YYYYMMDDTHHMMSSffffffZ.score.md')
+    lines.append('|        `- train/')
+    lines.append('|           `- YYYYMMDDTHHMMSSffffffZ.train.md')
     lines.append('|- reference/')
     lines.append('|- validations/')
     lines.append('`- INDEX.md')
@@ -1911,7 +2020,10 @@ def _generated_report_surfaces_markdown(
     lines.append('When collection packets are materialized:')
     lines.append('')
     lines.append('- `docs/reports/collections/<collection-alias>/collection/YYYYMMDDTHHMMSSffffffZ.collection.md`')
-    lines.append('- `docs/reports/collections/<collection-alias>/processing/<stage>/YYYYMMDDTHHMMSSffffffZ.<stage>.md`')
+    lines.append('- `docs/reports/collections/<collection-alias>/processing/build/YYYYMMDDTHHMMSSffffffZ.build.md`')
+    lines.append('- `docs/reports/collections/<collection-alias>/processing/eval/YYYYMMDDTHHMMSSffffffZ.eval.md`')
+    lines.append('- `docs/reports/collections/<collection-alias>/processing/score/YYYYMMDDTHHMMSSffffffZ.score.md`')
+    lines.append('- `docs/reports/collections/<collection-alias>/processing/train/YYYYMMDDTHHMMSSffffffZ.train.md`')
     lines.append('')
     lines.append('## Reader routes')
     lines.append('')

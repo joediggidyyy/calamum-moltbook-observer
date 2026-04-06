@@ -15,15 +15,20 @@ This reference describes the active human-facing report schema for tracked publi
 
 ```text
 docs/reports/
-|- aggregates/AGGREGATE_REPORT.md
-|- aggregates/PUBLIC_RUN_LEDGER.md
-|- aggregates/LATEST_COLLECTIONS.md
-|- aggregates/WORKFLOW_ROLLUP.md
-|- aggregates/THRESHOLD_SUMMARY.md
-|- collections/                         # may be empty at zero-state
-|  `- <collection-alias>/              # materialized only when published packets exist
-|     |- collection/YYYYMMDDTHHMMSSffffffZ.collection.md
-|     `- processing/<stage>/YYYYMMDDTHHMMSSffffffZ.<stage>.md
+|- aggregates/
+|- collections/
+|  `- <collection-alias>/
+|     |- collection/
+|     |  `- YYYYMMDDTHHMMSSffffffZ.collection.md
+|     `- processing/
+|        |- build/
+|        |  `- YYYYMMDDTHHMMSSffffffZ.build.md
+|        |- eval/
+|        |  `- YYYYMMDDTHHMMSSffffffZ.eval.md
+|        |- score/
+|        |  `- YYYYMMDDTHHMMSSffffffZ.score.md
+|        `- train/
+|           `- YYYYMMDDTHHMMSSffffffZ.train.md
 |- reference/
 |- validations/
 `- INDEX.md
@@ -53,7 +58,10 @@ docs/reports/
 When collection packets are materialized:
 
 - `docs/reports/collections/<collection-alias>/collection/YYYYMMDDTHHMMSSffffffZ.collection.md`
-- `docs/reports/collections/<collection-alias>/processing/<stage>/YYYYMMDDTHHMMSSffffffZ.<stage>.md`
+- `docs/reports/collections/<collection-alias>/processing/build/YYYYMMDDTHHMMSSffffffZ.build.md`
+- `docs/reports/collections/<collection-alias>/processing/eval/YYYYMMDDTHHMMSSffffffZ.eval.md`
+- `docs/reports/collections/<collection-alias>/processing/score/YYYYMMDDTHHMMSSffffffZ.score.md`
+- `docs/reports/collections/<collection-alias>/processing/train/YYYYMMDDTHHMMSSffffffZ.train.md`
 
 ## Reader routes
 

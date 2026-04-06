@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import csv
+import json
 from collections.abc import Mapping as MappingABC
 from pathlib import Path
 from typing import Any, Dict, Iterable, List, Mapping, Optional
@@ -381,6 +382,90 @@ def generate_evaluation_visuals(
     )
 
 
+def generate_build_visuals(
+    *,
+    figures_dir: Path,
+    dataset_manifest_path: Optional[Path] = None,
+    split_manifest_path: Optional[Path] = None,
+) -> Dict[str, Any]:
+    pyplot = _load_pyplot()
+    if pyplot is None:
+        return _visual_state(
+            decision='skipped',
+            reason_codes=['visualization_skipped:matplotlib_unavailable'],
+        )
+
+    manifest_payload = _load_json_mapping(dataset_manifest_path)
+    split_payload = _load_json_mapping(split_manifest_path)
+    split_rows = _build_split_rows(manifest_payload, split_payload)
+    input_rows = _build_input_source_rows(manifest_payload)
+    feature_rows = _build_feature_family_rows(manifest_payload)
+
+    figures_dir.mkdir(parents=True, exist_ok=True)
+    figures: List[Dict[str, Any]] = []
+    total_records = _as_int(manifest_payload.get('total_records'))
+
+    if split_rows:
+        split_path = figures_dir / 'split_balance.png'
+        _render_build_split_chart(
+            pyplot,
+            split_rows,
+            split_path,
+            total_records=total_records,
+        )
+        figures.append(_figure_record(
+            figure_id='split_balance',
+            title='Split balance',
+            caption='Observed train, validation, and test counts for the built dataset.',
+            path=split_path,
+            kind='split-balance',
+        ))
+
+    if input_rows:
+        input_path = figures_dir / 'input_slice_volume.png'
+        _render_ranked_bar_chart(
+            pyplot,
+            input_rows,
+            input_path,
+            title='Input slice volume',
+            x_label='Records',
+            color='#F58518',
+            horizontal=True,
+        )
+        figures.append(_figure_record(
+            figure_id='input_slice_volume',
+            title='Input slice volume',
+            caption='Relative contribution of each input slice that fed the dataset build.',
+            path=input_path,
+            kind='source-composition',
+        ))
+
+    if feature_rows:
+        feature_path = figures_dir / 'feature_family_breakdown.png'
+        _render_ranked_bar_chart(
+            pyplot,
+            feature_rows,
+            feature_path,
+            title='Feature family breakdown',
+            x_label='Columns',
+            color='#B279A2',
+            horizontal=False,
+        )
+        figures.append(_figure_record(
+            figure_id='feature_family_breakdown',
+            title='Feature family breakdown',
+            caption='How the dataset schema is distributed across feature families used during downstream analysis.',
+            path=feature_path,
+            kind='schema-composition',
+        ))
+
+    return _visual_state(
+        decision='go' if figures else 'skipped',
+        reason_codes=[] if figures else ['visualization_skipped:no_build_metadata_available'],
+        figures=figures,
+    )
+
+
 def generate_summary_card_visual(
     *,
     figures_dir: Path,
@@ -489,6 +574,19 @@ def _load_pyplot():
         return None
 
 
+def _load_json_mapping(path: Optional[Path]) -> Dict[str, Any]:
+    if path is None:
+        return {}
+    candidate = Path(path)
+    if not candidate.exists():
+        return {}
+    try:
+        payload = json.loads(candidate.read_text(encoding='utf-8'))
+    except Exception:
+        return {}
+    return dict(payload) if isinstance(payload, dict) else {}
+
+
 def _render_distribution_chart(pyplot, scores: List[float], output_path: Path, *, score_column: str) -> None:
     figure, axis = pyplot.subplots(figsize=(10, 5))
     axis.hist(scores, bins=min(30, max(10, len(scores))), color='#4C78A8', edgecolor='white', alpha=0.9)
@@ -536,6 +634,97 @@ def _render_threshold_chart(
         fontsize=9,
         bbox={'boxstyle': 'round', 'facecolor': 'white', 'alpha': 0.9},
     )
+    figure.tight_layout()
+    figure.savefig(output_path)
+    pyplot.close(figure)
+
+
+def _render_build_split_chart(
+    pyplot,
+    split_rows: List[tuple],
+    output_path: Path,
+    *,
+    total_records: int,
+) -> None:
+    labels = [str(label) for label, _, _ in split_rows]
+    values = [int(value) for _, value, _ in split_rows]
+    shares = [share for _, _, share in split_rows]
+    colors = ['#4C78A8', '#72B7B2', '#E45756'][:len(labels)]
+    figure, axis = pyplot.subplots(figsize=(8.5, 4.8))
+    bars = axis.bar(labels, values, color=colors)
+    axis.set_title('Train / validation / test balance')
+    axis.set_ylabel('Records')
+    axis.set_ylim(bottom=0, top=max(values) * 1.18 if values else 1)
+    for bar, value, share in zip(bars, values, shares):
+        share_text = '' if share is None else ' ({0}%)'.format(_format_number(float(share) * 100.0))
+        axis.text(
+            bar.get_x() + (bar.get_width() / 2.0),
+            float(value),
+            '{0}{1}'.format(_format_int(value), share_text),
+            ha='center',
+            va='bottom',
+            fontsize=9,
+        )
+    if total_records > 0:
+        axis.text(
+            0.02,
+            0.98,
+            'Total records: {0}'.format(_format_int(total_records)),
+            transform=axis.transAxes,
+            va='top',
+            ha='left',
+            fontsize=9,
+            bbox={'boxstyle': 'round', 'facecolor': 'white', 'alpha': 0.9},
+        )
+    figure.tight_layout()
+    figure.savefig(output_path)
+    pyplot.close(figure)
+
+
+def _render_ranked_bar_chart(
+    pyplot,
+    rows: List[tuple],
+    output_path: Path,
+    *,
+    title: str,
+    x_label: str,
+    color: str,
+    horizontal: bool,
+) -> None:
+    labels = [str(label) for label, _ in rows]
+    values = [int(value) for _, value in rows]
+    figure, axis = pyplot.subplots(figsize=(9.5, 5.2))
+    if horizontal:
+        bars = axis.barh(labels, values, color=color)
+        axis.invert_yaxis()
+        axis.set_xlabel(x_label)
+        axis.set_title(title)
+        max_value = max(values) if values else 0
+        axis.set_xlim(left=0, right=max_value * 1.2 if max_value else 1)
+        for bar, value in zip(bars, values):
+            axis.text(
+                float(value) + max(max_value * 0.01, 0.1),
+                bar.get_y() + (bar.get_height() / 2.0),
+                _format_int(value),
+                va='center',
+                ha='left',
+                fontsize=9,
+            )
+    else:
+        bars = axis.bar(labels, values, color=color)
+        axis.set_ylabel(x_label)
+        axis.set_title(title)
+        axis.set_ylim(bottom=0, top=max(values) * 1.2 if values else 1)
+        axis.tick_params(axis='x', rotation=20)
+        for bar, value in zip(bars, values):
+            axis.text(
+                bar.get_x() + (bar.get_width() / 2.0),
+                float(value),
+                _format_int(value),
+                ha='center',
+                va='bottom',
+                fontsize=9,
+            )
     figure.tight_layout()
     figure.savefig(output_path)
     pyplot.close(figure)
@@ -653,6 +842,92 @@ def _numeric_items(mapping: Mapping[str, Any]) -> List[tuple]:
                 continue
             items.append((str(key), numeric))
     return items
+
+
+def _build_split_rows(manifest_payload: Mapping[str, Any], split_payload: Mapping[str, Any]) -> List[tuple]:
+    counts_payload = split_payload.get('counts', {}) if isinstance(split_payload.get('counts', {}), MappingABC) else {}
+    total_records = _as_int(manifest_payload.get('total_records')) or sum(_as_int(value) for value in counts_payload.values())
+    rows: List[tuple] = []
+    for key in ('train', 'val', 'test'):
+        if key not in counts_payload:
+            continue
+        value = _as_int(counts_payload.get(key))
+        share = (float(value) / float(total_records)) if total_records > 0 else None
+        rows.append((key.title(), value, share))
+    return rows
+
+
+def _build_input_source_rows(manifest_payload: Mapping[str, Any]) -> List[tuple]:
+    rows: List[tuple] = []
+    seen_labels: Dict[str, int] = {}
+    for index, item in enumerate(list(manifest_payload.get('inputs', []) or []), start=1):
+        if not isinstance(item, MappingABC):
+            continue
+        records = _as_int(item.get('records'))
+        label = _input_label(str(item.get('path', '') or ''), index=index)
+        seen_labels[label] = int(seen_labels.get(label, 0) + 1)
+        if seen_labels[label] > 1:
+            label = '{0} #{1}'.format(label, seen_labels[label])
+        rows.append((label, records))
+    return sorted(rows, key=lambda row: (-int(row[1]), str(row[0]).lower()))
+
+
+def _build_feature_family_rows(manifest_payload: Mapping[str, Any]) -> List[tuple]:
+    counts: Dict[str, int] = {}
+    feature_columns = list(manifest_payload.get('feature_columns', []) or [])
+    for column in feature_columns:
+        text = str(column or '').strip()
+        if not text:
+            continue
+        family = _feature_family_for_column(text)
+        counts[family] = int(counts.get(family, 0) + 1)
+
+    preferred_order = [
+        'Identity + timing',
+        'Content structure',
+        'Surface markers',
+        'Prompt-risk',
+        'Derived risk',
+        'Event type',
+        'Other',
+    ]
+    rows: List[tuple] = []
+    for label in preferred_order:
+        value = int(counts.get(label, 0))
+        if value > 0:
+            rows.append((label, value))
+    return rows
+
+
+def _feature_family_for_column(column: str) -> str:
+    if column in {'record_id', 'ts_epoch'}:
+        return 'Identity + timing'
+    if column.startswith('type_'):
+        return 'Event type'
+    if column in {'content_length', 'content_length_words', 'line_count', 'question_count', 'exclamation_count'}:
+        return 'Content structure'
+    if column in {'has_code_block', 'code_block_count', 'has_link', 'link_count', 'tags_count', 'mentions_count'}:
+        return 'Surface markers'
+    if column in {
+        'contains_ignore_previous',
+        'contains_system_prompt_reference',
+        'contains_developer_message_reference',
+        'contains_env_var_reference',
+        'prompt_injection_score',
+        'matched_pattern_count',
+    }:
+        return 'Prompt-risk'
+    if column in {'f_complexity', 'f_code_density', 'f_toxicity', 'is_canary'}:
+        return 'Derived risk'
+    return 'Other'
+
+
+def _input_label(raw_path: str, *, index: int) -> str:
+    if str(raw_path).strip():
+        candidate = Path(str(raw_path)).stem.replace('_', ' ').replace('-', ' ').strip()
+        if candidate:
+            return candidate[:40]
+    return 'Input {0}'.format(index)
 
 
 def _has_confusion_counts(counts: Mapping[str, Any]) -> bool:

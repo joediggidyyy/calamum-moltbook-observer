@@ -17,31 +17,32 @@ This ledger defines the current public reporting population and provides a runti
 ## Current runtime-safe headline
 
 - Publish root: `docs/reports`
-- Published runs: 2
-- Collection aliases represented: 2
-- Workflow families represented: 2
-- Threshold-bearing packets: 0
-- Latest packet: [score_20260406T170017731886Z](../collections/score_20260406T170017731886Z/collection/20260406T170030764817Z.collection.md)
+- Published runs: 5
+- Collection aliases represented: 1
+- Workflow families represented: 4
+- Threshold-bearing packets: 1
+- Latest packet: [p3-demo-current-20260406](../collections/p3-demo-current-20260406/collection/20260406T213205644819Z.collection.md)
 
 ## Current lane census
 
 | Workflow | Published packets | Latest collection | Latest packet |
 |---|---:|---|---|
-| score | 1 | `score_20260406T170017731886Z` | [20260406T170030764817Z.score.md](../collections/score_20260406T170017731886Z/processing/score/20260406T170030764817Z.score.md) |
-| train | 1 | `train_20260406T165940271708Z` | [20260406T165945654317Z.train.md](../collections/train_20260406T165940271708Z/processing/train/20260406T165945654317Z.train.md) |
+| build | 2 | `p3-demo-current-20260406` | [20260406T213205644819Z.build.md](../collections/p3-demo-current-20260406/processing/build/20260406T213205644819Z.build.md) |
+| evaluate | 1 | `p3-demo-current-20260406` | [20260406T211246486478Z.eval.md](../collections/p3-demo-current-20260406/processing/eval/20260406T211246486478Z.eval.md) |
+| score | 1 | `p3-demo-current-20260406` | [20260406T170030764817Z.score.md](../collections/p3-demo-current-20260406/processing/score/20260406T170030764817Z.score.md) |
+| train | 1 | `p3-demo-current-20260406` | [20260406T165945654317Z.train.md](../collections/p3-demo-current-20260406/processing/train/20260406T165945654317Z.train.md) |
 
 ## Publication-family census
 
 | Collection alias | Source / mode | Published packets | Latest packet date | Latest stages | Collection packet |
 |---|---|---:|---|---|---|
-| `score_20260406T170017731886Z` | runtime-unspecified | 1 | 2026-04-06T17:00:30.764817Z | score | [collection packet](../collections/score_20260406T170017731886Z/collection/20260406T170030764817Z.collection.md) |
-| `train_20260406T165940271708Z` | runtime-unspecified | 1 | 2026-04-06T16:59:45.654317Z | train | [collection packet](../collections/train_20260406T165940271708Z/collection/20260406T165945654317Z.collection.md) |
+| `p3-demo-current-20260406` | runtime-unspecified | 5 | 2026-04-06T21:32:05.644819Z | build, evaluate, score, train | [collection packet](../collections/p3-demo-current-20260406/collection/20260406T213205644819Z.collection.md) |
 
 ## Publication-source census
 
 | Source | Mode | Published packets |
 |---|---|---:|
-| unspecified | unspecified | 2 |
+| unspecified | unspecified | 5 |
 
 ## Interpretive notes
 

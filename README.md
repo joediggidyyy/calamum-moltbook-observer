@@ -4,7 +4,7 @@
 **Status**: Public project overview  
 **Owner**: ORACL-Prime  
 **Project**: Calamum Moltbook Observer  
-**Last updated**: 2026-03-24
+**Last updated**: 2026-04-06
 
 ---
 
@@ -29,8 +29,10 @@ This README is the public front door for the project. Use it to understand what 
 | If you want to understand... | Read next |
 |---|---|
 | the overall documentation map | [Docs Index](docs/INDEX.md) |
+| the public report catalog and current packet family | [Report Collections](docs/reports/INDEX.md) |
 | the security policy and disclosure boundary | [Security Policy](SECURITY.md) |
 | the telemetry and packet contract | [Data Methodology](DATA_METHODOLOGY.md) |
+| how to contribute safely | [Contributing Guide](CONTRIBUTING.md) |
 | the manual catalog | [Manual Index](docs/manuals/INDEX.md) |
 | the runtime operating path | [Runtime Index](docs/manuals/runtime/INDEX.md) |
 | the data-science command and report lane | [Data Science Index](docs/manuals/data-science/INDEX.md) |
@@ -43,6 +45,7 @@ This README is the public front door for the project. Use it to understand what 
 - **Data posture**: names-only persistence; no raw-content storage by default
 - **Operational model**: explicit posture control, watchdog oversight, and local evidence retention
 - **Analysis model**: local ML workflows on obfuscated telemetry only
+- **Report model**: alias-first human-facing packet families under `docs/reports/collections/<collection-alias>/processing/{build,eval,score,train}/`
 - **Public repo scope**: code, docs, deployment surfaces, branding, and curated public artifacts
 - **Canonical current runtime family**: `logs/data/calamum/observer_derived/<source>/<mode>/...`
 
@@ -84,10 +87,24 @@ This repository presents the **public observer surface** only:
 - deployment assets
 - branding
 - public manuals
-- curated public reports
+- curated public reports and reader-facing packet collections
 - reusable project templates
 
 Runtime logs and operator-local governance surfaces remain outside the tracked public presentation.
+
+## Current public report spine
+
+Tracked public reports are rebuilt from the canonical local DS run spine into human-facing packet families under `docs/reports/`.
+The public entry surface for that lane is [Report Collections](docs/reports/INDEX.md).
+
+| If you need to... | Open |
+|---|---|
+| get the fastest route into the current collection packet | [docs/reports/INDEX.md](docs/reports/INDEX.md) |
+| compare the latest build / train / evaluate / score packets | [docs/reports/aggregates/WORKFLOW_ROLLUP.md](docs/reports/aggregates/WORKFLOW_ROLLUP.md) |
+| understand the tracked packet filesystem contract | [docs/reports/reference/GENERATED_REPORT_SURFACES.md](docs/reports/reference/GENERATED_REPORT_SURFACES.md) |
+| review the current dated packet leaves | `docs/reports/collections/<collection-alias>/processing/{build,eval,score,train}/` |
+
+The public report tree is intentionally reader-first. Machine-readable authority stays in the local analysis indexes and is referenced from these public packet surfaces rather than duplicated there.
 
 ## Project layout
 
@@ -127,10 +144,12 @@ projects/calamum-moltbook-observer/
 |---|---|
 | this `README.md` | Project overview |
 | [Docs Index](docs/INDEX.md) | Documentation hub |
+| [Report Collections](docs/reports/INDEX.md) | Public report catalog and current packet-family routing |
 | [Manual Index](docs/manuals/INDEX.md) | Manual catalog |
 | [Runtime Index](docs/manuals/runtime/INDEX.md) | Runtime operating path and command reference |
 | [Data Science Index](docs/manuals/data-science/INDEX.md) | DS commands, wizard use, and reporting linkage |
 | [Reference Index](docs/manuals/reference/INDEX.md) | Security architecture and transition contract |
+| [Contributing Guide](CONTRIBUTING.md) | Public contribution and validation guidance |
 | [Security Policy](SECURITY.md) | Security policy |
 | [Data Methodology](DATA_METHODOLOGY.md) | Methodology contract |
 | [Calamum Security Model](docs/manuals/reference/SECURITY_MODEL.md) | Security architecture |
@@ -202,6 +221,23 @@ After installation, use the observer-native command surface directly:
   `observerctl ops mode transition --to canary --source sim --event transition-canary --output logs/data/calamum/observer_derived/sim/canary/evidence/transition_canary.json --json`
 
 `ops gate-check` is fail-closed and returns non-zero when required inputs are missing or invalid.
+
+### Data science and report packet lane
+
+The observer-native DS surface now covers dataset build, train, evaluate, score, and end-to-end demo or pipeline execution.
+
+- **Build a dataset packet**  
+  `observerctl ds build --dataset <selector> --json`
+- **Train from an approved dataset**  
+  `observerctl ds train --dataset <selector> --model-type supervised --json`
+- **Evaluate a model or heuristic**  
+  `observerctl ds evaluate --features-csv <features.csv> --dataset-manifest <dataset_manifest.json> --json`
+- **Score an approved dataset with an unsupervised model**  
+  `observerctl ds score --dataset <selector> --model <train_manifest.json> --json`
+- **Run the packaged demo flow**  
+  `observerctl ds run demo --json`
+
+Those runs feed the tracked public report lane under `docs/reports/`, where collection packets and stage packets are published for the current alias-first report family.
 
 For the lower-level transition/evidence contract, see:
 

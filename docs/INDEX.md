@@ -1,6 +1,6 @@
 # Documentation Index
 
-Updated: 2026-04-03
+Updated: 2026-04-06
 
 This index routes readers through the tracked documentation surfaces for Calamum Moltbook Observer.
 
@@ -9,6 +9,7 @@ This index routes readers through the tracked documentation surfaces for Calamum
 | Reader goal | Start here | Then | Then |
 | --- | --- | --- | --- |
 | project overview | [`../README.md`](../README.md) | [`../SECURITY.md`](../SECURITY.md) | [`../DATA_METHODOLOGY.md`](../DATA_METHODOLOGY.md) |
+| public report packets and latest collection routes | [`reports/INDEX.md`](reports/INDEX.md) | [`reports/aggregates/WORKFLOW_ROLLUP.md`](reports/aggregates/WORKFLOW_ROLLUP.md) | [`reports/reference/GENERATED_REPORT_SURFACES.md`](reports/reference/GENERATED_REPORT_SURFACES.md) |
 | runtime and operations | [`manuals/runtime/INDEX.md`](manuals/runtime/INDEX.md) | [`manuals/runtime/RUNTIME_WORKFLOWS.md`](manuals/runtime/RUNTIME_WORKFLOWS.md) | [`manuals/runtime/RUNTIME_OPERATIONS.md`](manuals/runtime/RUNTIME_OPERATIONS.md) |
 | security and transition rules | [`manuals/reference/INDEX.md`](manuals/reference/INDEX.md) | [`manuals/reference/SECURITY_MODEL.md`](manuals/reference/SECURITY_MODEL.md) | [`manuals/reference/RUNTIME_TRANSITIONS.md`](manuals/reference/RUNTIME_TRANSITIONS.md) |
 | data science and reporting | [`manuals/data-science/INDEX.md`](manuals/data-science/INDEX.md) | [`manuals/data-science/DS_OPERATIONS.md`](manuals/data-science/DS_OPERATIONS.md) | [`reports/INDEX.md`](reports/INDEX.md) |
@@ -18,6 +19,7 @@ This index routes readers through the tracked documentation surfaces for Calamum
 | Document | Role |
 | --- | --- |
 | [`../README.md`](../README.md) | public project overview and primary entry surface |
+| [`../CONTRIBUTING.md`](../CONTRIBUTING.md) | public contribution workflow and validation expectations |
 | [`../SECURITY.md`](../SECURITY.md) | public security doctrine and evidence-boundary policy |
 | [`../DATA_METHODOLOGY.md`](../DATA_METHODOLOGY.md) | public telemetry and packet-contract surface |
 
@@ -32,10 +34,13 @@ This index routes readers through the tracked documentation surfaces for Calamum
 ## Reports
 
 Use [`reports/INDEX.md`](reports/INDEX.md) for the curated tracked report catalog.
+The current public packet family is organized by collection alias and then by dated `build`, `train`, `evaluate`, and `score` leaves.
 
 ## Quick routes
 
 - Want the project overview? Start at [`../README.md`](../README.md)
+- Want the current public packet family? Use [`reports/INDEX.md`](reports/INDEX.md)
 - Want the manual hub? Use [`manuals/INDEX.md`](manuals/INDEX.md)
 - Want runtime guidance? Use [`manuals/runtime/INDEX.md`](manuals/runtime/INDEX.md)
 - Want the DS lane? Use [`manuals/data-science/INDEX.md`](manuals/data-science/INDEX.md) and [`reports/INDEX.md`](reports/INDEX.md)
+- Want contribution guidance? Use [`../CONTRIBUTING.md`](../CONTRIBUTING.md)

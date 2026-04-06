@@ -4,7 +4,7 @@
 **Status**: Public methodology manual  
 **Owner**: ORACL-Prime  
 **Project**: Calamum Moltbook Observer  
-**Last updated**: 2026-03-24  
+**Last updated**: 2026-04-06  
 **Classification**: PUBLIC / ACADEMIC OPEN
 
 ---
@@ -25,6 +25,7 @@ It covers:
 
 - [`README.md`](README.md) — project overview and public entry point
 - [`SECURITY.md`](SECURITY.md) — security doctrine and disclosure policy
+- [`docs/reports/INDEX.md`](docs/reports/INDEX.md) — public report catalog and current packet-family routing
 - [`Calamum Security Model`](docs/manuals/reference/SECURITY_MODEL.md) — posture and enforcement architecture
 - [`Calamum Runtime Transitions`](docs/manuals/reference/RUNTIME_TRANSITIONS.md) — runtime transition contract
 
@@ -40,9 +41,14 @@ Primary verification basis:
 - `src/observerctl.py`
 - `src/analysis/schema/README.md`
 - `src/analysis/schema/obfuscated_record_schema_v1.json`
+- `src/analysis/report_aggregate.py`
+- `src/analysis/report_pack.py`
+- `src/analysis/report_visuals.py`
 - `src/analysis/validate_jsonl.py`
 - `src/tests/test_obfuscator.py`
 - `src/tests/test_observerctl.py`
+- `docs/reports/INDEX.md`
+- `docs/reports/reference/GENERATED_REPORT_SURFACES.md`
 - `docs/manuals/runtime/RUNTIME_OPERATIONS.md`
 - `docs/manuals/reference/RUNTIME_TRANSITIONS.md`
 
@@ -387,6 +393,31 @@ Representative analysis packet fields include:
 - run-linkage fields
 
 Verification requirement: files must remain machine-parsable JSON Lines, and schema drift is treated as a validator failure.
+
+### Packet family G — tracked public report packet family
+
+Source surfaces:
+
+- `src/analysis/report_pack.py`
+- `src/analysis/report_aggregate.py`
+- `src/analysis/report_visuals.py`
+
+The current public report lane turns canonical local DS run manifests into reader-facing packet families under `docs/reports/`.
+
+Tracked public packet surfaces include:
+
+- `docs/reports/collections/<collection-alias>/collection/YYYYMMDDTHHMMSSffffffZ.collection.md`
+- `docs/reports/collections/<collection-alias>/processing/build/YYYYMMDDTHHMMSSffffffZ.build.md`
+- `docs/reports/collections/<collection-alias>/processing/train/YYYYMMDDTHHMMSSffffffZ.train.md`
+- `docs/reports/collections/<collection-alias>/processing/eval/YYYYMMDDTHHMMSSffffffZ.eval.md`
+- `docs/reports/collections/<collection-alias>/processing/score/YYYYMMDDTHHMMSSffffffZ.score.md`
+
+Current contract notes:
+
+- these surfaces are human-facing publication artifacts rather than the machine-readable authority layer,
+- aggregate routing remains fronted by `docs/reports/INDEX.md`,
+- figures are packet-declared and copied into the matching dated processing leaf,
+- collection alias is the reader-facing identity anchor for the current tracked report family.
 
 ### Channel B: runtime diagnostics
 

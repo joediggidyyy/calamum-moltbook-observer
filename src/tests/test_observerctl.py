@@ -3417,6 +3417,15 @@ def test_ds_build_executes_wrapper_and_emits_artifact_summary(tmp_path: Path, mo
             assert Path(payload['artifacts']['features_csv']).exists()
             assert payload['has_labels'] is True
             assert int(payload['total_records']) == 12
+            assert payload['visuals']['decision'] == 'go'
+            assert {figure['id'] for figure in payload['visuals']['figures']} == {
+                'split_balance',
+                'input_slice_volume',
+                'feature_family_breakdown',
+            }
+            assert _resolve_reported_path(payload['artifacts']['split_balance_png']).exists()
+            assert _resolve_reported_path(payload['artifacts']['input_slice_volume_png']).exists()
+            assert _resolve_reported_path(payload['artifacts']['feature_family_breakdown_png']).exists()
             assert _resolve_reported_path(payload['artifacts']['report_json']).exists()
             assert _resolve_reported_path(payload['artifacts']['report_md']).exists()
             assert _resolve_reported_path(payload['artifacts']['report_manifest_json']).exists()
@@ -4432,7 +4441,8 @@ def test_ds_report_publication_refresh_rewrites_tracked_report_paths_and_strips_
     assert published_report_payload['published_run_dir'] == current_run['published_run_dir']
     assert published_manifest_payload['published_run_dir'] == current_run['published_run_dir']
     assert published_report_payload['result']['visuals']['figures'][0]['path'] == current_run['published_figures'][0]
-    assert '## Provenance' in published_report_text
+    assert '## Score method' in published_report_text
+    assert '## Related surfaces' in published_report_text
     assert '](figures/20260331T120500000000Z.score/score_distribution.png)' in published_report_text
     assert '../figures/' not in published_report_text
     assert 'scoring/threshold_report.json' in published_report_text
@@ -4653,15 +4663,18 @@ def test_ds_report_publication_groups_multiple_stage_runs_under_one_collection_a
     assert '20260331T120500123456Z.collection.md' in collection_report_text
     assert '20260331T120500000000Z.eval.md' in collection_report_text
     assert '20260331T120500123456Z.eval.md' in collection_report_text
-    assert '## Collection purpose' in collection_report_text
     assert '## Collection identity' in collection_report_text
-    assert '## Current packet summary' in collection_report_text
-    assert '## Collection evidence at a glance' in collection_report_text
-    assert '## Latest stage contributions' in collection_report_text
-    assert '## Interpretation' in collection_report_text
-    assert '## Historical packet trail' in collection_report_text
-    assert '## Limits and lineage' in collection_report_text
-    assert '## Related surfaces' in collection_report_text
+    assert '## Run summary' in collection_report_text
+    assert '## Collection handoff map' in collection_report_text
+    assert '## Collection method' in collection_report_text
+    assert '## Retention summary' in collection_report_text
+    assert '## Baseline readiness summary' in collection_report_text
+    assert '## Watchdog telemetry summary' in collection_report_text
+    assert '## Librarian accountability summary' in collection_report_text
+    assert '## Security linkage summary' in collection_report_text
+    assert '## Run implications' in collection_report_text
+    assert '## Limits' in collection_report_text
+    assert '## Processing run ledger' in collection_report_text
     assert 'Run IDs remain lineage context for `can-r1a2b`' in collection_report_text
     assert 'collection/report.md' not in latest_collections_text
     assert 'collection/report.md' not in workflow_rollup_text
@@ -4689,6 +4702,109 @@ def test_ds_report_publication_groups_multiple_stage_runs_under_one_collection_a
     assert 'Front-door collection routing' in generated_surfaces_text
     assert 'Aggregate-facing collection routes use the dated collection packet leaf' in generated_surfaces_text
     assert 'No stable `collection/report.md` landing page is part of the current tracked packet contract.' in generated_surfaces_text
+
+
+def test_ds_report_publication_uses_registered_dataset_alias_when_manifest_collection_alias_is_blank(tmp_path: Path) -> None:
+    from analysis.report_aggregate import append_ds_run_index, refresh_tracked_ds_publication
+    from analysis.report_pack import prepare_report_bundle, write_report_bundle
+    from calamum_librarian import register_librarian_dataset_packet
+
+    project_root = tmp_path / 'observer_project'
+    anchor = project_root / 'src' / 'observerctl_anchor.py'
+    anchor.parent.mkdir(parents=True, exist_ok=True)
+    anchor.write_text('# anchor\n', encoding='utf-8')
+    (project_root / 'PROJECT_MANIFEST.json').write_text('{}\n', encoding='utf-8')
+
+    dataset_dir = project_root / 'datasets' / 'presentation_demo'
+    dataset_dir.mkdir(parents=True, exist_ok=True)
+    features_csv = dataset_dir / 'features.csv'
+    manifest_path = dataset_dir / 'dataset_manifest.json'
+    features_csv.write_text('record_id,feature\n', encoding='utf-8')
+    manifest_path.write_text(json.dumps({
+        'features_csv': str(features_csv),
+        'total_records': 4,
+        'has_labels': False,
+    }), encoding='utf-8')
+
+    dataset_packet = register_librarian_dataset_packet(
+        anchor,
+        manifest_path,
+        display_name='Presentation Demo Dataset',
+        run_id='presentation-demo',
+    )
+    assert dataset_packet['decision'] == 'go'
+
+    train_bundle = prepare_report_bundle(anchor, 'train', run_id='train-presentation-demo')
+    train_report_bundle = write_report_bundle(
+        project_anchor=anchor,
+        bundle=train_bundle,
+        packet={
+            'timestamp_utc': '2026-03-31T12:00:00Z',
+            'runtime_cli_surface': 'observerctl',
+            'decision': 'go',
+            'action': 'ds-train',
+            'command_family': 'ds',
+            'command_path': 'observerctl ds train',
+            'implementation_state': 'command-available',
+            'underlying_surface': 'analysis.train_unsupervised',
+            'summary': 'Model training completed through observerctl ds.',
+            'run_id': train_bundle.run_id,
+            'artifacts': {},
+            'reason_codes': [],
+        },
+        context={'seed': 42},
+        lineage={'dataset_manifest': manifest_path},
+    )
+    append_ds_run_index(project_anchor=anchor, manifest_payload=train_report_bundle['manifest'])
+
+    score_bundle = prepare_report_bundle(anchor, 'score', run_id='score-presentation-demo')
+    score_report_bundle = write_report_bundle(
+        project_anchor=anchor,
+        bundle=score_bundle,
+        packet={
+            'timestamp_utc': '2026-03-31T12:05:00Z',
+            'runtime_cli_surface': 'observerctl',
+            'decision': 'go',
+            'action': 'ds-score',
+            'command_family': 'ds',
+            'command_path': 'observerctl ds score',
+            'implementation_state': 'command-available',
+            'underlying_surface': 'analysis.score_unsupervised',
+            'summary': 'Unsupervised scoring completed through observerctl ds.',
+            'run_id': score_bundle.run_id,
+            'records_scored': 4,
+            'anomaly_direction': 'lower-is-more-anomalous',
+            'score_column': 'score_anomaly',
+            'artifacts': {},
+            'reason_codes': [],
+        },
+        context={'output_override': False},
+        lineage={'dataset_manifest': manifest_path},
+    )
+    append_ds_run_index(project_anchor=anchor, manifest_payload=score_report_bundle['manifest'])
+
+    publication = refresh_tracked_ds_publication(project_anchor=anchor, current_manifest_payload=score_report_bundle['manifest'])
+
+    alias_root = project_root / 'docs' / 'reports' / 'collections' / 'presentation-demo'
+    current_stage_doc = project_root / publication['current_run']['published_report_paths']['processing_markdown']
+    reports_index_text = (project_root / publication['aggregate_paths']['index_md']).read_text(encoding='utf-8')
+    generated_surfaces_text = (project_root / publication['aggregate_paths']['generated_surfaces_md']).read_text(encoding='utf-8')
+
+    assert publication['decision'] == 'go'
+    assert publication['published_run_count'] == 2
+    assert publication['current_run']['collection_alias'] == 'presentation-demo'
+    assert alias_root.exists()
+    assert (alias_root / 'collection').exists()
+    assert (alias_root / 'processing' / 'train').exists()
+    assert (alias_root / 'processing' / 'score').exists()
+    assert not (project_root / 'docs' / 'reports' / 'collections' / train_bundle.run_id).exists()
+    assert not (project_root / 'docs' / 'reports' / 'collections' / score_bundle.run_id).exists()
+    assert '`presentation-demo`' in reports_index_text
+    assert '**Collection alias**: `presentation-demo`' in current_stage_doc.read_text(encoding='utf-8')
+    assert '|        |- build/' in generated_surfaces_text
+    assert '|        |- eval/' in generated_surfaces_text
+    assert '|        |- score/' in generated_surfaces_text
+    assert '|        `- train/' in generated_surfaces_text
 
 
 def test_ds_report_publication_threshold_summary_only_uses_evaluate_packets_and_pairs_scores_by_alias(tmp_path: Path) -> None:
@@ -4964,6 +5080,8 @@ def test_ds_build_with_canonical_run_root_publishes_tracked_ds_surfaces(monkeypa
     payload = json.loads(capsys.readouterr().out)
     assert payload['publication']['decision'] == 'go'
     assert payload['publication']['published_run_count'] == 1
+    assert payload['publication']['current_run']['figure_count'] == 3
+    assert any(str(path).endswith('split_balance.png') for path in payload['publication']['current_run']['published_figures'])
     assert (project_root / payload['artifacts']['tracked_ds_index_md']).exists()
     assert (project_root / payload['artifacts']['tracked_ds_latest_json']).exists()
     assert (project_root / payload['artifacts']['tracked_ds_by_workflow_json']).exists()

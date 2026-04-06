@@ -4,11 +4,11 @@ This synthesis page summarizes the strongest current reader-facing conclusions a
 
 ## Executive summary
 
-- Published packets: 2
-- Collection aliases represented: 2
-- Workflow families represented: 2
-- Threshold-bearing packets: 0
-- Current front-door packet: [score_20260406T170017731886Z](../collections/score_20260406T170017731886Z/collection/20260406T170030764817Z.collection.md)
+- Published packets: 5
+- Collection aliases represented: 1
+- Workflow families represented: 4
+- Threshold-bearing packets: 1
+- Current front-door packet: [p3-demo-current-20260406](../collections/p3-demo-current-20260406/collection/20260406T213205644819Z.collection.md)
 
 ## Why this aggregate exists
 
@@ -16,37 +16,42 @@ The tracked report family now has multiple reader roles: packet entry, workflow 
 
 ## Runtime-safe current picture
 
-- Latest published workflow: score
-- Latest packet timestamp (UTC): 2026-04-06T17:00:30.764817Z
-- Latest packet summary: Unsupervised scoring completed through observerctl ds.
+- Latest published workflow: build
+- Latest packet timestamp (UTC): 2026-04-06T21:32:05.644819Z
+- Latest packet summary: Approved dataset materialized through observerctl ds.
 
 ## What to open first
 
 | Collection alias | Current packet date | Latest stages | Current focus | Collection packet |
 |---|---|---|---|---|
-| `score_20260406T170017731886Z` | 2026-04-06T17:00:30.764817Z | score | Score-stage packet with figure-backed anomaly-surface context. | [collection packet](../collections/score_20260406T170017731886Z/collection/20260406T170030764817Z.collection.md) |
-| `train_20260406T165940271708Z` | 2026-04-06T16:59:45.654317Z | train | Training handoff packet for the current model-publication lane. | [collection packet](../collections/train_20260406T165940271708Z/collection/20260406T165945654317Z.collection.md) |
+| `p3-demo-current-20260406` | 2026-04-06T21:32:05.644819Z | build, evaluate, score, train | Build-stage packet for current dataset-materialization readiness. | [collection packet](../collections/p3-demo-current-20260406/collection/20260406T213205644819Z.collection.md) |
 
 ## Current packet family at a glance
 
 - Collections with figure-backed packets: 1
-- Collections with threshold-bearing packets: 0
-- Current packet summary: Unsupervised scoring completed through observerctl ds.
-- Current front-door packet: [score_20260406T170017731886Z](../collections/score_20260406T170017731886Z/collection/20260406T170030764817Z.collection.md)
+- Collections with threshold-bearing packets: 1
+- Current packet summary: Approved dataset materialized through observerctl ds.
+- Current front-door packet: [p3-demo-current-20260406](../collections/p3-demo-current-20260406/collection/20260406T213205644819Z.collection.md)
 
 ## Strongest findings
 
-- The tracked report family is now organized around 2 collection aliases instead of a single cache-shaped run list.
+- The tracked report family is now organized around 1 collection aliases instead of a single cache-shaped run list.
 - Collection packets now act as reader-first entry surfaces rather than history-only routing stubs.
-- Workflow coverage is currently spread across `score`, `train`.
-- No threshold-bearing packets are currently present in the tracked family.
+- Workflow coverage is currently spread across `build`, `evaluate`, `score`, `train`.
+- Threshold-bearing packets remain visible as dated packet leaves, with the latest threshold summary routed through `THRESHOLD_SUMMARY.md`.
 
 ## Workflow and threshold synthesis
 
 | Workflow family | Published packets | Latest collection | Current contribution |
 |---|---:|---|---|
-| score | 1 | `score_20260406T170017731886Z` | Captures scored anomaly output for reader follow-through. |
-| train | 1 | `train_20260406T165940271708Z` | Carries the latest model-training outcome. |
+| build | 2 | `p3-demo-current-20260406` | Defines the dataset packet baseline. |
+| evaluate | 1 | `p3-demo-current-20260406` | Captures validation and threshold interpretation. |
+| score | 1 | `p3-demo-current-20260406` | Captures scored anomaly output for reader follow-through. |
+| train | 1 | `p3-demo-current-20260406` | Carries the latest model-training outcome. |
+
+| Threshold-bearing packet | Threshold | Target guardrail | Eval packet |
+|---|---:|---:|---|
+| `p3-demo-current-20260406` / `evaluate_20260406T211232484108Z` | 0 | 0.01 | [eval packet](../collections/p3-demo-current-20260406/processing/eval/20260406T211246486478Z.eval.md) |
 
 ## Limits and caution notes
 
