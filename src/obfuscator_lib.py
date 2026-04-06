@@ -2,9 +2,61 @@ import hashlib
 import hmac
 import json
 import os
+import re
 from typing import Any, Dict, Iterable, List
 
 __version__ = "1.1.0"
+
+_PACKET_VERSION = 'p1'
+_VENUE_ID = 'moltbook'
+
+
+def _content_signal_summary(content: str) -> Dict[str, Any]:
+    text = str(content or '')
+    links = re.findall(r'https?://\S+', text, re.IGNORECASE)
+    code_markers = len(re.findall(r'```', text))
+    words = re.findall(r'\b\w+\b', text)
+    lines = text.splitlines()
+
+    pattern_specs = [
+        ('ignore_previous', r'ignore\s+(?:all\s+)?(?:previous|prior)'),
+        ('system_prompt_reference', r'\bsystem\s+prompt\b'),
+        ('developer_message_reference', r'\bdeveloper\s+message\b'),
+        (
+            'env_var_reference',
+            r'(?:\$[A-Z_][A-Z0-9_]*|\$\{[A-Z_][A-Z0-9_]*\}|%[A-Z_][A-Z0-9_]*%|process\.env\.|os\.getenv\(|\.env\b|[A-Z][A-Z0-9_]{2,}_(?:KEY|TOKEN|SECRET|PASSWORD)\b)',
+        ),
+    ]
+
+    matched_labels: List[str] = []
+    for label, pattern in pattern_specs:
+        if re.search(pattern, text, re.IGNORECASE):
+            matched_labels.append(label)
+
+    prompt_injection_score = sum(
+        1
+        for label in matched_labels
+        if label in {'ignore_previous', 'system_prompt_reference', 'developer_message_reference'}
+    )
+
+    code_block_count = int((code_markers + 1) / 2) if code_markers else 0
+
+    return {
+        'content_length_words': len(words),
+        'line_count': len(lines) if text else 0,
+        'code_block_count': code_block_count,
+        'has_link': bool(links),
+        'link_count': len(links),
+        'question_count': text.count('?'),
+        'exclamation_count': text.count('!'),
+        'contains_ignore_previous': 'ignore_previous' in matched_labels,
+        'contains_system_prompt_reference': 'system_prompt_reference' in matched_labels,
+        'contains_developer_message_reference': 'developer_message_reference' in matched_labels,
+        'contains_env_var_reference': 'env_var_reference' in matched_labels,
+        'prompt_injection_score': prompt_injection_score,
+        'matched_pattern_labels': matched_labels,
+        'matched_pattern_count': len(matched_labels),
+    }
 
 
 def _canonical_payload_bytes(payload: Dict[str, Any]) -> bytes:
@@ -199,6 +251,10 @@ class Obfuscator:
         Transforms a raw sample into a safe, obfuscated record.
         """
         safe_record = {
+            "packet_family": "obs.content_item",
+            "packet_version": _PACKET_VERSION,
+            "venue_id": _VENUE_ID,
+            "entity_kind": "content_item",
             "timestamp": sample.get("timestamp"),
             "type": sample.get("type", "unknown"),
             "content_length": len(sample.get("content", "")),
@@ -208,6 +264,10 @@ class Obfuscator:
             "tags_count": len(sample.get("tags", [])),
             "mentions_count": len(sample.get("mentions", [])),
         }
+        source_id = str(sample.get("id", "") or "").strip()
+        if source_id:
+            safe_record["source_id_hash"] = Obfuscator._hash(source_id)
+        safe_record.update(_content_signal_summary(sample.get("content", "")))
         return safe_record
     
     @staticmethod
@@ -217,15 +277,22 @@ class Obfuscator:
         Strictly strips DM content.
         """
         safe_record = {
+            "packet_family": "obs.interaction_event",
+            "packet_version": _PACKET_VERSION,
+            "venue_id": _VENUE_ID,
+            "entity_kind": "interaction_event",
             "timestamp": notification.get("timestamp"),
             "event_type": notification.get("event_type", "unknown"), # dm, follow, mention
             "sender_hash": Obfuscator._hash(notification.get("sender", "unknown")),
         }
+        source_id = str(notification.get("id", "") or "").strip()
+        if source_id:
+            safe_record["source_id_hash"] = Obfuscator._hash(source_id)
         
         # Only log content metrics if it's a message-bearing event
         if "content" in notification:
             safe_record["content_length"] = len(notification.get("content", ""))
-            safe_record["has_link"] = "http" in notification.get("content", "")
+            safe_record.update(_content_signal_summary(notification.get("content", "")))
         
         return safe_record
 

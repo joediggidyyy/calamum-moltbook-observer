@@ -26,7 +26,10 @@ from pathlib import Path
 from typing import Any, Dict, List, Optional, Tuple
 
 from analysis._util import (
+    default_analysis_dir,
     dataset_access_dir,
+    ds_indexes_dir,
+    ds_publication_internal_dir,
     find_project_root,
     librarian_dataset_catalog_path,
     librarian_dataset_manifest_path,
@@ -542,6 +545,49 @@ def _vault_fingerprint_rows(paths: Dict[str, Path]) -> List[Dict[str, Any]]:
     return rows
 
 
+def _count_files_recursive(path: Path) -> int:
+    if not path.exists() or not path.is_dir():
+        return 0
+    return int(sum(1 for candidate in path.rglob('*') if candidate.is_file()))
+
+
+def _path_file_exists_count(*paths_to_check: Path) -> int:
+    return int(sum(1 for candidate in paths_to_check if candidate.exists() and candidate.is_file()))
+
+
+def _vault_managed_surface_counts(paths: Dict[str, Path]) -> Dict[str, Any]:
+    authority_file_count = _path_file_exists_count(paths['authority_snapshot_path'], paths['authority_catalog_path'])
+    delegated_access_file_count = _count_files_recursive(paths['authority_access_root'])
+    integrity_file_count = _count_files_recursive(paths['integrity_root'])
+    quarantine_file_count = _count_files_recursive(paths['quarantine_root'])
+    vault_file_count = int(
+        authority_file_count
+        + delegated_access_file_count
+        + integrity_file_count
+        + quarantine_file_count
+    )
+
+    projection_manifest_file_count = _path_file_exists_count(paths['snapshot_path'], paths['catalog_path'])
+    projection_access_file_count = _count_files_recursive(paths['access_root'])
+    projection_file_count = int(projection_manifest_file_count + projection_access_file_count)
+
+    catalog_entries = _load_dataset_snapshot(paths)
+    approved_selector_entry_count = int(sum(1 for entry in catalog_entries if _entry_is_admitted_dataset_selector(entry)))
+
+    return {
+        'authority_file_count': int(authority_file_count),
+        'delegated_access_file_count': int(delegated_access_file_count),
+        'integrity_file_count': int(integrity_file_count),
+        'quarantine_file_count': int(quarantine_file_count),
+        'vault_file_count': int(vault_file_count),
+        'projection_manifest_file_count': int(projection_manifest_file_count),
+        'projection_access_file_count': int(projection_access_file_count),
+        'projection_file_count': int(projection_file_count),
+        'catalog_entry_count': int(len(catalog_entries)),
+        'approved_selector_entry_count': int(approved_selector_entry_count),
+    }
+
+
 def _vault_checksum_payload(paths: Dict[str, Path]) -> Dict[str, Any]:
     tracked_files = _vault_fingerprint_rows(paths)
     checksum = hashlib.sha256(
@@ -875,6 +921,14 @@ def _dataset_selector_entry(entry: Dict[str, Any], index: int) -> Dict[str, Any]
         'requires_librarian_attestation': bool(entry.get('requires_librarian_attestation', False)),
         'source': str(entry.get('source', 'unknown') or 'unknown'),
         'mode': str(entry.get('mode', 'unknown') or 'unknown'),
+        'registration_kind': str(entry.get('registration_kind', '') or '').strip(),
+        'baseline_window_id': str(entry.get('baseline_window_id', '') or '').strip(),
+        'baseline_analysis_packet': str(resolver.get('baseline_analysis_packet', '') or '').strip(),
+        'baseline_analysis_index_path': str(resolver.get('baseline_analysis_index_path', '') or '').strip(),
+        'baseline_decision_state': str(entry.get('baseline_decision_state', '') or '').strip(),
+        'baseline_summary': str(entry.get('baseline_summary', '') or '').strip(),
+        'baseline_sample_counts': dict(entry.get('baseline_sample_counts', {}) or {}) if isinstance(entry.get('baseline_sample_counts', {}), dict) else {},
+        'baseline_recorded_at_utc': str(entry.get('baseline_recorded_at_utc', '') or '').strip(),
         'display_alias': _dataset_entry_display_alias(entry, resolver),
         'dataset_manifest_sha256': str(resolver.get('dataset_manifest_sha256', '') or '').strip(),
     }
@@ -1012,6 +1066,79 @@ def _resolve_dataset_entry(paths: Dict[str, Path], selector: str) -> Optional[Di
     return None
 
 
+def _analysis_evidence_index_path(project_anchor: Path, source: str, mode: str) -> Path:
+    return default_analysis_dir(project_anchor) / 'observer_derived' / source / mode / 'evidence' / 'index.jsonl'
+
+
+def _resolve_analysis_ref(project_root: Path, ref: str) -> Optional[Path]:
+    text = str(ref or '').strip()
+    if not text:
+        return None
+    path = Path(text.replace('/', os.sep))
+    if not path.is_absolute():
+        path = project_root / path
+    try:
+        return path.resolve()
+    except Exception:
+        return path
+
+
+def _latest_dataset_baseline_context(project_anchor: Path, project_root: Path, source: str, mode: str) -> Dict[str, Any]:
+    source_token = _dataset_scope_token(source, ('sim', 'real'))
+    mode_token = _dataset_scope_token(mode, ('watch', 'canary', 'live', 'honeypot'))
+    if source_token == 'unknown' or mode_token == 'unknown':
+        return {}
+
+    index_path = _analysis_evidence_index_path(project_anchor, source_token, mode_token)
+    if not index_path.exists():
+        return {}
+
+    try:
+        lines = [line for line in index_path.read_text(encoding='utf-8', errors='ignore').splitlines() if str(line).strip()]
+    except Exception:
+        return {}
+
+    for line in reversed(lines):
+        try:
+            row = json.loads(line)
+        except Exception:
+            continue
+        if not isinstance(row, dict):
+            continue
+        if str(row.get('event', '') or '').strip().lower() != 'baseline_analysis':
+            continue
+
+        packet_ref = str(row.get('packet_path', '') or '').strip()
+        packet_path = _resolve_analysis_ref(project_root, packet_ref)
+        packet = _read_json_dict(packet_path, default={}) if packet_path is not None and packet_path.exists() else {}
+
+        baseline_window_id = str(
+            packet.get('baseline_window_id', '')
+            or row.get('baseline_window_id', '')
+            or row.get('window_id', '')
+            or ''
+        ).strip()
+        decision_state = str(packet.get('decision', row.get('decision', '')) or '').strip().lower()
+        sample_counts = dict(packet.get('sample_counts', {}) or {}) if isinstance(packet.get('sample_counts', {}), dict) else {}
+
+        baseline_packet_ref = ''
+        if packet_path is not None and packet_path.exists():
+            baseline_packet_ref = normalize_repo_or_absolute_path(packet_path, project_root)
+        elif packet_ref:
+            baseline_packet_ref = str(packet_ref).strip()
+
+        return {
+            'baseline_window_id': baseline_window_id,
+            'baseline_analysis_packet': baseline_packet_ref,
+            'baseline_analysis_index_path': normalize_repo_or_absolute_path(index_path, project_root),
+            'baseline_decision_state': decision_state,
+            'baseline_summary': str(packet.get('summary', '') or '').strip(),
+            'baseline_sample_counts': sample_counts,
+            'baseline_recorded_at_utc': str(packet.get('timestamp_utc', '') or row.get('timestamp_utc', '') or '').strip(),
+        }
+    return {}
+
+
 def _build_dataset_entry(
     project_anchor: Path,
     dataset_manifest_path: Path,
@@ -1074,6 +1201,13 @@ def _build_dataset_entry(
         'features_csv_path': normalize_repo_or_absolute_path(features_path, project_root) if features_ref_raw else '',
         'labels_csv_path': normalize_repo_or_absolute_path(labels_path, project_root) if labels_ref_raw and labels_path is not None else '',
     }
+    baseline_context = _latest_dataset_baseline_context(project_anchor, project_root, resolved_source, resolved_mode)
+    baseline_packet_ref = str(baseline_context.get('baseline_analysis_packet', '') or '').strip()
+    baseline_index_ref = str(baseline_context.get('baseline_analysis_index_path', '') or '').strip()
+    if baseline_packet_ref:
+        resolver['baseline_analysis_packet'] = baseline_packet_ref
+    if baseline_index_ref:
+        resolver['baseline_analysis_index_path'] = baseline_index_ref
 
     return {
         'schema_version': DATASET_SELECTOR_SCHEMA_VERSION,
@@ -1095,6 +1229,11 @@ def _build_dataset_entry(
         'source_binding': resolved_binding,
         'report_manifest_ref': str(report_manifest_ref or '').strip(),
         'registration_kind': str(registration_kind or 'manual').strip() or 'manual',
+        'baseline_window_id': str(baseline_context.get('baseline_window_id', '') or '').strip(),
+        'baseline_decision_state': str(baseline_context.get('baseline_decision_state', '') or '').strip(),
+        'baseline_summary': str(baseline_context.get('baseline_summary', '') or '').strip(),
+        'baseline_sample_counts': dict(baseline_context.get('baseline_sample_counts', {}) or {}) if isinstance(baseline_context.get('baseline_sample_counts', {}), dict) else {},
+        'baseline_recorded_at_utc': str(baseline_context.get('baseline_recorded_at_utc', '') or '').strip(),
         'resolver': resolver,
     }
 
@@ -1198,6 +1337,18 @@ def register_librarian_dataset_packet(
     )
     resolved = _resolve_dataset_entry(paths, str(entry.get('entry_id', '')))
     selector_entry = resolved.get('selector_entry', {}) if isinstance(resolved, dict) else {}
+    artifacts = {
+        **_vault_artifact_refs(paths),
+        'librarian_dataset_manifest_json': update['snapshot_path'],
+        'librarian_dataset_catalog_jsonl': update['catalog_path'],
+        'librarian_vault_baseline_checksum': str(baseline.get('checksum_sha256', '') or '').strip(),
+    }
+    baseline_packet_ref = str(selector_entry.get('baseline_analysis_packet', '') or '').strip()
+    baseline_index_ref = str(selector_entry.get('baseline_analysis_index_path', '') or '').strip()
+    if baseline_packet_ref:
+        artifacts['baseline_analysis_packet'] = baseline_packet_ref
+    if baseline_index_ref:
+        artifacts['baseline_analysis_index_jsonl'] = baseline_index_ref
     return {
         'timestamp_utc': utc_now_iso(),
         'runtime_cli_surface': 'observerctl',
@@ -1206,12 +1357,7 @@ def register_librarian_dataset_packet(
         'summary': 'Dataset registered in the librarian-approved catalog.',
         'reason_codes': [],
         'dataset': selector_entry,
-        'artifacts': {
-            **_vault_artifact_refs(paths),
-            'librarian_dataset_manifest_json': update['snapshot_path'],
-            'librarian_dataset_catalog_jsonl': update['catalog_path'],
-            'librarian_vault_baseline_checksum': str(baseline.get('checksum_sha256', '') or '').strip(),
-        },
+        'artifacts': artifacts,
     }
 
 
@@ -1280,6 +1426,24 @@ def _report_store_collection_rows(paths: Dict[str, Path]) -> List[Dict[str, Any]
     return rows
 
 
+def _report_store_auxiliary_reset_paths(project_anchor: Path) -> Dict[str, Path]:
+    indexes_root = ds_indexes_dir(project_anchor)
+    internal_root = ds_publication_internal_dir(project_anchor)
+    return {
+        'ledger_path': indexes_root / 'ds_run_index.jsonl',
+        'latest_index_path': indexes_root / 'ds_latest.json',
+        'internal_collections_root': internal_root / 'collections',
+    }
+
+
+def _archive_reset_surface(source: Path, destination: Path) -> Optional[Path]:
+    if not source.exists():
+        return None
+    destination.parent.mkdir(parents=True, exist_ok=True)
+    shutil.move(str(source), str(destination))
+    return destination
+
+
 def _report_store_archive_manifest(
     paths: Dict[str, Path],
     *,
@@ -1287,9 +1451,11 @@ def _report_store_archive_manifest(
     reason: str,
     archive_root: Path,
     archived_paths: List[Path],
+    archived_auxiliary_paths: Optional[List[Path]] = None,
     live_target: Path,
 ) -> Dict[str, Any]:
     project_root = paths['project_root']
+    auxiliary_paths = list(archived_auxiliary_paths or [])
     manifest = {
         'action': str(action or '').strip(),
         'reason': str(reason or '').strip(),
@@ -1299,6 +1465,8 @@ def _report_store_archive_manifest(
         'archived_paths': [str(path) for path in archived_paths],
         'archived_aliases': [path.name for path in archived_paths],
         'archived_alias_count': int(len(archived_paths)),
+        'archived_auxiliary_paths': [str(path) for path in auxiliary_paths],
+        'archived_auxiliary_count': int(len(auxiliary_paths)),
         'archived_at_utc': utc_now_iso(),
     }
     archive_root.mkdir(parents=True, exist_ok=True)
@@ -1363,19 +1531,36 @@ def librarian_report_store_packet(
     archive_parent.mkdir(parents=True, exist_ok=True)
 
     if purge:
+        from analysis.report_aggregate import reset_tracked_ds_publication_state
+
         archived_paths: List[Path] = []
+        archived_auxiliary_paths: List[Path] = []
         archive_root = archive_parent / 'report_collections_reset_{0}'.format(stamp)
         destination_dir = archive_root / 'collections'
         if collections_root.exists():
             archived_paths = sorted(path for path in collections_root.iterdir() if path.exists())
             shutil.move(str(collections_root), str(destination_dir))
         collections_root.mkdir(parents=True, exist_ok=True)
+
+        auxiliary_paths = _report_store_auxiliary_reset_paths(project_anchor)
+        archive_targets = {
+            'ledger_path': archive_root / 'analysis_indexes' / 'ds_run_index.jsonl',
+            'latest_index_path': archive_root / 'analysis_indexes' / 'ds_latest.json',
+            'internal_collections_root': archive_root / 'analysis_indexes' / 'ds_publication' / 'collections',
+        }
+        for key, destination in archive_targets.items():
+            archived_path = _archive_reset_surface(auxiliary_paths[key], destination)
+            if archived_path is not None:
+                archived_auxiliary_paths.append(archived_path)
+
+        reset_packet = reset_tracked_ds_publication_state(project_anchor=project_anchor)
         manifest = _report_store_archive_manifest(
             paths,
             action='archive-and-reset-report-collections',
-            reason='reset tracked report collections before rerun from full collection pipeline',
+            reason='reset tracked report collections, selector authority, and aggregate publication before rerun from full collection pipeline',
             archive_root=archive_root,
             archived_paths=archived_paths,
+            archived_auxiliary_paths=archived_auxiliary_paths,
             live_target=collections_root,
         )
         return {
@@ -1383,9 +1568,10 @@ def librarian_report_store_packet(
             'runtime_cli_surface': 'observerctl',
             'decision': 'go',
             'action': 'librarian-store-reports-purge',
-            'summary': 'Tracked report collection tree archived and recreated empty.',
+            'summary': 'Tracked report collection tree archived, selector authority cleared, and aggregate files reset to zero-state.',
             'archived_aliases': list(manifest.get('archived_aliases', []) or []),
             'archived_alias_count': int(manifest.get('archived_alias_count', 0) or 0),
+            'archived_auxiliary_count': int(manifest.get('archived_auxiliary_count', 0) or 0),
             'report_collections': _report_store_collection_rows(paths),
             'reason_codes': [],
             'artifacts': {
@@ -1393,6 +1579,11 @@ def librarian_report_store_packet(
                 'collections_root': normalize_repo_or_absolute_path(collections_root, project_root),
                 'archive_root': normalize_repo_or_absolute_path(archive_root, project_root),
                 'archive_manifest_json': normalize_repo_or_absolute_path(archive_root / 'archive_manifest.json', project_root),
+                'ds_run_index_jsonl': str(((reset_packet.get('index_paths', {}) if isinstance(reset_packet.get('index_paths', {}), dict) else {}).get('ledger_path', '') or '').strip()),
+                'ds_latest_json': str(((reset_packet.get('index_paths', {}) if isinstance(reset_packet.get('index_paths', {}), dict) else {}).get('latest_index_path', '') or '').strip()),
+                'aggregate_report_md': str(((reset_packet.get('aggregate_paths', {}) if isinstance(reset_packet.get('aggregate_paths', {}), dict) else {}).get('aggregate_report_md', '') or '').strip()),
+                'latest_md': str(((reset_packet.get('aggregate_paths', {}) if isinstance(reset_packet.get('aggregate_paths', {}), dict) else {}).get('latest_md', '') or '').strip()),
+                'generated_surfaces_md': str(((reset_packet.get('aggregate_paths', {}) if isinstance(reset_packet.get('aggregate_paths', {}), dict) else {}).get('generated_surfaces_md', '') or '').strip()),
             },
         }
 
@@ -1660,6 +1851,12 @@ def release_librarian_dataset_packet(
         'dataset_access_release_receipt_json': normalize_repo_or_absolute_path(projection_release_path, project_root),
         'librarian_vault_baseline_checksum': str(baseline.get('checksum_sha256', '') or '').strip(),
     })
+    baseline_packet_ref = str(selector_entry.get('baseline_analysis_packet', '') or '').strip()
+    baseline_index_ref = str(selector_entry.get('baseline_analysis_index_path', '') or '').strip()
+    if baseline_packet_ref:
+        artifacts['baseline_analysis_packet'] = baseline_packet_ref
+    if baseline_index_ref:
+        artifacts['baseline_analysis_index_jsonl'] = baseline_index_ref
     return {
         'timestamp_utc': utc_now_iso(),
         'runtime_cli_surface': 'observerctl',
@@ -1680,6 +1877,7 @@ def librarian_vault_status_packet(project_anchor: Path) -> Dict[str, Any]:
     control_state = _load_vault_control_state(paths)
     current = dict(integrity.get('current', {}) or {})
     baseline = dict(integrity.get('baseline', {}) or {})
+    managed = _vault_managed_surface_counts(paths)
     return {
         'timestamp_utc': utc_now_iso(),
         'runtime_cli_surface': 'observerctl',
@@ -1695,6 +1893,7 @@ def librarian_vault_status_packet(project_anchor: Path) -> Dict[str, Any]:
             'baseline_checksum_sha256': str(baseline.get('checksum_sha256', '') or '').strip(),
             'tracked_file_count': int(current.get('tracked_file_count', 0) or 0),
         },
+        'managed_surfaces': managed,
         'artifacts': _vault_artifact_refs(paths),
     }
 
@@ -1705,6 +1904,7 @@ def librarian_vault_verify_packet(project_anchor: Path) -> Dict[str, Any]:
     current = dict(integrity.get('current', {}) or {})
     baseline = dict(integrity.get('baseline', {}) or {})
     status = str(integrity.get('status', 'warn') or 'warn')
+    managed = _vault_managed_surface_counts(paths)
     return {
         'timestamp_utc': utc_now_iso(),
         'runtime_cli_surface': 'observerctl',
@@ -1718,6 +1918,7 @@ def librarian_vault_verify_packet(project_anchor: Path) -> Dict[str, Any]:
             'baseline_checksum_sha256': str(baseline.get('checksum_sha256', '') or '').strip(),
             'tracked_file_count': int(current.get('tracked_file_count', 0) or 0),
         },
+        'managed_surfaces': managed,
         'artifacts': _vault_artifact_refs(paths),
     }
 

@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import csv
 import json
 import sys
 from pathlib import Path
@@ -124,6 +125,63 @@ def test_build_dataset_deterministic_splits_and_eval(tmp_path: Path) -> None:
     res = evaluate(Path(m1.features_csv), labels_csv=Path(m1.labels_csv) if m1.labels_csv else None, max_fpr=0.01)
     assert res.has_labels is True
     assert res.metrics.get('fpr', 1.0) <= 0.01
+
+
+def test_build_dataset_carries_packet_uplift_fields(tmp_path: Path) -> None:
+    rec = {
+        'timestamp': '2026-02-10T00:00:00Z',
+        'type': 'post',
+        'packet_family': 'obs.content_item',
+        'packet_version': 'p1',
+        'venue_id': 'moltbook',
+        'entity_kind': 'content_item',
+        'author_hash': 'abcd' * 4,
+        'content_length': 64,
+        'content_length_words': 10,
+        'has_code_block': True,
+        'code_block_count': 1,
+        'has_link': True,
+        'link_count': 1,
+        'tags_count': 2,
+        'mentions_count': 1,
+        'line_count': 3,
+        'question_count': 1,
+        'exclamation_count': 2,
+        'contains_ignore_previous': True,
+        'contains_system_prompt_reference': True,
+        'contains_developer_message_reference': False,
+        'contains_env_var_reference': True,
+        'prompt_injection_score': 2,
+        'matched_pattern_count': 3,
+        'f_complexity': 0.7,
+        'f_code_density': 0.2,
+        'f_toxicity': 2,
+        'f_timestamp_epoch': 123.0,
+    }
+    signed = Obfuscator.sign_record(rec)
+    jsonl = tmp_path / 'uplift.jsonl'
+    _write_jsonl(jsonl, [signed])
+
+    out_dir = tmp_path / 'dataset'
+    manifest = build_dataset([jsonl], out_dir=out_dir, seed=42)
+
+    with Path(manifest.features_csv).open('r', encoding='utf-8', newline='') as handle:
+        rows = list(csv.DictReader(handle))
+
+    assert len(rows) == 1
+    row = rows[0]
+    assert row['content_length_words'] == '10'
+    assert row['code_block_count'] == '1'
+    assert row['link_count'] == '1'
+    assert row['line_count'] == '3'
+    assert row['question_count'] == '1'
+    assert row['exclamation_count'] == '2'
+    assert row['contains_ignore_previous'] == '1'
+    assert row['contains_system_prompt_reference'] == '1'
+    assert row['contains_developer_message_reference'] == '0'
+    assert row['contains_env_var_reference'] == '1'
+    assert row['prompt_injection_score'] == '2'
+    assert row['matched_pattern_count'] == '3'
 
 
 def test_evaluation_run_ledger_emits_fields_needed_for_ds_wizard_import(tmp_path: Path) -> None:

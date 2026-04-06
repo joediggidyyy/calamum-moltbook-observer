@@ -106,4 +106,13 @@ Write-Output "output_dir=$OutputDir"
 Write-Output "claim_url_path=$(Join-Path $OutputDir 'claim_url.txt')"
 Write-Output "sealed_drop_path=$(Join-Path $OutputDir 'sealed_drop.bin')"
 Write-Output "import_helper_path=$(Join-Path $OutputDir 'Import-MoltbookApiKeyFromSealedDrop.ps1')"
+Write-Output "persist_user_env_helper_path=$(Join-Path $OutputDir 'Persist-MoltbookApiKeyToUserEnv.ps1')"
 Write-Output "audit_path=$(Join-Path $OutputDir 'keysmith_audit.jsonl')"
+
+if (-not $DryRun) {
+    $persistHelper = Join-Path $OutputDir 'Persist-MoltbookApiKeyToUserEnv.ps1'
+    if (Test-Path $persistHelper) {
+        & $persistHelper | Out-Null
+        Write-Output 'user_env_persisted=true'
+    }
+}

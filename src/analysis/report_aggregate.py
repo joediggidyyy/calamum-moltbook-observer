@@ -22,6 +22,7 @@ from ._util import (
     iter_jsonl,
     normalize_repo_or_absolute_path,
     sanitize_run_id,
+    utc_now_iso,
 )
 from .report_pack import _normalize_json_value, _report_markdown
 
@@ -62,6 +63,215 @@ def _reset_publication_root(publication_root: Path) -> None:
             shutil.rmtree(child)
             continue
         child.unlink()
+
+
+def _tracked_ds_publication_paths(project_anchor: Path) -> Dict[str, Path]:
+    publication_root = ds_publication_dir(project_anchor)
+    aggregates_root = ds_publication_aggregates_dir(project_anchor)
+    reference_root = ds_publication_reference_dir(project_anchor)
+    validations_root = ds_publication_validations_dir(project_anchor)
+    internal_root = ds_publication_internal_dir(project_anchor)
+    internal_aggregates_root = internal_root / 'aggregates'
+    internal_collections_root = internal_root / 'collections'
+    indexes_root = ds_indexes_dir(project_anchor)
+    collections_root = ds_publication_runs_dir(project_anchor)
+    return {
+        'publication_root': publication_root,
+        'collections_root': collections_root,
+        'aggregates_root': aggregates_root,
+        'reference_root': reference_root,
+        'validations_root': validations_root,
+        'internal_root': internal_root,
+        'internal_aggregates_root': internal_aggregates_root,
+        'internal_collections_root': internal_collections_root,
+        'indexes_root': indexes_root,
+        'ledger_path': indexes_root / 'ds_run_index.jsonl',
+        'latest_index_path': indexes_root / 'ds_latest.json',
+        'latest_json_path': internal_aggregates_root / 'latest.json',
+        'latest_md_path': aggregates_root / 'LATEST_COLLECTIONS.md',
+        'by_workflow_json_path': internal_aggregates_root / 'workflow_rollup.json',
+        'by_workflow_md_path': aggregates_root / 'WORKFLOW_ROLLUP.md',
+        'thresholds_json_path': internal_aggregates_root / 'threshold_summary.json',
+        'thresholds_md_path': aggregates_root / 'THRESHOLD_SUMMARY.md',
+        'public_run_ledger_json_path': internal_aggregates_root / 'public_run_ledger.json',
+        'public_run_ledger_md_path': aggregates_root / 'PUBLIC_RUN_LEDGER.md',
+        'aggregate_report_json_path': internal_aggregates_root / 'aggregate_report.json',
+        'aggregate_report_md_path': aggregates_root / 'AGGREGATE_REPORT.md',
+        'index_md_path': publication_root / 'INDEX.md',
+        'generated_surfaces_md_path': reference_root / 'GENERATED_REPORT_SURFACES.md',
+        'validations_index_md_path': validations_root / 'INDEX.md',
+    }
+
+
+def _ensure_tracked_ds_publication_dirs(paths: Mapping[str, Path]) -> None:
+    for key in (
+        'indexes_root',
+        'publication_root',
+        'collections_root',
+        'aggregates_root',
+        'reference_root',
+        'validations_root',
+        'internal_root',
+        'internal_aggregates_root',
+        'internal_collections_root',
+    ):
+        Path(paths[key]).mkdir(parents=True, exist_ok=True)
+
+
+def _empty_ds_latest_payload(project_root: Path, ledger_path: Path, updated_at_utc: str) -> Dict[str, Any]:
+    return {
+        'schema_version': '1.0',
+        'family_id': 'ds_run',
+        'updated_at_utc': str(updated_at_utc or ''),
+        'ledger_path': normalize_repo_or_absolute_path(ledger_path, project_root),
+        'latest_run': {},
+        'by_workflow': {},
+    }
+
+
+def _write_tracked_ds_publication_outputs(
+    *,
+    project_root: Path,
+    paths: Mapping[str, Path],
+    published_runs: List[Dict[str, Any]],
+    threshold_rows: List[Dict[str, Any]],
+) -> Dict[str, str]:
+    publication_root = Path(paths['publication_root'])
+    latest_payload = _latest_publication_payload(project_root, published_runs, publication_root)
+    by_workflow_payload = _by_workflow_publication_payload(project_root, published_runs, publication_root)
+    thresholds_payload = _thresholds_publication_payload(project_root, threshold_rows, publication_root)
+    public_run_ledger_payload = _public_run_ledger_payload(project_root, published_runs, threshold_rows, publication_root)
+    aggregate_report_payload = _aggregate_report_payload(project_root, published_runs, threshold_rows, publication_root)
+
+    latest_json_path = Path(paths['latest_json_path'])
+    latest_md_path = Path(paths['latest_md_path'])
+    by_workflow_json_path = Path(paths['by_workflow_json_path'])
+    by_workflow_md_path = Path(paths['by_workflow_md_path'])
+    thresholds_json_path = Path(paths['thresholds_json_path'])
+    thresholds_md_path = Path(paths['thresholds_md_path'])
+    public_run_ledger_json_path = Path(paths['public_run_ledger_json_path'])
+    public_run_ledger_md_path = Path(paths['public_run_ledger_md_path'])
+    aggregate_report_json_path = Path(paths['aggregate_report_json_path'])
+    aggregate_report_md_path = Path(paths['aggregate_report_md_path'])
+    index_md_path = Path(paths['index_md_path'])
+    generated_surfaces_md_path = Path(paths['generated_surfaces_md_path'])
+    validations_index_md_path = Path(paths['validations_index_md_path'])
+
+    latest_json_path.write_text(json.dumps(latest_payload, indent=2, sort_keys=True), encoding='utf-8')
+    latest_md_path.write_text(_latest_publication_markdown(project_root, latest_md_path, latest_payload), encoding='utf-8')
+    by_workflow_json_path.write_text(json.dumps(by_workflow_payload, indent=2, sort_keys=True), encoding='utf-8')
+    by_workflow_md_path.write_text(_by_workflow_publication_markdown(project_root, by_workflow_md_path, by_workflow_payload), encoding='utf-8')
+    thresholds_json_path.write_text(json.dumps(thresholds_payload, indent=2, sort_keys=True), encoding='utf-8')
+    thresholds_md_path.write_text(_thresholds_publication_markdown(project_root, thresholds_md_path, thresholds_payload), encoding='utf-8')
+    public_run_ledger_json_path.write_text(json.dumps(public_run_ledger_payload, indent=2, sort_keys=True), encoding='utf-8')
+    public_run_ledger_md_path.write_text(
+        _public_run_ledger_markdown(
+            project_root,
+            public_run_ledger_md_path,
+            public_run_ledger_payload,
+            aggregate_report_md_path,
+            latest_md_path,
+            by_workflow_md_path,
+            thresholds_md_path,
+        ),
+        encoding='utf-8',
+    )
+    aggregate_report_json_path.write_text(json.dumps(aggregate_report_payload, indent=2, sort_keys=True), encoding='utf-8')
+    aggregate_report_md_path.write_text(
+        _aggregate_report_markdown(
+            project_root,
+            aggregate_report_md_path,
+            aggregate_report_payload,
+            public_run_ledger_md_path,
+            latest_md_path,
+            by_workflow_md_path,
+            thresholds_md_path,
+        ),
+        encoding='utf-8',
+    )
+    index_md_path.write_text(
+        _ds_publication_index_markdown(
+            project_root,
+            index_md_path,
+            aggregate_report_md_path,
+            public_run_ledger_md_path,
+            latest_payload,
+            by_workflow_payload,
+            thresholds_payload,
+            published_runs,
+        ),
+        encoding='utf-8',
+    )
+    generated_surfaces_md_path.write_text(
+        _generated_report_surfaces_markdown(
+            project_root,
+            generated_surfaces_md_path,
+            aggregate_report_md_path,
+            public_run_ledger_md_path,
+            latest_md_path,
+            by_workflow_md_path,
+            thresholds_md_path,
+        ),
+        encoding='utf-8',
+    )
+    validations_index_md_path.write_text(
+        _validations_index_markdown(project_root, validations_index_md_path),
+        encoding='utf-8',
+    )
+
+    return {
+        'index_md': normalize_repo_or_absolute_path(index_md_path, project_root),
+        'aggregate_report_json': normalize_repo_or_absolute_path(aggregate_report_json_path, project_root),
+        'aggregate_report_md': normalize_repo_or_absolute_path(aggregate_report_md_path, project_root),
+        'public_run_ledger_json': normalize_repo_or_absolute_path(public_run_ledger_json_path, project_root),
+        'public_run_ledger_md': normalize_repo_or_absolute_path(public_run_ledger_md_path, project_root),
+        'latest_json': normalize_repo_or_absolute_path(latest_json_path, project_root),
+        'latest_md': normalize_repo_or_absolute_path(latest_md_path, project_root),
+        'by_workflow_json': normalize_repo_or_absolute_path(by_workflow_json_path, project_root),
+        'by_workflow_md': normalize_repo_or_absolute_path(by_workflow_md_path, project_root),
+        'thresholds_json': normalize_repo_or_absolute_path(thresholds_json_path, project_root),
+        'thresholds_md': normalize_repo_or_absolute_path(thresholds_md_path, project_root),
+        'generated_surfaces_md': normalize_repo_or_absolute_path(generated_surfaces_md_path, project_root),
+        'validations_index_md': normalize_repo_or_absolute_path(validations_index_md_path, project_root),
+    }
+
+
+def reset_tracked_ds_publication_state(*, project_anchor: Path) -> Dict[str, Any]:
+    project_root = find_project_root(project_anchor)
+    paths = _tracked_ds_publication_paths(project_anchor)
+
+    _reset_publication_root(Path(paths['collections_root']))
+    _reset_publication_root(Path(paths['internal_collections_root']))
+    _ensure_tracked_ds_publication_dirs(paths)
+
+    reset_at_utc = utc_now_iso()
+    ledger_path = Path(paths['ledger_path'])
+    latest_index_path = Path(paths['latest_index_path'])
+    ledger_path.write_text('', encoding='utf-8')
+    latest_index_payload = _empty_ds_latest_payload(project_root, ledger_path, reset_at_utc)
+    latest_index_path.write_text(json.dumps(latest_index_payload, indent=2, sort_keys=True), encoding='utf-8')
+
+    aggregate_paths = _write_tracked_ds_publication_outputs(
+        project_root=project_root,
+        paths=paths,
+        published_runs=[],
+        threshold_rows=[],
+    )
+
+    return {
+        'decision': 'go',
+        'reason_codes': [],
+        'publish_root': normalize_repo_or_absolute_path(Path(paths['publication_root']), project_root),
+        'published_run_count': 0,
+        'excluded_entry_count': 0,
+        'current_run': {},
+        'reset_at_utc': reset_at_utc,
+        'index_paths': {
+            'ledger_path': normalize_repo_or_absolute_path(ledger_path, project_root),
+            'latest_index_path': normalize_repo_or_absolute_path(latest_index_path, project_root),
+        },
+        'aggregate_paths': aggregate_paths,
+    }
 
 
 def append_ds_run_index(*, project_anchor: Path, manifest_payload: Mapping[str, Any]) -> Dict[str, Any]:
@@ -127,19 +337,11 @@ def refresh_tracked_ds_publication(
     current_manifest_payload: Optional[Mapping[str, Any]] = None,
 ) -> Dict[str, Any]:
     project_root = find_project_root(project_anchor)
-    publication_root = ds_publication_dir(project_anchor)
+    paths = _tracked_ds_publication_paths(project_anchor)
+    publication_root = Path(paths['publication_root'])
     _reset_publication_root(publication_root)
-    aggregates_root = ds_publication_aggregates_dir(project_anchor)
-    reference_root = ds_publication_reference_dir(project_anchor)
-    validations_root = ds_publication_validations_dir(project_anchor)
-    internal_root = ds_publication_internal_dir(project_anchor)
-    internal_aggregates_root = internal_root / 'aggregates'
-    publication_root.mkdir(parents=True, exist_ok=True)
-    aggregates_root.mkdir(parents=True, exist_ok=True)
-    reference_root.mkdir(parents=True, exist_ok=True)
-    validations_root.mkdir(parents=True, exist_ok=True)
-    internal_root.mkdir(parents=True, exist_ok=True)
-    internal_aggregates_root.mkdir(parents=True, exist_ok=True)
+    _reset_publication_root(Path(paths['internal_collections_root']))
+    _ensure_tracked_ds_publication_dirs(paths)
 
     records = load_ds_run_manifest_records(project_anchor=project_anchor)
     publishable: List[Dict[str, Any]] = []
@@ -162,86 +364,11 @@ def refresh_tracked_ds_publication(
     _write_collection_reports(publishable, project_root)
 
     threshold_rows = _threshold_summary_rows(published_runs)
-    latest_payload = _latest_publication_payload(project_root, published_runs, publication_root)
-    by_workflow_payload = _by_workflow_publication_payload(project_root, published_runs, publication_root)
-    thresholds_payload = _thresholds_publication_payload(project_root, threshold_rows, publication_root)
-    public_run_ledger_payload = _public_run_ledger_payload(project_root, published_runs, threshold_rows, publication_root)
-    aggregate_report_payload = _aggregate_report_payload(project_root, published_runs, threshold_rows, publication_root)
-
-    latest_json_path = internal_aggregates_root / 'latest.json'
-    latest_md_path = aggregates_root / 'LATEST_COLLECTIONS.md'
-    by_workflow_json_path = internal_aggregates_root / 'workflow_rollup.json'
-    by_workflow_md_path = aggregates_root / 'WORKFLOW_ROLLUP.md'
-    thresholds_json_path = internal_aggregates_root / 'threshold_summary.json'
-    thresholds_md_path = aggregates_root / 'THRESHOLD_SUMMARY.md'
-    public_run_ledger_json_path = internal_aggregates_root / 'public_run_ledger.json'
-    public_run_ledger_md_path = aggregates_root / 'PUBLIC_RUN_LEDGER.md'
-    aggregate_report_json_path = internal_aggregates_root / 'aggregate_report.json'
-    aggregate_report_md_path = aggregates_root / 'AGGREGATE_REPORT.md'
-    index_md_path = publication_root / 'INDEX.md'
-    generated_surfaces_md_path = reference_root / 'GENERATED_REPORT_SURFACES.md'
-    validations_index_md_path = validations_root / 'INDEX.md'
-
-    latest_json_path.write_text(json.dumps(latest_payload, indent=2, sort_keys=True), encoding='utf-8')
-    latest_md_path.write_text(_latest_publication_markdown(project_root, latest_md_path, latest_payload), encoding='utf-8')
-    by_workflow_json_path.write_text(json.dumps(by_workflow_payload, indent=2, sort_keys=True), encoding='utf-8')
-    by_workflow_md_path.write_text(_by_workflow_publication_markdown(project_root, by_workflow_md_path, by_workflow_payload), encoding='utf-8')
-    thresholds_json_path.write_text(json.dumps(thresholds_payload, indent=2, sort_keys=True), encoding='utf-8')
-    thresholds_md_path.write_text(_thresholds_publication_markdown(project_root, thresholds_md_path, thresholds_payload), encoding='utf-8')
-    public_run_ledger_json_path.write_text(json.dumps(public_run_ledger_payload, indent=2, sort_keys=True), encoding='utf-8')
-    public_run_ledger_md_path.write_text(
-        _public_run_ledger_markdown(
-            project_root,
-            public_run_ledger_md_path,
-            public_run_ledger_payload,
-            aggregate_report_md_path,
-            latest_md_path,
-            by_workflow_md_path,
-            thresholds_md_path,
-        ),
-        encoding='utf-8',
-    )
-    aggregate_report_json_path.write_text(json.dumps(aggregate_report_payload, indent=2, sort_keys=True), encoding='utf-8')
-    aggregate_report_md_path.write_text(
-        _aggregate_report_markdown(
-            project_root,
-            aggregate_report_md_path,
-            aggregate_report_payload,
-            public_run_ledger_md_path,
-            latest_md_path,
-            by_workflow_md_path,
-            thresholds_md_path,
-        ),
-        encoding='utf-8',
-    )
-    index_md_path.write_text(
-        _ds_publication_index_markdown(
-            project_root,
-            index_md_path,
-            aggregate_report_md_path,
-            public_run_ledger_md_path,
-            latest_payload,
-            by_workflow_payload,
-            thresholds_payload,
-            published_runs,
-        ),
-        encoding='utf-8',
-    )
-    generated_surfaces_md_path.write_text(
-        _generated_report_surfaces_markdown(
-            project_root,
-            generated_surfaces_md_path,
-            aggregate_report_md_path,
-            public_run_ledger_md_path,
-            latest_md_path,
-            by_workflow_md_path,
-            thresholds_md_path,
-        ),
-        encoding='utf-8',
-    )
-    validations_index_md_path.write_text(
-        _validations_index_markdown(project_root, validations_index_md_path),
-        encoding='utf-8',
+    aggregate_paths = _write_tracked_ds_publication_outputs(
+        project_root=project_root,
+        paths=paths,
+        published_runs=published_runs,
+        threshold_rows=threshold_rows,
     )
 
     current_run: Dict[str, Any] = {}
@@ -267,21 +394,7 @@ def refresh_tracked_ds_publication(
         'published_run_count': int(len(published_runs)),
         'excluded_entry_count': int(excluded_entries),
         'current_run': current_run,
-        'aggregate_paths': {
-            'index_md': normalize_repo_or_absolute_path(index_md_path, project_root),
-            'aggregate_report_json': normalize_repo_or_absolute_path(aggregate_report_json_path, project_root),
-            'aggregate_report_md': normalize_repo_or_absolute_path(aggregate_report_md_path, project_root),
-            'public_run_ledger_json': normalize_repo_or_absolute_path(public_run_ledger_json_path, project_root),
-            'public_run_ledger_md': normalize_repo_or_absolute_path(public_run_ledger_md_path, project_root),
-            'latest_json': normalize_repo_or_absolute_path(latest_json_path, project_root),
-            'latest_md': normalize_repo_or_absolute_path(latest_md_path, project_root),
-            'by_workflow_json': normalize_repo_or_absolute_path(by_workflow_json_path, project_root),
-            'by_workflow_md': normalize_repo_or_absolute_path(by_workflow_md_path, project_root),
-            'thresholds_json': normalize_repo_or_absolute_path(thresholds_json_path, project_root),
-            'thresholds_md': normalize_repo_or_absolute_path(thresholds_md_path, project_root),
-            'generated_surfaces_md': normalize_repo_or_absolute_path(generated_surfaces_md_path, project_root),
-            'validations_index_md': normalize_repo_or_absolute_path(validations_index_md_path, project_root),
-        },
+        'aggregate_paths': aggregate_paths,
     }
 
 

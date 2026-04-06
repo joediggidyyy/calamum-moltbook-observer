@@ -11,6 +11,7 @@ _SRC_DIR = Path(__file__).resolve().parents[1]
 if str(_SRC_DIR) not in sys.path:
     sys.path.insert(0, str(_SRC_DIR))
 
+import ops.telemetry as telemetry_module
 from ops.telemetry import TelemetryProvider, load_config, _newest_jsonl, _JsonlAppendCounter
 
 
@@ -143,6 +144,7 @@ def test_telemetry_display_totals_use_archive_plus_non_sim_session(tmp_path: Pat
     manifest = {
         'moltbook_canary_20260210T081214.jsonl': {'records': 100},
         'moltbook_canary_metrics_legacy_simulation.jsonl': {'records': 25},
+        'resource_real_canary_baseline_20260210T081214_seg0001.jsonl': {'records': 40},
     }
     (archive_dir / 'manifest.json').write_text(json.dumps(manifest), encoding='utf-8')
 
@@ -165,6 +167,8 @@ def test_telemetry_display_totals_use_archive_plus_non_sim_session(tmp_path: Pat
     assert snap['records_total_display'] == 128
     assert snap['records_archive_non_sim'] == 100
     assert snap['records_archive_sim_estimate'] == 25
+    assert snap['resource_archive_records'] == 40
+    assert snap['resource_total_display'] == 40
     assert snap['active_source_is_sim'] is False
 
 
@@ -229,7 +233,7 @@ def test_pick_active_jsonl_recovers_when_cached_path_missing(tmp_path: Path, mon
     assert picked == active
 
 
-def test_telemetry_uses_resource_index_when_active_jsonl_idle(tmp_path: Path, monkeypatch) -> None:
+def test_telemetry_keeps_resource_index_separate_when_active_jsonl_idle(tmp_path: Path, monkeypatch) -> None:
     repo_root = tmp_path
     (repo_root / 'logs').mkdir(parents=True, exist_ok=True)
 
@@ -280,15 +284,16 @@ def test_telemetry_uses_resource_index_when_active_jsonl_idle(tmp_path: Path, mo
 
     provider = TelemetryProvider(load_config(module_file))
     snap1 = provider.update()
-    assert snap1['new_records'] == 7
-    assert snap1['total_records'] >= 7
+    assert snap1['new_records'] == 0
+    assert snap1['total_records'] == 0
     assert snap1['resource_new_records'] == 7
     assert snap1['resource_total_records'] >= 7
+    assert snap1['resource_total_display'] >= 7
 
-    # Let density slice roll so histogram source receives a non-zero bucket.
+    # Let density slice roll; resource-only activity must not inflate collected density.
     time.sleep(0.32)
     snap2 = provider.update()
-    assert any(int(x) > 0 for x in snap2['density_raw_window'])
+    assert all(int(x) == 0 for x in snap2['density_raw_window'])
 
 
 def test_pick_active_jsonl_keeps_ssot_route_even_when_other_lane_is_active(tmp_path: Path, monkeypatch) -> None:
@@ -452,3 +457,49 @@ def test_jsonl_counter_resets_baseline_when_stream_path_changes(tmp_path: Path) 
     d2, t2 = counter.poll()
     assert d2 >= 1
     assert t2 >= 2
+
+
+def test_telemetry_includes_observer_runtime_signal_summary(tmp_path: Path, monkeypatch) -> None:
+    repo_root = tmp_path
+    (repo_root / 'logs').mkdir(parents=True, exist_ok=True)
+
+    health_dir = repo_root / 'logs' / 'health'
+    data_dir = repo_root / 'logs' / 'data' / 'calamum'
+    control_dir = repo_root / 'logs' / 'control' / 'calamum'
+    health_dir.mkdir(parents=True, exist_ok=True)
+    data_dir.mkdir(parents=True, exist_ok=True)
+    control_dir.mkdir(parents=True, exist_ok=True)
+
+    wd = health_dir / 'wd.heartbeat'
+    obs = health_dir / 'obs.heartbeat'
+    wd.touch()
+    obs.touch()
+
+    (control_dir / 'observerctl_state.json').write_text(
+        json.dumps({'source': 'real', 'mode': 'canary'}),
+        encoding='utf-8',
+    )
+
+    monkeypatch.setenv('CALAMUM_WATCHDOG_HEARTBEAT_PATH', str(wd))
+    monkeypatch.setenv('CALAMUM_OBSERVER_HEARTBEAT_PATH', str(obs))
+    monkeypatch.setenv('CALAMUM_DATA_DIR', str(data_dir))
+    monkeypatch.setenv('CALAMUM_CONTROL_DIR', str(control_dir))
+    monkeypatch.setattr(
+        telemetry_module,
+        '_load_runtime_signal_summary',
+        lambda source, mode: {
+            'runtime_source_fetch': {'status': 'err', 'error_kind': 'http_404', 'endpoint': 'feed'},
+            'runtime_collection_state': {'state': 'error', 'status': 'err'},
+        },
+    )
+
+    module_file = repo_root / 'src' / 'dummy.py'
+    module_file.parent.mkdir(parents=True, exist_ok=True)
+    module_file.write_text('# dummy', encoding='utf-8')
+
+    provider = TelemetryProvider(load_config(module_file))
+    snap = provider.update()
+
+    assert snap['runtime_source_fetch']['status'] == 'err'
+    assert snap['runtime_source_fetch']['endpoint'] == 'feed'
+    assert snap['runtime_collection_state']['state'] == 'error'

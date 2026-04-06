@@ -27,6 +27,7 @@ Common inputs:
 
 - `logs/data/calamum/moltbook_canary_metrics.jsonl`
 - `logs/data/calamum/moltbook_sampler_metrics.jsonl`
+- `logs/data/calamum/observer_derived/<sim|real>/<mode>/moltbook_metrics.jsonl`
 
 ## Where outputs go
 
@@ -48,6 +49,8 @@ This is gitignored by design.
 - the supported observer model lane now targets ApexLab-owned estimators for supervised and unsupervised training
 - unsupervised anomaly semantics in the DS report lane are: **lower score = more anomalous**
 - old sklearn-oriented wording in historical planning docs should be treated as background context rather than current execution authority
+- the dataset builder accepts the stable lean packet fields plus additive Frame P1 packet-uplift fields; older rows remain valid because missing additive fields default to `0` / false during feature extraction
+- the canonical observer-agent runtime stream under `observer_derived/.../moltbook_metrics.jsonl` now carries the promoted Stage-4 scalar features for content rows and message-bearing canary rows
 
 ## Reader-facing DS documentation
 

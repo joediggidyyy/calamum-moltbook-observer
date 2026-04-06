@@ -4,11 +4,11 @@ This synthesis page summarizes the strongest current reader-facing conclusions a
 
 ## Executive summary
 
-- Published packets: 5
-- Collection aliases represented: 2
+- Published packets: 10
+- Collection aliases represented: 6
 - Workflow families represented: 4
 - Threshold-bearing packets: 1
-- Current front-door packet: [can-r7af3](../collections/can-r7af3/collection/20260405T044605627549Z.collection.md)
+- Current front-door packet: [can-r7af3](../collections/can-r7af3/collection/20260406T072118262659Z.collection.md)
 
 ## Why this aggregate exists
 
@@ -16,20 +16,24 @@ The tracked report family now has multiple reader roles: packet entry, workflow 
 
 ## Runtime-safe current picture
 
-- Latest published workflow: score
-- Latest packet timestamp (UTC): 2026-04-05T04:46:05.627549Z
-- Latest packet summary: Unsupervised scoring completed through observerctl ds.
+- Latest published workflow: train
+- Latest packet timestamp (UTC): 2026-04-06T07:21:18.262659Z
+- Latest packet summary: Model training completed through observerctl ds.
 
 ## Aggregate cohort at a glance
 
 | Collection alias | Current packet date | Latest stages | Why it matters now | Collection packet |
 |---|---|---|---|---|
-| `can-r7af3` | 2026-04-05T04:46:05.627549Z | build, evaluate, score, train | Scoring packet with the latest anomaly output. | [collection packet](../collections/can-r7af3/collection/20260405T044605627549Z.collection.md) |
+| `can-r7af3` | 2026-04-06T07:21:18.262659Z | build, evaluate, score, train | Training packet for the latest model-building lane. | [collection packet](../collections/can-r7af3/collection/20260406T072118262659Z.collection.md) |
+| `build_20260406T023758094814Z` | 2026-04-06T02:37:58.115802Z | build | Dataset-build packet for the latest materialized collection. | [collection packet](../collections/build_20260406T023758094814Z/collection/20260406T023758115802Z.collection.md) |
+| `build_20260406T023756969475Z` | 2026-04-06T02:37:56.987764Z | build | Dataset-build packet for the latest materialized collection. | [collection packet](../collections/build_20260406T023756969475Z/collection/20260406T023756987764Z.collection.md) |
+| `build_20260405T081918876049Z` | 2026-04-05T08:19:18.888509Z | build | Dataset-build packet for the latest materialized collection. | [collection packet](../collections/build_20260405T081918876049Z/collection/20260405T081918888509Z.collection.md) |
+| `build_20260405T081918058977Z` | 2026-04-05T08:19:18.074431Z | build | Dataset-build packet for the latest materialized collection. | [collection packet](../collections/build_20260405T081918058977Z/collection/20260405T081918074431Z.collection.md) |
 | `can-r305f` | 2026-04-05T04:20:49.878075Z | build | Dataset-build packet for the latest materialized collection. | [collection packet](../collections/can-r305f/collection/20260405T042049878075Z.collection.md) |
 
 ## Strongest findings
 
-- The tracked report family is now organized around 2 collection aliases instead of a single cache-shaped run list.
+- The tracked report family is now organized around 6 collection aliases instead of a single cache-shaped run list.
 - Workflow coverage is currently spread across `build`, `evaluate`, `score`, `train`.
 - Threshold-bearing packets remain visible as dated packet leaves, with the latest threshold summary routed through `THRESHOLD_SUMMARY.md`.
 
@@ -37,10 +41,10 @@ The tracked report family now has multiple reader roles: packet entry, workflow 
 
 | Workflow family | Published packets | Latest collection | Current contribution |
 |---|---:|---|---|
-| build | 2 | `can-r7af3` | Defines the dataset packet baseline. |
+| build | 6 | `build_20260406T023758094814Z` | Defines the dataset packet baseline. |
 | evaluate | 1 | `can-r7af3` | Captures validation and threshold interpretation. |
 | score | 1 | `can-r7af3` | Captures scored anomaly output for reader follow-through. |
-| train | 1 | `can-r7af3` | Carries the latest model-training outcome. |
+| train | 2 | `can-r7af3` | Carries the latest model-training outcome. |
 
 | Threshold-bearing packet | Threshold | Target guardrail | Eval packet |
 |---|---:|---:|---|

@@ -251,3 +251,50 @@ def test_register_dataset_infers_source_and_mode_from_manifest_inputs(tmp_path: 
     assert packet['dataset']['source'] == 'real'
     assert packet['dataset']['mode'] == 'canary'
 
+
+def test_register_dataset_links_latest_baseline_context_for_inferred_scope(tmp_path: Path) -> None:
+    project_root, anchor = _make_temp_project(tmp_path)
+    dataset_dir = project_root / 'datasets' / 'baseline_link_alpha'
+    dataset_dir.mkdir(parents=True, exist_ok=True)
+    features_csv = dataset_dir / 'features.csv'
+    manifest_path = dataset_dir / 'dataset_manifest.json'
+    features_csv.write_text('record_id,feature\n', encoding='utf-8')
+    manifest_path.write_text(json.dumps({
+        'features_csv': str(features_csv),
+        'total_records': 2,
+        'has_labels': False,
+        'inputs': [
+            {
+                'path': str(project_root / 'logs' / 'data' / 'calamum' / 'archive' / 'resource_real_canary_normal_baseline_link_seg0001.jsonl.gz'),
+                'records': 2,
+            },
+        ],
+    }), encoding='utf-8')
+
+    evidence_dir = project_root / 'local_untracked' / 'analysis' / 'observer_derived' / 'real' / 'canary' / 'evidence'
+    evidence_dir.mkdir(parents=True, exist_ok=True)
+    baseline_packet = evidence_dir / 'observerctl_baseline-analysis_dataset_link.json'
+    baseline_packet.write_text(json.dumps({
+        'timestamp_utc': '2026-04-06T12:00:00Z',
+        'decision': 'go',
+        'summary': 'Latest baseline context for the dataset admission link.',
+        'baseline_window_id': 'dataset-link-window-001',
+        'sample_counts': {'resource_normal': 5, 'resource_baseline': 7},
+    }), encoding='utf-8')
+    (evidence_dir / 'index.jsonl').write_text(json.dumps({
+        'timestamp_utc': '2026-04-06T12:00:00Z',
+        'event': 'baseline_analysis',
+        'packet_path': str(baseline_packet).replace('\\', '/'),
+        'baseline_window_id': 'dataset-link-window-001',
+    }) + '\n', encoding='utf-8')
+
+    packet = register_librarian_dataset_packet(anchor, manifest_path, display_name='Baseline Link Alpha', run_id='baseline-link-alpha')
+
+    assert packet['decision'] == 'go'
+    assert packet['dataset']['source'] == 'real'
+    assert packet['dataset']['mode'] == 'canary'
+    assert packet['dataset']['baseline_window_id'] == 'dataset-link-window-001'
+    assert packet['dataset']['baseline_analysis_packet'].endswith('observerctl_baseline-analysis_dataset_link.json')
+    assert packet['dataset']['baseline_sample_counts'] == {'resource_normal': 5, 'resource_baseline': 7}
+    assert packet['artifacts']['baseline_analysis_packet'].endswith('observerctl_baseline-analysis_dataset_link.json')
+

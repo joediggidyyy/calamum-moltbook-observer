@@ -305,7 +305,7 @@ def test_ops_keysmith_status_reports_shipped_surfaces(monkeypatch, tmp_path: Pat
 
     rc = main(['ops', 'keysmith', '--json'])
 
-    assert rc == 0
+    assert rc == 2
     payload = json.loads(capsys.readouterr().out)
     assert payload['action'] == 'ops-keysmith'
     assert payload['decision'] == 'go'
@@ -319,6 +319,158 @@ def test_ops_keysmith_status_reports_shipped_surfaces(monkeypatch, tmp_path: Pat
     assert payload['env_presence']['moltbook_api_key'] is False
     assert 'keysmith_allow_unsandboxed' not in payload['env_presence']
     assert payload['artifacts']['default_output_dir'] != ''
+
+
+def test_ops_runtime_status_returns_enriched_runtime_packet(monkeypatch) -> None:
+    monkeypatch.setattr(observerctl_module, '_load_state', lambda: {'source': 'real', 'mode': 'live'})
+    monkeypatch.setattr(
+        observerctl_module,
+        'collect_runtime_status',
+        lambda source='real': {
+            'checks': {
+                'runtime.observer_service': {'state': 'active', 'status': 'ok'},
+                'runtime.collection_state': {
+                    'state': 'error',
+                    'status': 'err',
+                    'metrics_age_seconds': None,
+                    'collecting_fresh_max_age_seconds': 40.0,
+                },
+                'runtime.source_fetch': {
+                    'status': 'err',
+                    'error_kind': 'http_404',
+                    'endpoint': 'feed',
+                    'recent_error': 'Network error on feed: 404',
+                },
+                'data.observer_metrics_current': {
+                    'path': 'observer_derived/real/live/moltbook_metrics.jsonl',
+                    'exists': False,
+                },
+                'runtime.baseline_monitor': {'state': 'active', 'status': 'ok'},
+            }
+        },
+    )
+    monkeypatch.setattr(
+        observerctl_module,
+        '_runtime_observer_status',
+        lambda max_age_sec=60.0: {
+            'state': 'active',
+            'pid': {'alive': True, 'value': 1234},
+            'heartbeat': {'status': 'ok'},
+        },
+    )
+
+    packet = observerctl_module._ops_runtime_status()
+
+    assert packet['action'] == 'runtime-status'
+    assert packet['decision'] == 'no-go'
+    assert packet['source'] == 'real'
+    assert packet['mode'] == 'live'
+    assert packet['collection_state'] == 'error'
+    assert packet['source_fetch_status'] == 'err'
+    assert packet['source_fetch_error_kind'] == 'http_404'
+    assert packet['source_fetch_endpoint'] == 'feed'
+    assert 'critical_check_failed:runtime_collection_error' in packet['reason_codes']
+    assert 'critical_check_failed:runtime_source_fetch_error' in packet['reason_codes']
+
+
+def test_ops_runtime_status_human_render_surfaces_route_and_upstream(monkeypatch, capsys) -> None:
+    monkeypatch.setattr(observerctl_module, '_load_state', lambda: {'source': 'real', 'mode': 'live'})
+    monkeypatch.setattr(
+        observerctl_module,
+        'collect_runtime_status',
+        lambda source='real': {
+            'checks': {
+                'runtime.observer_service': {'state': 'active', 'status': 'ok'},
+                'runtime.collection_state': {
+                    'state': 'error',
+                    'status': 'err',
+                    'metrics_age_seconds': None,
+                    'collecting_fresh_max_age_seconds': 40.0,
+                },
+                'runtime.source_fetch': {
+                    'status': 'err',
+                    'error_kind': 'http_404',
+                    'endpoint': 'feed',
+                    'recent_error': 'Network error on feed: 404',
+                },
+                'data.observer_metrics_current': {
+                    'path': 'observer_derived/real/live/moltbook_metrics.jsonl',
+                    'exists': False,
+                },
+                'runtime.baseline_monitor': {'state': 'active', 'status': 'ok'},
+            }
+        },
+    )
+    monkeypatch.setattr(
+        observerctl_module,
+        '_runtime_observer_status',
+        lambda max_age_sec=60.0: {
+            'state': 'active',
+            'pid': {'alive': True, 'value': 1234},
+            'heartbeat': {'status': 'ok'},
+        },
+    )
+
+    rc = main(['ops', 'runtime', 'status'])
+
+    assert rc == 2
+    rendered = capsys.readouterr().out.splitlines()
+    assert rendered[0] == 'Observer runtime status'
+    assert 'Runtime' in rendered
+    assert any('Route:' in strip_ansi(line) and 'REAL:LIVE' in strip_ansi(line) for line in rendered)
+    assert any('Collection status:' in strip_ansi(line) and 'err' in strip_ansi(line) for line in rendered)
+    assert any('Fresh max age s:' in strip_ansi(line) and '40.0' in strip_ansi(line) for line in rendered)
+    assert 'Upstream' in rendered
+    assert any('Fetch status:' in strip_ansi(line) and 'err' in strip_ansi(line) for line in rendered)
+    assert any('Endpoint:' in strip_ansi(line) and 'feed' in strip_ansi(line) for line in rendered)
+    assert any('Recent error:' in strip_ansi(line) and 'Network error on feed: 404' in strip_ansi(line) for line in rendered)
+
+
+def test_ops_runtime_status_human_render_surfaces_healthy_real_fetch_state(monkeypatch, capsys) -> None:
+    monkeypatch.setattr(observerctl_module, '_load_state', lambda: {'source': 'real', 'mode': 'live'})
+    monkeypatch.setattr(
+        observerctl_module,
+        'collect_runtime_status',
+        lambda source='real': {
+            'checks': {
+                'runtime.observer_service': {'state': 'active', 'status': 'ok'},
+                'runtime.collection_state': {
+                    'state': 'collecting',
+                    'status': 'ok',
+                    'metrics_age_seconds': 0.4,
+                    'collecting_fresh_max_age_seconds': 40.0,
+                },
+                'runtime.source_fetch': {
+                    'status': 'ok',
+                    'observed': True,
+                },
+                'data.observer_metrics_current': {
+                    'path': 'observer_derived/real/live/moltbook_metrics.jsonl',
+                    'exists': True,
+                },
+                'runtime.baseline_monitor': {'state': 'active', 'status': 'ok'},
+            }
+        },
+    )
+    monkeypatch.setattr(
+        observerctl_module,
+        '_runtime_observer_status',
+        lambda max_age_sec=60.0: {
+            'state': 'active',
+            'pid': {'alive': True, 'value': 1234},
+            'heartbeat': {'status': 'ok'},
+        },
+    )
+
+    rc = main(['ops', 'runtime', 'status'])
+
+    assert rc == 0
+    rendered = capsys.readouterr().out.splitlines()
+    assert rendered[0] == 'Observer runtime status'
+    assert 'Upstream' in rendered
+    assert any('Fetch status:' in strip_ansi(line) and 'ok' in strip_ansi(line) for line in rendered)
+    assert any('Collection state:' in strip_ansi(line) and 'collecting' in strip_ansi(line) for line in rendered)
+    assert any('Collection status:' in strip_ansi(line) and 'ok' in strip_ansi(line) for line in rendered)
 
 
 def test_ops_keysmith_mint_dry_run_delegates_and_keeps_output_names_only(tmp_path: Path, capsys) -> None:
@@ -339,6 +491,47 @@ def test_ops_keysmith_mint_dry_run_delegates_and_keeps_output_names_only(tmp_pat
     assert Path(payload['sealed_drop_path']).exists()
     assert Path(payload['audit_path']).exists()
     assert Path(payload['result_json']).exists()
+    assert Path(payload['import_helper_path']).exists()
+    assert Path(payload['persist_user_env_helper_path']).exists()
+
+
+def test_project_dotenv_loads_missing_env_without_overriding_existing(tmp_path: Path, monkeypatch) -> None:
+    project_root = tmp_path / 'project'
+    project_root.mkdir(parents=True, exist_ok=True)
+    (project_root / '.env').write_text(
+        '# local env\nCALAMUM_DATA_SIGNING_KEY=dotenv-signing-key\nMOLTBOOK_API_KEY=dotenv-molt-key\n',
+        encoding='utf-8',
+    )
+    monkeypatch.setattr(observerctl_module, '_project_root', lambda: project_root)
+    monkeypatch.delenv('CALAMUM_DATA_SIGNING_KEY', raising=False)
+    monkeypatch.setenv('MOLTBOOK_API_KEY', 'existing-key')
+
+    result = observerctl_module._load_project_dotenv()
+
+    assert result['exists'] is True
+    assert 'CALAMUM_DATA_SIGNING_KEY' in result['loaded_names']
+    assert os.environ.get('CALAMUM_DATA_SIGNING_KEY') == 'dotenv-signing-key'
+    assert os.environ.get('MOLTBOOK_API_KEY') == 'existing-key'
+
+
+def test_keysmith_env_import_hydrates_process_and_project_dotenv(tmp_path: Path, monkeypatch) -> None:
+    project_root = tmp_path / 'project'
+    project_root.mkdir(parents=True, exist_ok=True)
+    env_path = project_root / '.env'
+    env_path.write_text('MOLTBOOK_API_KEY=\n', encoding='utf-8')
+    sealed_drop = tmp_path / 'sealed_drop.bin'
+    sealed_drop.write_text('unit-test-live-key', encoding='utf-8')
+    monkeypatch.setattr(observerctl_module, '_project_root', lambda: project_root)
+    monkeypatch.delenv('MOLTBOOK_API_KEY', raising=False)
+    monkeypatch.setattr(observerctl_module, '_persist_user_env_var_windows', lambda name, value: False)
+
+    result = observerctl_module._hydrate_moltbook_key_from_sealed_drop(sealed_drop)
+
+    assert result['present'] is True
+    assert result['current_process'] is True
+    assert result['project_env_updated'] is True
+    assert os.environ.get('MOLTBOOK_API_KEY') == 'unit-test-live-key'
+    assert 'MOLTBOOK_API_KEY=unit-test-live-key' in env_path.read_text(encoding='utf-8')
 
 
 def test_ops_keysmith_mint_non_dry_run_requires_sandbox(tmp_path: Path, monkeypatch, capsys) -> None:
@@ -349,11 +542,25 @@ def test_ops_keysmith_mint_non_dry_run_requires_sandbox(tmp_path: Path, monkeypa
 
     monkeypatch.setattr(observerctl_module, '_keysmith_shell_path', lambda: 'powershell.exe')
     monkeypatch.setattr(observerctl_module, '_keysmith_sandbox_runner_path', lambda: runner_path)
+    monkeypatch.setattr(observerctl_module, '_hydrate_moltbook_key_from_sealed_drop', lambda path, persist_project_env=True: {
+        'sealed_drop_path': str(path),
+        'present': True,
+        'current_process': True,
+        'project_env_updated': True,
+        'user_env_persisted': False,
+    })
 
     def _fake_run(*args, **kwargs):
         out_dir = tmp_path / 'live_keysmith'
         out_dir.mkdir(parents=True, exist_ok=True)
-        for name in ('claim_url.txt', 'sealed_drop.bin', 'keysmith_audit.jsonl', 'keysmith_result.json'):
+        for name in (
+            'claim_url.txt',
+            'sealed_drop.bin',
+            'Import-MoltbookApiKeyFromSealedDrop.ps1',
+            'Persist-MoltbookApiKeyToUserEnv.ps1',
+            'keysmith_audit.jsonl',
+            'keysmith_result.json',
+        ):
             (out_dir / name).write_text('ok\n', encoding='utf-8')
 
         class _Completed:
@@ -375,6 +582,8 @@ def test_ops_keysmith_mint_non_dry_run_requires_sandbox(tmp_path: Path, monkeypa
     assert payload['sandbox'] is True
     assert Path(payload['claim_url_path']).exists()
     assert Path(payload['sealed_drop_path']).exists()
+    assert Path(payload['import_helper_path']).exists()
+    assert Path(payload['persist_user_env_helper_path']).exists()
 
 
 def test_ops_keysmith_mint_non_dry_run_reports_docker_lane_blocker(tmp_path: Path, monkeypatch, capsys) -> None:
@@ -1523,6 +1732,75 @@ def test_ds_wizard_hydrate_dataset_selector_releases_protected_dataset(monkeypat
     assert access_receipts
 
 
+def test_ds_wizard_hydrate_dataset_selector_attaches_baseline_context(monkeypatch, tmp_path: Path) -> None:
+    from calamum_librarian import register_librarian_dataset_packet
+
+    project_root, anchor = _make_temp_observer_project(tmp_path)
+    dataset_dir = project_root / 'datasets' / 'baseline_hydrate_alpha'
+    dataset_dir.mkdir(parents=True, exist_ok=True)
+    manifest_path = dataset_dir / 'dataset_manifest.json'
+    features_csv = dataset_dir / 'features.csv'
+    labels_csv = dataset_dir / 'labels.csv'
+    features_csv.write_text('record_id,feature\n1,0.1\n', encoding='utf-8')
+    labels_csv.write_text('record_id,label\n1,1\n', encoding='utf-8')
+    manifest_path.write_text(json.dumps({
+        'features_csv': str(features_csv),
+        'labels_csv': str(labels_csv),
+        'total_records': 1,
+        'has_labels': True,
+        'inputs': [
+            {
+                'path': str(project_root / 'logs' / 'data' / 'calamum' / 'archive' / 'resource_real_canary_normal_hydrate_seg0001.jsonl.gz'),
+                'records': 1,
+            },
+        ],
+    }), encoding='utf-8')
+
+    evidence_dir = project_root / 'local_untracked' / 'analysis' / 'observer_derived' / 'real' / 'canary' / 'evidence'
+    evidence_dir.mkdir(parents=True, exist_ok=True)
+    baseline_packet = evidence_dir / 'observerctl_baseline-analysis_hydrate.json'
+    baseline_packet.write_text(json.dumps({
+        'timestamp_utc': '2026-04-06T12:30:00Z',
+        'decision': 'go',
+        'summary': 'Baseline context that should travel with dataset hydration.',
+        'baseline_window_id': 'hydrate-window-001',
+        'sample_counts': {'resource_normal': 3, 'resource_baseline': 4},
+    }), encoding='utf-8')
+    (evidence_dir / 'index.jsonl').write_text(json.dumps({
+        'timestamp_utc': '2026-04-06T12:30:00Z',
+        'event': 'baseline_analysis',
+        'packet_path': str(baseline_packet).replace('\\', '/'),
+        'baseline_window_id': 'hydrate-window-001',
+    }) + '\n', encoding='utf-8')
+
+    register_librarian_dataset_packet(
+        anchor,
+        manifest_path,
+        access_class='protected-source',
+        display_name='Hydrate Alpha',
+        run_id='hydrate-alpha-run',
+    )
+    monkeypatch.setattr(observerctl_module, '_project_root', lambda: project_root)
+    monkeypatch.setattr(observerctl_module, '_project_anchor', lambda: anchor)
+    monkeypatch.setenv('CALAMUM_DATA_SIGNING_KEY', 'unit-test-signing-key')
+
+    state = observerctl_module._ds_wizard_new_state('evaluate')
+    state, packet, should_exit = observerctl_module._ds_wizard_handle_command(state, 'hydrate dataset 1')
+
+    assert packet is None
+    assert should_exit is False
+    assert state.values['dataset_manifest'] == str(manifest_path)
+    assert state.values['features_csv'] == str(features_csv)
+    assert state.values['labels_csv'] == str(labels_csv)
+    assert state.values['baseline_window_id'] == 'hydrate-window-001'
+    assert state.values['baseline_analysis_packet'] == str(baseline_packet)
+    assert state.hydrated_from['dataset_manifest'] == 'librarian_dataset'
+    assert state.hydrated_from['baseline_window_id'] == 'librarian_dataset'
+    assert state.hydrated_from['baseline_analysis_packet'] == 'librarian_dataset'
+    lines = observerctl_module._ds_wizard_transient_lines(state)
+    assert lines == ['dataset loaded; baseline context attached']
+
+
 def test_librarian_dataset_cli_register_list_and_release(monkeypatch, tmp_path: Path, capsys) -> None:
     project_root, anchor = _make_temp_observer_project(tmp_path)
     dataset_dir = project_root / 'datasets' / 'cli_alpha'
@@ -1791,6 +2069,12 @@ def test_librarian_nested_cli_dataset_and_vault_commands(monkeypatch, tmp_path: 
     payload = json.loads(capsys.readouterr().out)
     assert payload['action'] == 'librarian-vault-status'
     assert payload['artifacts']['librarian_vault_baseline_json'].endswith('vault_checksum.json')
+    assert payload['integrity']['tracked_file_count'] == 2
+    assert payload['managed_surfaces']['authority_file_count'] == 2
+    assert payload['managed_surfaces']['integrity_file_count'] == 3
+    assert payload['managed_surfaces']['vault_file_count'] == 5
+    assert payload['managed_surfaces']['catalog_entry_count'] == 1
+    assert payload['managed_surfaces']['approved_selector_entry_count'] == 1
 
     rc = main(['librarian', 'dataset', 'release', '1', '--requester-id', 'nested-suite', '--json'])
     assert rc == 0
@@ -1871,6 +2155,134 @@ def test_librarian_store_reports_show_delete_and_purge(monkeypatch, tmp_path: Pa
     assert payload['report_collections'] == []
     assert collections_root.exists()
     assert list(collections_root.iterdir()) == []
+
+
+def test_librarian_store_reports_purge_clears_saved_selector_authority_and_resets_aggregate_files(monkeypatch, tmp_path: Path, capsys) -> None:
+    from analysis.report_aggregate import refresh_tracked_ds_publication
+
+    project_root, anchor = _make_temp_observer_project(tmp_path)
+    _bind_temp_observer_project(monkeypatch, project_root, anchor)
+
+    dataset_dir = project_root / 'saved' / 'dataset'
+    dataset_dir.mkdir(parents=True, exist_ok=True)
+    dataset_manifest = dataset_dir / 'dataset_manifest.json'
+    features_csv = dataset_dir / 'features.csv'
+    labels_csv = dataset_dir / 'labels.csv'
+    features_csv.write_text('record_id,feature\n1,0.1\n', encoding='utf-8')
+    labels_csv.write_text('record_id,label\n1,1\n', encoding='utf-8')
+    dataset_manifest.write_text(json.dumps({
+        'features_csv': str(features_csv),
+        'labels_csv': str(labels_csv),
+        'total_records': 1,
+        'has_labels': True,
+    }), encoding='utf-8')
+
+    train_dir = project_root / 'saved' / 'model'
+    train_dir.mkdir(parents=True, exist_ok=True)
+    model_path = train_dir / 'model.pkl'
+    train_manifest = train_dir / 'train_manifest.json'
+    model_path.write_bytes(b'model')
+    train_manifest.write_text(json.dumps({
+        'dataset_manifest_path': str(dataset_manifest),
+        'model_path': str(model_path),
+        'model_type': 'unsupervised',
+    }), encoding='utf-8')
+    _append_saved_ds_manifest(
+        anchor,
+        'train',
+        'purge-train-001',
+        timestamp_utc='2026-04-06T16:00:00Z',
+        artifact_paths={
+            'train_manifest': train_manifest,
+            'model_path': model_path,
+            'dataset_manifest': dataset_manifest,
+        },
+        context={'source': 'real', 'mode': 'canary'},
+        summary='Saved train selector for purge regression.',
+    )
+
+    evaluation_dir = project_root / 'saved' / 'evaluation'
+    evaluation_dir.mkdir(parents=True, exist_ok=True)
+    run_json = evaluation_dir / 'run.json'
+    run_md = evaluation_dir / 'run.md'
+    run_json.write_text(json.dumps({
+        'identity': {'run_id': 'purge-eval-001'},
+        'context': {'constraints': {'max_fpr': 0.02}},
+        'data': {
+            'dataset_manifest': str(dataset_manifest),
+            'features_csv': str(features_csv),
+            'labels_csv': str(labels_csv),
+        },
+        'model': {'source': str(model_path)},
+    }), encoding='utf-8')
+    run_md.write_text('# saved eval\n', encoding='utf-8')
+    _append_saved_ds_manifest(
+        anchor,
+        'evaluate',
+        'purge-eval-001',
+        timestamp_utc='2026-04-06T16:05:00Z',
+        artifact_paths={
+            'run_json': run_json,
+            'run_md': run_md,
+        },
+        context={'source': 'real', 'mode': 'canary', 'max_fpr': 0.02},
+        summary='Saved run selector for purge regression.',
+    )
+
+    publication = refresh_tracked_ds_publication(project_anchor=anchor)
+    collections_root = project_root / 'docs' / 'reports' / 'collections'
+    aggregates_root = project_root / 'docs' / 'reports' / 'aggregates'
+    reference_root = project_root / 'docs' / 'reports' / 'reference'
+    indexes_root = project_root / 'local_untracked' / 'analysis' / 'indexes'
+    ledger_path = indexes_root / 'ds_run_index.jsonl'
+    latest_index_path = indexes_root / 'ds_latest.json'
+    internal_collections_root = indexes_root / 'ds_publication' / 'collections'
+
+    assert publication['published_run_count'] == 2
+    assert observerctl_module._ds_saved_train_entries()
+    assert observerctl_module._ds_saved_run_entries()
+    assert collections_root.exists()
+    assert any(collections_root.iterdir())
+    assert internal_collections_root.exists()
+    assert any(internal_collections_root.iterdir())
+    assert (aggregates_root / 'AGGREGATE_REPORT.md').exists()
+
+    rc = main(['librarian', 'store', 'reports', '--purge', '--json'])
+
+    assert rc == 0
+    payload = json.loads(capsys.readouterr().out)
+    assert payload['action'] == 'librarian-store-reports-purge'
+    assert payload['archived_alias_count'] >= 1
+    assert payload['archived_auxiliary_count'] == 3
+    assert payload['report_collections'] == []
+
+    assert observerctl_module._ds_saved_train_entries() == []
+    assert observerctl_module._ds_saved_run_entries() == []
+
+    assert collections_root.exists()
+    assert list(collections_root.iterdir()) == []
+    assert internal_collections_root.exists()
+    assert list(internal_collections_root.iterdir()) == []
+
+    assert ledger_path.exists()
+    assert ledger_path.read_text(encoding='utf-8') == ''
+    latest_payload = json.loads(latest_index_path.read_text(encoding='utf-8'))
+    assert latest_payload['latest_run'] == {}
+    assert latest_payload['by_workflow'] == {}
+
+    aggregate_report_md = aggregates_root / 'AGGREGATE_REPORT.md'
+    latest_collections_md = aggregates_root / 'LATEST_COLLECTIONS.md'
+    generated_surfaces_md = reference_root / 'GENERATED_REPORT_SURFACES.md'
+    publication_index_md = project_root / 'docs' / 'reports' / 'INDEX.md'
+
+    assert aggregate_report_md.exists()
+    assert latest_collections_md.exists()
+    assert generated_surfaces_md.exists()
+    assert publication_index_md.exists()
+    assert 'No published packets are available yet.' in aggregate_report_md.read_text(encoding='utf-8')
+    assert '- Latest run: none published yet' in latest_collections_md.read_text(encoding='utf-8')
+    assert 'Zero-state publication may leave `docs/reports/collections/` present but empty' in generated_surfaces_md.read_text(encoding='utf-8')
+    assert 'No published collections are available yet.' in publication_index_md.read_text(encoding='utf-8')
 
 
 def test_librarian_store_reports_human_show_surfaces_sections(monkeypatch, tmp_path: Path, capsys) -> None:
@@ -4810,6 +5222,7 @@ def test_gate_check_go_in_sim_mode(tmp_path: Path, monkeypatch) -> None:
     monkeypatch.setenv('CALAMUM_LOG_DIR', str(log_dir))
     monkeypatch.setenv('CALAMUM_DATA_SIGNING_KEY', 'unit-test-signing-key')
     _set_security_report_ref(monkeypatch, log_dir)
+    observerctl_module._save_state('sim', 'watch')
     _write_watchdog_posture(control, posture='isolation', heartbeat_interval=10, baseline_interval=120)
     _write_watchdog_resource(control, cpu_now=55, ram_now=60, cpu_p95=50, ram_p95=55, score=0.2, age_s=5)
 
@@ -4835,6 +5248,7 @@ def test_gate_noop_transition_denied(tmp_path: Path, monkeypatch) -> None:
     monkeypatch.setenv('CALAMUM_LOG_DIR', str(log_dir))
     monkeypatch.setenv('CALAMUM_DATA_SIGNING_KEY', 'unit-test-signing-key')
     _set_security_report_ref(monkeypatch, log_dir)
+    observerctl_module._save_state('sim', 'watch')
     _write_watchdog_posture(control, posture='isolation', heartbeat_interval=10, baseline_interval=120)
     _write_watchdog_resource(control, cpu_now=55, ram_now=60, cpu_p95=50, ram_p95=55, score=0.2, age_s=5)
 
@@ -4868,6 +5282,48 @@ def test_gate_check_real_requires_api_key(tmp_path: Path, monkeypatch) -> None:
     gate = evaluate_gate_decision(status)
     assert gate['decision'] == 'no-go'
     assert 'critical_check_failed:env.moltbook_api_key' in gate['reason_codes']
+
+
+def test_real_fetch_errors_mark_collection_error(tmp_path: Path, monkeypatch) -> None:
+    log_dir = tmp_path / 'logs'
+    health = log_dir / 'health'
+    data = log_dir / 'data' / 'calamum'
+    control = log_dir / 'control' / 'calamum'
+
+    for d in [health, data, control]:
+        d.mkdir(parents=True, exist_ok=True)
+
+    _touch(health / 'calamum_ops_watchdog.heartbeat')
+    _touch(health / 'calamum_observer.heartbeat')
+    _touch(health / 'calamum_librarian.heartbeat')
+    (log_dir / 'calamum_agent.stderr.log').write_text(
+        'ERROR:root:Network error on feed: 404 Client Error: Not Found for url: https://www.moltbook.com/api/v1/feed?limit=50\n',
+        encoding='utf-8',
+    )
+
+    monkeypatch.setenv('CALAMUM_LOG_DIR', str(log_dir))
+    monkeypatch.setenv('CALAMUM_DATA_SIGNING_KEY', 'unit-test-signing-key')
+    monkeypatch.setenv('MOLTBOOK_API_KEY', 'test-key')
+    _set_security_report_ref(monkeypatch, log_dir)
+    observerctl_module._save_state('real', 'watch')
+    _write_watchdog_posture(control, posture='isolation', heartbeat_interval=10, baseline_interval=120)
+    _write_watchdog_resource(control, cpu_now=55, ram_now=60, cpu_p95=50, ram_p95=55, score=0.2, age_s=5)
+
+    pid_path = tmp_path / 'calamum_agent.pid'
+    pid_path.write_text(str(os.getpid()), encoding='utf-8')
+    monkeypatch.setattr(observerctl_module, '_agent_pid_path', lambda: pid_path)
+
+    status = collect_runtime_status(source='real')
+    fetch_row = status['checks']['runtime.source_fetch']
+    assert fetch_row['status'] == 'err'
+    assert fetch_row['error_kind'] == 'http_404'
+    assert fetch_row['endpoint'] == 'feed'
+    assert status['checks']['runtime.collection_state']['state'] == 'error'
+    assert status['checks']['runtime.collection_state']['status'] == 'err'
+
+    gate = evaluate_gate_decision(status, target_mode='canary')
+    assert gate['decision'] == 'no-go'
+    assert 'critical_check_failed:collection_state_incoherent' in gate['reason_codes']
 
 
 def test_gate_allows_idle_service_when_observer_heartbeat_stale(tmp_path: Path, monkeypatch) -> None:
@@ -5622,6 +6078,7 @@ def test_ops_mode_transition_atomic_flow(tmp_path: Path, monkeypatch) -> None:
     monkeypatch.setenv('CALAMUM_LOG_DIR', str(log_dir))
     monkeypatch.setenv('CALAMUM_DATA_SIGNING_KEY', 'unit-test-signing-key')
     _set_security_report_ref(monkeypatch, log_dir)
+    observerctl_module._save_state('sim', 'watch')
     _write_watchdog_posture(control, posture='isolation', heartbeat_interval=10, baseline_interval=120)
     _write_watchdog_resource(control, cpu_now=55, ram_now=60, cpu_p95=50, ram_p95=55, score=0.2, age_s=5)
 
@@ -5636,6 +6093,278 @@ def test_ops_mode_transition_atomic_flow(tmp_path: Path, monkeypatch) -> None:
     ])
     assert rc == 0
     assert out.exists()
+
+
+def test_ops_mode_transition_self_actuates_bounded_lockdown_blockers_before_mode_set(tmp_path: Path, monkeypatch) -> None:
+    log_dir = tmp_path / 'logs'
+    control = log_dir / 'control' / 'calamum'
+    data = log_dir / 'data' / 'calamum'
+    for d in [log_dir / 'health', data, control]:
+        d.mkdir(parents=True, exist_ok=True)
+
+    monkeypatch.setenv('CALAMUM_LOG_DIR', str(log_dir))
+    monkeypatch.setenv('CALAMUM_DATA_SIGNING_KEY', 'unit-test-signing-key')
+    monkeypatch.delenv('CALAMUM_SECURITY_REPORT_REF', raising=False)
+
+    observerctl_module._save_state('sim', 'canary')
+
+    baseline_ready_receipt = tmp_path / 'baseline_ready_receipt.json'
+    baseline_ready_receipt.write_text('{}\n', encoding='utf-8')
+
+    call_counts = {'gate': 0, 'baseline_ready': 0}
+
+    def _fake_collect_runtime_status(source: str = 'sim') -> dict:
+        return {
+            'timestamp_utc': observerctl_module._utc_now(),
+            'runtime_cli_surface': 'observerctl',
+            'source': source,
+            'state_source': source,
+            'mode': 'canary',
+            'checks': {},
+        }
+
+    def _fake_gate(status: dict, target_mode: str = 'watch') -> dict:
+        call_counts['gate'] += 1
+        if call_counts['gate'] == 1:
+            return {
+                'timestamp_utc': observerctl_module._utc_now(),
+                'runtime_cli_surface': 'observerctl',
+                'decision': 'no-go',
+                'reason_codes': [
+                    'critical_check_failed:run_security_report_missing',
+                    'critical_check_failed:lockdown_heartbeat_rate_not_escalated',
+                    'critical_check_failed:lockdown_baseline_rate_not_escalated',
+                    'critical_check_failed:resource_stream_retention_unavailable',
+                    'critical_check_failed:resource_baseline_window_incomplete',
+                ],
+                'from_state': 'sim:canary',
+                'to_state': 'sim:live',
+                'profile': 'GP-4',
+                'evidence_refs': ['pre-remediation-evidence'],
+            }
+        return {
+            'timestamp_utc': observerctl_module._utc_now(),
+            'runtime_cli_surface': 'observerctl',
+            'decision': 'go',
+            'reason_codes': [],
+            'from_state': 'sim:canary',
+            'to_state': 'sim:live',
+            'profile': 'GP-4',
+            'security_report_ref': str(os.getenv('CALAMUM_SECURITY_REPORT_REF', '') or ''),
+            'evidence_refs': ['post-remediation-evidence'],
+        }
+
+    def _fake_baseline_ready(**kwargs) -> dict:
+        call_counts['baseline_ready'] += 1
+        return {
+            'timestamp_utc': observerctl_module._utc_now(),
+            'runtime_cli_surface': 'observerctl',
+            'decision': 'go',
+            'action': 'baseline-ready',
+            'reason_codes': [],
+            'validation_cycle_packet_path': str(baseline_ready_receipt).replace('\\', '/'),
+            'evidence_refs': [str(baseline_ready_receipt).replace('\\', '/')],
+            'gate_packet': {'decision': 'go', 'reason_codes': []},
+        }
+
+    def _fake_posture(source: str, mode: str, event: str = 'mode-set') -> dict:
+        return {
+            'timestamp_utc': observerctl_module._utc_now(),
+            'runtime_cli_surface': 'observerctl',
+            'decision': 'go',
+            'action': 'posture-apply',
+            'reason_codes': [],
+            'source': source,
+            'mode': mode,
+            'readback_verified': True,
+            'posture_trigger': observerctl_module._posture_for_mode(mode),
+            'heartbeat_interval_seconds': 4.0 if mode == 'live' else 10.0,
+            'baseline_validation_interval_seconds': 45.0 if mode == 'live' else 120.0,
+            'posture_state_path': str(control / 'watchdog_posture_state.json').replace('\\', '/'),
+            'receipt_path': str(tmp_path / 'posture_receipt.json').replace('\\', '/'),
+        }
+
+    def _fake_build_evidence(status: dict, gate: dict, event: str = 'manual') -> dict:
+        return {
+            'timestamp_utc': observerctl_module._utc_now(),
+            'runtime_cli_surface': 'observerctl',
+            'decision': gate.get('decision', 'no-go'),
+            'gate_packet': gate,
+            'provenance': {
+                'artifact_path': '',
+                'artifact_sha256': '',
+                'generated_at_utc': observerctl_module._utc_now(),
+                'producer_process': 'test',
+                'upstream_inputs': {},
+            },
+            'methodology': {},
+            'process': {'evidence_refs': []},
+        }
+
+    monkeypatch.setattr(observerctl_module, 'collect_runtime_status', _fake_collect_runtime_status)
+    monkeypatch.setattr(observerctl_module, 'evaluate_gate_decision', _fake_gate)
+    monkeypatch.setattr(observerctl_module, '_baseline_ready', _fake_baseline_ready)
+    monkeypatch.setattr(observerctl_module, '_apply_watchdog_posture', _fake_posture)
+    monkeypatch.setattr(observerctl_module, 'build_evidence_pack', _fake_build_evidence)
+
+    out = tmp_path / 'transition_self_actuated.json'
+    packet = observerctl_module._ops_mode_transition(source='sim', to_mode='live', event='unit-transition-self-actuate', output=str(out))
+
+    assert packet.get('decision') == 'go'
+    assert call_counts['baseline_ready'] == 1
+    assert packet.get('to_state') == 'sim:live'
+    assert out.exists()
+
+    remediation_packet = packet.get('remediation_packet') or {}
+    assert remediation_packet.get('attempted') is True
+    assert remediation_packet.get('decision') == 'go'
+    assert (remediation_packet.get('security_report_packet') or {}).get('decision') == 'go'
+    assert call_counts['gate'] >= 2
+
+    security_report_ref = str(packet.get('security_report_ref', '') or '')
+    assert security_report_ref
+    assert Path(security_report_ref.replace('/', os.sep)).exists()
+
+    run_context_path = control / 'observerctl_run_context.json'
+    run_context = json.loads(run_context_path.read_text(encoding='utf-8'))
+    assert run_context.get('security_report_ref') == security_report_ref
+
+    state = observerctl_module._load_state()
+    assert state.get('mode') == 'live'
+
+
+def test_ops_mode_transition_does_not_self_actuate_nonremediable_gate_failure(tmp_path: Path, monkeypatch) -> None:
+    log_dir = tmp_path / 'logs'
+    control = log_dir / 'control' / 'calamum'
+    for d in [log_dir / 'health', log_dir / 'data' / 'calamum', control]:
+        d.mkdir(parents=True, exist_ok=True)
+
+    monkeypatch.setenv('CALAMUM_LOG_DIR', str(log_dir))
+    monkeypatch.setenv('CALAMUM_DATA_SIGNING_KEY', 'unit-test-signing-key')
+    monkeypatch.delenv('CALAMUM_SECURITY_REPORT_REF', raising=False)
+
+    observerctl_module._save_state('sim', 'canary')
+
+    baseline_ready_calls = {'count': 0}
+    mode_set_calls = {'count': 0}
+
+    monkeypatch.setattr(observerctl_module, 'collect_runtime_status', lambda source='sim': {
+        'timestamp_utc': observerctl_module._utc_now(),
+        'runtime_cli_surface': 'observerctl',
+        'source': source,
+        'state_source': source,
+        'mode': 'canary',
+        'checks': {},
+    })
+    monkeypatch.setattr(observerctl_module, 'evaluate_gate_decision', lambda status, target_mode='watch': {
+        'timestamp_utc': observerctl_module._utc_now(),
+        'runtime_cli_surface': 'observerctl',
+        'decision': 'no-go',
+        'reason_codes': ['critical_check_failed:observer_heartbeat_stale'],
+        'from_state': 'sim:canary',
+        'to_state': 'sim:live',
+        'profile': 'GP-4',
+        'evidence_refs': ['hard-fail-evidence'],
+    })
+
+    def _unexpected_baseline_ready(**kwargs) -> dict:
+        baseline_ready_calls['count'] += 1
+        return {'decision': 'go'}
+
+    def _unexpected_mode_set(source: str, to_mode: str) -> dict:
+        mode_set_calls['count'] += 1
+        return {'decision': 'go'}
+
+    monkeypatch.setattr(observerctl_module, '_baseline_ready', _unexpected_baseline_ready)
+    monkeypatch.setattr(observerctl_module, '_ops_mode_set', _unexpected_mode_set)
+
+    packet = observerctl_module._ops_mode_transition(source='sim', to_mode='live', event='unit-transition-hard-fail', output='')
+
+    assert packet.get('decision') == 'no-go'
+    assert packet.get('reason_codes') == ['critical_check_failed:observer_heartbeat_stale']
+    remediation_packet = packet.get('remediation_packet') or {}
+    assert remediation_packet.get('attempted') is False
+    assert baseline_ready_calls['count'] == 0
+    assert mode_set_calls['count'] == 0
+    assert not (control / 'observerctl_run_context.json').exists()
+
+
+def test_ops_mode_switch_fails_closed_when_self_actuation_does_not_clear_gate(tmp_path: Path, monkeypatch) -> None:
+    log_dir = tmp_path / 'logs'
+    control = log_dir / 'control' / 'calamum'
+    for d in [log_dir / 'health', log_dir / 'data' / 'calamum', control]:
+        d.mkdir(parents=True, exist_ok=True)
+
+    monkeypatch.setenv('CALAMUM_LOG_DIR', str(log_dir))
+    monkeypatch.setenv('CALAMUM_DATA_SIGNING_KEY', 'unit-test-signing-key')
+    monkeypatch.delenv('CALAMUM_SECURITY_REPORT_REF', raising=False)
+
+    observerctl_module._save_state('sim', 'canary')
+
+    call_counts = {'gate': 0, 'baseline_ready': 0, 'runtime_stop': 0, 'runtime_start': 0}
+
+    monkeypatch.setattr(observerctl_module, 'collect_runtime_status', lambda source='sim': {
+        'timestamp_utc': observerctl_module._utc_now(),
+        'runtime_cli_surface': 'observerctl',
+        'source': source,
+        'state_source': source,
+        'mode': 'canary',
+        'checks': {},
+    })
+
+    def _fake_gate(status: dict, target_mode: str = 'watch') -> dict:
+        call_counts['gate'] += 1
+        return {
+            'timestamp_utc': observerctl_module._utc_now(),
+            'runtime_cli_surface': 'observerctl',
+            'decision': 'no-go',
+            'reason_codes': [
+                'critical_check_failed:run_security_report_missing',
+                'critical_check_failed:lockdown_heartbeat_rate_not_escalated',
+                'critical_check_failed:resource_stream_retention_unavailable',
+            ],
+            'from_state': 'sim:canary',
+            'to_state': 'sim:live',
+            'profile': 'GP-4',
+            'security_report_ref': str(os.getenv('CALAMUM_SECURITY_REPORT_REF', '') or ''),
+            'evidence_refs': ['still-blocked-evidence'],
+        }
+
+    def _fake_baseline_ready(**kwargs) -> dict:
+        call_counts['baseline_ready'] += 1
+        return {
+            'timestamp_utc': observerctl_module._utc_now(),
+            'runtime_cli_surface': 'observerctl',
+            'decision': 'no-go',
+            'action': 'baseline-ready',
+            'reason_codes': ['critical_check_failed:lockdown_heartbeat_rate_not_escalated'],
+            'validation_cycle_packet_path': str(tmp_path / 'baseline_ready_failed.json').replace('\\', '/'),
+            'evidence_refs': [],
+        }
+
+    monkeypatch.setattr(observerctl_module, 'evaluate_gate_decision', _fake_gate)
+    monkeypatch.setattr(observerctl_module, '_baseline_ready', _fake_baseline_ready)
+    monkeypatch.setattr(observerctl_module, '_ops_runtime_stop', lambda timeout_sec=8.0: call_counts.__setitem__('runtime_stop', call_counts['runtime_stop'] + 1) or {'decision': 'go'})
+    monkeypatch.setattr(observerctl_module, '_ops_runtime_start', lambda source, mode, interval_sec, timeout_sec: call_counts.__setitem__('runtime_start', call_counts['runtime_start'] + 1) or {'decision': 'go'})
+
+    packet = observerctl_module._ops_mode_switch(
+        source='sim',
+        to_mode='live',
+        event='unit-switch-fail-closed',
+        output='',
+        interval_sec=1.0,
+        stop_timeout_sec=0.0,
+        startup_probe_sec=0.0,
+    )
+
+    assert packet.get('decision') == 'no-go'
+    assert 'critical_check_failed:lockdown_heartbeat_rate_not_escalated' in packet.get('reason_codes', [])
+    remediation_packet = packet.get('remediation_packet') or {}
+    assert remediation_packet.get('attempted') is True
+    assert remediation_packet.get('decision') == 'no-go'
+    assert call_counts['baseline_ready'] == 1
+    assert call_counts['runtime_stop'] == 0
+    assert call_counts['runtime_start'] == 0
 
 
 def test_ops_mode_switch_single_action_syncs_runtime_and_state(tmp_path: Path, monkeypatch) -> None:
@@ -7453,6 +8182,62 @@ def test_gate_denies_when_security_report_link_unresolvable(tmp_path: Path, monk
     assert 'critical_check_failed:run_security_report_missing' in gate['reason_codes']
 
 
+def test_health_quick_human_output_explains_missing_security_report_link(tmp_path: Path, monkeypatch, capsys) -> None:
+    log_dir = tmp_path / 'logs'
+    health = log_dir / 'health'
+    data = log_dir / 'data' / 'calamum'
+    control = log_dir / 'control' / 'calamum'
+
+    for d in [health, data, control]:
+        d.mkdir(parents=True, exist_ok=True)
+
+    _touch(health / 'calamum_ops_watchdog.heartbeat')
+    _touch(health / 'calamum_observer.heartbeat')
+    _touch(health / 'calamum_librarian.heartbeat')
+
+    monkeypatch.setenv('CALAMUM_LOG_DIR', str(log_dir))
+    monkeypatch.setenv('CALAMUM_DATA_SIGNING_KEY', 'unit-test-signing-key')
+    monkeypatch.delenv('CALAMUM_SECURITY_REPORT_REF', raising=False)
+    _write_watchdog_posture(control, posture='isolation', heartbeat_interval=10, baseline_interval=120)
+    _write_watchdog_resource(control, cpu_now=55, ram_now=60, cpu_p95=50, ram_p95=55, score=0.2, age_s=5)
+    observerctl_module._save_state('sim', 'canary')
+
+    rc = main(['health', 'quick'])
+
+    assert rc == 2
+    rendered = capsys.readouterr().out.splitlines()
+    assert rendered[0] == 'ObserverCTL health quick'
+    assert 'Security linkage' in rendered
+    assert any('Requirement:' in line and 'CALAMUM_SECURITY_REPORT_REF' in line for line in rendered)
+    assert any('Configured ref:' in line and '<missing>' in line for line in rendered)
+    assert any('run_context.security_report_ref' in line for line in rendered)
+
+
+def test_health_explain_human_output_surfaces_current_security_report_ref_status(tmp_path: Path, monkeypatch, capsys) -> None:
+    log_dir = tmp_path / 'logs'
+    health = log_dir / 'health'
+    data = log_dir / 'data' / 'calamum'
+    control = log_dir / 'control' / 'calamum'
+
+    for d in [health, data, control]:
+        d.mkdir(parents=True, exist_ok=True)
+
+    monkeypatch.setenv('CALAMUM_LOG_DIR', str(log_dir))
+    monkeypatch.setenv('CALAMUM_SECURITY_REPORT_REF', str(log_dir / 'missing_security_report.md'))
+    observerctl_module._save_state('sim', 'canary')
+
+    rc = main(['health', 'explain', '--code', 'critical_check_failed:run_security_report_missing'])
+
+    assert rc == 0
+    rendered = capsys.readouterr().out.splitlines()
+    assert rendered[0] == 'ObserverCTL health explain'
+    assert 'Security linkage' in rendered
+    assert any('Ref source:' in line and 'env:CALAMUM_SECURITY_REPORT_REF' in line for line in rendered)
+    assert any('Resolved path:' in line and 'missing_security_report.md' in line for line in rendered)
+    assert any('Exists on disk:' in line and 'no' in line for line in rendered)
+    assert 'Guidance' in rendered
+
+
 def test_live_gate_denies_when_baseline_monitor_runtime_inactive_but_surfaces_saved_evidence(tmp_path: Path, monkeypatch) -> None:
     log_dir = tmp_path / 'logs'
     health = log_dir / 'health'
@@ -7876,6 +8661,7 @@ def test_ops_runtime_start_gui_omits_browser_skip_env(tmp_path: Path, monkeypatc
     health = log_dir / 'health'
     health.mkdir(parents=True, exist_ok=True)
     monkeypatch.setenv('CALAMUM_LOG_DIR', str(log_dir))
+    monkeypatch.setenv('CALAMUM_SKIP_BROWSER', '1')
 
     launcher = tmp_path / 'launch_ghost_console.ps1'
     launcher.write_text('# test launcher\n', encoding='utf-8')
@@ -7916,6 +8702,112 @@ def test_ops_runtime_start_gui_omits_browser_skip_env(tmp_path: Path, monkeypatc
     assert rc == 0
     assert captured['env'].get('CALAMUM_GUI_AUTOSTART_OBSERVER') == '1'
     assert 'CALAMUM_SKIP_BROWSER' not in captured['env']
+
+
+def test_ops_runtime_start_gui_no_verify_skips_post_launch_checks(tmp_path: Path, monkeypatch, capsys) -> None:
+    log_dir = tmp_path / 'logs'
+    health = log_dir / 'health'
+    health.mkdir(parents=True, exist_ok=True)
+    monkeypatch.setenv('CALAMUM_LOG_DIR', str(log_dir))
+
+    launcher = tmp_path / 'launch_ghost_console.ps1'
+    launcher.write_text('# test launcher\n', encoding='utf-8')
+    monkeypatch.setattr(observerctl_module, '_project_root', lambda: tmp_path)
+
+    captured = {'env': {}}
+
+    class _DummyProc:
+        pid = 12345
+
+    def _fake_popen(cmd, env, cwd, stdin, stdout, stderr, creationflags):
+        captured['env'] = dict(env)
+        return _DummyProc()
+
+    def _boom(**kwargs):
+        raise AssertionError('baseline monitor should not start when --gui --no-verify is used')
+
+    monkeypatch.setattr(observerctl_module.subprocess, 'Popen', _fake_popen)
+    monkeypatch.setattr(observerctl_module, '_baseline_monitor_start', _boom)
+
+    rc = main([
+        'ops', 'runtime', 'start',
+        '--source', 'sim',
+        '--mode', 'canary',
+        '--interval-sec', '1.0',
+        '--timeout-sec', '2',
+        '--gui',
+        '--no-verify',
+        '--json',
+    ])
+    assert rc == 0
+    payload = json.loads(capsys.readouterr().out)
+    assert payload['decision'] == 'go'
+    assert payload['gui_requested'] is True
+    assert payload['no_verify_requested'] is True
+    assert payload['verification_skipped'] is True
+    assert payload['baseline_monitor_packet'] == {}
+    assert captured['env'].get('CALAMUM_GUI_AUTOSTART_OBSERVER') == '1'
+    assert 'CALAMUM_SKIP_BROWSER' not in captured['env']
+
+
+def test_ops_runtime_start_no_verify_requires_gui(tmp_path: Path, monkeypatch, capsys) -> None:
+    monkeypatch.setattr(observerctl_module, '_project_root', lambda: tmp_path)
+
+    rc = main([
+        'ops', 'runtime', 'start',
+        '--source', 'sim',
+        '--mode', 'canary',
+        '--no-verify',
+        '--json',
+    ])
+    assert rc == 2
+    payload = json.loads(capsys.readouterr().out)
+    assert payload['decision'] == 'no-go'
+    assert 'policy_denied:runtime_no_verify_requires_gui' in payload['reason_codes']
+
+
+def test_librarian_vault_status_human_labels_integrity_scope_and_managed_surfaces(monkeypatch, tmp_path: Path, capsys) -> None:
+    project_root, anchor = _make_temp_observer_project(tmp_path)
+    dataset_dir = project_root / 'datasets' / 'vault_alpha'
+    dataset_dir.mkdir(parents=True, exist_ok=True)
+    manifest_path = dataset_dir / 'dataset_manifest.json'
+    features_csv = dataset_dir / 'features.csv'
+    labels_csv = dataset_dir / 'labels.csv'
+    features_csv.write_text('record_id,feature\n', encoding='utf-8')
+    labels_csv.write_text('record_id,label\n', encoding='utf-8')
+    manifest_path.write_text(json.dumps({
+        'features_csv': str(features_csv),
+        'labels_csv': str(labels_csv),
+        'total_records': 1,
+        'has_labels': True,
+    }), encoding='utf-8')
+
+    monkeypatch.setattr(observerctl_module, '_project_root', lambda: project_root)
+    monkeypatch.setattr(observerctl_module, '_project_anchor', lambda: anchor)
+
+    rc = main([
+        'librarian',
+        'dataset',
+        'register',
+        str(manifest_path),
+        '--access-class', 'protected-source',
+        '--display-name', 'Vault Alpha',
+        '--run-id', 'vault-alpha',
+        '--json',
+    ])
+    assert rc == 0
+    _ = json.loads(capsys.readouterr().out)
+
+    rc = main(['librarian', 'vault', 'status'])
+    assert rc == 0
+    rendered = capsys.readouterr().out.splitlines()
+    assert rendered[0] == 'Librarian vault status'
+    assert any('Integrity-tracked files:' in line for line in rendered)
+    assert any('Vault-managed files:' in line for line in rendered)
+    assert any('Projection-managed files:' in line for line in rendered)
+    assert 'Managed surfaces' in rendered
+    assert any('Authority files:' in line for line in rendered)
+    assert any('Integrity files:' in line for line in rendered)
 
 
 def test_ops_runtime_start_fails_closed_when_monitor_start_fails(tmp_path: Path, monkeypatch) -> None:

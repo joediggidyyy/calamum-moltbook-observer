@@ -43,7 +43,7 @@ def test_keysmith_dry_run_writes_artifacts_and_never_prints_secret_placeholder()
         out_dir = Path(td) / "keysmith"
 
         # Execute via subprocess to capture stdout/stderr safely.
-        cmd = [sys.executable, "-c", "import keysmith; raise SystemExit(keysmith.main(['mint','--dry-run','--output-dir',r'{}']))".format(str(out_dir))]
+        cmd = [sys.executable, "-c", "import keysmith; raise SystemExit(keysmith.main(['mint','--dry-run','--output-dir',r'{}']))".format(out_dir.as_posix())]
         result = subprocess.run(cmd, cwd=str(src_dir), capture_output=True, text=True)
 
         assert result.returncode == 0, result.stderr
@@ -54,11 +54,15 @@ def test_keysmith_dry_run_writes_artifacts_and_never_prints_secret_placeholder()
         sealed_path = out_dir / "sealed_drop.bin"
         audit_path = out_dir / "keysmith_audit.jsonl"
         result_json = out_dir / "keysmith_result.json"
+        import_helper = out_dir / "Import-MoltbookApiKeyFromSealedDrop.ps1"
+        persist_helper = out_dir / "Persist-MoltbookApiKeyToUserEnv.ps1"
 
         assert claim_path.exists()
         assert sealed_path.exists()
         assert audit_path.exists()
         assert result_json.exists()
+        assert import_helper.exists()
+        assert persist_helper.exists()
 
         claim_text = claim_path.read_text(encoding="utf-8")
         assert "https://" in claim_text
@@ -67,9 +71,9 @@ def test_keysmith_dry_run_writes_artifacts_and_never_prints_secret_placeholder()
         audit_text = audit_path.read_text(encoding="utf-8")
         assert "DRY_RUN_PLACEHOLDER_DO_NOT_USE" not in audit_text
 
-        # Host helper scripts are intentionally no longer emitted.
-        assert not (out_dir / "Import-MoltbookApiKeyFromSealedDrop.ps1").exists()
-        assert not (out_dir / "Persist-MoltbookApiKeyToUserEnv.ps1").exists()
+        helper_text = import_helper.read_text(encoding="utf-8") + persist_helper.read_text(encoding="utf-8")
+        assert "DRY_RUN_PLACEHOLDER_DO_NOT_USE" not in helper_text
+        assert "MOLTBOOK_API_KEY" in helper_text
 
 
 def test_keysmith_non_dry_run_requires_sandbox_env_flag():

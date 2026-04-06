@@ -5,25 +5,133 @@
   "description": "Privacy-preserving telemetry record. Must not contain raw semantic payload.",
   "additionalProperties": true,
   "properties": {
-    "timestamp": {"type": "string"},
-    "ts": {"type": "string"},
-    "type": {"type": "string"},
-    "event_type": {"type": "string"},
-    "author_hash": {"type": "string"},
-    "sender_hash": {"type": "string"},
-    "content_length": {"type": "integer", "minimum": 0},
-    "has_code_block": {"type": "boolean"},
-    "has_link": {"type": "boolean"},
-    "tags_count": {"type": "integer", "minimum": 0},
-    "mentions_count": {"type": "integer", "minimum": 0},
-    "f_complexity": {"type": "number"},
-    "f_code_density": {"type": "number"},
-    "f_toxicity": {"type": "integer"},
-    "f_timestamp_epoch": {"type": "number"},
-    "node_id": {"type": "string"},
-    "mode": {"type": "string"},
-    "kind": {"type": "string"},
-    "signature": {"type": "string"},
-    "tv_id": {"type": "string"}
+    "timestamp": {
+      "type": "string"
+    },
+    "ts": {
+      "type": "string"
+    },
+    "packet_family": {
+      "type": "string"
+    },
+    "packet_version": {
+      "type": "string"
+    },
+    "venue_id": {
+      "type": "string"
+    },
+    "entity_kind": {
+      "type": "string"
+    },
+    "source_id_hash": {
+      "type": "string"
+    },
+    "type": {
+      "type": "string"
+    },
+    "event_type": {
+      "type": "string"
+    },
+    "author_hash": {
+      "type": "string"
+    },
+    "sender_hash": {
+      "type": "string"
+    },
+    "content_length": {
+      "type": "integer",
+      "minimum": 0
+    },
+    "content_length_words": {
+      "type": "integer",
+      "minimum": 0
+    },
+    "has_code_block": {
+      "type": "boolean"
+    },
+    "code_block_count": {
+      "type": "integer",
+      "minimum": 0
+    },
+    "has_link": {
+      "type": "boolean"
+    },
+    "link_count": {
+      "type": "integer",
+      "minimum": 0
+    },
+    "tags_count": {
+      "type": "integer",
+      "minimum": 0
+    },
+    "mentions_count": {
+      "type": "integer",
+      "minimum": 0
+    },
+    "line_count": {
+      "type": "integer",
+      "minimum": 0
+    },
+    "question_count": {
+      "type": "integer",
+      "minimum": 0
+    },
+    "exclamation_count": {
+      "type": "integer",
+      "minimum": 0
+    },
+    "contains_ignore_previous": {
+      "type": "boolean"
+    },
+    "contains_system_prompt_reference": {
+      "type": "boolean"
+    },
+    "contains_developer_message_reference": {
+      "type": "boolean"
+    },
+    "contains_env_var_reference": {
+      "type": "boolean"
+    },
+    "prompt_injection_score": {
+      "type": "integer",
+      "minimum": 0
+    },
+    "matched_pattern_labels": {
+      "type": "array",
+      "items": {
+        "type": "string"
+      }
+    },
+    "matched_pattern_count": {
+      "type": "integer",
+      "minimum": 0
+    },
+    "f_complexity": {
+      "type": "number"
+    },
+    "f_code_density": {
+      "type": "number"
+    },
+    "f_toxicity": {
+      "type": "integer"
+    },
+    "f_timestamp_epoch": {
+      "type": "number"
+    },
+    "node_id": {
+      "type": "string"
+    },
+    "mode": {
+      "type": "string"
+    },
+    "kind": {
+      "type": "string"
+    },
+    "signature": {
+      "type": "string"
+    },
+    "tv_id": {
+      "type": "string"
+    }
   }
 }

@@ -62,12 +62,12 @@ The simulation layer (`MockMoltbookClient`) acts as a deterministic digital twin
 
 ### 4.1 Threat Vector classification
 
-| ID | Class | Description | Simulation Pattern | Purpose |
-|----|-------|-------------|--------------------|---------|
-| **TV-0** | **Benign** | Baseline-consistent ordinary activity that remains within expected low-risk bounds. | ordinary posts, routine follows, baseline message timing | Baseline metric calibration. |
-| **TV-1** | **Irregular** | Low-concern deviations from baseline, including unusual but non-actionable technical or format-heavy activity. | code-dense but benign posts, atypical markdown bursts, harmless structural outliers | Stress-testing false positives against activity that looks unusual without being strongly hostile. |
-| **TV-2** | **Suspicious** | Structurally abnormal activity whose timing, density, or interaction profile supports a likely-hostile interpretation. | override-like bursts, unusual link/script concentration, repeated abnormal interaction patterns | Evaluating whether metadata-only features can isolate likely-hostile structure before strongest-risk labeling. |
-| **TV-3** | **High-Risk** | Patterns that justify the strongest level of concern under the privacy-preserving labeling policy. | credential-solicitation DM simulations, concentrated malicious-link clusters, severe hostile-contact patterns | Testing highest-risk handling and intervention-grade alerting logic. |
+| ID       | Class          | Description                                                                                                            | Simulation Pattern                                                                                            | Purpose                                                                                                        |
+| -------- | -------------- | ---------------------------------------------------------------------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------- | -------------------------------------------------------------------------------------------------------------- |
+| **TV-0** | **Benign**     | Baseline-consistent ordinary activity that remains within expected low-risk bounds.                                    | ordinary posts, routine follows, baseline message timing                                                      | Baseline metric calibration.                                                                                   |
+| **TV-1** | **Irregular**  | Low-concern deviations from baseline, including unusual but non-actionable technical or format-heavy activity.         | code-dense but benign posts, atypical markdown bursts, harmless structural outliers                           | Stress-testing false positives against activity that looks unusual without being strongly hostile.             |
+| **TV-2** | **Suspicious** | Structurally abnormal activity whose timing, density, or interaction profile supports a likely-hostile interpretation. | override-like bursts, unusual link/script concentration, repeated abnormal interaction patterns               | Evaluating whether metadata-only features can isolate likely-hostile structure before strongest-risk labeling. |
+| **TV-3** | **High-Risk**  | Patterns that justify the strongest level of concern under the privacy-preserving labeling policy.                     | credential-solicitation DM simulations, concentrated malicious-link clusters, severe hostile-contact patterns | Testing highest-risk handling and intervention-grade alerting logic.                                           |
 
 For the current DATA780 framing, the primary empirical boundary remains **TV-0 versus TV-3**. **TV-1** and **TV-2** are retained as intermediate categories so the project can represent nuisance structure, ambiguity, and escalation without collapsing every non-benign deviation into the highest-risk class.
 
@@ -118,13 +118,34 @@ Source surfaces:
 
 Nominal fields:
 
+- packet identity lift:
+    - `packet_family`
+    - `packet_version`
+    - `venue_id`
+    - `entity_kind`
+    - optional `source_id_hash`
 - `timestamp`
 - `type`
 - `author_hash`
 - `content_length`
+- `content_length_words`
 - `has_code_block`
+- `code_block_count`
+- `has_link`
+- `link_count`
 - `tags_count`
 - `mentions_count`
+- `line_count`
+- `question_count`
+- `exclamation_count`
+- names-only prompt/risk helpers:
+    - `contains_ignore_previous`
+    - `contains_system_prompt_reference`
+    - `contains_developer_message_reference`
+    - `contains_env_var_reference`
+    - `prompt_injection_score`
+    - `matched_pattern_labels`
+    - `matched_pattern_count`
 - derived scalar features used by current analysis surfaces:
     - `f_complexity`
     - `f_code_density`
@@ -135,13 +156,26 @@ Representative row:
 
 ```json
 {
+    "packet_family": "obs.content_item",
+    "packet_version": "p1",
+    "venue_id": "moltbook",
+    "entity_kind": "content_item",
     "timestamp": "2026-03-24T12:00:00Z",
     "type": "post",
     "author_hash": "9d0c54f1c2a1e8ab",
     "content_length": 142,
+    "content_length_words": 24,
     "has_code_block": true,
+    "code_block_count": 1,
+    "has_link": false,
+    "link_count": 0,
     "tags_count": 2,
-    "mentions_count": 1
+    "mentions_count": 1,
+    "line_count": 3,
+    "question_count": 0,
+    "exclamation_count": 0,
+    "prompt_injection_score": 0,
+    "matched_pattern_count": 0
 }
 ```
 
@@ -155,22 +189,48 @@ Source surfaces:
 
 Nominal fields:
 
+- packet identity lift:
+    - `packet_family`
+    - `packet_version`
+    - `venue_id`
+    - `entity_kind`
+    - optional `source_id_hash`
 - `timestamp`
 - `event_type`
 - `sender_hash`
 - included for message-bearing events only:
     - `content_length`
+    - `content_length_words`
     - `has_link`
+    - `link_count`
+    - `line_count`
+    - `question_count`
+    - `exclamation_count`
+    - `contains_ignore_previous`
+    - `contains_system_prompt_reference`
+    - `contains_developer_message_reference`
+    - `contains_env_var_reference`
+    - `prompt_injection_score`
+    - `matched_pattern_labels`
+    - `matched_pattern_count`
 
 Representative row:
 
 ```json
 {
+    "packet_family": "obs.interaction_event",
+    "packet_version": "p1",
+    "venue_id": "moltbook",
+    "entity_kind": "interaction_event",
     "timestamp": "2026-03-24T12:00:00Z",
     "event_type": "dm",
     "sender_hash": "ad28e10c5fd98a13",
     "content_length": 87,
-    "has_link": true
+    "content_length_words": 13,
+    "has_link": true,
+    "link_count": 1,
+    "prompt_injection_score": 0,
+    "matched_pattern_count": 0
 }
 ```
 
@@ -195,11 +255,20 @@ Nominal additional fields:
 - `posture_trigger_id`
 - `posture_trigger`
 - `security_report_ref`
+- the current canonical runtime row also carries the Stage-4 scalar feature quartet for content rows and message-bearing canary rows:
+    - `f_complexity`
+    - `f_code_density`
+    - `f_toxicity`
+    - `f_timestamp_epoch`
 
 Representative row:
 
 ```json
 {
+    "packet_family": "obs.content_item",
+    "packet_version": "p1",
+    "venue_id": "moltbook",
+    "entity_kind": "content_item",
     "timestamp": "2026-03-24T12:00:00Z",
     "type": "post",
     "author_hash": "9d0c54f1c2a1e8ab",
@@ -207,6 +276,10 @@ Representative row:
     "has_code_block": true,
     "tags_count": 2,
     "mentions_count": 1,
+    "f_complexity": 0.41,
+    "f_code_density": 0.2,
+    "f_toxicity": 0,
+    "f_timestamp_epoch": 1774353600.0,
     "signature": "<hmac-sha256>",
     "node_id": "calamum-node-01",
     "mode": "WATCH",
@@ -350,11 +423,11 @@ Typical workflow:
 
 ## 7. Defense in depth
 
-| Layer | Component | Defense Mechanism | Failure Mode |
-|-------|-----------|-------------------|--------------|
-| **Inner** | `obfuscator_lib.py` | Hashing, stripping, and structured reduction of content before persistence | Logic bug / import error |
-| **Middle** | **Docker Runtime** | Read-only root filesystem, dropped capabilities, user namespace isolation | CVE / breakout |
-| **Outer** | `sentinel.py` watchdog runtime | Fail-signature monitoring with termination semantics | **Fail-closed termination** |
+| Layer      | Component                      | Defense Mechanism                                                          | Failure Mode                |
+| ---------- | ------------------------------ | -------------------------------------------------------------------------- | --------------------------- |
+| **Inner**  | `obfuscator_lib.py`            | Hashing, stripping, and structured reduction of content before persistence | Logic bug / import error    |
+| **Middle** | **Docker Runtime**             | Read-only root filesystem, dropped capabilities, user namespace isolation  | CVE / breakout              |
+| **Outer**  | `sentinel.py` watchdog runtime | Fail-signature monitoring with termination semantics                       | **Fail-closed termination** |
 
 This stack is intentionally more disciplined than a minimal research prototype. Secure handling is treated as a condition for trustworthy methodology, not as a separate concern to revisit later.
 

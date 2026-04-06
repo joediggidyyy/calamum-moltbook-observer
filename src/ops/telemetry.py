@@ -145,40 +145,144 @@ def _is_sim_likely_path(path: Optional[Path]) -> bool:
     return ('legacy_sim' in lowered_name) or ('simulation' in lowered_name)
 
 
-def _archive_manifest_totals(data_dir: Path) -> Tuple[int, int, int]:
-    """Return (archive_total, archive_non_sim, archive_sim_estimate)."""
+def _archive_manifest_entry_blob(key: Any, meta: Dict[str, Any]) -> str:
+    key_l = str(key or '').strip().lower()
+    artifact_l = str(meta.get('artifact_path', '') or '').strip().lower()
+    imported = meta.get('imported_from', {}) if isinstance(meta.get('imported_from', {}), dict) else {}
+    src_art_l = str(imported.get('src_artifact', '') or '').strip().lower()
+    src_tag_l = str(imported.get('source_tag', '') or '').strip().lower()
+    return ' '.join([key_l, artifact_l, src_art_l, src_tag_l])
+
+
+def _archive_manifest_is_resource_blob(blob: str) -> bool:
+    text = str(blob or '').strip().lower()
+    if not text:
+        return False
+    return (
+        ('resource_' in text)
+        or ('/resource/' in text)
+        or ('\\resource\\' in text)
+    )
+
+
+def _archive_manifest_is_sim_blob(blob: str) -> bool:
+    text = str(blob or '').strip().lower()
+    if not text:
+        return False
+    return (
+        ('simulation' in text)
+        or ('legacy_sim' in text)
+        or ('/sim/' in text)
+        or ('\\sim\\' in text)
+    )
+
+
+def _archive_manifest_split_totals(data_dir: Path) -> Tuple[int, int, int, int]:
+    """Return (collection_total, collection_non_sim, collection_sim_estimate, resource_total)."""
     manifest_path = data_dir / 'archive' / 'manifest.json'
     if not manifest_path.exists():
-        return 0, 0, 0
+        return 0, 0, 0, 0
 
     try:
         payload = json.loads(manifest_path.read_text(encoding='utf-8'))
     except Exception:
-        return 0, 0, 0
+        return 0, 0, 0, 0
 
     if not isinstance(payload, dict):
-        return 0, 0, 0
+        return 0, 0, 0, 0
 
-    total = 0
-    sim_est = 0
+    collection_total = 0
+    collection_sim_est = 0
+    resource_total = 0
     for key, meta in payload.items():
         if not isinstance(meta, dict):
             continue
         records = int(meta.get('records', 0) or 0)
-        total += records
+        blob = _archive_manifest_entry_blob(key, meta)
 
-        key_l = str(key or '').strip().lower()
-        artifact_l = str(meta.get('artifact_path', '') or '').strip().lower()
-        imported = meta.get('imported_from', {}) if isinstance(meta.get('imported_from', {}), dict) else {}
-        src_art_l = str(imported.get('src_artifact', '') or '').strip().lower()
-        src_tag_l = str(imported.get('source_tag', '') or '').strip().lower()
-        blob = ' '.join([key_l, artifact_l, src_art_l, src_tag_l])
+        if _archive_manifest_is_resource_blob(blob):
+            resource_total += records
+            continue
 
-        if ('simulation' in blob) or ('legacy_sim' in blob) or ('/sim/' in blob) or ('\\sim\\' in blob):
-            sim_est += records
+        collection_total += records
+        if _archive_manifest_is_sim_blob(blob):
+            collection_sim_est += records
 
-    non_sim = max(0, total - sim_est)
+    collection_non_sim = max(0, collection_total - collection_sim_est)
+    return int(collection_total), int(collection_non_sim), int(collection_sim_est), int(resource_total)
+
+
+def _archive_manifest_totals(data_dir: Path) -> Tuple[int, int, int]:
+    """Return collection-only archive totals for operator-facing record counters.
+
+    Resource/baseline monitoring artifacts are intentionally excluded from the
+    collected-record contract and surfaced separately.
+    """
+    total, non_sim, sim_est, _resource_total = _archive_manifest_split_totals(data_dir)
     return int(total), int(non_sim), int(sim_est)
+
+
+def _archive_manifest_resource_total(data_dir: Path) -> int:
+    """Return archived resource/baseline records tracked in the manifest."""
+    _collection_total, _collection_non_sim, _collection_sim_est, resource_total = _archive_manifest_split_totals(data_dir)
+    return int(resource_total)
+
+
+def _normalize_runtime_source(raw: Any) -> str:
+    source = str(raw or '').strip().lower()
+    if source in ('real', 'live'):
+        return 'real'
+    return 'sim'
+
+
+def _normalize_runtime_mode(raw: Any) -> str:
+    mode = str(raw or '').strip().lower().replace('_', '-').replace(' ', '-')
+    aliases = {
+        'active-gated': 'live',
+        'activegated': 'live',
+        'sampler': 'watch',
+    }
+    mode = aliases.get(mode, mode)
+    if mode in ('watch', 'canary', 'live', 'honeypot'):
+        return mode
+    return 'canary'
+
+
+def _load_runtime_signal_summary(source: str, mode: str) -> dict:
+    """Reuse observerctl runtime semantics for operator-facing signal routing."""
+    source_norm = _normalize_runtime_source(source)
+    mode_norm = _normalize_runtime_mode(mode)
+    fetch_health: dict = {
+        'observed': False,
+        'status': 'ok',
+    }
+    collection_state: dict = {}
+
+    try:
+        import observerctl as observerctl_module  # type: ignore
+    except Exception:
+        return {
+            'runtime_source_fetch': fetch_health,
+            'runtime_collection_state': collection_state,
+        }
+
+    try:
+        observer_runtime = observerctl_module._runtime_observer_status()
+        metrics_path = observerctl_module._observer_metrics_path(source_norm, mode_norm)
+        if source_norm == 'real':
+            fetch_health = observerctl_module._observer_source_fetch_health(source_norm)
+        collection_state = observerctl_module._infer_collection_state(
+            observer_runtime,
+            metrics_path,
+            fetch_health=fetch_health,
+        )
+    except Exception:
+        pass
+
+    return {
+        'runtime_source_fetch': fetch_health,
+        'runtime_collection_state': collection_state,
+    }
 
 
 class _SafeStat:
@@ -242,19 +346,17 @@ class _JsonlAppendCounter:
         self._last_manifest_check = now
         count = 0
         try:
-             manifest_path: Optional[Path] = None
+             data_dir: Optional[Path] = None
              if self._data_dir:
-                 manifest_path = self._data_dir / 'archive' / 'manifest.json'
+                 data_dir = self._data_dir
              elif self.path:
-                 # Backward-compatible fallback if data_dir is unavailable.
-                 manifest_path = self.path.parent / 'archive' / 'manifest.json'
+                 for parent in [self.path.parent] + list(self.path.parents):
+                     if (parent / 'archive' / 'manifest.json').exists():
+                         data_dir = parent
+                         break
 
-             if manifest_path and manifest_path.exists():
-                 data = json.loads(manifest_path.read_text(encoding='utf-8'))
-                 if isinstance(data, dict):
-                     for _, meta in data.items():
-                         if isinstance(meta, dict):
-                             count += int(meta.get('records', 0) or 0)
+             if data_dir is not None:
+                 count = int(_archive_manifest_totals(data_dir)[0])
         except Exception:
             pass
         
@@ -881,6 +983,9 @@ class TelemetryProvider:
         self._counter.set_path(active_jsonl)
         new_lines, total_lines = self._counter.poll(max_read_bytes=self.config.jsonl_max_read_bytes_per_poll)
         active_stream_source, active_stream_mode = self._parse_stream_route_from_path(active_jsonl)
+        runtime_signals = _load_runtime_signal_summary(route_source, route_mode)
+        runtime_source_fetch = runtime_signals.get('runtime_source_fetch', {}) if isinstance(runtime_signals, dict) else {}
+        runtime_collection_state = runtime_signals.get('runtime_collection_state', {}) if isinstance(runtime_signals, dict) else {}
         route_stream_mismatch = bool(
             route_has_state
             and active_stream_source is not None
@@ -888,19 +993,16 @@ class TelemetryProvider:
             and (active_stream_source != route_source or active_stream_mode != route_mode)
         )
 
-        # Resource-index fallback for observerctl baseline collection windows.
         resource_new, resource_total = self._poll_resource_index()
         effective_new = int(new_lines)
         effective_total = int(total_lines)
-        if effective_new <= 0 and resource_new > 0:
-            effective_new = int(resource_new)
-            effective_total = int(max(effective_total, resource_total))
         
         historical = self._counter._historical_count
         session_recs = max(0, effective_total - historical)
         active_is_sim = _is_sim_likely_path(active_jsonl)
 
         archive_total, archive_non_sim, archive_sim_est = _archive_manifest_totals(self.config.data_dir)
+        resource_archive_total = _archive_manifest_resource_total(self.config.data_dir)
         session_non_sim = 0 if active_is_sim else int(session_recs)
         # Display total: canonical archive total + non-sim active session stream.
         total_display = int(archive_total + session_non_sim)
@@ -972,6 +1074,8 @@ class TelemetryProvider:
             'active_source_is_sim': bool(active_is_sim),
             'resource_new_records': int(resource_new),
             'resource_total_records': int(resource_total),
+            'resource_archive_records': int(resource_archive_total),
+            'resource_total_display': int(resource_archive_total + resource_total),
             'density_bins': density_bins,
             'density_raw_window': list(self._density_window),
             'density_slice_sec': float(self.config.density_slice_sec),
@@ -994,4 +1098,6 @@ class TelemetryProvider:
             'active_stream_source': active_stream_source,
             'active_stream_mode': active_stream_mode,
             'route_stream_mismatch': bool(route_stream_mismatch),
+            'runtime_source_fetch': runtime_source_fetch,
+            'runtime_collection_state': runtime_collection_state,
         }

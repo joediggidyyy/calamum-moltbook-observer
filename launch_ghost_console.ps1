@@ -27,7 +27,29 @@ $Url = "http://localhost:$Port"
 
 # --- HELPER FUNCTIONS ---
 
-function Stop-ByPidFile ($pidFile, $name) {
+function Get-ProcessTreePids($rootPid) {
+    $all = @()
+    $seen = @{}
+    $queue = New-Object System.Collections.Generic.Queue[int]
+    $queue.Enqueue([int]$rootPid)
+    while ($queue.Count -gt 0) {
+        $cur = $queue.Dequeue()
+        if ($seen.ContainsKey($cur)) { continue }
+        $seen[$cur] = $true
+        $all += $cur
+        try {
+            $kids = Get-CimInstance Win32_Process -Filter "ParentProcessId=$cur" -ErrorAction SilentlyContinue
+            foreach ($k in $kids) {
+                if ($k.ProcessId) {
+                    $queue.Enqueue([int]$k.ProcessId)
+                }
+            }
+        } catch { }
+    }
+    return ($all | Select-Object -Unique)
+}
+
+function Stop-ByPidFile ($pidFile, $name, $scriptPath = $null) {
     if (Test-Path $pidFile) {
         try {
             $pidVal = Get-Content $pidFile -ErrorAction Stop
@@ -36,27 +58,6 @@ function Stop-ByPidFile ($pidFile, $name) {
                 $proc = Get-Process -Id $id -ErrorAction SilentlyContinue
                 if ($proc) {
                     Write-Host "    -> Stopping $name (PID: $id)..." -ForegroundColor Yellow
-                    function Get-ProcessTreePids($rootPid) {
-                        $all = @()
-                        $seen = @{}
-                        $queue = New-Object System.Collections.Generic.Queue[int]
-                        $queue.Enqueue([int]$rootPid)
-                        while ($queue.Count -gt 0) {
-                            $cur = $queue.Dequeue()
-                            if ($seen.ContainsKey($cur)) { continue }
-                            $seen[$cur] = $true
-                            $all += $cur
-                            try {
-                                $kids = Get-CimInstance Win32_Process -Filter "ParentProcessId=$cur" -ErrorAction SilentlyContinue
-                                foreach ($k in $kids) {
-                                    if ($k.ProcessId) {
-                                        $queue.Enqueue([int]$k.ProcessId)
-                                    }
-                                }
-                            } catch { }
-                        }
-                        return ($all | Select-Object -Unique)
-                    }
 
                     function Wait-PidsExit($pidList, $timeoutMs) {
                         $deadline = (Get-Date).AddMilliseconds([int]$timeoutMs)
@@ -75,7 +76,13 @@ function Stop-ByPidFile ($pidFile, $name) {
                         return $false
                     }
 
-                    $tree = Get-ProcessTreePids $id
+                    $tree = @(Get-ProcessTreePids $id)
+                    if ($scriptPath) {
+                        $scriptFamily = @(Get-PidsByScript $scriptPath)
+                        if ($scriptFamily.Count -gt 0) {
+                            $tree = @($tree + $scriptFamily | Select-Object -Unique)
+                        }
+                    }
                     # Graceful first: request stop without force, children first.
                     foreach ($pidItem in ($tree | Sort-Object -Descending)) {
                         try {
@@ -246,6 +253,144 @@ function Stop-OrphanInstances ($name, $scriptPath, $expectedPid) {
                 Stop-Process -Id $procId -Force -ErrorAction SilentlyContinue
             }
         } catch { }
+    }
+}
+
+function New-EdgeAppSessionDir() {
+    try {
+        $root = [System.IO.Path]::GetTempPath()
+        if ([string]::IsNullOrWhiteSpace($root)) { return $null }
+        $dir = Join-Path $root ("calamum_ghost_console_edge_" + [guid]::NewGuid().ToString('N'))
+        New-Item -ItemType Directory -Force -Path $dir | Out-Null
+        return $dir
+    } catch { }
+    return $null
+}
+
+function Remove-EdgeAppSessionDir($sessionDir) {
+    if ([string]::IsNullOrWhiteSpace("$sessionDir")) { return }
+    try {
+        if (Test-Path $sessionDir) {
+            Remove-Item -Path $sessionDir -Recurse -Force -ErrorAction SilentlyContinue
+        }
+    } catch { }
+}
+
+function Get-EdgeAppPids($sessionMarker, $url) {
+    $pids = @()
+    $marker = ("$sessionMarker").Trim()
+    $urlNeedle = ("$url").Trim()
+    try {
+        $items = Get-CimInstance Win32_Process -ErrorAction SilentlyContinue | Where-Object {
+            if (-not ($_.Name -match '^msedge(\.exe)?$')) { return $false }
+            if (-not $_.CommandLine) { return $false }
+            $cmd = [string]$_.CommandLine
+            if (-not [string]::IsNullOrWhiteSpace($marker)) {
+                return ($cmd.IndexOf($marker, [System.StringComparison]::OrdinalIgnoreCase) -ge 0)
+            }
+            if (-not [string]::IsNullOrWhiteSpace($urlNeedle)) {
+                return (($cmd -like "*--app=$urlNeedle*") -or ($cmd -like "*$urlNeedle*"))
+            }
+            return $false
+        }
+        foreach ($it in $items) {
+            if ($it.ProcessId) {
+                $pids += [int]$it.ProcessId
+            }
+        }
+    } catch { }
+    return ($pids | Select-Object -Unique)
+}
+
+function Wait-ForEdgeAppExit($sessionMarker, $url, $seedPid) {
+    $startupDeadline = (Get-Date).AddSeconds(12)
+    $sawAppProcess = $false
+    $trackedPids = @{}
+    $loggedSeedFallback = $false
+
+    while ((Get-Date) -lt $startupDeadline) {
+        $appPids = @(Get-EdgeAppPids $sessionMarker $url)
+        if ($appPids.Count -eq 0 -and $seedPid) {
+            $aliveSeedTree = @()
+            try {
+                $seedTreeNow = @(Get-ProcessTreePids ([int]$seedPid))
+            } catch {
+                $seedTreeNow = @()
+            }
+            foreach ($pidItem in $seedTreeNow) {
+                try {
+                    if (Get-Process -Id ([int]$pidItem) -ErrorAction SilentlyContinue) {
+                        $aliveSeedTree += [int]$pidItem
+                    }
+                } catch { }
+            }
+            if ($aliveSeedTree.Count -gt 0) {
+                $appPids = $aliveSeedTree
+                if (-not $loggedSeedFallback) {
+                    Write-Host ("[*] GUI close hook using launched Edge process family fallback PID(s): " + (($aliveSeedTree | Select-Object -Unique) -join ', ')) -ForegroundColor Gray
+                    $loggedSeedFallback = $true
+                }
+            }
+        }
+        if ($appPids.Count -gt 0) {
+            $sawAppProcess = $true
+            foreach ($pidItem in ($appPids | Select-Object -Unique)) {
+                $trackedPids[[int]$pidItem] = $true
+            }
+            Write-Host ("[*] GUI close hook tracking Edge app PID(s): " + (($appPids | Select-Object -Unique) -join ', ')) -ForegroundColor Gray
+        } elseif ($trackedPids.Count -gt 0) {
+            $stillAlive = @()
+            foreach ($pidItem in $trackedPids.Keys) {
+                try {
+                    if (Get-Process -Id ([int]$pidItem) -ErrorAction SilentlyContinue) {
+                        $stillAlive += [int]$pidItem
+                    }
+                } catch { }
+            }
+            if ($stillAlive.Count -eq 0) {
+                return $true
+            }
+        }
+
+        # The initial Start-Process handle can be a short-lived launcher PID.
+        # Do not treat its exit as GUI closure unless we have actually seen a
+        # real app-mode Edge process for the dashboard URL.
+        if ($seedPid) {
+            try {
+                if (-not (Get-Process -Id $seedPid -ErrorAction SilentlyContinue)) {
+                    # Keep polling inside the startup window; a child may already
+                    # be spawning even though the launcher PID is gone.
+                }
+            } catch { }
+        }
+        Start-Sleep -Milliseconds 250
+    }
+
+    if (-not $sawAppProcess) {
+        Write-Host "[!] GUI close hook could not resolve the launched Edge app session. Leaving Dashboard Backend running." -ForegroundColor Yellow
+        return $false
+    }
+
+    while ($true) {
+        $currentPids = @()
+        foreach ($pidItem in @(Get-EdgeAppPids $sessionMarker $url)) {
+            $currentPids += [int]$pidItem
+        }
+        foreach ($pidItem in $trackedPids.Keys) {
+            $currentPids += [int]$pidItem
+        }
+        $alive = @()
+        foreach ($pidItem in ($currentPids | Select-Object -Unique)) {
+            try {
+                if (Get-Process -Id ([int]$pidItem) -ErrorAction SilentlyContinue) {
+                    $alive += [int]$pidItem
+                }
+            } catch { }
+        }
+        if ($alive.Count -eq 0) {
+            return $true
+        }
+        Start-Sleep -Milliseconds 250
     }
 }
 
@@ -430,6 +575,20 @@ function Get-PortOwningPid($port) {
 
 Write-Host "[*] Checking Core Stack Integrity..." -ForegroundColor Cyan
 
+
+function Test-ProcessOlderThanFile($procId, $filePath) {
+    if (-not $procId) { return $false }
+    if (-not (Test-Path $filePath)) { return $false }
+    try {
+        $proc = Get-Process -Id ([int]$procId) -ErrorAction SilentlyContinue
+        if (-not $proc) { return $false }
+        $fileItem = Get-Item $filePath -ErrorAction SilentlyContinue
+        if (-not $fileItem) { return $false }
+        return ($proc.StartTime -lt $fileItem.LastWriteTime)
+    } catch {
+        return $false
+    }
+}
 # Check/Start Watchdog Supervisor
 $watchdogPid = Get-RunningPid $WatchdogPidFile
 Stop-OrphanInstances "Watchdog" $WatchdogScript $watchdogPid
@@ -478,7 +637,7 @@ if (-not $autoStartObserver) {
 
         if ($needsRestart) {
             Write-Host "    [!] Observer Agent config mismatch or unknown. Restarting to apply env-driven settings..." -ForegroundColor Yellow
-            Stop-ByPidFile $AgentPidFile "Observer Agent"
+            Stop-ByPidFile $AgentPidFile "Observer Agent" $AgentScript
             Start-ServiceScript "calamum_agent" $AgentScript $AgentPidFile @(
                 "--mode", $desiredMode,
                 "--source", $desiredSource,
@@ -515,7 +674,20 @@ if ($dashboardPid) {
         }
     } else {
         Write-Host "    [!] Dashboard PID present but port $Port is not LISTENing. Restarting..." -ForegroundColor Yellow
-        Stop-ByPidFile $DashboardPidFile "Dashboard Backend"
+        Stop-ByPidFile $DashboardPidFile "Dashboard Backend" $DashboardScript
+        $dashboardPid = $null
+    }
+}
+
+if ($dashboardPid) {
+    $freshnessPid = $dashboardPid
+    $freshnessOwner = Get-PortOwningPid $Port
+    if ($freshnessOwner) {
+        $freshnessPid = [int]$freshnessOwner
+    }
+    if (Test-ProcessOlderThanFile $freshnessPid $DashboardScript) {
+        Write-Host "    [!] Dashboard backend is older than ops_dashboard.py. Restarting to load fresh code..." -ForegroundColor Yellow
+        Stop-ByPidFile $DashboardPidFile "Dashboard Backend" $DashboardScript
         $dashboardPid = $null
     }
 }
@@ -558,7 +730,7 @@ while ((Get-Date) -lt $deadline) {
 
 if (-not $ready) {
     Write-Host "[!] Dashboard did not come online on port $Port. Attempting one restart..." -ForegroundColor Yellow
-    Stop-ByPidFile $DashboardPidFile "Dashboard Backend"
+    Stop-ByPidFile $DashboardPidFile "Dashboard Backend" $DashboardScript
     Start-ServiceScript "calamum_dashboard" $DashboardScript $DashboardPidFile
 
     $deadline = (Get-Date).AddSeconds(15)
@@ -608,17 +780,35 @@ $EdgeArgs = @(
     "--no-first-run",
     "--disable-session-crashed-bubble",
     "--disable-extensions",
-    "--disable-gpu"
+    "--disable-gpu",
+    "--disable-background-mode",
+    "--disable-features=msEdgeBackgroundMode"
 )
 
 # Start Edge (detached)
 if ($env:CALAMUM_SKIP_BROWSER -eq '1') {
     Write-Host "[*] Browser launch skipped (CALAMUM_SKIP_BROWSER=1)." -ForegroundColor Gray
 } else {
+    $edgeSessionDir = New-EdgeAppSessionDir
+    if ($edgeSessionDir) {
+        $EdgeArgs += "--user-data-dir=$edgeSessionDir"
+    } else {
+        Write-Host "[!] GUI close hook could not allocate an isolated Edge app session directory. Falling back to URL-based tracking." -ForegroundColor Yellow
+    }
     try {
-        Start-Process "msedge" -ArgumentList $EdgeArgs
+        $edgeProc = Start-Process "msedge" -ArgumentList $EdgeArgs -PassThru
+        if ($edgeProc -and $edgeProc.Id) {
+            Write-Host "[*] GUI close hook armed. Closing the Edge app window will stop the dashboard backend." -ForegroundColor Gray
+            $guiClosed = Wait-ForEdgeAppExit $edgeSessionDir $Url $edgeProc.Id
+            if ($guiClosed) {
+                Write-Host "[*] GUI window closed. Stopping Dashboard Backend..." -ForegroundColor Yellow
+                Stop-ByPidFile $DashboardPidFile "Dashboard Backend" $DashboardScript
+            }
+        }
     } catch {
         Write-Host "[!] Could not launch Edge. Open $Url manually." -ForegroundColor Yellow
+    } finally {
+        Remove-EdgeAppSessionDir $edgeSessionDir
     }
 }
 

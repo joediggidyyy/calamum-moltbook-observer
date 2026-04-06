@@ -28,12 +28,14 @@ from typing import Any, Dict, Optional, Tuple, cast
 try:
     import calamum_sampler
     import obfuscator_lib
+    import stage4_features
     from calamum_keepalive import KeepaliveHelper
     from moltbook_client import MoltbookAPIClient
 except ImportError:
     # Allow running even if siblings are tricky to import (e.g. specialized envs)
     calamum_sampler = None
     obfuscator_lib = None
+    stage4_features = None
     KeepaliveHelper = None
     MoltbookAPIClient = None
 
@@ -337,7 +339,7 @@ def _get_live_client_best_effort() -> Optional[Any]:
     if not api_key:
         return None
 
-    host = (os.getenv("MOLTBOOK_HOST") or "https://api.moltbook.com/v1").strip()
+    host = (os.getenv("MOLTBOOK_HOST") or "https://www.moltbook.com/api/v1").strip()
     try:
         fp8 = hashlib.sha256(api_key.encode("utf-8")).hexdigest()[:8]
     except Exception:
@@ -528,6 +530,19 @@ def append_record(
                     record['type'] = record.get('event_type', 'unknown')
             else:
                 record = obfuscator_lib.Obfuscator.obfuscate_sample(raw)
+
+            content_text = str(raw.get('content', '') or '')
+            if stage4_features and ((mode or '').strip().lower() != 'canary' or content_text):
+                try:
+                    record.update(
+                        stage4_features.extract_stage4_features(
+                            content_text,
+                            str(raw.get('timestamp', '') or ''),
+                        )
+                    )
+                except Exception:
+                    pass
+
             record = obfuscator_lib.Obfuscator.sign_record(record)
         except Exception:
             # Code safety: fail safe if obfuscation crashes
