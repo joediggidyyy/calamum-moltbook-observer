@@ -111,6 +111,10 @@ def test_reports_index_and_generated_surfaces_follow_current_public_report_contr
         "aggregates/THRESHOLD_SUMMARY.md",
         "reference/GENERATED_REPORT_SURFACES.md",
         "validations/INDEX.md",
+        "How to use this report family",
+        "Flagship synthesis narrative",
+        "Front-door collection routing",
+        "Threshold-bearing packet follow-through",
     ):
         assert expected in reports_index, f"Current report index must reference {expected}"
 
@@ -133,6 +137,13 @@ def test_reports_index_and_generated_surfaces_follow_current_public_report_contr
         "Aggregate-facing collection routes use the dated collection packet leaf",
         "No stable `collection/report.md` landing page is part of the current tracked packet contract.",
         "Aggregate-consumer route authority",
+        "Aggregate surface roles",
+        "Flagship synthesis narrative",
+        "Runtime-safe population census",
+        "Front-door collection routing",
+        "Workflow-family overview",
+        "Evaluation-only threshold follow-through",
+        "Contract/reference surface",
         "whenever packet families are materialized",
         "Zero-state publication should remain honest",
         "AGGREGATE_REPORT.md",

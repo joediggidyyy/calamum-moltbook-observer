@@ -4653,11 +4653,24 @@ def test_ds_report_publication_groups_multiple_stage_runs_under_one_collection_a
     assert '20260331T120500123456Z.collection.md' in collection_report_text
     assert '20260331T120500000000Z.eval.md' in collection_report_text
     assert '20260331T120500123456Z.eval.md' in collection_report_text
+    assert '## Collection purpose' in collection_report_text
+    assert '## Collection identity' in collection_report_text
+    assert '## Current packet summary' in collection_report_text
+    assert '## Collection evidence at a glance' in collection_report_text
+    assert '## Latest stage contributions' in collection_report_text
+    assert '## Interpretation' in collection_report_text
+    assert '## Historical packet trail' in collection_report_text
+    assert '## Limits and lineage' in collection_report_text
+    assert '## Related surfaces' in collection_report_text
+    assert 'Run IDs remain lineage context for `can-r1a2b`' in collection_report_text
     assert 'collection/report.md' not in latest_collections_text
     assert 'collection/report.md' not in workflow_rollup_text
     assert 'collection/report.md' not in reports_index_text
     assert '# Aggregate Report' in aggregate_report_text
     assert '# Public Run Ledger' in public_run_ledger_text
+    assert '## What to open first' in aggregate_report_text
+    assert '## Current packet family at a glance' in aggregate_report_text
+    assert 'Collection packets now act as reader-first entry surfaces rather than history-only routing stubs.' in aggregate_report_text
     assert 'AGGREGATE_REPORT.md' in public_run_ledger_text
     assert 'PUBLIC_RUN_LEDGER.md' in aggregate_report_text
     assert '20260331T120500123456Z.collection.md' in aggregate_report_text
@@ -4666,10 +4679,14 @@ def test_ds_report_publication_groups_multiple_stage_runs_under_one_collection_a
     assert '20260331T120500123456Z.collection.md' in reports_index_text
     assert 'AGGREGATE_REPORT.md' in reports_index_text
     assert 'PUBLIC_RUN_LEDGER.md' in reports_index_text
+    assert '## How to use this report family' in reports_index_text
+    assert 'Flagship synthesis narrative' in reports_index_text
     assert '`can-r1a2b`' in latest_collections_text
     assert '| `can-r1a2b` |' in public_run_ledger_text
     assert 'AGGREGATE_REPORT.md' in generated_surfaces_text
     assert 'PUBLIC_RUN_LEDGER.md' in generated_surfaces_text
+    assert '## Aggregate surface roles' in generated_surfaces_text
+    assert 'Front-door collection routing' in generated_surfaces_text
     assert 'Aggregate-facing collection routes use the dated collection packet leaf' in generated_surfaces_text
     assert 'No stable `collection/report.md` landing page is part of the current tracked packet contract.' in generated_surfaces_text
 
@@ -4811,6 +4828,8 @@ def test_ds_report_publication_zero_state_generated_surfaces_remains_truthful(tm
     assert 'Zero-state publication may leave `docs/reports/collections/` present but empty' in generated_surfaces_text
     assert 'whenever packet families are materialized' in generated_surfaces_text
     assert 'Zero-state publication should remain honest' in generated_surfaces_text
+    assert '## Aggregate surface roles' in generated_surfaces_text
+    assert 'Runtime-safe population census' in generated_surfaces_text
     assert 'Published runs are rendered under `docs/reports/collections/<collection-alias>/`.' not in generated_surfaces_text
 
 
@@ -7900,6 +7919,178 @@ def test_baseline_check_uses_runtime_validation_cycle_not_chunked_catalog(tmp_pa
     assert payload.get('baseline_type') == 'observer_runtime'
     assert (payload.get('validation_cycle') or {}).get('exists') is True
     assert (payload.get('validation_cycle') or {}).get('decision') == 'go'
+
+
+def test_baseline_status_human_output_surfaces_chunked_graph_contract_and_evidence(tmp_path: Path, monkeypatch, capsys) -> None:
+    log_dir = tmp_path / 'logs'
+    control = log_dir / 'control' / 'calamum'
+    for d in [log_dir / 'health', log_dir / 'data' / 'calamum', control]:
+        d.mkdir(parents=True, exist_ok=True)
+
+    monkeypatch.setenv('CALAMUM_LOG_DIR', str(log_dir))
+    observerctl_module._save_state('sim', 'canary')
+
+    cycle_path = tmp_path / 'baseline_cycle.json'
+    cycle_path.write_text(json.dumps({
+        'timestamp_utc': observerctl_module._utc_now(),
+        'decision': 'go',
+        'action': 'baseline-monitor-cycle',
+        'reason_codes': [],
+    }), encoding='utf-8')
+
+    baseline_packet_path = tmp_path / 'baseline_analysis.json'
+    baseline_packet_path.write_text(json.dumps({'decision': 'go'}), encoding='utf-8')
+    analysis_packet_path = tmp_path / 'baseline_window.json'
+    analysis_packet_path.write_text(json.dumps({'decision': 'go'}), encoding='utf-8')
+
+    monitor_state = {
+        'source': 'sim',
+        'mode': 'canary',
+        'last_validation_cycle_packet_path': str(cycle_path).replace('\\', '/'),
+        'last_validation_cycle_decision': 'go',
+        'last_validation_cycle_event': 'baseline-monitor-cycle',
+        'last_validation_cycle_at_utc': observerctl_module._utc_now(),
+        'last_normal_sample_epoch_s': float(observerctl_module.time.time()),
+        'last_baseline_window_id': 'framec-ready-window',
+        'last_baseline_packet_path': str(baseline_packet_path).replace('\\', '/'),
+        'last_analysis_packet_path': str(analysis_packet_path).replace('\\', '/'),
+    }
+    monitor_state_path = control / 'baseline_monitor_state.json'
+    monitor_state_path.write_text(json.dumps(monitor_state), encoding='utf-8')
+
+    monkeypatch.setattr(observerctl_module, '_runtime_baseline_monitor_status', lambda max_age_sec=90.0: {
+        'timestamp_utc': observerctl_module._utc_now(),
+        'runtime_cli_surface': 'observerctl',
+        'decision': 'go',
+        'action': 'baseline-monitor-status',
+        'summary': 'Baseline monitor runtime ready.',
+        'reason_codes': [],
+        'source': 'sim',
+        'mode': 'canary',
+        'runtime_label': 'baseline-monitor',
+        'state': 'active',
+        'heartbeat': {'status': 'ok', 'age_seconds': 1.0, 'max_age_seconds': 90.0},
+        'pid': {'value': 2468, 'alive': True},
+        'monitor_state': monitor_state,
+        'monitor_state_path': str(monitor_state_path).replace('\\', '/'),
+    })
+
+    rc = main(['baseline', 'status'])
+    assert rc == 0
+
+    rendered = capsys.readouterr().out.splitlines()
+    assert rendered[0] == 'Observer baseline status'
+    assert 'Contract' in rendered
+    assert any('Graph architecture:' in line and 'chunked resource_normal/resource_baseline segments + resource index + archive continuity' in line for line in rendered)
+    assert 'Validation cycle' in rendered
+    assert any('Resource index:' in line and 'canary/resource/index.jsonl' in line for line in rendered)
+    assert any('Evidence index:' in line and 'canary/evidence/index.jsonl' in line for line in rendered)
+    assert any('Validation cycle:' in line and 'baseline_cycle.json' in line for line in rendered)
+    assert any('Monitor state:' in line and 'control/calamum/baseline_monitor_state.json' in line for line in rendered)
+    assert 'Guidance' in rendered
+
+
+def test_baseline_status_human_output_surfaces_fail_closed_runtime_reasons(tmp_path: Path, monkeypatch, capsys) -> None:
+    log_dir = tmp_path / 'logs'
+    control = log_dir / 'control' / 'calamum'
+    for d in [log_dir / 'health', log_dir / 'data' / 'calamum', control]:
+        d.mkdir(parents=True, exist_ok=True)
+
+    monkeypatch.setenv('CALAMUM_LOG_DIR', str(log_dir))
+    observerctl_module._save_state('real', 'canary')
+
+    monitor_state_path = control / 'baseline_monitor_state.json'
+    monitor_state_path.write_text('{}\n', encoding='utf-8')
+
+    monkeypatch.setattr(observerctl_module, '_runtime_baseline_monitor_status', lambda max_age_sec=90.0: {
+        'timestamp_utc': observerctl_module._utc_now(),
+        'runtime_cli_surface': 'observerctl',
+        'decision': 'no-go',
+        'action': 'baseline-monitor-status',
+        'summary': 'Baseline monitor runtime stopped.',
+        'reason_codes': ['critical_check_failed:baseline_monitor_runtime_inactive'],
+        'source': 'real',
+        'mode': 'canary',
+        'runtime_label': 'baseline-monitor',
+        'state': 'stopped',
+        'heartbeat': {'status': 'err', 'max_age_seconds': 90.0},
+        'pid': {'value': None, 'alive': False},
+        'monitor_state': {},
+        'monitor_state_path': str(monitor_state_path).replace('\\', '/'),
+    })
+
+    rc = main(['baseline', 'status'])
+    assert rc == 2
+
+    rendered = capsys.readouterr().out.splitlines()
+    assert rendered[0] == 'Observer baseline status'
+    assert 'Reasons' in rendered
+    assert any('critical_check_failed:baseline_monitor_runtime_inactive' in line for line in rendered)
+    assert any('critical_check_failed:baseline_validation_cycle_missing' in line for line in rendered)
+    assert 'Guidance' in rendered
+    assert any('chunked baseline graph lane' in line for line in rendered)
+
+
+def test_baseline_monitor_status_human_output_surfaces_joined_chunked_graph_guidance(tmp_path: Path, monkeypatch, capsys) -> None:
+    log_dir = tmp_path / 'logs'
+    for d in [log_dir / 'health', log_dir / 'data' / 'calamum', log_dir / 'control' / 'calamum']:
+        d.mkdir(parents=True, exist_ok=True)
+
+    monkeypatch.setenv('CALAMUM_LOG_DIR', str(log_dir))
+    project_root, anchor = _make_temp_observer_project(tmp_path)
+    _bind_temp_observer_project(monkeypatch, project_root, anchor)
+
+    observerctl_module._save_state('sim', 'canary')
+    _touch(log_dir / 'health' / 'calamum_baseline_monitor.heartbeat')
+    observerctl_module._baseline_monitor_pid_path().write_text(str(os.getpid()), encoding='utf-8')
+    (log_dir / 'control' / 'calamum' / 'baseline_monitor_state.json').write_text(
+        json.dumps({
+            'source': 'sim',
+            'mode': 'canary',
+            'last_validation_cycle_event': 'baseline_ready',
+            'last_validation_cycle_packet_path': 'logs/data/calamum/observer_derived/sim/canary/evidence/observerctl_baseline_ready.json',
+            'last_validation_cycle_at_utc': observerctl_module._utc_now(),
+            'last_baseline_window_id': 'framec-monitor-window',
+        }),
+        encoding='utf-8',
+    )
+
+    rc = main(['baseline', 'monitor-status'])
+    assert rc == 0
+
+    rendered = capsys.readouterr().out.splitlines()
+    assert rendered[0] == 'Observer baseline monitor status'
+    assert 'Contract' in rendered
+    assert any('Graph architecture:' in line and 'joined by observerctl baseline status/check' in line for line in rendered)
+    assert 'Runtime' in rendered
+    assert any('Monitor state:' in line and 'control/calamum/baseline_monitor_state.json' in line for line in rendered)
+    assert 'Guidance' in rendered
+
+
+def test_baseline_status_human_output_for_explicit_filesystem_snapshot(tmp_path: Path, monkeypatch, capsys) -> None:
+    log_dir = tmp_path / 'logs'
+    for d in [log_dir / 'health', log_dir / 'data' / 'calamum', log_dir / 'control' / 'calamum']:
+        d.mkdir(parents=True, exist_ok=True)
+    monkeypatch.setenv('CALAMUM_LOG_DIR', str(log_dir))
+    monkeypatch.setattr(observerctl_module, '_project_root', lambda: tmp_path)
+
+    tracked = tmp_path / 'tracked.txt'
+    tracked.write_text('hello baseline\n', encoding='utf-8')
+
+    baseline_path = tmp_path / 'fs_baseline.json'
+    assert main(['baseline', 'generate', '--output', str(baseline_path), '--max-files', '1000', '--json']) == 0
+    _ = capsys.readouterr().out
+
+    rc = main(['baseline', 'status', '--baseline', str(baseline_path)])
+    assert rc == 0
+
+    rendered = capsys.readouterr().out.splitlines()
+    assert rendered[0] == 'Observer baseline status'
+    assert 'Contract' in rendered
+    assert any('Integrity model:' in line and 'explicit filesystem-hash snapshot' in line for line in rendered)
+    assert 'Statistics' in rendered
+    assert any('Baseline path:' in line and 'fs_baseline.json' in line for line in rendered)
+    assert 'Guidance' in rendered
 
 
 def test_baseline_check_detects_hash_mismatch(tmp_path: Path, monkeypatch) -> None:

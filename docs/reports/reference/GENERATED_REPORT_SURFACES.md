@@ -37,6 +37,17 @@ docs/reports/
 - `docs/reports/aggregates/WORKFLOW_ROLLUP.md`
 - `docs/reports/aggregates/THRESHOLD_SUMMARY.md`
 
+## Aggregate surface roles
+
+| Surface | Reader role |
+|---|---|
+| `AGGREGATE_REPORT.md` | Flagship synthesis narrative |
+| `PUBLIC_RUN_LEDGER.md` | Runtime-safe population census |
+| `LATEST_COLLECTIONS.md` | Front-door collection routing |
+| `WORKFLOW_ROLLUP.md` | Workflow-family overview |
+| `THRESHOLD_SUMMARY.md` | Evaluation-only threshold follow-through |
+| `GENERATED_REPORT_SURFACES.md` | Contract/reference surface |
+
 ## Tracked packet family
 
 When collection packets are materialized:

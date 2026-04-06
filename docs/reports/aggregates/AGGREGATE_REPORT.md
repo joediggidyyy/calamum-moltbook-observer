@@ -4,11 +4,11 @@ This synthesis page summarizes the strongest current reader-facing conclusions a
 
 ## Executive summary
 
-- Published packets: 10
-- Collection aliases represented: 6
-- Workflow families represented: 4
-- Threshold-bearing packets: 1
-- Current front-door packet: [can-r7af3](../collections/can-r7af3/collection/20260406T072118262659Z.collection.md)
+- Published packets: 2
+- Collection aliases represented: 2
+- Workflow families represented: 2
+- Threshold-bearing packets: 0
+- Current front-door packet: [score_20260406T170017731886Z](../collections/score_20260406T170017731886Z/collection/20260406T170030764817Z.collection.md)
 
 ## Why this aggregate exists
 
@@ -16,39 +16,37 @@ The tracked report family now has multiple reader roles: packet entry, workflow 
 
 ## Runtime-safe current picture
 
-- Latest published workflow: train
-- Latest packet timestamp (UTC): 2026-04-06T07:21:18.262659Z
-- Latest packet summary: Model training completed through observerctl ds.
+- Latest published workflow: score
+- Latest packet timestamp (UTC): 2026-04-06T17:00:30.764817Z
+- Latest packet summary: Unsupervised scoring completed through observerctl ds.
 
-## Aggregate cohort at a glance
+## What to open first
 
-| Collection alias | Current packet date | Latest stages | Why it matters now | Collection packet |
+| Collection alias | Current packet date | Latest stages | Current focus | Collection packet |
 |---|---|---|---|---|
-| `can-r7af3` | 2026-04-06T07:21:18.262659Z | build, evaluate, score, train | Training packet for the latest model-building lane. | [collection packet](../collections/can-r7af3/collection/20260406T072118262659Z.collection.md) |
-| `build_20260406T023758094814Z` | 2026-04-06T02:37:58.115802Z | build | Dataset-build packet for the latest materialized collection. | [collection packet](../collections/build_20260406T023758094814Z/collection/20260406T023758115802Z.collection.md) |
-| `build_20260406T023756969475Z` | 2026-04-06T02:37:56.987764Z | build | Dataset-build packet for the latest materialized collection. | [collection packet](../collections/build_20260406T023756969475Z/collection/20260406T023756987764Z.collection.md) |
-| `build_20260405T081918876049Z` | 2026-04-05T08:19:18.888509Z | build | Dataset-build packet for the latest materialized collection. | [collection packet](../collections/build_20260405T081918876049Z/collection/20260405T081918888509Z.collection.md) |
-| `build_20260405T081918058977Z` | 2026-04-05T08:19:18.074431Z | build | Dataset-build packet for the latest materialized collection. | [collection packet](../collections/build_20260405T081918058977Z/collection/20260405T081918074431Z.collection.md) |
-| `can-r305f` | 2026-04-05T04:20:49.878075Z | build | Dataset-build packet for the latest materialized collection. | [collection packet](../collections/can-r305f/collection/20260405T042049878075Z.collection.md) |
+| `score_20260406T170017731886Z` | 2026-04-06T17:00:30.764817Z | score | Score-stage packet with figure-backed anomaly-surface context. | [collection packet](../collections/score_20260406T170017731886Z/collection/20260406T170030764817Z.collection.md) |
+| `train_20260406T165940271708Z` | 2026-04-06T16:59:45.654317Z | train | Training handoff packet for the current model-publication lane. | [collection packet](../collections/train_20260406T165940271708Z/collection/20260406T165945654317Z.collection.md) |
+
+## Current packet family at a glance
+
+- Collections with figure-backed packets: 1
+- Collections with threshold-bearing packets: 0
+- Current packet summary: Unsupervised scoring completed through observerctl ds.
+- Current front-door packet: [score_20260406T170017731886Z](../collections/score_20260406T170017731886Z/collection/20260406T170030764817Z.collection.md)
 
 ## Strongest findings
 
-- The tracked report family is now organized around 6 collection aliases instead of a single cache-shaped run list.
-- Workflow coverage is currently spread across `build`, `evaluate`, `score`, `train`.
-- Threshold-bearing packets remain visible as dated packet leaves, with the latest threshold summary routed through `THRESHOLD_SUMMARY.md`.
+- The tracked report family is now organized around 2 collection aliases instead of a single cache-shaped run list.
+- Collection packets now act as reader-first entry surfaces rather than history-only routing stubs.
+- Workflow coverage is currently spread across `score`, `train`.
+- No threshold-bearing packets are currently present in the tracked family.
 
-## Threshold, workflow, and packet synthesis
+## Workflow and threshold synthesis
 
 | Workflow family | Published packets | Latest collection | Current contribution |
 |---|---:|---|---|
-| build | 6 | `build_20260406T023758094814Z` | Defines the dataset packet baseline. |
-| evaluate | 1 | `can-r7af3` | Captures validation and threshold interpretation. |
-| score | 1 | `can-r7af3` | Captures scored anomaly output for reader follow-through. |
-| train | 2 | `can-r7af3` | Carries the latest model-training outcome. |
-
-| Threshold-bearing packet | Threshold | Target guardrail | Eval packet |
-|---|---:|---:|---|
-| `can-r7af3` / `evaluate_20260405T043000438719Z` | 0.434329 | 0.01 | [eval packet](../collections/can-r7af3/processing/eval/20260405T043759419248Z.eval.md) |
+| score | 1 | `score_20260406T170017731886Z` | Captures scored anomaly output for reader follow-through. |
+| train | 1 | `train_20260406T165940271708Z` | Carries the latest model-training outcome. |
 
 ## Limits and caution notes
 
@@ -56,10 +54,13 @@ The tracked report family now has multiple reader roles: packet entry, workflow 
 - Row-completeness and deeper truthfulness audits remain a downstream concern when packet content needs further repair.
 - Missing links fail closed rather than inventing synthetic packet routes.
 
-## Related authority and lineage
+## Related surfaces
 
 - Publish root: `docs/reports`
 - Public run ledger: [PUBLIC_RUN_LEDGER.md](PUBLIC_RUN_LEDGER.md)
+- Latest collections: [LATEST_COLLECTIONS.md](LATEST_COLLECTIONS.md)
+- Workflow rollup: [WORKFLOW_ROLLUP.md](WORKFLOW_ROLLUP.md)
+- Threshold summary: [THRESHOLD_SUMMARY.md](THRESHOLD_SUMMARY.md)
 - Generated report surfaces: [GENERATED_REPORT_SURFACES.md](../reference/GENERATED_REPORT_SURFACES.md)
 
 ## Reader next steps

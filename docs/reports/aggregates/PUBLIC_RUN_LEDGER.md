@@ -17,37 +17,31 @@ This ledger defines the current public reporting population and provides a runti
 ## Current runtime-safe headline
 
 - Publish root: `docs/reports`
-- Published runs: 10
-- Collection aliases represented: 6
-- Workflow families represented: 4
-- Threshold-bearing packets: 1
-- Latest packet: [can-r7af3](../collections/can-r7af3/collection/20260406T072118262659Z.collection.md)
+- Published runs: 2
+- Collection aliases represented: 2
+- Workflow families represented: 2
+- Threshold-bearing packets: 0
+- Latest packet: [score_20260406T170017731886Z](../collections/score_20260406T170017731886Z/collection/20260406T170030764817Z.collection.md)
 
 ## Current lane census
 
 | Workflow | Published packets | Latest collection | Latest packet |
 |---|---:|---|---|
-| build | 6 | `build_20260406T023758094814Z` | [20260406T023758115802Z.build.md](../collections/build_20260406T023758094814Z/processing/build/20260406T023758115802Z.build.md) |
-| evaluate | 1 | `can-r7af3` | [20260405T043759419248Z.eval.md](../collections/can-r7af3/processing/eval/20260405T043759419248Z.eval.md) |
-| score | 1 | `can-r7af3` | [20260405T044605627549Z.score.md](../collections/can-r7af3/processing/score/20260405T044605627549Z.score.md) |
-| train | 2 | `can-r7af3` | [20260406T072118262659Z.train.md](../collections/can-r7af3/processing/train/20260406T072118262659Z.train.md) |
+| score | 1 | `score_20260406T170017731886Z` | [20260406T170030764817Z.score.md](../collections/score_20260406T170017731886Z/processing/score/20260406T170030764817Z.score.md) |
+| train | 1 | `train_20260406T165940271708Z` | [20260406T165945654317Z.train.md](../collections/train_20260406T165940271708Z/processing/train/20260406T165945654317Z.train.md) |
 
 ## Publication-family census
 
 | Collection alias | Source / mode | Published packets | Latest packet date | Latest stages | Collection packet |
 |---|---|---:|---|---|---|
-| `can-r7af3` | runtime-unspecified | 5 | 2026-04-06T07:21:18.262659Z | build, evaluate, score, train | [collection packet](../collections/can-r7af3/collection/20260406T072118262659Z.collection.md) |
-| `build_20260406T023758094814Z` | runtime-unspecified | 1 | 2026-04-06T02:37:58.115802Z | build | [collection packet](../collections/build_20260406T023758094814Z/collection/20260406T023758115802Z.collection.md) |
-| `build_20260406T023756969475Z` | runtime-unspecified | 1 | 2026-04-06T02:37:56.987764Z | build | [collection packet](../collections/build_20260406T023756969475Z/collection/20260406T023756987764Z.collection.md) |
-| `build_20260405T081918876049Z` | runtime-unspecified | 1 | 2026-04-05T08:19:18.888509Z | build | [collection packet](../collections/build_20260405T081918876049Z/collection/20260405T081918888509Z.collection.md) |
-| `build_20260405T081918058977Z` | runtime-unspecified | 1 | 2026-04-05T08:19:18.074431Z | build | [collection packet](../collections/build_20260405T081918058977Z/collection/20260405T081918074431Z.collection.md) |
-| `can-r305f` | runtime-unspecified | 1 | 2026-04-05T04:20:49.878075Z | build | [collection packet](../collections/can-r305f/collection/20260405T042049878075Z.collection.md) |
+| `score_20260406T170017731886Z` | runtime-unspecified | 1 | 2026-04-06T17:00:30.764817Z | score | [collection packet](../collections/score_20260406T170017731886Z/collection/20260406T170030764817Z.collection.md) |
+| `train_20260406T165940271708Z` | runtime-unspecified | 1 | 2026-04-06T16:59:45.654317Z | train | [collection packet](../collections/train_20260406T165940271708Z/collection/20260406T165945654317Z.collection.md) |
 
 ## Publication-source census
 
 | Source | Mode | Published packets |
 |---|---|---:|
-| unspecified | unspecified | 10 |
+| unspecified | unspecified | 2 |
 
 ## Interpretive notes
 

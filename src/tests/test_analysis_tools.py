@@ -564,5 +564,98 @@ def test_report_pack_markdown_marks_stage_workflows_as_processing_stage_packets(
 
     assert 'processing-stage packet' in report_md
     assert 'composite workflow packet' not in report_md
-    assert '## Why this packet exists' in report_md
-    assert '## Reader next steps' in report_md
+    assert '## Stage purpose' in report_md
+    assert '## Stage identity' in report_md
+    assert '## Inputs used' in report_md
+    assert '## Method summary' in report_md
+    assert '## Key results' in report_md
+    assert '## Interpretation' in report_md
+    assert '## Visual surfaces' in report_md
+    assert 'No declared figures were emitted for this packet.' in report_md
+    assert '## Risks, limits, and non-claims' in report_md
+    assert '## What follows from this stage' in report_md
+    assert '## Related surfaces' in report_md
+    assert '## Provenance' in report_md
+    assert '## Artifact index' not in report_md
+    assert '## Report paths' not in report_md
+    assert '## Reader next steps' not in report_md
+
+
+def test_report_pack_stage_markdown_keeps_visual_links_and_compact_related_surfaces(tmp_path: Path) -> None:
+    from analysis.report_pack import prepare_report_bundle, write_report_bundle
+
+    project_root = tmp_path / 'observer_project'
+    anchor = project_root / 'src' / 'observerctl_anchor.py'
+    anchor.parent.mkdir(parents=True, exist_ok=True)
+    anchor.write_text('# anchor\n', encoding='utf-8')
+    (project_root / 'PROJECT_MANIFEST.json').write_text('{}\n', encoding='utf-8')
+
+    bundle = prepare_report_bundle(anchor, 'score', run_id='score-style-001')
+    scoring_dir = bundle.artifact_dirs['scoring']
+    figures_dir = bundle.run_root / 'figures'
+    scoring_dir.mkdir(parents=True, exist_ok=True)
+    figures_dir.mkdir(parents=True, exist_ok=True)
+
+    scores_csv = scoring_dir / 'scores.csv'
+    figure_path = figures_dir / 'score_distribution.png'
+    scores_csv.write_text('record_id,score_anomaly\na,0.1\nb,0.9\n', encoding='utf-8')
+    figure_path.write_bytes(b'fake-png')
+
+    bundle_result = write_report_bundle(
+        project_anchor=anchor,
+        bundle=bundle,
+        packet={
+            'timestamp_utc': '2026-04-02T12:45:00Z',
+            'runtime_cli_surface': 'observerctl',
+            'decision': 'go',
+            'action': 'ds-score',
+            'collection_alias': 'can-score-style',
+            'command_family': 'ds',
+            'command_path': 'observerctl ds score',
+            'implementation_state': 'command-available',
+            'underlying_surface': 'analysis.score_unsupervised',
+            'summary': 'Unsupervised scoring completed through observerctl ds.',
+            'run_id': bundle.run_id,
+            'records_scored': 2,
+            'score_column': 'score_anomaly',
+            'anomaly_direction': 'lower-is-more-anomalous',
+            'thresholding': {
+                'threshold': 0.2,
+                'report_json': scoring_dir / 'threshold_report.json',
+                'report_md': scoring_dir / 'threshold_report.md',
+                'scores_csv': scores_csv,
+            },
+            'reason_codes': [],
+            'visuals': {
+                'decision': 'go',
+                'figure_count': 1,
+                'anomaly_direction': 'lower-is-more-anomalous',
+                'score_column': 'score_anomaly',
+                'figures': [
+                    {
+                        'id': 'score_distribution',
+                        'title': 'Score distribution',
+                        'caption': 'Distribution of anomaly scores. Lower scores indicate more anomalous records.',
+                        'path': figure_path,
+                    }
+                ],
+            },
+            'artifacts': {},
+        },
+        artifact_paths={
+            'scores_csv': scores_csv,
+        },
+        context={'output_override': False},
+        lineage={'source_run_root': bundle.run_root},
+    )
+
+    report_md = (project_root / bundle_result['paths']['report_md']).read_text(encoding='utf-8')
+
+    assert '## Visual surfaces' in report_md
+    assert '## Related surfaces' in report_md
+    assert '## What follows from this stage' in report_md
+    assert 'This stage exposes the score surface rather than making a semantic case judgment about the ranked records.' in report_md
+    assert '[Report JSON](report.json)' in report_md
+    assert '[Manifest JSON](manifest.json)' in report_md
+    assert '[Score surface CSV](../scoring/scores.csv)' in report_md
+    assert '![Score distribution](../figures/score_distribution.png)' in report_md

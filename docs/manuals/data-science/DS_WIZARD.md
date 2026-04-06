@@ -149,12 +149,12 @@ The wizard writes into the same DS reporting structure as the direct CLI.
 | Surface | Role |
 | --- | --- |
 | local run artifacts under the chosen output root | detailed execution residue and ledgers |
-| `docs/reports/collections/<collection-alias>/collection/report.md` | tracked collection packet keyed by the canonical alias shown in the wizard |
+| `docs/reports/collections/<collection-alias>/collection/YYYYMMDDTHHMMSSffffffZ.collection.md` | tracked collection packet leaf for the published collection alias resolved for the run |
 | `docs/reports/collections/<collection-alias>/processing/<stage>/YYYYMMDDTHHMMSSffffffZ.<stage>.md` | tracked stage report for each published calculation run under that collection alias |
 | `docs/reports/aggregates/*.md` | tracked rollups |
 | `docs/reports/INDEX.md` | reader-facing report-collections hub |
 
-The collection folder is keyed by the canonical alias used in the wizard dataset selector, not by the calculation run id. Historical stage identity comes from the canonical UTC timestamp token in the filename; the tracked publication lane does not use same-day numeric suffixes for reader-facing stage documents.
+The collection folder is keyed by the published collection alias resolved for the run. Historical stage identity comes from the canonical UTC timestamp token in the filename; the tracked publication lane does not use same-day numeric suffixes for reader-facing stage documents.
 
 If you only need the publication view, go to [`../../reports/INDEX.md`](../../reports/INDEX.md). If you need the direct non-wizard command forms, go to [`DS_OPERATIONS.md`](DS_OPERATIONS.md).
 

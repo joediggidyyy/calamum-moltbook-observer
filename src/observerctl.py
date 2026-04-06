@@ -1566,6 +1566,13 @@ def _runtime_baseline_monitor_status(max_age_sec: float = 90.0) -> Dict[str, Any
     pid = _read_pid(pid_path)
     pid_alive = _pid_alive(pid)
     state_doc = _load_json_file(_baseline_monitor_state_path(), {})
+    state_row = _load_state()
+    source = _normalize_source(str(state_doc.get('source', state_row.get('source', 'sim')) or 'sim'))
+    mode = str(state_doc.get('mode', state_row.get('mode', 'watch')) or 'watch').strip().lower()
+    if mode not in MODES:
+        mode = str(state_row.get('mode', 'watch') or 'watch').strip().lower()
+        if mode not in MODES:
+            mode = 'watch'
 
     if hb.get('status') == 'ok' and pid_alive:
         state = 'active'
@@ -1585,6 +1592,8 @@ def _runtime_baseline_monitor_status(max_age_sec: float = 90.0) -> Dict[str, Any
         'action': 'baseline-monitor-status',
         'summary': summary,
         'reason_codes': reason_codes,
+        'source': source,
+        'mode': mode,
         'runtime_label': 'baseline-monitor',
         'state': state,
         'heartbeat': hb,
@@ -1594,6 +1603,7 @@ def _runtime_baseline_monitor_status(max_age_sec: float = 90.0) -> Dict[str, Any
             'alive': pid_alive,
         },
         'monitor_state': state_doc,
+        'monitor_state_path': str(_baseline_monitor_state_path()).replace('\\', '/'),
     }
 
 
@@ -5040,6 +5050,353 @@ def _render_librarian_vault_human(packet: Dict[str, Any]) -> List[str]:
     return lines
 
 
+def _baseline_type_token(packet: Dict[str, Any]) -> str:
+    action = str(packet.get('action', '') or '').strip().lower()
+    token = str(packet.get('baseline_type', '') or '').strip().lower()
+    if token:
+        return token
+    if action == 'baseline-monitor-status':
+        return 'observer_monitor'
+    return ''
+
+
+def _baseline_type_label(packet: Dict[str, Any]) -> str:
+    token = _baseline_type_token(packet)
+    return {
+        'observer_runtime': 'observer runtime readiness',
+        'observer_monitor': 'baseline monitor runtime',
+        'filesystem_hash': 'filesystem snapshot',
+        'chunked_dynamic': 'chunked catalog view',
+    }.get(token, token.replace('_', ' '))
+
+
+def _baseline_scope_text(packet: Dict[str, Any]) -> str:
+    monitor_state = packet.get('monitor_state', {}) if isinstance(packet.get('monitor_state', {}), dict) else {}
+    source_value = str(packet.get('source', '') or monitor_state.get('source', '') or '').strip()
+    mode_value = str(packet.get('mode', '') or monitor_state.get('mode', '') or '').strip().lower()
+    source = _normalize_source(source_value) if source_value else ''
+    mode = mode_value if mode_value in MODES else ''
+    if source and mode:
+        return '{0} / {1}'.format(source, mode)
+    if source:
+        return source
+    if mode:
+        return mode
+    return ''
+
+
+def _baseline_heartbeat_text(heartbeat: Dict[str, Any]) -> str:
+    if not isinstance(heartbeat, dict) or not heartbeat:
+        return ''
+    status = str(heartbeat.get('status', '') or '').strip() or 'unknown'
+    age = heartbeat.get('age_seconds')
+    max_age = heartbeat.get('max_age_seconds')
+    if age not in ('', None) and max_age not in ('', None):
+        try:
+            return '{0} (age={1:.3f}s / max={2:.3f}s)'.format(status, float(age), float(max_age))
+        except (TypeError, ValueError):
+            return status
+    return status
+
+
+def _baseline_pid_text(pid: Dict[str, Any]) -> str:
+    if not isinstance(pid, dict) or not pid:
+        return ''
+    value = pid.get('value')
+    if value in ('', None):
+        return ''
+    return '{0} ({1})'.format(value, 'alive' if bool(pid.get('alive', False)) else 'stale')
+
+
+def _baseline_validation_cycle(packet: Dict[str, Any]) -> Dict[str, Any]:
+    current = packet.get('validation_cycle', {}) if isinstance(packet.get('validation_cycle', {}), dict) else {}
+    if current:
+        return dict(current)
+
+    monitor_state = packet.get('monitor_state', {}) if isinstance(packet.get('monitor_state', {}), dict) else {}
+    continuity = _load_monitor_continuity(monitor_state)
+    anchors = continuity.get('anchors', {}) if isinstance(continuity.get('anchors', {}), dict) else {}
+    packet_path = str(anchors.get('last_validation_cycle_packet_path', '') or '').strip()
+    cycle_path = Path(packet_path.replace('/', os.sep)) if packet_path else None
+    exists = bool(cycle_path and cycle_path.exists())
+    cycle_packet = _load_json_file(cycle_path, {}) if exists and cycle_path is not None else {}
+    return {
+        'event': str(anchors.get('last_validation_cycle_event', '') or cycle_packet.get('action', '') or '').strip(),
+        'decision': str(anchors.get('last_validation_cycle_decision', '') or cycle_packet.get('decision', '') or '').strip(),
+        'timestamp_utc': str(anchors.get('last_validation_cycle_at_utc', '') or cycle_packet.get('timestamp_utc', '') or '').strip(),
+        'packet_path': packet_path,
+        'exists': bool(exists),
+        'reason_codes': list(cycle_packet.get('reason_codes', [])) if isinstance(cycle_packet.get('reason_codes', []), list) else [],
+    }
+
+
+def _baseline_continuity(packet: Dict[str, Any]) -> Dict[str, Any]:
+    current = packet.get('continuity', {}) if isinstance(packet.get('continuity', {}), dict) else {}
+    if current:
+        return dict(current)
+    monitor_state = packet.get('monitor_state', {}) if isinstance(packet.get('monitor_state', {}), dict) else {}
+    return _load_monitor_continuity(monitor_state)
+
+
+def _baseline_contract_rows(packet: Dict[str, Any]) -> List[Tuple[str, str]]:
+    action = str(packet.get('action', '') or '').strip().lower()
+    token = _baseline_type_token(packet)
+    scope = _baseline_scope_text(packet)
+    rows: List[Tuple[str, str]] = []
+    if token == 'observer_runtime':
+        rows.append(('Integrity model', 'live monitor + validation-cycle receipt over chunked baseline graph evidence'))
+        rows.append(('Graph architecture', 'chunked resource_normal/resource_baseline segments + resource index + archive continuity'))
+        rows.append(('Continuity model', 'fresh_start / preserved / degraded anchors'))
+        rows.append(('Strictness', 'status keeps degraded continuity advisory' if action == 'baseline-status' else 'check treats degraded continuity fail-closed'))
+        rows.append(('Snapshot lane', 'use --baseline <path> for explicit filesystem-hash baselines'))
+    elif token == 'observer_monitor':
+        rows.append(('Integrity model', 'baseline monitor runtime + persisted continuity anchors'))
+        rows.append(('Graph architecture', 'joined by observerctl baseline status/check when readiness is evaluated against the chunked baseline graph'))
+    elif token == 'filesystem_hash':
+        rows.append(('Integrity model', 'explicit filesystem-hash snapshot'))
+        rows.append(('Activation', 'used only when --baseline <path> is supplied'))
+        rows.append(('Observer lane', 'bare baseline status/check still target live monitor + chunked baseline graph evidence'))
+    elif token == 'chunked_dynamic':
+        rows.append(('Integrity model', 'chunked baseline catalog view'))
+        rows.append(('Graph architecture', 'active catalog pointer over current chunked retained windows'))
+        rows.append(('Joined readiness', 'observerctl baseline status/check add live runtime + validation-cycle truth above the catalog view'))
+    if scope:
+        rows.insert(0, ('Scope', scope))
+    return rows
+
+
+def _render_baseline_statistics_rows(statistics: Dict[str, Any]) -> List[Tuple[str, str]]:
+    rows: List[Tuple[str, str]] = []
+    if not isinstance(statistics, dict):
+        return rows
+    preferred_keys = [
+        'file_count',
+        'files_checked',
+        'files_modified',
+        'files_missing',
+        'files_new',
+        'directory_count',
+        'max_files',
+    ]
+    seen = set()
+    for key in preferred_keys + sorted(statistics.keys()):
+        if key in seen or key not in statistics:
+            continue
+        seen.add(key)
+        value = statistics.get(key)
+        if value in ('', None, [], {}, ()):  # pragma: no branch - compact filter
+            continue
+        label = str(key).replace('_', ' ').strip().capitalize()
+        rows.append((label, str(value)))
+    return rows
+
+
+def _baseline_evidence_rows(packet: Dict[str, Any]) -> List[Tuple[str, str]]:
+    token = _baseline_type_token(packet)
+    rows: List[Tuple[str, str]] = []
+    validation_cycle = _baseline_validation_cycle(packet)
+    continuity = _baseline_continuity(packet)
+    anchors = continuity.get('anchors', {}) if isinstance(continuity.get('anchors', {}), dict) else {}
+
+    source = str(packet.get('source', '') or '').strip()
+    mode = str(packet.get('mode', '') or '').strip().lower()
+    if source and mode in MODES:
+        rows.append(('Resource index', _render_human_path_tail(str(_resource_index_path(_normalize_source(source), mode)).replace('\\', '/'))))
+        rows.append(('Evidence index', _render_human_path_tail(str(_evidence_index_path(_normalize_source(source), mode)).replace('\\', '/'))))
+
+    if token in ('observer_runtime', 'observer_monitor'):
+        rows.append(('Validation cycle', _render_human_path_tail(validation_cycle.get('packet_path', ''))))
+        rows.append(('Monitor state', _render_human_path_tail(packet.get('monitor_state_path', ''))))
+        rows.append(('Last baseline', _render_human_path_tail(anchors.get('last_baseline_packet_path', ''))))
+        rows.append(('Last analysis', _render_human_path_tail(anchors.get('last_analysis_packet_path', ''))))
+    elif token == 'filesystem_hash':
+        rows.append(('Baseline path', _render_human_path_tail(packet.get('baseline_path', ''))))
+    elif token == 'chunked_dynamic':
+        rows.append(('Catalog path', _render_human_path_tail(str(_baseline_catalog_path()).replace('\\', '/'))))
+
+    return [(label, value) for label, value in rows if str(value or '').strip()]
+
+
+def _render_baseline_guidance_lines(packet: Dict[str, Any]) -> List[str]:
+    action = str(packet.get('action', '') or '').strip().lower()
+    token = _baseline_type_token(packet)
+    decision = str(packet.get('decision', '') or '').strip().lower()
+    reasons = packet.get('reason_codes', []) if isinstance(packet.get('reason_codes', []), list) else []
+    advisories = packet.get('advisory_reason_codes', []) if isinstance(packet.get('advisory_reason_codes', []), list) else []
+
+    if token == 'filesystem_hash':
+        if decision == 'go':
+            return ['Next: use bare observerctl baseline status/check for the live observer lane, and keep --baseline <path> for explicit snapshot audits only.']
+        return ['Next: generate an explicit filesystem baseline with observerctl baseline generate --output <path> before retrying this snapshot lane.']
+
+    if token == 'chunked_dynamic':
+        return ['Next: treat this as the chunked catalog view; use bare observerctl baseline status/check when you want the joined runtime + validation-cycle reading over the same graph-backed baseline substrate.']
+
+    if action == 'baseline-monitor-status':
+        if decision == 'go':
+            return ['Next: run observerctl baseline status for the joined readiness view that evaluates the live monitor against the chunked baseline graph and latest validation-cycle receipt.']
+        return ['Next: start or repair the baseline monitor with observerctl baseline generate --start [--repair], then rerun monitor-status.']
+
+    if 'critical_check_failed:baseline_monitor_runtime_inactive' in reasons:
+        return ['Next: start or repair the baseline monitor, then rerun baseline status to republish live readiness from the chunked baseline graph lane.']
+    if 'critical_check_failed:baseline_validation_cycle_missing' in reasons:
+        return ['Next: emit a fresh validation-cycle receipt with observerctl baseline monitor-once or baseline ready before treating the chunked baseline graph as presentation-ready.']
+    if advisories:
+        return ['Next: review the degraded continuity details; baseline status keeps them advisory, while baseline check treats the same drift fail-closed.']
+    if action == 'baseline-check' and decision == 'go':
+        return ['Next: the strict baseline gate is clear; proceed to the next guarded transition or evidence step.']
+    return ['Next: keep bare baseline status/check on the observer runtime lane and reserve --baseline <path> for explicit filesystem snapshot comparisons.']
+
+
+def _render_baseline_human(packet: Dict[str, Any]) -> List[str]:
+    action = str(packet.get('action', '') or '').strip().lower()
+    token = _baseline_type_token(packet)
+    title = {
+        'baseline-status': 'Observer baseline status',
+        'baseline-check': 'Observer baseline check',
+        'baseline-monitor-status': 'Observer baseline monitor status',
+    }.get(action, 'Observer baseline')
+
+    lines: List[str] = [_style_section_title(title)]
+    ts = str(packet.get('timestamp_utc', '') or '').strip()
+    if ts:
+        lines.append('generated_at_utc: {0}'.format(ts))
+    decision = str(packet.get('decision', '') or '').strip().lower()
+    summary = str(packet.get('summary', '') or '').strip()
+    if decision or summary:
+        if summary:
+            lines.append('decision: {0} - {1}'.format(_style_decision_value(decision or 'no-go'), summary))
+        else:
+            lines.append('decision: {0}'.format(_style_decision_value(decision)))
+
+    summary_rows: List[Tuple[str, str]] = []
+    if token:
+        summary_rows.append(('Baseline type', _baseline_type_label(packet)))
+    if action == 'baseline-monitor-status':
+        summary_rows.append(('Runtime label', str(packet.get('runtime_label', '') or 'baseline-monitor')))
+        summary_rows.append(('State', str(packet.get('state', '') or 'unknown')))
+    _append_human_section(
+        lines,
+        'Summary',
+        _render_human_kv_rows(summary_rows, indent='  ', min_label_width=14, max_label_width=16),
+    )
+
+    _append_human_section(
+        lines,
+        'Contract',
+        _render_human_kv_rows(_baseline_contract_rows(packet), indent='  ', min_label_width=16, max_label_width=18),
+    )
+
+    if token in ('observer_runtime', 'observer_monitor'):
+        monitor_runtime = packet.get('monitor_runtime', {}) if isinstance(packet.get('monitor_runtime', {}), dict) else {}
+        heartbeat = monitor_runtime.get('heartbeat', {}) if isinstance(monitor_runtime.get('heartbeat', {}), dict) else {}
+        pid = monitor_runtime.get('pid', {}) if isinstance(monitor_runtime.get('pid', {}), dict) else {}
+        if token == 'observer_monitor':
+            heartbeat = packet.get('heartbeat', {}) if isinstance(packet.get('heartbeat', {}), dict) else heartbeat
+            pid = packet.get('pid', {}) if isinstance(packet.get('pid', {}), dict) else pid
+        _append_human_section(
+            lines,
+            'Runtime',
+            _render_human_kv_rows(
+                [
+                    ('State', str((monitor_runtime.get('state', '') if token == 'observer_runtime' else packet.get('state', '')) or 'unknown')),
+                    ('Decision', str((monitor_runtime.get('decision', '') if token == 'observer_runtime' else packet.get('decision', '')) or 'unknown')),
+                    ('Heartbeat', _baseline_heartbeat_text(heartbeat)),
+                    ('Monitor pid', _baseline_pid_text(pid)),
+                ],
+                indent='  ',
+                min_label_width=12,
+                max_label_width=14,
+            ),
+        )
+
+        continuity = _baseline_continuity(packet)
+        anchors = continuity.get('anchors', {}) if isinstance(continuity.get('anchors', {}), dict) else {}
+        _append_human_section(
+            lines,
+            'Continuity',
+            _render_human_kv_rows(
+                [
+                    ('State', str(continuity.get('state', '') or 'fresh_start')),
+                    ('Window', str(anchors.get('last_baseline_window_id', '') or '').strip()),
+                    ('Last event', str(anchors.get('last_validation_cycle_event', '') or '').strip()),
+                    ('Last cycle at', str(anchors.get('last_validation_cycle_at_utc', '') or '').strip()),
+                    ('Previous cycle', _render_human_path_tail(anchors.get('last_validation_cycle_packet_path', ''))),
+                    ('Previous baseline', _render_human_path_tail(anchors.get('last_baseline_packet_path', ''))),
+                    ('Previous analysis', _render_human_path_tail(anchors.get('last_analysis_packet_path', ''))),
+                    ('Detail codes', ', '.join(str(code) for code in list(continuity.get('detail_codes', []) or []) if str(code).strip())),
+                ],
+                indent='  ',
+                min_label_width=16,
+                max_label_width=18,
+            ),
+        )
+
+        validation_cycle = _baseline_validation_cycle(packet)
+        _append_human_section(
+            lines,
+            'Validation cycle',
+            _render_human_kv_rows(
+                [
+                    ('Exists', _yes_no_text(bool(validation_cycle.get('exists', False)))),
+                    ('Decision', str(validation_cycle.get('decision', '') or 'unknown')),
+                    ('Event', str(validation_cycle.get('event', '') or '').strip()),
+                    ('Published', str(validation_cycle.get('timestamp_utc', '') or '').strip()),
+                    ('Reason codes', ', '.join(str(code) for code in list(validation_cycle.get('reason_codes', []) or []) if str(code).strip())),
+                ],
+                indent='  ',
+                min_label_width=12,
+                max_label_width=14,
+            ),
+        )
+
+    if token == 'filesystem_hash':
+        _append_human_section(
+            lines,
+            'Statistics',
+            _render_human_kv_rows(
+                _render_baseline_statistics_rows(packet.get('statistics', {}) if isinstance(packet.get('statistics', {}), dict) else {}),
+                indent='  ',
+                min_label_width=14,
+                max_label_width=16,
+            ),
+        )
+
+    if token == 'chunked_dynamic':
+        _append_human_section(
+            lines,
+            'Chunked catalog',
+            _render_human_kv_rows(
+                [
+                    ('Active baseline', str(packet.get('active_baseline_id', '') or '').strip()),
+                    ('Exists', _yes_no_text(bool(packet.get('exists', False)))),
+                    ('Item status', str(packet.get('item_status', '') or '').strip()),
+                    ('Created', str(packet.get('created_at_utc', '') or '').strip()),
+                ],
+                indent='  ',
+                min_label_width=14,
+                max_label_width=16,
+            ),
+        )
+
+    _append_human_section(
+        lines,
+        'Evidence',
+        _render_human_kv_rows(_baseline_evidence_rows(packet), indent='  ', min_label_width=14, max_label_width=16),
+    )
+
+    reason_codes = packet.get('reason_codes', []) if isinstance(packet.get('reason_codes', []), list) else []
+    if reason_codes:
+        _append_human_section(lines, 'Reasons', ['  {0}'.format(reason) for reason in reason_codes])
+
+    advisory_reason_codes = packet.get('advisory_reason_codes', []) if isinstance(packet.get('advisory_reason_codes', []), list) else []
+    if advisory_reason_codes:
+        _append_human_section(lines, 'Advisories', ['  {0}'.format(reason) for reason in advisory_reason_codes])
+
+    _append_human_section(lines, 'Guidance', ['  {0}'.format(line) for line in _render_baseline_guidance_lines(packet)])
+    return lines
+
+
 def _render_ds_saved_heading(row: Dict[str, Any], include_index: bool = True) -> str:
     label = str(row.get('display_name', '') or row.get('entry_id', '') or 'saved item').strip()
     index_value = int(row.get('index', 0) or 0)
@@ -5543,6 +5900,8 @@ def _render_human_known_packet(packet: Dict[str, Any]) -> Optional[List[str]]:
     if not isinstance(packet, dict):
         return None
     action = str(packet.get('action', '') or '').strip().lower()
+    if action in ('baseline-status', 'baseline-check', 'baseline-monitor-status'):
+        return _render_baseline_human(packet)
     if action == 'runtime-status':
         return _render_runtime_status_human(packet)
     if action in ('ops-gate-check', 'health-quick', 'health-explain'):

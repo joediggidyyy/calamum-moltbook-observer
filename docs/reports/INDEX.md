@@ -1,11 +1,12 @@
 # Report Collections
 
 Tracked reports are rebuilt as human-facing collection packets derived from the canonical untracked DS run spine.
+Use this index to choose between synthesis, front-door packet routing, workflow-family rollups, threshold follow-through, and validation surfaces.
 Machine-readable authority remains outside `docs/reports/` and is referenced from these collection surfaces rather than duplicated here.
 
 ## Summary
 
-- Published runs: 10
+- Published runs: 2
 - Aggregate report: [AGGREGATE_REPORT.md](aggregates/AGGREGATE_REPORT.md)
 - Public run ledger: [PUBLIC_RUN_LEDGER.md](aggregates/PUBLIC_RUN_LEDGER.md)
 - Latest collections: [LATEST_COLLECTIONS.md](aggregates/LATEST_COLLECTIONS.md)
@@ -14,35 +15,38 @@ Machine-readable authority remains outside `docs/reports/` and is referenced fro
 - Generated-report reference: [GENERATED_REPORT_SURFACES.md](reference/GENERATED_REPORT_SURFACES.md)
 - Validation index: [validations/INDEX.md](validations/INDEX.md)
 
+## How to use this report family
+
+| Surface | Reader role | Open this when |
+|---|---|---|
+| `AGGREGATE_REPORT.md` | Flagship synthesis narrative | You need the strongest current packet-level conclusions first. |
+| `LATEST_COLLECTIONS.md` | Front-door collection routing | You want the fastest route into the current dated collection packets. |
+| `WORKFLOW_ROLLUP.md` | Workflow-family overview | You need to compare the latest build / train / evaluate / score packet families. |
+| `THRESHOLD_SUMMARY.md` | Threshold-bearing packet follow-through | You need evaluation-led threshold and guardrail context. |
+| `PUBLIC_RUN_LEDGER.md` | Runtime-safe population census | You need counts, current coverage, and publication-family composition. |
+| `GENERATED_REPORT_SURFACES.md` | Contract/reference surface | You need the tracked packet filesystem contract and fail-closed routing rules. |
+| `validations/INDEX.md` | Validation routing | You need public validation surfaces rather than collection packets. |
+
 ## Latest collection
 
-- Collection alias: `can-r7af3`
-- Run ID: `train_20260406T071840441671Z`
-- Workflow: train
-- Timestamp (UTC): 2026-04-06T07:21:18.262659Z
-- Collection packet: [20260406T072118262659Z.collection.md](collections/can-r7af3/collection/20260406T072118262659Z.collection.md)
-- Latest stage report: [20260406T072118262659Z.train.md](collections/can-r7af3/processing/train/20260406T072118262659Z.train.md)
+- Collection alias: `score_20260406T170017731886Z`
+- Run ID: `score_20260406T170017731886Z`
+- Workflow: score
+- Timestamp (UTC): 2026-04-06T17:00:30.764817Z
+- Why open it now: Score-stage packet with figure-backed anomaly-surface context.
+- Collection packet: [20260406T170030764817Z.collection.md](collections/score_20260406T170017731886Z/collection/20260406T170030764817Z.collection.md)
+- Latest stage report: [20260406T170030764817Z.score.md](collections/score_20260406T170017731886Z/processing/score/20260406T170030764817Z.score.md)
 
 ## Workflow latest
 
 | Workflow | Published runs | Collection alias | Latest run | Collection packet | Latest stage doc |
 |---|---:|---|---|---|---|
-| build | 6 | `build_20260406T023758094814Z` | `build_20260406T023758094814Z` | [collection packet](collections/build_20260406T023758094814Z/collection/20260406T023758115802Z.collection.md) | [20260406T023758115802Z.build.md](collections/build_20260406T023758094814Z/processing/build/20260406T023758115802Z.build.md) |
-| evaluate | 1 | `can-r7af3` | `evaluate_20260405T043000438719Z` | [collection packet](collections/can-r7af3/collection/20260405T043759419248Z.collection.md) | [20260405T043759419248Z.eval.md](collections/can-r7af3/processing/eval/20260405T043759419248Z.eval.md) |
-| score | 1 | `can-r7af3` | `score_20260405T044156917446Z` | [collection packet](collections/can-r7af3/collection/20260405T044605627549Z.collection.md) | [20260405T044605627549Z.score.md](collections/can-r7af3/processing/score/20260405T044605627549Z.score.md) |
-| train | 2 | `can-r7af3` | `train_20260406T071840441671Z` | [collection packet](collections/can-r7af3/collection/20260406T072118262659Z.collection.md) | [20260406T072118262659Z.train.md](collections/can-r7af3/processing/train/20260406T072118262659Z.train.md) |
+| score | 1 | `score_20260406T170017731886Z` | `score_20260406T170017731886Z` | [collection packet](collections/score_20260406T170017731886Z/collection/20260406T170030764817Z.collection.md) | [20260406T170030764817Z.score.md](collections/score_20260406T170017731886Z/processing/score/20260406T170030764817Z.score.md) |
+| train | 1 | `train_20260406T165940271708Z` | `train_20260406T165940271708Z` | [collection packet](collections/train_20260406T165940271708Z/collection/20260406T165945654317Z.collection.md) | [20260406T165945654317Z.train.md](collections/train_20260406T165940271708Z/processing/train/20260406T165945654317Z.train.md) |
 
 ## Recent collections
 
 | Timestamp (UTC) | Workflow | Collection alias | Run ID | Collection packet | Stage doc |
 |---|---|---|---|---|---|
-| 2026-04-06T07:21:18.262659Z | train | `can-r7af3` | `train_20260406T071840441671Z` | [collection packet](collections/can-r7af3/collection/20260406T072118262659Z.collection.md) | [20260406T072118262659Z.train.md](collections/can-r7af3/processing/train/20260406T072118262659Z.train.md) |
-| 2026-04-06T02:37:58.115802Z | build | `build_20260406T023758094814Z` | `build_20260406T023758094814Z` | [collection packet](collections/build_20260406T023758094814Z/collection/20260406T023758115802Z.collection.md) | [20260406T023758115802Z.build.md](collections/build_20260406T023758094814Z/processing/build/20260406T023758115802Z.build.md) |
-| 2026-04-06T02:37:56.987764Z | build | `build_20260406T023756969475Z` | `build_20260406T023756969475Z` | [collection packet](collections/build_20260406T023756969475Z/collection/20260406T023756987764Z.collection.md) | [20260406T023756987764Z.build.md](collections/build_20260406T023756969475Z/processing/build/20260406T023756987764Z.build.md) |
-| 2026-04-05T08:19:18.888509Z | build | `build_20260405T081918876049Z` | `build_20260405T081918876049Z` | [collection packet](collections/build_20260405T081918876049Z/collection/20260405T081918888509Z.collection.md) | [20260405T081918888509Z.build.md](collections/build_20260405T081918876049Z/processing/build/20260405T081918888509Z.build.md) |
-| 2026-04-05T08:19:18.074431Z | build | `build_20260405T081918058977Z` | `build_20260405T081918058977Z` | [collection packet](collections/build_20260405T081918058977Z/collection/20260405T081918074431Z.collection.md) | [20260405T081918074431Z.build.md](collections/build_20260405T081918058977Z/processing/build/20260405T081918074431Z.build.md) |
-| 2026-04-05T04:46:05.627549Z | score | `can-r7af3` | `score_20260405T044156917446Z` | [collection packet](collections/can-r7af3/collection/20260405T044605627549Z.collection.md) | [20260405T044605627549Z.score.md](collections/can-r7af3/processing/score/20260405T044605627549Z.score.md) |
-| 2026-04-05T04:37:59.419248Z | evaluate | `can-r7af3` | `evaluate_20260405T043000438719Z` | [collection packet](collections/can-r7af3/collection/20260405T043759419248Z.collection.md) | [20260405T043759419248Z.eval.md](collections/can-r7af3/processing/eval/20260405T043759419248Z.eval.md) |
-| 2026-04-05T04:25:05.512273Z | train | `can-r7af3` | `train_20260405T042311073706Z` | [collection packet](collections/can-r7af3/collection/20260405T042505512273Z.collection.md) | [20260405T042505512273Z.train.md](collections/can-r7af3/processing/train/20260405T042505512273Z.train.md) |
-| 2026-04-05T04:22:01.056997Z | build | `can-r7af3` | `build_20260405T042200983848Z` | [collection packet](collections/can-r7af3/collection/20260405T042201056997Z.collection.md) | [20260405T042201056997Z.build.md](collections/can-r7af3/processing/build/20260405T042201056997Z.build.md) |
-| 2026-04-05T04:20:49.878075Z | build | `can-r305f` | `build_20260405T042049802980Z` | [collection packet](collections/can-r305f/collection/20260405T042049878075Z.collection.md) | [20260405T042049878075Z.build.md](collections/can-r305f/processing/build/20260405T042049878075Z.build.md) |
+| 2026-04-06T17:00:30.764817Z | score | `score_20260406T170017731886Z` | `score_20260406T170017731886Z` | [collection packet](collections/score_20260406T170017731886Z/collection/20260406T170030764817Z.collection.md) | [20260406T170030764817Z.score.md](collections/score_20260406T170017731886Z/processing/score/20260406T170030764817Z.score.md) |
+| 2026-04-06T16:59:45.654317Z | train | `train_20260406T165940271708Z` | `train_20260406T165940271708Z` | [collection packet](collections/train_20260406T165940271708Z/collection/20260406T165945654317Z.collection.md) | [20260406T165945654317Z.train.md](collections/train_20260406T165940271708Z/processing/train/20260406T165945654317Z.train.md) |

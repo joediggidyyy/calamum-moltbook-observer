@@ -77,6 +77,7 @@ WORKFLOW_NEXT_STEP_HINTS = {
     'demo': 'Use the machine-readable companions and listed artifacts to drill into the stage-specific outputs that the composite demo chain produced.',
     'pipeline': 'Use the machine-readable companions and listed artifacts to drill into the stage-specific outputs that the composite pipeline produced.',
 }
+STAGE_WORKFLOWS = {'build', 'train', 'evaluate', 'score'}
 PACKET_RESULT_EXCLUDED_FIELDS = {
     'timestamp_utc',
     'runtime_cli_surface',
@@ -303,6 +304,13 @@ def _looks_like_path(text: str) -> bool:
 
 def _report_markdown(report_payload: Mapping[str, Any], *, project_root: Path, report_md_path: Path) -> str:
     workflow = str(report_payload.get('workflow', 'run'))
+    if workflow in STAGE_WORKFLOWS:
+        return _stage_report_markdown(report_payload, project_root=project_root, report_md_path=report_md_path)
+    return _composite_report_markdown(report_payload, project_root=project_root, report_md_path=report_md_path)
+
+
+def _composite_report_markdown(report_payload: Mapping[str, Any], *, project_root: Path, report_md_path: Path) -> str:
+    workflow = str(report_payload.get('workflow', 'run'))
     title = WORKFLOW_TITLES.get(workflow, workflow.replace('-', ' ').title())
     packet_role = WORKFLOW_PACKET_ROLES.get(workflow, 'analysis packet')
     result_payload = report_payload.get('result', {}) if isinstance(report_payload.get('result', {}), MappingABC) else {}
@@ -374,6 +382,371 @@ def _report_markdown(report_payload: Mapping[str, Any], *, project_root: Path, r
         report_md_path=report_md_path,
     )
     return '\n'.join(lines).rstrip() + '\n'
+
+
+def _stage_report_markdown(report_payload: Mapping[str, Any], *, project_root: Path, report_md_path: Path) -> str:
+    workflow = str(report_payload.get('workflow', 'run'))
+    title = WORKFLOW_TITLES.get(workflow, workflow.replace('-', ' ').title())
+    packet_role = WORKFLOW_PACKET_ROLES.get(workflow, 'analysis packet')
+    result_payload = report_payload.get('result', {}) if isinstance(report_payload.get('result', {}), MappingABC) else {}
+    decision = str(report_payload.get('decision', '') or '').strip()
+    runtime_cli_surface = str(report_payload.get('runtime_cli_surface', '') or '').strip()
+    command_path = str(report_payload.get('command_path', '') or '').strip()
+    summary = str(report_payload.get('summary', '') or '').strip()
+    collection_alias = str(report_payload.get('collection_alias', '') or '').strip()
+    lines = [
+        '# {0} packet — {1}'.format(title, str(report_payload.get('run_id', ''))),
+        '',
+        '**Decision**: `{0}`'.format(decision or 'unknown'),
+        '**Workflow**: `{0}`'.format(workflow),
+        '**Created (UTC)**: `{0}`'.format(str(report_payload.get('timestamp_utc', ''))),
+    ]
+    if collection_alias:
+        lines.append('**Collection alias**: `{0}`'.format(collection_alias))
+    if runtime_cli_surface:
+        lines.append('**Runtime CLI surface**: `{0}`'.format(runtime_cli_surface))
+    if command_path:
+        lines.append('**Command path**: `{0}`'.format(command_path))
+    lines.extend([
+        '',
+        '## Executive summary',
+        '',
+        summary or 'No summary was recorded for this run.',
+        '',
+    ])
+    _append_narrative_section(lines, 'Stage purpose', _workflow_purpose_text(workflow, collection_alias))
+    _append_scalar_table(
+        lines,
+        'Stage identity',
+        {
+            'collection_alias': collection_alias,
+            'run_id': report_payload.get('run_id', ''),
+            'workflow': workflow,
+            'packet_role': packet_role,
+            'decision': decision,
+            'created_utc': report_payload.get('timestamp_utc', ''),
+        },
+    )
+    _append_bullet_section(lines, 'Inputs used', _workflow_input_items(workflow, report_payload))
+    _append_narrative_section(lines, 'Method summary', _workflow_method_summary_text(workflow, report_payload, result_payload))
+    _append_stage_key_results(lines, workflow, report_payload, result_payload)
+    _append_narrative_section(lines, 'Interpretation', _workflow_interpretation_text(workflow, report_payload, result_payload))
+    _append_stage_visual_surfaces(lines, workflow, result_payload, project_root=project_root, report_md_path=report_md_path)
+    _append_bullet_section(lines, 'Risks, limits, and non-claims', _workflow_limit_items(workflow, decision, result_payload))
+    _append_narrative_section(lines, 'What follows from this stage', _workflow_stage_handoff_text(workflow, report_payload, result_payload))
+    _append_related_surfaces_section(lines, report_payload, project_root=project_root, report_md_path=report_md_path)
+    _append_provenance_section(lines, report_payload.get('lineage', {}))
+    return '\n'.join(lines).rstrip() + '\n'
+
+
+def _workflow_input_items(workflow: str, report_payload: Mapping[str, Any]) -> list[str]:
+    artifacts = report_payload.get('artifacts', {}) if isinstance(report_payload.get('artifacts', {}), MappingABC) else {}
+    lineage = report_payload.get('lineage', {}) if isinstance(report_payload.get('lineage', {}), MappingABC) else {}
+    result_payload = report_payload.get('result', {}) if isinstance(report_payload.get('result', {}), MappingABC) else {}
+    thresholding = result_payload.get('thresholding', {}) if isinstance(result_payload.get('thresholding', {}), MappingABC) else {}
+    items: list[str] = []
+
+    if workflow == 'build':
+        if _has_any_value(artifacts, 'dataset_manifest', 'features_csv', 'labels_csv'):
+            items.append('The build stage uses the run-local dataset materialization surfaces that define the feature bundle, any available labels, and the current analysis-ready handoff.')
+        if lineage:
+            items.append('Upstream lineage metadata remains attached so later stages can trace the dataset bundle back to its approved source surfaces without treating this Markdown packet as the canonical ledger.')
+    elif workflow == 'train':
+        if _has_any_value(artifacts, 'dataset_manifest', 'features_csv', 'labels_csv'):
+            items.append('The training stage consumes the published dataset bundle rather than an ad hoc sample so model custody stays tied to the same dataset contract.')
+        if _has_any_value(artifacts, 'model_path', 'model_pickle', 'train_manifest', 'metrics_path'):
+            items.append('The primary training outputs are the model artifact, the train-manifest companion, and any emitted metrics surface recorded for the run.')
+    elif workflow == 'evaluate':
+        if _has_any_value(artifacts, 'dataset_manifest', 'features_csv', 'labels_csv', 'run_json', 'run_md'):
+            items.append('The evaluation stage uses the run-local dataset and evaluation companions that describe how the current operating threshold was selected and recorded.')
+        if _has_any_value(artifacts, 'model_path', 'model_pickle', 'resolved_model_path'):
+            items.append('A trained model reference is required so the threshold posture is tied to the same model lineage that the downstream score packet will use.')
+    elif workflow == 'score':
+        if _has_any_value(artifacts, 'scores_csv') or _has_any_value(thresholding, 'scores_csv'):
+            items.append('The score stage is anchored to the full score surface so the packet can explain ordering and review posture across the complete scored set instead of a narrow sample.')
+        if _has_any_value(artifacts, 'resolved_model_path', 'model_path', 'model_pickle'):
+            items.append('A resolved trained-model reference is retained so the score surface can be read as a direct descendant of the published training handoff.')
+        if _has_any_value(thresholding, 'report_md', 'report_json', 'threshold'):
+            items.append('Threshold context remains paired to the score surface so the reader can connect score ordering to the downstream review boundary without blurring the score and evaluate roles.')
+
+    if not items:
+        items.append('Use the related surfaces and provenance sections below to move from the human-facing packet into the machine-readable companions for this run.')
+    return items
+
+
+def _workflow_method_summary_text(workflow: str, report_payload: Mapping[str, Any], result_payload: Mapping[str, Any]) -> str:
+    command_path = str(report_payload.get('command_path', '') or '').strip() or 'the active observerctl surface'
+    if workflow == 'build':
+        return 'For this run, `{0}` materialized the current dataset bundle into a reusable run-local handoff. The packet focuses on what was built, how the dataset contract was preserved, and whether the resulting bundle is ready for downstream model work.'.format(command_path)
+    if workflow == 'train':
+        return 'For this run, `{0}` consumed the current dataset bundle and wrote the trained-model handoff surfaces that downstream evaluation and scoring will read. The packet emphasizes lineage continuity and fit-posture truth rather than pretending that artifact publication alone proves deployment readiness.'.format(command_path)
+    if workflow == 'evaluate':
+        return 'For this run, `{0}` translated the current model response surface into threshold posture, guardrail context, and review-volume evidence. The packet stays focused on how the operating point was selected and what that choice means for the paired score surface.'.format(command_path)
+    if workflow == 'score':
+        score_column = _first_present(result_payload, 'score_column') or _first_present(
+            result_payload.get('thresholding', {}) if isinstance(result_payload.get('thresholding', {}), MappingABC) else {},
+            'score_column',
+        )
+        if score_column not in ('', None):
+            return 'For this run, `{0}` scored the available records into `{1}` and routed any declared figures through the shared visual registry. The packet is meant to explain how the score surface should be read, not to turn the scored set into an unsupported semantic verdict.'.format(command_path, str(score_column))
+        return 'For this run, `{0}` produced the current score surface and routed any declared figures through the shared visual registry. The packet is meant to explain how the ordering should be read, not to turn the scored set into an unsupported semantic verdict.'.format(command_path)
+    return 'This packet summarizes the current run in reader-facing language while leaving machine-readable authority in the companion JSON surfaces.'
+
+
+def _append_stage_key_results(
+    lines: list[str],
+    workflow: str,
+    report_payload: Mapping[str, Any],
+    result_payload: Mapping[str, Any],
+) -> None:
+    lines.append('## Key results')
+    lines.append('')
+    lines.append('This section highlights the strongest run-level evidence for the current stage without duplicating the full machine-readable payload.')
+    lines.append('')
+
+    stage_summary = _workflow_key_results_mapping(workflow, report_payload, result_payload)
+    counts = result_payload.get('counts', {}) if isinstance(result_payload.get('counts', {}), MappingABC) else {}
+    metrics = result_payload.get('metrics', {}) if isinstance(result_payload.get('metrics', {}), MappingABC) else {}
+    thresholding = result_payload.get('thresholding', {}) if isinstance(result_payload.get('thresholding', {}), MappingABC) else {}
+    reason_codes = result_payload.get('reason_codes', [])
+
+    _append_key_value_table(lines, 'Stage summary', stage_summary, key_label='Field')
+    _append_horizontal_value_table(lines, 'Count evidence', counts)
+    _append_key_value_table(lines, 'Metric evidence', metrics, key_label='Metric')
+    _append_key_value_table(lines, 'Threshold posture', thresholding, key_label='Field', code_values=True)
+    _append_reason_codes_section(lines, reason_codes)
+
+
+def _workflow_key_results_mapping(
+    workflow: str,
+    report_payload: Mapping[str, Any],
+    result_payload: Mapping[str, Any],
+) -> Dict[str, Any]:
+    counts = result_payload.get('counts', {}) if isinstance(result_payload.get('counts', {}), MappingABC) else {}
+    metrics = result_payload.get('metrics', {}) if isinstance(result_payload.get('metrics', {}), MappingABC) else {}
+    thresholding = result_payload.get('thresholding', {}) if isinstance(result_payload.get('thresholding', {}), MappingABC) else {}
+    visuals = result_payload.get('visuals', {}) if isinstance(result_payload.get('visuals', {}), MappingABC) else {}
+    context = report_payload.get('context', {}) if isinstance(report_payload.get('context', {}), MappingABC) else {}
+    mapping: Dict[str, Any] = {}
+
+    if workflow == 'build':
+        _maybe_add(mapping, 'records_built', _first_present(result_payload, 'records_built') or _first_present(counts, 'records_built'))
+        _maybe_add(mapping, 'feature_columns', _first_present(result_payload, 'feature_columns'))
+        _maybe_add(mapping, 'labels_present', _first_present(result_payload, 'has_labels'))
+        _maybe_add(mapping, 'dataset_seed', _first_present(context, 'dataset_seed', 'seed'))
+    elif workflow == 'train':
+        _maybe_add(mapping, 'model_type', _first_present(result_payload, 'model_type'))
+        _maybe_add(mapping, 'feature_columns', _first_present(result_payload, 'feature_columns'))
+        _maybe_add(mapping, 'labels_present', _first_present(result_payload, 'has_labels'))
+        _maybe_add(mapping, 'metrics_emitted', _nonempty_mapping_count(metrics), allow_empty_zero=True)
+        _maybe_add(mapping, 'figure_count', int(visuals.get('figure_count', 0) or 0), allow_empty_zero=True)
+    elif workflow == 'evaluate':
+        _maybe_add(mapping, 'records_evaluated', _first_present(thresholding, 'records_evaluated') or _first_present(result_payload, 'records_evaluated'))
+        _maybe_add(mapping, 'flagged_records', _first_present(thresholding, 'flagged_records') or _first_present(result_payload, 'flagged_records'))
+        _maybe_add(mapping, 'threshold', _first_present(thresholding, 'threshold') or _first_present(result_payload, 'threshold'))
+        _maybe_add(mapping, 'target_fpr', _first_present(thresholding, 'target_fpr') or _first_present(context, 'max_fpr') or _first_present(result_payload, 'max_fpr'))
+        _maybe_add(mapping, 'actual_fpr', _first_present(thresholding, 'actual_fpr'))
+        _maybe_add(mapping, 'anomaly_direction', _first_present(thresholding, 'anomaly_direction') or _first_present(result_payload, 'anomaly_direction'))
+        _maybe_add(mapping, 'score_column', _first_present(thresholding, 'score_column') or _first_present(result_payload, 'score_column'))
+        _maybe_add(mapping, 'figure_count', int(visuals.get('figure_count', 0) or 0), allow_empty_zero=True)
+    elif workflow == 'score':
+        _maybe_add(mapping, 'records_scored', _first_present(thresholding, 'records_scored') or _first_present(result_payload, 'records_scored'))
+        _maybe_add(mapping, 'score_column', _first_present(result_payload, 'score_column') or _first_present(thresholding, 'score_column'))
+        _maybe_add(mapping, 'anomaly_direction', _first_present(result_payload, 'anomaly_direction') or _first_present(thresholding, 'anomaly_direction'))
+        _maybe_add(mapping, 'paired_threshold', _first_present(thresholding, 'threshold'))
+        _maybe_add(mapping, 'figure_count', int(visuals.get('figure_count', 0) or 0), allow_empty_zero=True)
+
+    return mapping
+
+
+def _workflow_interpretation_text(
+    workflow: str,
+    report_payload: Mapping[str, Any],
+    result_payload: Mapping[str, Any],
+) -> str:
+    thresholding = result_payload.get('thresholding', {}) if isinstance(result_payload.get('thresholding', {}), MappingABC) else {}
+    visuals = result_payload.get('visuals', {}) if isinstance(result_payload.get('visuals', {}), MappingABC) else {}
+    counts = result_payload.get('counts', {}) if isinstance(result_payload.get('counts', {}), MappingABC) else {}
+    metrics = result_payload.get('metrics', {}) if isinstance(result_payload.get('metrics', {}), MappingABC) else {}
+    figure_count = int(visuals.get('figure_count', 0) or 0)
+    has_labels = result_payload.get('has_labels')
+
+    if workflow == 'build':
+        records_built = _first_present(result_payload, 'records_built') or _first_present(counts, 'records_built')
+        parts = ['This stage should be read as dataset materialization rather than model judgment.']
+        if records_built not in ('', None):
+            parts.append('It establishes a reusable dataset handoff for `{0}` records, which is the foundation that later training, evaluation, and scoring packets will inherit.'.format(_format_countish(records_built)))
+        if has_labels is False:
+            parts.append('Because labels are absent, downstream evaluation and score packets should be interpreted as review-posture evidence rather than labeled performance proof.')
+        parts.append('The main reader value is custody and reproducibility: the dataset contract is explicit, reusable, and ready for the next stage in the reporting spine.')
+        return ' '.join(parts)
+
+    if workflow == 'train':
+        model_type = _first_present(result_payload, 'model_type')
+        parts = ['This stage should be read as a model-publication handoff rather than as the final word on model quality.']
+        if model_type not in ('', None):
+            parts.append('The reported model type is `{0}`, which matters mainly as context for how the downstream evaluation and score surfaces should be interpreted.'.format(str(model_type)))
+        if _nonempty_mapping_count(metrics) == 0 and figure_count == 0:
+            parts.append('The current run records artifact custody more strongly than fit diagnostics, so the packet stays explicit about the absence of richer training metrics or visual posture.')
+        elif figure_count > 0:
+            parts.append('Declared training figures are present, which helps translate model posture into reader-facing evidence instead of leaving the packet as a pure artifact ledger.')
+        else:
+            parts.append('Metric evidence is available, but the packet should still be paired with downstream evaluation before it is treated as a readiness signal.')
+        return ' '.join(parts)
+
+    if workflow == 'evaluate':
+        threshold = _first_present(thresholding, 'threshold') or _first_present(result_payload, 'threshold')
+        flagged_records = _first_present(thresholding, 'flagged_records') or _first_present(result_payload, 'flagged_records')
+        total_records = _first_present(thresholding, 'records_evaluated', 'records_scored') or _first_present(result_payload, 'records_evaluated', 'records_scored')
+        parts = ['This stage defines the operating threshold and review burden for the paired score surface.']
+        if threshold not in ('', None):
+            parts.append('The current operating point is recorded at `{0}`.'.format(_format_countish(threshold)))
+        if flagged_records not in ('', None) and total_records not in ('', None):
+            parts.append('That selection yields `{0}` flagged records out of `{1}` evaluated records, which keeps the review volume concrete rather than abstract.'.format(_format_countish(flagged_records), _format_countish(total_records)))
+        if has_labels is False:
+            parts.append('Because labels are absent, threshold constraints in this packet should be read as operational guardrails rather than as verified labeled error rates.')
+        if figure_count > 0:
+            parts.append('Declared figures anchor the threshold story in visible evidence instead of leaving the operating point buried in tables alone.')
+        return ' '.join(parts)
+
+    if workflow == 'score':
+        records_scored = _first_present(thresholding, 'records_scored') or _first_present(result_payload, 'records_scored')
+        anomaly_direction = _first_present(result_payload, 'anomaly_direction') or _first_present(thresholding, 'anomaly_direction')
+        parts = ['This stage exposes the score surface rather than making a semantic case judgment about the ranked records.']
+        if records_scored not in ('', None):
+            parts.append('The packet covers `{0}` scored records, which makes the ordering legible across the full scored set rather than only through a narrow flagged slice.'.format(_format_countish(records_scored)))
+        if anomaly_direction not in ('', None):
+            parts.append('The anomaly direction remains `{0}`, so the reader should interpret the review-relevant edge accordingly.'.format(str(anomaly_direction)))
+        if figure_count > 0:
+            parts.append('Declared visual evidence is present, which helps the reader connect the distribution shape to any paired threshold context without confusing score output with final review disposition.')
+        else:
+            parts.append('No declared score figure is present, so any threshold interpretation should stay anchored to the paired evaluation or aggregate surfaces rather than being inferred from absent visuals.')
+        return ' '.join(parts)
+
+    return _workflow_evidence_summary_text(workflow, str(report_payload.get('decision', '') or ''), result_payload)
+
+
+def _append_stage_visual_surfaces(
+    lines: list[str],
+    workflow: str,
+    result_payload: Mapping[str, Any],
+    *,
+    project_root: Path,
+    report_md_path: Path,
+) -> None:
+    visuals = result_payload.get('visuals', {}) if isinstance(result_payload.get('visuals', {}), MappingABC) else {}
+    figures = list(visuals.get('figures', []) or []) if isinstance(visuals, MappingABC) else []
+
+    lines.append('## Visual surfaces')
+    lines.append('')
+    if not figures:
+        lines.append(_workflow_missing_visual_note(workflow, result_payload))
+        lines.append('')
+        return
+
+    lines.append('These figures are declared by the packet itself, so the visual evidence stays tied to the same run contract as the narrative summary and companion JSON surfaces.')
+    lines.append('')
+    visual_summary = {
+        'anomaly_direction': str(visuals.get('anomaly_direction', '') or '').strip(),
+        'score_column': str(visuals.get('score_column', '') or '').strip(),
+        'figure_count': int(visuals.get('figure_count', len(figures)) or len(figures)),
+    }
+    _append_key_value_table(lines, 'Visual summary', visual_summary, key_label='Field')
+    for figure in figures:
+        if not isinstance(figure, MappingABC):
+            continue
+        title = str(figure.get('title', '') or figure.get('id', '') or 'Figure').strip()
+        caption = str(figure.get('caption', '') or '').strip()
+        rel_path = _markdown_relative_path(report_md_path, project_root, figure.get('path'))
+        lines.append('### {0}'.format(title))
+        lines.append('')
+        if caption:
+            lines.append(caption)
+            lines.append('')
+        if rel_path:
+            lines.append('![{0}]({1})'.format(title, rel_path))
+            lines.append('')
+
+
+def _workflow_missing_visual_note(workflow: str, result_payload: Mapping[str, Any]) -> str:
+    if workflow == 'train':
+        return 'No declared figures were emitted for this packet. Treat that as an honest reporting gap: the current training lane publishes artifact custody more strongly than plot-level model posture, so downstream evaluation should carry more of the explanatory burden.'
+    if workflow == 'build':
+        return 'No declared figures were emitted for this packet. The build stage can still be read through dataset counts and lineage continuity, but this packet does not pretend that a plot-backed dataset profile was published when it was not.'
+    if workflow == 'evaluate':
+        return 'No declared figures were emitted for this packet. That absence should be read as a current visualization gap rather than as evidence that the threshold posture no longer needs explicit visual support.'
+    if workflow == 'score':
+        return 'No declared figures were emitted for this packet. Any threshold interpretation should therefore remain anchored to the paired evaluation or aggregate surfaces instead of being inferred from an absent score figure.'
+    return 'No declared figures were emitted for this packet, so the reader should treat the visual story as incomplete rather than assuming that a figure exists somewhere off-page.'
+
+
+def _workflow_stage_handoff_text(
+    workflow: str,
+    report_payload: Mapping[str, Any],
+    result_payload: Mapping[str, Any],
+) -> str:
+    decision = str(report_payload.get('decision', '') or '').strip().lower()
+    if decision and decision != 'go':
+        return 'The packet is not in a final `go` state, so downstream interpretation should remain conditional on the cited guardrails and the machine-readable companions.'
+
+    base = WORKFLOW_NEXT_STEP_HINTS.get(
+        workflow,
+        'Use the related surfaces below to move from this narrative packet into the next workflow handoff or the machine-readable companions.',
+    )
+    if workflow == 'train':
+        return base + ' The next useful read is whichever evaluation or scoring surface turns the published model artifact into observable downstream behavior.'
+    if workflow == 'score':
+        thresholding = result_payload.get('thresholding', {}) if isinstance(result_payload.get('thresholding', {}), MappingABC) else {}
+        if _has_any_value(thresholding, 'threshold', 'report_md', 'report_json'):
+            return base + ' Keep the paired threshold surface nearby so the score distribution is not mistaken for a standalone flagged-case decision.'
+    return base
+
+
+def _append_related_surfaces_section(
+    lines: list[str],
+    report_payload: Mapping[str, Any],
+    *,
+    project_root: Path,
+    report_md_path: Path,
+) -> None:
+    items = _workflow_next_step_items(report_payload, project_root=project_root, report_md_path=report_md_path)
+    lines.append('## Related surfaces')
+    lines.append('')
+    lines.append('Use these companion surfaces when you need the machine-readable evidence or the next useful route in the reporting spine.')
+    lines.append('')
+    if not items:
+        lines.append('- Inspect `report.json` and `manifest.json` for the machine-readable companion surfaces.')
+        lines.append('')
+        return
+    for item in items:
+        lines.append('- {0}'.format(item))
+    lines.append('')
+
+
+def _has_any_value(mapping: Mapping[str, Any], *keys: str) -> bool:
+    return _first_present(mapping, *keys) not in ('', None)
+
+
+def _first_present(mapping: Mapping[str, Any], *keys: str) -> Any:
+    for key in keys:
+        value = mapping.get(key)
+        if value in ('', None, [], {}, ()):
+            continue
+        return value
+    return None
+
+
+def _maybe_add(mapping: Dict[str, Any], key: str, value: Any, *, allow_empty_zero: bool = False) -> None:
+    if allow_empty_zero and value == 0:
+        mapping[key] = value
+        return
+    if value in ('', None, [], {}, ()):
+        return
+    mapping[key] = value
+
+
+def _nonempty_mapping_count(mapping: Mapping[str, Any]) -> int:
+    return len([value for value in mapping.values() if value not in ('', None, [], {}, ())])
 
 
 def _append_narrative_section(lines: list[str], title: str, body: str) -> None:
