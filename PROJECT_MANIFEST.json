@@ -34,6 +34,30 @@
       "src/deployment/secure_run.ps1"
     ]
   },
+  "layout": {
+    "tracked_roots": [
+      "assets/",
+      "deployment/",
+      "docs/",
+      "semantics_staging/",
+      "src/",
+      "template_library/",
+      "tools/"
+    ],
+    "ignored_roots": [
+      ".agent_session/",
+      "deliverables/",
+      "demo_output/",
+      "jobs/",
+      "local_untracked/",
+      "logs/",
+      "planning/",
+      "questframes/",
+      "queststacks/",
+      "src/.agent_session/",
+      "src/logs/"
+    ]
+  },
   "public_reports": [
     "docs/reports/INDEX.md",
     "docs/reports/aggregates/AGGREGATE_REPORT.md",
@@ -42,7 +66,9 @@
     "docs/reports/aggregates/WORKFLOW_ROLLUP.md",
     "docs/reports/aggregates/THRESHOLD_SUMMARY.md",
     "docs/reports/reference/GENERATED_REPORT_SURFACES.md",
-    "docs/reports/validations/INDEX.md"
+    "docs/reports/validations/INDEX.md",
+    "docs/reports/validations/APEXLAB_REFERENCE_VALIDATION_REPORT_20260324.md",
+    "docs/reports/validations/APEXLAB_REFERENCE_VALIDATION_REPORT_20260324.html"
   ],
   "public_manuals": [
     "docs/manuals/INDEX.md",

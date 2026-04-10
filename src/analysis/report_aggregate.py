@@ -47,18 +47,128 @@ _EPHEMERAL_RUN_ROOT_MARKERS = (
 _NON_PUBLISHABLE_WORKFLOWS = {'demo'}
 
 
-def _is_ephemeral_run_root(run_root: str) -> bool:
-    """Return True if a run-root path is from an ephemeral/test context and should be excluded from selector surfaces."""
-    if not run_root:
+def _is_ephemeral_path_ref(path_ref: Any) -> bool:
+    text = str(path_ref or '').strip()
+    if not text:
         return False
-    normalized = run_root.replace('\\', '/')
+    normalized = text.replace('\\', '/')
     return any(marker.replace('\\', '/') in normalized for marker in _EPHEMERAL_RUN_ROOT_MARKERS)
 
 
-def _reset_publication_root(publication_root: Path) -> None:
+def _is_ephemeral_run_root(run_root: str) -> bool:
+    """Return True if a run-root path is from an ephemeral/test context and should be excluded from selector surfaces."""
+    return _is_ephemeral_path_ref(run_root)
+
+
+def _dataset_manifest_refs(manifest_payload: Mapping[str, Any]) -> List[str]:
+    refs: List[str] = []
+    seen: set[str] = set()
+    candidate_containers = [
+        manifest_payload,
+        manifest_payload.get('context', {}) if isinstance(manifest_payload.get('context', {}), dict) else {},
+        manifest_payload.get('lineage', {}) if isinstance(manifest_payload.get('lineage', {}), dict) else {},
+        manifest_payload.get('artifacts', {}) if isinstance(manifest_payload.get('artifacts', {}), dict) else {},
+    ]
+    for container in candidate_containers:
+        ref = str(container.get('dataset_manifest', '') or '').strip()
+        if not ref or ref in seen:
+            continue
+        seen.add(ref)
+        refs.append(ref)
+    return refs
+
+
+def _manifest_collection_alias(manifest_payload: Mapping[str, Any]) -> str:
+    for container in (
+        manifest_payload,
+        manifest_payload.get('context', {}) if isinstance(manifest_payload.get('context', {}), dict) else {},
+        manifest_payload.get('lineage', {}) if isinstance(manifest_payload.get('lineage', {}), dict) else {},
+    ):
+        alias = str(container.get('collection_alias', '') or container.get('dataset_alias', '') or '').strip()
+        if alias:
+            return sanitize_run_id(alias) or ''
+    return ''
+
+
+def _collection_identity_required(manifest_payload: Mapping[str, Any]) -> bool:
+    workflow = canonical_ds_workflow_name(str(manifest_payload.get('workflow', '') or '').strip())
+    if workflow in _NON_PUBLISHABLE_WORKFLOWS:
+        return False
+    decision = str(manifest_payload.get('decision', '') or '').strip().lower()
+    if decision != 'go':
+        return False
+    return str(manifest_payload.get('run_root_policy', '') or '').strip().lower() == 'canonical'
+
+
+def _publication_control_state_default() -> Dict[str, Any]:
+    return {
+        'schema_version': '1.0',
+        'family_id': 'ds_publication_control',
+        'republish_required': False,
+        'reason': '',
+        'updated_at_utc': utc_now_iso(),
+    }
+
+
+def _load_publication_control_state(path: Path) -> Dict[str, Any]:
+    state = _publication_control_state_default()
+    if path.exists():
+        try:
+            payload = json.loads(path.read_text(encoding='utf-8'))
+        except Exception:
+            payload = {}
+        if isinstance(payload, dict):
+            state.update(payload)
+    state['republish_required'] = bool(state.get('republish_required', False))
+    state['reason'] = str(state.get('reason', '') or '').strip()
+    state['updated_at_utc'] = str(state.get('updated_at_utc', '') or '').strip() or utc_now_iso()
+    return state
+
+
+def _save_publication_control_state(path: Path, *, republish_required: bool, reason: str = '') -> Dict[str, Any]:
+    state = _publication_control_state_default()
+    state['republish_required'] = bool(republish_required)
+    state['reason'] = str(reason or '').strip()
+    state['updated_at_utc'] = utc_now_iso()
+    path.parent.mkdir(parents=True, exist_ok=True)
+    path.write_text(json.dumps(state, indent=2, sort_keys=True), encoding='utf-8')
+    return state
+
+
+def tracked_ds_publication_republish_state(*, project_anchor: Path) -> Dict[str, Any]:
+    project_root = find_project_root(project_anchor)
+    paths = _tracked_ds_publication_paths(project_anchor)
+    _ensure_tracked_ds_publication_dirs(paths)
+    state = _load_publication_control_state(Path(paths['publication_control_path']))
+    state['control_path'] = normalize_repo_or_absolute_path(Path(paths['publication_control_path']), project_root)
+    return state
+
+
+def set_tracked_ds_publication_republish_state(
+    *,
+    project_anchor: Path,
+    republish_required: bool,
+    reason: str = '',
+) -> Dict[str, Any]:
+    project_root = find_project_root(project_anchor)
+    paths = _tracked_ds_publication_paths(project_anchor)
+    _ensure_tracked_ds_publication_dirs(paths)
+    state = _save_publication_control_state(
+        Path(paths['publication_control_path']),
+        republish_required=bool(republish_required),
+        reason=str(reason or '').strip(),
+    )
+    state['control_path'] = normalize_repo_or_absolute_path(Path(paths['publication_control_path']), project_root)
+    return state
+
+
+def _reset_publication_root(publication_root: Path, *, preserve_children: Optional[List[str]] = None) -> None:
     if not publication_root.exists():
         return
+    preserved = {str(name).strip() for name in list(preserve_children or []) if str(name).strip()}
     for child in publication_root.iterdir():
+        if child.name in preserved:
+            continue
         if child.is_dir():
             shutil.rmtree(child)
             continue
@@ -84,6 +194,7 @@ def _tracked_ds_publication_paths(project_anchor: Path) -> Dict[str, Path]:
         'internal_root': internal_root,
         'internal_aggregates_root': internal_aggregates_root,
         'internal_collections_root': internal_collections_root,
+        'publication_control_path': internal_root / 'publication_control.json',
         'indexes_root': indexes_root,
         'ledger_path': indexes_root / 'ds_run_index.jsonl',
         'latest_index_path': indexes_root / 'ds_latest.json',
@@ -126,6 +237,37 @@ def _empty_ds_latest_payload(project_root: Path, ledger_path: Path, updated_at_u
         'ledger_path': normalize_repo_or_absolute_path(ledger_path, project_root),
         'latest_run': {},
         'by_workflow': {},
+    }
+
+
+def _tracked_ds_aggregate_output_refs(*, project_root: Path, paths: Mapping[str, Path]) -> Dict[str, str]:
+    latest_json_path = Path(paths['latest_json_path'])
+    latest_md_path = Path(paths['latest_md_path'])
+    by_workflow_json_path = Path(paths['by_workflow_json_path'])
+    by_workflow_md_path = Path(paths['by_workflow_md_path'])
+    thresholds_json_path = Path(paths['thresholds_json_path'])
+    thresholds_md_path = Path(paths['thresholds_md_path'])
+    public_run_ledger_json_path = Path(paths['public_run_ledger_json_path'])
+    public_run_ledger_md_path = Path(paths['public_run_ledger_md_path'])
+    aggregate_report_json_path = Path(paths['aggregate_report_json_path'])
+    aggregate_report_md_path = Path(paths['aggregate_report_md_path'])
+    index_md_path = Path(paths['index_md_path'])
+    generated_surfaces_md_path = Path(paths['generated_surfaces_md_path'])
+    validations_index_md_path = Path(paths['validations_index_md_path'])
+    return {
+        'index_md': normalize_repo_or_absolute_path(index_md_path, project_root),
+        'aggregate_report_json': normalize_repo_or_absolute_path(aggregate_report_json_path, project_root),
+        'aggregate_report_md': normalize_repo_or_absolute_path(aggregate_report_md_path, project_root),
+        'public_run_ledger_json': normalize_repo_or_absolute_path(public_run_ledger_json_path, project_root),
+        'public_run_ledger_md': normalize_repo_or_absolute_path(public_run_ledger_md_path, project_root),
+        'latest_json': normalize_repo_or_absolute_path(latest_json_path, project_root),
+        'latest_md': normalize_repo_or_absolute_path(latest_md_path, project_root),
+        'by_workflow_json': normalize_repo_or_absolute_path(by_workflow_json_path, project_root),
+        'by_workflow_md': normalize_repo_or_absolute_path(by_workflow_md_path, project_root),
+        'thresholds_json': normalize_repo_or_absolute_path(thresholds_json_path, project_root),
+        'thresholds_md': normalize_repo_or_absolute_path(thresholds_md_path, project_root),
+        'generated_surfaces_md': normalize_repo_or_absolute_path(generated_surfaces_md_path, project_root),
+        'validations_index_md': normalize_repo_or_absolute_path(validations_index_md_path, project_root),
     }
 
 
@@ -219,21 +361,7 @@ def _write_tracked_ds_publication_outputs(
         encoding='utf-8',
     )
 
-    return {
-        'index_md': normalize_repo_or_absolute_path(index_md_path, project_root),
-        'aggregate_report_json': normalize_repo_or_absolute_path(aggregate_report_json_path, project_root),
-        'aggregate_report_md': normalize_repo_or_absolute_path(aggregate_report_md_path, project_root),
-        'public_run_ledger_json': normalize_repo_or_absolute_path(public_run_ledger_json_path, project_root),
-        'public_run_ledger_md': normalize_repo_or_absolute_path(public_run_ledger_md_path, project_root),
-        'latest_json': normalize_repo_or_absolute_path(latest_json_path, project_root),
-        'latest_md': normalize_repo_or_absolute_path(latest_md_path, project_root),
-        'by_workflow_json': normalize_repo_or_absolute_path(by_workflow_json_path, project_root),
-        'by_workflow_md': normalize_repo_or_absolute_path(by_workflow_md_path, project_root),
-        'thresholds_json': normalize_repo_or_absolute_path(thresholds_json_path, project_root),
-        'thresholds_md': normalize_repo_or_absolute_path(thresholds_md_path, project_root),
-        'generated_surfaces_md': normalize_repo_or_absolute_path(generated_surfaces_md_path, project_root),
-        'validations_index_md': normalize_repo_or_absolute_path(validations_index_md_path, project_root),
-    }
+    return _tracked_ds_aggregate_output_refs(project_root=project_root, paths=paths)
 
 
 def reset_tracked_ds_publication_state(*, project_anchor: Path) -> Dict[str, Any]:
@@ -257,6 +385,11 @@ def reset_tracked_ds_publication_state(*, project_anchor: Path) -> Dict[str, Any
         published_runs=[],
         threshold_rows=[],
     )
+    control_state = _save_publication_control_state(
+        Path(paths['publication_control_path']),
+        republish_required=True,
+        reason='tracked-publication-reset',
+    )
 
     return {
         'decision': 'go',
@@ -270,6 +403,8 @@ def reset_tracked_ds_publication_state(*, project_anchor: Path) -> Dict[str, Any
             'ledger_path': normalize_repo_or_absolute_path(ledger_path, project_root),
             'latest_index_path': normalize_repo_or_absolute_path(latest_index_path, project_root),
         },
+        'republish_required': bool(control_state.get('republish_required', False)),
+        'publication_control_path': normalize_repo_or_absolute_path(Path(paths['publication_control_path']), project_root),
         'aggregate_paths': aggregate_paths,
     }
 
@@ -281,7 +416,14 @@ def append_ds_run_index(*, project_anchor: Path, manifest_payload: Mapping[str, 
 
     ledger_path = indexes_dir / 'ds_run_index.jsonl'
     latest_path = indexes_dir / 'ds_latest.json'
-    entry = _build_entry(manifest_payload, project_root, ledger_path, latest_path)
+    manifest_record = dict(manifest_payload or {}) if isinstance(manifest_payload, Mapping) else {}
+    collection_alias = _manifest_collection_alias(manifest_record)
+    if _collection_identity_required(manifest_record) and not collection_alias:
+        raise ValueError('Publishable DS manifest missing frozen collection_alias.')
+    if collection_alias:
+        manifest_record['collection_alias'] = collection_alias
+
+    entry = _build_entry(manifest_record, project_root, ledger_path, latest_path)
 
     with ledger_path.open('a', encoding='utf-8') as handle:
         handle.write(json.dumps(entry, sort_keys=True) + '\n')
@@ -335,11 +477,27 @@ def refresh_tracked_ds_publication(
     *,
     project_anchor: Path,
     current_manifest_payload: Optional[Mapping[str, Any]] = None,
+    explicit_republish: bool = False,
 ) -> Dict[str, Any]:
     project_root = find_project_root(project_anchor)
     paths = _tracked_ds_publication_paths(project_anchor)
     publication_root = Path(paths['publication_root'])
-    _reset_publication_root(publication_root)
+    control_state = _load_publication_control_state(Path(paths['publication_control_path']))
+    if bool(control_state.get('republish_required', False)) and not bool(explicit_republish):
+        _ensure_tracked_ds_publication_dirs(paths)
+        return {
+            'decision': 'skipped',
+            'reason_codes': ['publication_skipped:republish_required'],
+            'publish_root': normalize_repo_or_absolute_path(publication_root, project_root),
+            'published_run_count': 0,
+            'excluded_entry_count': 0,
+            'current_run': {},
+            'republish_required': True,
+            'publication_control_path': normalize_repo_or_absolute_path(Path(paths['publication_control_path']), project_root),
+            'aggregate_paths': _tracked_ds_aggregate_output_refs(project_root=project_root, paths=paths),
+        }
+
+    _reset_publication_root(publication_root, preserve_children=['validations'])
     _reset_publication_root(Path(paths['internal_collections_root']))
     _ensure_tracked_ds_publication_dirs(paths)
 
@@ -354,6 +512,7 @@ def refresh_tracked_ds_publication(
         publishable.append(candidate)
 
     publishable.sort(key=lambda candidate: (_publication_sort_key(str(candidate.get('timestamp_utc', ''))), str(candidate.get('run_id', ''))))
+    _assign_collection_packet_paths(publishable)
 
     published_runs: List[Dict[str, Any]] = []
     for candidate in publishable:
@@ -387,6 +546,12 @@ def refresh_tracked_ds_publication(
                 current_run = dict(summary)
                 break
 
+    control_state = _save_publication_control_state(
+        Path(paths['publication_control_path']),
+        republish_required=False,
+        reason='explicit-republish' if bool(explicit_republish) else '',
+    )
+
     return {
         'decision': 'go',
         'reason_codes': [],
@@ -394,6 +559,8 @@ def refresh_tracked_ds_publication(
         'published_run_count': int(len(published_runs)),
         'excluded_entry_count': int(excluded_entries),
         'current_run': current_run,
+        'republish_required': bool(control_state.get('republish_required', False)),
+        'publication_control_path': normalize_repo_or_absolute_path(Path(paths['publication_control_path']), project_root),
         'aggregate_paths': aggregate_paths,
     }
 
@@ -409,6 +576,8 @@ def publication_eligibility_reasons(*, project_anchor: Path, manifest_payload: M
         reasons.append('publication_skipped:decision_not_publishable')
     if str(manifest_payload.get('run_root_policy', '') or '').strip().lower() != 'canonical':
         reasons.append('publication_skipped:noncanonical_run_root')
+    if _collection_identity_required(manifest_payload) and not _manifest_collection_alias(manifest_payload):
+        reasons.append('publication_skipped:collection_alias_missing')
 
     run_root_path = _resolve_repo_path(project_root, str(manifest_payload.get('run_root', '') or '').strip())
     canonical_runs_root = ds_runs_dir(project_anchor)
@@ -425,6 +594,10 @@ def publication_eligibility_reasons(*, project_anchor: Path, manifest_payload: M
         required_path = _resolve_repo_path(project_root, str(report_paths.get(key, '') or '').strip())
         if required_path is None or not required_path.exists():
             reasons.append('publication_skipped:missing_{0}'.format(key))
+
+    dataset_manifest_refs = _dataset_manifest_refs(manifest_payload)
+    if any(_is_ephemeral_path_ref(ref) for ref in dataset_manifest_refs):
+        reasons.append('publication_skipped:dataset_manifest_ephemeral')
 
     if not sanitize_run_id(str(manifest_payload.get('run_id', '') or '').strip()):
         reasons.append('publication_skipped:run_id_missing')
@@ -736,10 +909,16 @@ def _publish_candidate(candidate: Mapping[str, Any]) -> None:
     if not source_manifest_payload:
         source_manifest_payload = dict(candidate.get('manifest_payload', {}) or {})
 
-    collection_history_report_md_path = _next_collection_report_path(
-        collection_dir=collection_dir,
-        timestamp_utc=str(candidate.get('timestamp_utc', '') or ''),
-    )
+    collection_history_report_md_path_raw = candidate.get('collection_history_report_md_path')
+    if isinstance(collection_history_report_md_path_raw, Path):
+        collection_history_report_md_path = collection_history_report_md_path_raw
+    elif str(collection_history_report_md_path_raw or '').strip():
+        collection_history_report_md_path = Path(str(collection_history_report_md_path_raw))
+    else:
+        collection_history_report_md_path = _next_collection_report_path(
+            collection_dir=collection_dir,
+            timestamp_utc=str(candidate.get('timestamp_utc', '') or ''),
+        )
     processing_report_md_path = _next_processing_report_path(
         processing_dir=processing_dir,
         timestamp_utc=str(candidate.get('timestamp_utc', '') or ''),
@@ -2020,6 +2199,8 @@ def _generated_report_surfaces_markdown(
     lines.append('When collection packets are materialized:')
     lines.append('')
     lines.append('- `docs/reports/collections/<collection-alias>/collection/YYYYMMDDTHHMMSSffffffZ.collection.md`')
+    lines.append('- `docs/reports/collections/<collection-alias>/processing/<stage>/YYYYMMDDTHHMMSSffffffZ.<stage>.md`')
+    lines.append('- `<stage>` currently materializes as `build`, `eval`, `score`, or `train` in the tracked packet family.')
     lines.append('- `docs/reports/collections/<collection-alias>/processing/build/YYYYMMDDTHHMMSSffffffZ.build.md`')
     lines.append('- `docs/reports/collections/<collection-alias>/processing/eval/YYYYMMDDTHHMMSSffffffZ.eval.md`')
     lines.append('- `docs/reports/collections/<collection-alias>/processing/score/YYYYMMDDTHHMMSSffffffZ.score.md`')
@@ -2092,46 +2273,45 @@ def _next_collection_report_path(*, collection_dir: Path, timestamp_utc: str) ->
     return candidate
 
 
+def _assign_collection_packet_paths(candidates: List[Dict[str, Any]]) -> None:
+    latest_by_alias: Dict[str, Dict[str, Any]] = {}
+    for candidate in candidates:
+        alias = str(candidate.get('collection_alias', '') or '').strip()
+        if not alias:
+            continue
+        existing = latest_by_alias.get(alias)
+        candidate_key = (
+            _publication_sort_key(str(candidate.get('timestamp_utc', ''))),
+            str(candidate.get('run_id', '')),
+        )
+        existing_key = (
+            _publication_sort_key(str(existing.get('timestamp_utc', ''))),
+            str(existing.get('run_id', '')),
+        ) if isinstance(existing, dict) else None
+        if existing_key is None or candidate_key > existing_key:
+            latest_by_alias[alias] = candidate
+
+    assigned_paths: Dict[str, Path] = {}
+    for alias, latest in latest_by_alias.items():
+        assigned_paths[alias] = _next_collection_report_path(
+            collection_dir=Path(latest['collection_dir']),
+            timestamp_utc=str(latest.get('timestamp_utc', '') or ''),
+        )
+
+    for candidate in candidates:
+        alias = str(candidate.get('collection_alias', '') or '').strip()
+        assigned = assigned_paths.get(alias)
+        if assigned is not None:
+            candidate['collection_history_report_md_path'] = assigned
+
+
 def _resolve_collection_alias(
     manifest_payload: Mapping[str, Any],
     project_root: Path,
     project_anchor: Path,
     fallback_run_id: str,
 ) -> str:
-    for container in (
-        manifest_payload,
-        manifest_payload.get('context', {}) if isinstance(manifest_payload.get('context', {}), dict) else {},
-        manifest_payload.get('lineage', {}) if isinstance(manifest_payload.get('lineage', {}), dict) else {},
-    ):
-        alias = str(container.get('collection_alias', '') or container.get('dataset_alias', '') or '').strip()
-        if alias:
-            return sanitize_run_id(alias) or sanitize_run_id(fallback_run_id) or 'collection'
-
-    manifest_refs: List[str] = []
-    artifacts = dict(manifest_payload.get('artifacts', {}) or {}) if isinstance(manifest_payload.get('artifacts', {}), dict) else {}
-    lineage = dict(manifest_payload.get('lineage', {}) or {}) if isinstance(manifest_payload.get('lineage', {}), dict) else {}
-    context = dict(manifest_payload.get('context', {}) or {}) if isinstance(manifest_payload.get('context', {}), dict) else {}
-    for ref in (
-        artifacts.get('dataset_manifest', ''),
-        lineage.get('dataset_manifest', ''),
-        context.get('dataset_manifest', ''),
-    ):
-        text = str(ref or '').strip()
-        if text and text not in manifest_refs:
-            manifest_refs.append(text)
-
-    if manifest_refs:
-        try:
-            from calamum_librarian import dataset_display_alias_for_manifest
-        except Exception:
-            dataset_display_alias_for_manifest = None
-        if dataset_display_alias_for_manifest is not None:
-            for manifest_ref in manifest_refs:
-                alias = str(dataset_display_alias_for_manifest(project_anchor, manifest_ref) or '').strip()
-                if alias:
-                    return sanitize_run_id(alias) or sanitize_run_id(fallback_run_id) or 'collection'
-
-    return sanitize_run_id(fallback_run_id) or 'collection'
+    return _manifest_collection_alias(manifest_payload)
 
 
 def _write_collection_reports(candidates: List[Dict[str, Any]], project_root: Path) -> None:
@@ -2146,24 +2326,74 @@ def _write_collection_reports(candidates: List[Dict[str, Any]], project_root: Pa
             [dict(row) for row in rows if isinstance(row, dict)],
             key=lambda row: (_publication_sort_key(str(row.get('timestamp_utc', ''))), str(row.get('run_id', ''))),
         )
-        collection_dir = Path(ordered_rows[0]['collection_dir'])
         summaries = [_published_run_summary(row, project_root) for row in ordered_rows]
-        for index, summary in enumerate(summaries):
-            snapshot_path = _resolve_repo_path(project_root, _published_collection_history_path(summary))
-            if snapshot_path is None:
-                continue
-            snapshot_path.parent.mkdir(parents=True, exist_ok=True)
-            snapshot_path.write_text(
-                _collection_report_markdown(alias, summaries[: index + 1], project_root, snapshot_path),
-                encoding='utf-8',
-            )
+        latest_summary = dict(summaries[-1]) if summaries else {}
+        snapshot_path = _resolve_repo_path(project_root, _published_collection_history_path(latest_summary))
+        if snapshot_path is None:
+            continue
+        snapshot_path.parent.mkdir(parents=True, exist_ok=True)
+        snapshot_path.write_text(
+            _collection_report_markdown(alias, summaries, project_root, snapshot_path),
+            encoding='utf-8',
+        )
+
+
+def _validation_publication_rows(validations_root: Path) -> List[Dict[str, str]]:
+    grouped: Dict[str, Dict[str, str]] = {}
+    if not validations_root.exists():
+        return []
+
+    for candidate in sorted(validations_root.iterdir()):
+        if not candidate.is_file() or candidate.name == 'INDEX.md':
+            continue
+        suffix = candidate.suffix.lower()
+        if suffix not in ('.md', '.html'):
+            continue
+        stem = candidate.stem
+        row = grouped.setdefault(
+            stem,
+            {
+                'stem': stem,
+                'display_name': stem.replace('_', ' '),
+                'markdown_name': '',
+                'html_name': '',
+            },
+        )
+        if suffix == '.md':
+            row['markdown_name'] = candidate.name
+        elif suffix == '.html':
+            row['html_name'] = candidate.name
+
+    rows = list(grouped.values())
+    rows.sort(key=lambda row: str(row.get('stem', '')))
+    return rows
 
 
 def _validations_index_markdown(project_root: Path, target_path: Path) -> str:
+    validations_root = target_path.parent
+    rows = _validation_publication_rows(validations_root)
     lines = ['# Validation Reports', '']
     lines.append('Validation publications are routed into this lane when a validation family intentionally emits reader-facing tracked material.')
     lines.append('')
     lines.append('Machine-readable validation evidence remains outside `docs/reports/` and should be referenced from future Markdown packets rather than copied into this tree.')
+    lines.append('')
+    lines.append('## Published validation packets')
+    lines.append('')
+    if rows:
+        lines.append('| Validation packet | Markdown | HTML |')
+        lines.append('|---|---|---|')
+        for row in rows:
+            markdown_name = str(row.get('markdown_name', '') or '').strip()
+            html_name = str(row.get('html_name', '') or '').strip()
+            markdown_link = _markdown_link(target_path, project_root, normalize_repo_or_absolute_path(validations_root / markdown_name, project_root), markdown_name) if markdown_name else ''
+            html_link = _markdown_link(target_path, project_root, normalize_repo_or_absolute_path(validations_root / html_name, project_root), html_name) if html_name else ''
+            lines.append('| `{0}` | {1} | {2} |'.format(
+                str(row.get('stem', '') or ''),
+                markdown_link,
+                html_link,
+            ))
+    else:
+        lines.append('No standalone validation packets are currently tracked in this lane.')
     lines.append('')
     lines.append('- Return to {0}'.format(_markdown_link(target_path, project_root, 'docs/reports/INDEX.md', 'reports/INDEX.md')))
     return '\n'.join(lines).rstrip() + '\n'

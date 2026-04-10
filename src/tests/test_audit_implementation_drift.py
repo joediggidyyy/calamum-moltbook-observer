@@ -79,6 +79,40 @@ def test_project_manifest_layout_passes_when_aligned(monkeypatch, tmp_path: Path
     assert result["violations"] == []
 
 
+def test_status_sync_global_reads_json_queststack_status(tmp_path: Path) -> None:
+    mod = _load_audit_module()
+
+    repo_root = tmp_path / "repo"
+    project_root = repo_root / "projects" / "calamum-moltbook-observer"
+    queststack_path = project_root / "queststacks" / "QS-DEMO.json"
+    tasks_path = repo_root / "operations" / "tasks.json"
+    dashboard_path = repo_root / "docs" / "dashboards" / "room" / "JOBS_DASHBOARD.md"
+
+    queststack_path.parent.mkdir(parents=True, exist_ok=True)
+    tasks_path.parent.mkdir(parents=True, exist_ok=True)
+    dashboard_path.parent.mkdir(parents=True, exist_ok=True)
+
+    tasks_path.write_text(
+        json.dumps(
+            [
+                {
+                    "id": "calamum-demo-json-queststack",
+                    "path": "projects/calamum-moltbook-observer/queststacks/QS-DEMO.json",
+                    "status": "open",
+                }
+            ]
+        ),
+        encoding="utf-8",
+    )
+    dashboard_path.write_text("", encoding="utf-8")
+    queststack_path.write_text(json.dumps({"status": "open", "frames": []}), encoding="utf-8")
+
+    result = mod._check_status_sync_global(repo_root)
+
+    assert result["checked_task_count"] == 1
+    assert result["violations"] == []
+
+
 def test_changed_files_unit_test_coverage_flags_missing(monkeypatch, tmp_path: Path) -> None:
     mod = _load_audit_module()
 
@@ -117,6 +151,33 @@ def test_changed_files_unit_test_coverage_passes_with_test(monkeypatch, tmp_path
         mod,
         "_git_changed_files",
         lambda _repo_root: ["projects/calamum-moltbook-observer/tools/new_tool.py"],
+    )
+
+    result = mod._check_changed_files_unit_test_coverage(repo_root, project_root)
+    assert result["missing_unit_tests_count"] == 0
+    assert result["missing_unit_tests"] == []
+
+
+def test_changed_files_unit_test_coverage_accepts_imported_analysis_module(monkeypatch, tmp_path: Path) -> None:
+    mod = _load_audit_module()
+
+    repo_root = tmp_path / "repo"
+    project_root = repo_root / "projects" / "calamum-moltbook-observer"
+    module_path = project_root / "src" / "analysis" / "run_demo.py"
+    tests_dir = project_root / "src" / "tests"
+    module_path.parent.mkdir(parents=True, exist_ok=True)
+    tests_dir.mkdir(parents=True, exist_ok=True)
+
+    module_path.write_text("def run_demo():\n    return None\n", encoding="utf-8")
+    (tests_dir / "test_analysis_tools.py").write_text(
+        "from analysis.run_demo import run_demo\n\n\ndef test_smoke():\n    assert callable(run_demo)\n",
+        encoding="utf-8",
+    )
+
+    monkeypatch.setattr(
+        mod,
+        "_git_changed_files",
+        lambda _repo_root: ["projects/calamum-moltbook-observer/src/analysis/run_demo.py"],
     )
 
     result = mod._check_changed_files_unit_test_coverage(repo_root, project_root)

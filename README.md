@@ -4,7 +4,7 @@
 **Status**: Public project overview  
 **Owner**: ORACL-Prime  
 **Project**: Calamum Moltbook Observer  
-**Last updated**: 2026-04-06
+**Last updated**: 2026-04-09
 
 ---
 
@@ -48,6 +48,19 @@ This README is the public front door for the project. Use it to understand what 
 - **Report model**: alias-first human-facing packet families under `docs/reports/collections/<collection-alias>/processing/{build,eval,score,train}/`
 - **Public repo scope**: code, docs, deployment surfaces, branding, and curated public artifacts
 - **Canonical current runtime family**: `logs/data/calamum/observer_derived/<source>/<mode>/...`
+
+## Current release boundary
+
+The current tracked release boundary is **Stage-4 / canary-ready**.
+
+| Included now | Governed separately |
+|---|---|
+| sim/canary observer runtime and evidence surfaces | real-source live activation |
+| Ghost Console dashboard | active magnet / honeypot deployment |
+| watchdog and librarian control surfaces | unsandboxed keysmith live minting |
+| names-only telemetry model | |
+| local DS/report toolchain | |
+| guarded keysmith status and dry-run lanes | |
 
 ## Verified current runtime model
 
@@ -237,7 +250,7 @@ The observer-native DS surface now covers dataset build, train, evaluate, score,
 - **Run the packaged demo flow**  
   `observerctl ds run demo --json`
 
-Those runs feed the tracked public report lane under `docs/reports/`, where collection packets and stage packets are published for the current alias-first report family.
+Approved local DS artifacts can be explicitly published into the tracked public report lane under `docs/reports/`, where collection packets and stage packets follow the current alias-first report family.
 
 For the lower-level transition/evidence contract, see:
 

@@ -95,6 +95,10 @@ def librarian_vault_quarantine_dir(start: Path) -> Path:
     return librarian_vault_root(start) / 'quarantine'
 
 
+def librarian_vault_report_quarantine_dir(start: Path) -> Path:
+    return librarian_vault_quarantine_dir(start) / 'tracked_reports'
+
+
 def ds_drafts_dir(start: Path) -> Path:
     return default_analysis_dir(start) / 'drafts'
 

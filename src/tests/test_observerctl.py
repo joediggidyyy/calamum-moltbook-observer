@@ -210,6 +210,7 @@ def _append_saved_ds_manifest(
     timestamp_utc: str,
     artifact_paths: dict[str, Path],
     context: dict | None = None,
+    lineage: dict | None = None,
     summary: str = '',
 ) -> None:
     from analysis.report_aggregate import append_ds_run_index
@@ -245,7 +246,7 @@ def _append_saved_ds_manifest(
         },
         artifact_paths=artifact_paths,
         context=context or {},
-        lineage={},
+        lineage=lineage or {},
     )
     append_ds_run_index(project_anchor=anchor, manifest_payload=report_bundle['manifest'])
 
@@ -512,6 +513,30 @@ def test_project_dotenv_loads_missing_env_without_overriding_existing(tmp_path: 
     assert 'CALAMUM_DATA_SIGNING_KEY' in result['loaded_names']
     assert os.environ.get('CALAMUM_DATA_SIGNING_KEY') == 'dotenv-signing-key'
     assert os.environ.get('MOLTBOOK_API_KEY') == 'existing-key'
+
+
+def test_project_dotenv_does_not_autoload_route_authority_env(tmp_path: Path, monkeypatch) -> None:
+    project_root = tmp_path / 'project'
+    project_root.mkdir(parents=True, exist_ok=True)
+    (project_root / '.env').write_text(
+        'CALAMUM_DATA_SIGNING_KEY=dotenv-signing-key\n'
+        'CALAMUM_MOLTBOOK_SOURCE=real\n'
+        'CALAMUM_OPS_MODE=canary\n',
+        encoding='utf-8',
+    )
+    monkeypatch.setattr(observerctl_module, '_project_root', lambda: project_root)
+    monkeypatch.delenv('CALAMUM_DATA_SIGNING_KEY', raising=False)
+    monkeypatch.delenv('CALAMUM_MOLTBOOK_SOURCE', raising=False)
+    monkeypatch.delenv('CALAMUM_OPS_MODE', raising=False)
+
+    result = observerctl_module._load_project_dotenv()
+
+    assert 'CALAMUM_DATA_SIGNING_KEY' in result['loaded_names']
+    assert 'CALAMUM_MOLTBOOK_SOURCE' not in result['loaded_names']
+    assert 'CALAMUM_OPS_MODE' not in result['loaded_names']
+    assert os.environ.get('CALAMUM_DATA_SIGNING_KEY') == 'dotenv-signing-key'
+    assert not os.environ.get('CALAMUM_MOLTBOOK_SOURCE')
+    assert not os.environ.get('CALAMUM_OPS_MODE')
 
 
 def test_keysmith_env_import_hydrates_process_and_project_dotenv(tmp_path: Path, monkeypatch) -> None:
@@ -1117,6 +1142,7 @@ def test_ds_wizard_save_and_load_draft_round_trip(tmp_path: Path) -> None:
     observerctl_module._ds_wizard_open_section(state, 'report')
     observerctl_module._ds_wizard_set_value(state, 'run_id', 'draft-run-001')
     observerctl_module._ds_wizard_set_value(state, 'max_fpr', '0.03')
+    state.values['dataset_alias'] = ''
     state.source = 'real'
     state.mode = 'canary'
     state.values['source'] = 'real'
@@ -1135,6 +1161,8 @@ def test_ds_wizard_save_and_load_draft_round_trip(tmp_path: Path) -> None:
     assert loaded.active_section == 'report'
     assert loaded.values['run_id'] == 'draft-run-001'
     assert loaded.values['max_fpr'] == 0.03
+    assert 'dataset_alias' in loaded.values
+    assert loaded.values['dataset_alias'] == ''
     assert loaded.source == 'real'
     assert loaded.mode == 'canary'
     assert loaded.hydrated_from['run_id'] == 'run_ledger'
@@ -2109,6 +2137,7 @@ def test_librarian_nested_cli_dataset_and_vault_commands(monkeypatch, tmp_path: 
 def test_librarian_store_reports_show_delete_and_purge(monkeypatch, tmp_path: Path, capsys) -> None:
     project_root, anchor = _make_temp_observer_project(tmp_path)
     collections_root = project_root / 'docs' / 'reports' / 'collections'
+    vault_quarantine_root = project_root / 'local_untracked' / 'analysis' / 'vaults' / 'librarian' / 'quarantine' / 'tracked_reports' / project_root.name
 
     can_alpha_collection = collections_root / 'can-alpha' / 'collection'
     can_alpha_processing = collections_root / 'can-alpha' / 'processing' / 'build'
@@ -2143,18 +2172,46 @@ def test_librarian_store_reports_show_delete_and_purge(monkeypatch, tmp_path: Pa
     assert payload['action'] == 'librarian-store-reports-delete'
     assert payload['delete_alias'] == 'can-alpha'
     assert payload['archived_alias_count'] == 1
+    assert payload['republish_required'] is True
     assert not (collections_root / 'can-alpha').exists()
     assert (collections_root / 'can-beta').exists()
-    assert Path(payload['artifacts']['archive_manifest_json']).exists()
+    assert _resolve_reported_path(payload['artifacts']['vault_quarantine_manifest_json']).exists()
+    assert _resolve_reported_path(payload['artifacts']['publication_control_json']).exists()
+    assert _resolve_reported_path(payload['artifacts']['vault_quarantine_root']) == vault_quarantine_root
 
     rc = main(['librarian', 'store', 'reports', '--purge', '--json'])
     assert rc == 0
     payload = json.loads(capsys.readouterr().out)
     assert payload['action'] == 'librarian-store-reports-purge'
     assert payload['archived_alias_count'] == 1
+    assert payload['republish_required'] is True
     assert payload['report_collections'] == []
     assert collections_root.exists()
     assert list(collections_root.iterdir()) == []
+    assert _resolve_reported_path(payload['artifacts']['vault_quarantine_manifest_json']).exists()
+    assert _resolve_reported_path(payload['artifacts']['vault_quarantine_root']) == vault_quarantine_root
+
+
+def test_refresh_tracked_ds_publication_preserves_validation_reports(tmp_path: Path) -> None:
+    from analysis.report_aggregate import refresh_tracked_ds_publication
+
+    project_root, anchor = _make_temp_observer_project(tmp_path)
+    validations_root = project_root / 'docs' / 'reports' / 'validations'
+    validations_root.mkdir(parents=True, exist_ok=True)
+    apex_md = validations_root / 'APEXLAB_REFERENCE_VALIDATION_REPORT_20260324.md'
+    apex_html = validations_root / 'APEXLAB_REFERENCE_VALIDATION_REPORT_20260324.html'
+
+    apex_md.write_text('# apex validation\n', encoding='utf-8')
+    apex_html.write_text('<!DOCTYPE html><html><body>apex validation</body></html>\n', encoding='utf-8')
+
+    publication = refresh_tracked_ds_publication(project_anchor=anchor)
+    validations_index = (validations_root / 'INDEX.md').read_text(encoding='utf-8')
+
+    assert publication['decision'] == 'go'
+    assert apex_md.exists()
+    assert apex_html.exists()
+    assert 'APEXLAB_REFERENCE_VALIDATION_REPORT_20260324.md' in validations_index
+    assert 'APEXLAB_REFERENCE_VALIDATION_REPORT_20260324.html' in validations_index
 
 
 def test_librarian_store_reports_purge_clears_saved_selector_authority_and_resets_aggregate_files(monkeypatch, tmp_path: Path, capsys) -> None:
@@ -2162,6 +2219,7 @@ def test_librarian_store_reports_purge_clears_saved_selector_authority_and_reset
 
     project_root, anchor = _make_temp_observer_project(tmp_path)
     _bind_temp_observer_project(monkeypatch, project_root, anchor)
+    vault_quarantine_root = project_root / 'local_untracked' / 'analysis' / 'vaults' / 'librarian' / 'quarantine' / 'tracked_reports' / project_root.name
 
     dataset_dir = project_root / 'saved' / 'dataset'
     dataset_dir.mkdir(parents=True, exist_ok=True)
@@ -2226,6 +2284,7 @@ def test_librarian_store_reports_purge_clears_saved_selector_authority_and_reset
             'run_md': run_md,
         },
         context={'source': 'real', 'mode': 'canary', 'max_fpr': 0.02},
+        lineage={'dataset_manifest': dataset_manifest},
         summary='Saved run selector for purge regression.',
     )
 
@@ -2233,10 +2292,17 @@ def test_librarian_store_reports_purge_clears_saved_selector_authority_and_reset
     collections_root = project_root / 'docs' / 'reports' / 'collections'
     aggregates_root = project_root / 'docs' / 'reports' / 'aggregates'
     reference_root = project_root / 'docs' / 'reports' / 'reference'
+    validations_root = project_root / 'docs' / 'reports' / 'validations'
     indexes_root = project_root / 'local_untracked' / 'analysis' / 'indexes'
     ledger_path = indexes_root / 'ds_run_index.jsonl'
     latest_index_path = indexes_root / 'ds_latest.json'
     internal_collections_root = indexes_root / 'ds_publication' / 'collections'
+    apex_validation_md = validations_root / 'APEXLAB_REFERENCE_VALIDATION_REPORT_20260324.md'
+    apex_validation_html = validations_root / 'APEXLAB_REFERENCE_VALIDATION_REPORT_20260324.html'
+
+    validations_root.mkdir(parents=True, exist_ok=True)
+    apex_validation_md.write_text('# apex validation\n', encoding='utf-8')
+    apex_validation_html.write_text('<!DOCTYPE html><html><body>apex validation</body></html>\n', encoding='utf-8')
 
     assert publication['published_run_count'] == 2
     assert observerctl_module._ds_saved_train_entries()
@@ -2254,7 +2320,12 @@ def test_librarian_store_reports_purge_clears_saved_selector_authority_and_reset
     assert payload['action'] == 'librarian-store-reports-purge'
     assert payload['archived_alias_count'] >= 1
     assert payload['archived_auxiliary_count'] == 3
+    assert payload['republish_required'] is True
     assert payload['report_collections'] == []
+    assert _resolve_reported_path(payload['artifacts']['vault_quarantine_root']) == vault_quarantine_root
+    assert _resolve_reported_path(payload['artifacts']['vault_quarantine_manifest_json']).exists()
+    assert _resolve_reported_path(payload['artifacts']['librarian_vault_baseline_json']).exists()
+    assert _resolve_reported_path(payload['artifacts']['librarian_vault_audit_jsonl']).exists()
 
     assert observerctl_module._ds_saved_train_entries() == []
     assert observerctl_module._ds_saved_run_entries() == []
@@ -2270,19 +2341,183 @@ def test_librarian_store_reports_purge_clears_saved_selector_authority_and_reset
     assert latest_payload['latest_run'] == {}
     assert latest_payload['by_workflow'] == {}
 
+    publication_control_path = _resolve_reported_path(payload['artifacts']['publication_control_json'])
+    publication_control_payload = json.loads(publication_control_path.read_text(encoding='utf-8'))
+    assert publication_control_payload['republish_required'] is True
+
     aggregate_report_md = aggregates_root / 'AGGREGATE_REPORT.md'
     latest_collections_md = aggregates_root / 'LATEST_COLLECTIONS.md'
     generated_surfaces_md = reference_root / 'GENERATED_REPORT_SURFACES.md'
     publication_index_md = project_root / 'docs' / 'reports' / 'INDEX.md'
+    validations_index_md = validations_root / 'INDEX.md'
+    archived_reports_root = vault_quarantine_root / next(path.name for path in vault_quarantine_root.iterdir() if path.is_dir()) / 'docs' / 'reports'
 
     assert aggregate_report_md.exists()
     assert latest_collections_md.exists()
     assert generated_surfaces_md.exists()
     assert publication_index_md.exists()
+    assert validations_index_md.exists()
+    assert apex_validation_md.exists()
+    assert apex_validation_html.exists()
+    assert (archived_reports_root / 'aggregates' / 'AGGREGATE_REPORT.md').exists()
+    assert (archived_reports_root / 'INDEX.md').exists()
+    assert not (archived_reports_root / 'validations' / apex_validation_md.name).exists()
+    assert not (archived_reports_root / 'validations' / apex_validation_html.name).exists()
     assert 'No published packets are available yet.' in aggregate_report_md.read_text(encoding='utf-8')
     assert '- Latest run: none published yet' in latest_collections_md.read_text(encoding='utf-8')
     assert 'Zero-state publication may leave `docs/reports/collections/` present but empty' in generated_surfaces_md.read_text(encoding='utf-8')
     assert 'No published collections are available yet.' in publication_index_md.read_text(encoding='utf-8')
+    assert 'APEXLAB_REFERENCE_VALIDATION_REPORT_20260324.md' in validations_index_md.read_text(encoding='utf-8')
+    assert 'APEXLAB_REFERENCE_VALIDATION_REPORT_20260324.html' in validations_index_md.read_text(encoding='utf-8')
+
+
+def test_librarian_store_reports_delete_blocks_automatic_republish_until_explicit_restore(monkeypatch, tmp_path: Path, capsys) -> None:
+    from analysis.report_aggregate import append_ds_run_index, refresh_tracked_ds_publication
+    from analysis.report_pack import prepare_report_bundle, write_report_bundle
+
+    project_root, anchor = _make_temp_observer_project(tmp_path)
+    _bind_temp_observer_project(monkeypatch, project_root, anchor)
+
+    bundle = prepare_report_bundle(anchor, 'evaluate', run_id='eval-delete-blocked')
+    evaluation_dir = bundle.artifact_dirs['evaluation']
+    evaluation_dir.mkdir(parents=True, exist_ok=True)
+    run_json = evaluation_dir / 'run.json'
+    run_md = evaluation_dir / 'run.md'
+    run_json.write_text('{}\n', encoding='utf-8')
+    run_md.write_text('# eval\n', encoding='utf-8')
+    report_bundle = write_report_bundle(
+        project_anchor=anchor,
+        bundle=bundle,
+        packet={
+            'timestamp_utc': '2026-04-06T18:00:00Z',
+            'runtime_cli_surface': 'observerctl',
+            'decision': 'go',
+            'action': 'ds-evaluate',
+            'command_family': 'ds',
+            'command_path': 'observerctl ds evaluate',
+            'implementation_state': 'command-available',
+            'underlying_surface': 'analysis.evaluation_harness',
+            'summary': 'Evaluation completed through observerctl ds.',
+            'run_id': bundle.run_id,
+            'collection_alias': 'can-delete-blocked',
+            'threshold': 0.42,
+            'artifacts': {},
+            'reason_codes': [],
+        },
+        artifact_paths={
+            'run_json': run_json,
+            'run_md': run_md,
+        },
+        context={'max_fpr': 0.01},
+    )
+    append_ds_run_index(project_anchor=anchor, manifest_payload=report_bundle['manifest'])
+
+    publication = refresh_tracked_ds_publication(project_anchor=anchor, current_manifest_payload=report_bundle['manifest'])
+
+    assert publication['decision'] == 'go'
+    assert (project_root / 'docs' / 'reports' / 'collections' / 'can-delete-blocked').exists()
+
+    rc = main(['librarian', 'store', 'reports', '--delete', 'can-delete-blocked', '--json'])
+
+    assert rc == 0
+    payload = json.loads(capsys.readouterr().out)
+    assert payload['action'] == 'librarian-store-reports-delete'
+    assert payload['republish_required'] is True
+    assert not (project_root / 'docs' / 'reports' / 'collections' / 'can-delete-blocked').exists()
+
+    skipped_publication = refresh_tracked_ds_publication(project_anchor=anchor)
+
+    assert skipped_publication['decision'] == 'skipped'
+    assert skipped_publication['reason_codes'] == ['publication_skipped:republish_required']
+    assert not (project_root / 'docs' / 'reports' / 'collections' / 'can-delete-blocked').exists()
+
+
+def test_librarian_store_reports_republish_rebuilds_publication_after_reset_gate(monkeypatch, tmp_path: Path, capsys) -> None:
+    from analysis.report_aggregate import refresh_tracked_ds_publication
+    from calamum_librarian import dataset_display_alias_for_manifest
+
+    project_root, anchor = _make_temp_observer_project(tmp_path)
+    _bind_temp_observer_project(monkeypatch, project_root, anchor)
+
+    dataset_dir = project_root / 'saved' / 'dataset'
+    dataset_dir.mkdir(parents=True, exist_ok=True)
+    dataset_manifest = dataset_dir / 'dataset_manifest.json'
+    features_csv = dataset_dir / 'features.csv'
+    labels_csv = dataset_dir / 'labels.csv'
+    features_csv.write_text('record_id,feature\n1,0.1\n', encoding='utf-8')
+    labels_csv.write_text('record_id,label\n1,1\n', encoding='utf-8')
+    dataset_manifest.write_text(json.dumps({
+        'features_csv': str(features_csv),
+        'labels_csv': str(labels_csv),
+        'total_records': 1,
+        'has_labels': True,
+    }), encoding='utf-8')
+
+    train_dir = project_root / 'saved' / 'model'
+    train_dir.mkdir(parents=True, exist_ok=True)
+    model_path = train_dir / 'model.pkl'
+    train_manifest = train_dir / 'train_manifest.json'
+    model_path.write_bytes(b'model')
+    train_manifest.write_text(json.dumps({
+        'dataset_manifest_path': str(dataset_manifest),
+        'model_path': str(model_path),
+        'model_type': 'unsupervised',
+    }), encoding='utf-8')
+
+    rc = main(['librarian', 'store', 'reports', '--purge', '--json'])
+
+    assert rc == 0
+    purge_payload = json.loads(capsys.readouterr().out)
+    assert purge_payload['action'] == 'librarian-store-reports-purge'
+    assert purge_payload['republish_required'] is True
+
+    _append_saved_ds_manifest(
+        anchor,
+        'train',
+        'republish-train-001',
+        timestamp_utc='2026-04-06T16:00:00Z',
+        artifact_paths={
+            'train_manifest': train_manifest,
+            'model_path': model_path,
+            'dataset_manifest': dataset_manifest,
+        },
+        context={'source': 'real', 'mode': 'canary'},
+        summary='Saved train selector for explicit republish regression.',
+    )
+
+    skipped_publication = refresh_tracked_ds_publication(project_anchor=anchor)
+    collections_root = project_root / 'docs' / 'reports' / 'collections'
+
+    assert skipped_publication['decision'] == 'skipped'
+    assert skipped_publication['reason_codes'] == ['publication_skipped:republish_required']
+    assert skipped_publication['republish_required'] is True
+    assert collections_root.exists()
+    assert list(collections_root.iterdir()) == []
+
+    rc = main(['librarian', 'store', 'reports', '--republish', '--json'])
+
+    assert rc == 0
+    republish_payload = json.loads(capsys.readouterr().out)
+    collection_alias = dataset_display_alias_for_manifest(anchor, dataset_manifest)
+    alias_root = collections_root / collection_alias
+
+    assert republish_payload['action'] == 'librarian-store-reports-republish'
+    assert republish_payload['published_run_count'] == 1
+    assert republish_payload['count'] == 1
+    assert republish_payload['republish_required'] is False
+    assert republish_payload['current_run_id'] == ''
+    assert republish_payload['report_collections'][0]['collection_alias'] == collection_alias
+    assert alias_root.exists()
+    assert (alias_root / 'collection').exists()
+    assert (alias_root / 'processing' / 'train').exists()
+
+    rc = main(['librarian', 'store', 'reports', '--json'])
+
+    assert rc == 0
+    show_payload = json.loads(capsys.readouterr().out)
+    assert show_payload['count'] == 1
+    assert show_payload['republish_required'] is False
+    assert show_payload['report_collections'][0]['collection_alias'] == collection_alias
 
 
 def test_librarian_store_reports_human_show_surfaces_sections(monkeypatch, tmp_path: Path, capsys) -> None:
@@ -2529,6 +2764,7 @@ def test_ds_saved_selector_commands_and_wizard_hydration(monkeypatch, tmp_path: 
             'baseline_window_id': 'canary-window-001',
             'max_fpr': 0.02,
         },
+        lineage={'dataset_manifest': dataset_manifest},
         summary='Retained run selector fixture.',
     )
 
@@ -3240,7 +3476,7 @@ def test_ds_wizard_score_execute_populates_report_results_and_completion_feedbac
     assert any(line == 'anomaly direction: higher=worse' for line in report_rendered)
 
 
-def test_ds_run_demo_executes_wrapper_and_emits_artifact_summary(tmp_path: Path, monkeypatch, capsys) -> None:
+def test_ds_run_demo_with_explicit_derived_reports_emits_local_report_bundle(tmp_path: Path, monkeypatch, capsys) -> None:
     with _bind_temp_observer_project_ctx(monkeypatch, tmp_path) as project_dir:
             try:
                 import apexlab  # noqa: F401
@@ -3248,7 +3484,7 @@ def test_ds_run_demo_executes_wrapper_and_emits_artifact_summary(tmp_path: Path,
                 pytest.skip('ApexLab not installed')
         
             out_dir = tmp_path / 'demo_flow'
-            rc = main(['ds', 'run', 'demo', '--out-dir', str(out_dir), '--json'])
+            rc = main(['ds', 'run', 'demo', '--out-dir', str(out_dir), '--derived-reports', '--json'])
         
             assert rc == 0
             payload = json.loads(capsys.readouterr().out)
@@ -3256,6 +3492,9 @@ def test_ds_run_demo_executes_wrapper_and_emits_artifact_summary(tmp_path: Path,
             assert payload['run_mode'] == 'demo'
             assert payload['implementation_state'] == 'automation-available'
             assert 'delivery_frame' not in payload
+            assert payload['finalization']['derived_reports_enabled'] is True
+            assert payload['publication']['decision'] == 'skipped'
+            assert 'publication_skipped:workflow_not_publishable' in payload['publication']['reason_codes']
             assert payload['total_records'] == 60
             assert Path(payload['artifacts']['root_dir']).exists()
             assert Path(payload['artifacts']['dataset_manifest']).exists()
@@ -3268,6 +3507,35 @@ def test_ds_run_demo_executes_wrapper_and_emits_artifact_summary(tmp_path: Path,
             assert _resolve_reported_path(payload['artifacts']['report_manifest_json']).exists()
             assert _resolve_reported_path(payload['artifacts']['ds_run_index_jsonl']).exists()
             assert _resolve_reported_path(payload['artifacts']['ds_latest_json']).exists()
+            assert 'tracked_ds_index_md' not in payload['artifacts']
+            assert not (project_dir / 'docs' / 'reports' / 'collections').exists()
+
+
+def test_ds_run_demo_defaults_to_no_derived_reports(tmp_path: Path, monkeypatch, capsys) -> None:
+    with _bind_temp_observer_project_ctx(monkeypatch, tmp_path) as project_dir:
+            try:
+                import apexlab  # noqa: F401
+            except ImportError:
+                pytest.skip('ApexLab not installed')
+
+            rc = main(['ds', 'run', 'demo', '--json'])
+
+            assert rc == 0
+            payload = json.loads(capsys.readouterr().out)
+            assert payload['action'] == 'ds-run'
+            assert payload['run_mode'] == 'demo'
+            assert payload['finalization']['derived_reports_enabled'] is False
+            assert payload['publication']['decision'] == 'skipped'
+            assert 'publication_skipped:derived_reports_disabled' in payload['publication']['reason_codes']
+            assert Path(payload['artifacts']['root_dir']).exists()
+            assert Path(payload['artifacts']['dataset_manifest']).exists()
+            assert Path(payload['artifacts']['evaluation_run_json']).exists()
+            assert 'report_json' not in payload['artifacts']
+            assert 'report_md' not in payload['artifacts']
+            assert 'report_manifest_json' not in payload['artifacts']
+            assert 'ds_run_index_jsonl' not in payload['artifacts']
+            assert not (project_dir / 'local_untracked' / 'analysis' / 'indexes' / 'ds_run_index.jsonl').exists()
+            assert not (project_dir / 'docs' / 'reports' / 'collections').exists()
 
 
 def test_ds_run_demo_no_derived_reports_skips_report_bundle_and_publication(tmp_path: Path, monkeypatch, capsys) -> None:
@@ -3295,6 +3563,72 @@ def test_ds_run_demo_no_derived_reports_skips_report_bundle_and_publication(tmp_
             assert 'ds_run_index_jsonl' not in payload['artifacts']
             assert 'tracked_ds_index_md' not in payload['artifacts']
             assert not (project_dir / 'docs' / 'reports' / 'ds').exists()
+
+
+def test_ds_run_demo_human_render_uses_sectioned_terminal_layout(monkeypatch, capsys) -> None:
+    monkeypatch.setattr(
+        observerctl_module,
+        '_ds_run_demo',
+        lambda out_dir, dataset_seed, model_seed, max_fpr, derived_reports_enabled=False: {
+            'timestamp_utc': '2026-04-09T12:00:00Z',
+            'runtime_cli_surface': 'observerctl',
+            'decision': 'go',
+            'action': 'ds-run',
+            'command_family': 'ds',
+            'command_path': 'observerctl ds run demo',
+            'implementation_state': 'automation-available',
+            'underlying_surface': 'analysis.run_demo',
+            'run_mode': 'demo',
+            'summary': 'Demo pipeline completed through observerctl ds.',
+            'run_id': 'demo-unit-001',
+            'dataset_seed': 123,
+            'model_seed': 42,
+            'total_records': 60,
+            'max_fpr': 0.01,
+            'counts': {'tp': 1, 'fp': 0, 'tn': 58, 'fn': 1},
+            'thresholding': {
+                'threshold': 0.2,
+                'target_fpr': 0.01,
+                'actual_fpr': 0.0,
+                'flagged_records': 1,
+                'records_scored': 60,
+            },
+            'score_column': 'score_anomaly',
+            'anomaly_direction': 'lower-is-more-anomalous',
+            'artifacts': {
+                'root_dir': 'local_untracked/analysis/runs/demo/demo-unit-001',
+                'dataset_manifest': 'local_untracked/analysis/runs/demo/demo-unit-001/dataset/dataset_manifest.json',
+                'supervised_model_path': 'local_untracked/analysis/runs/demo/demo-unit-001/models/supervised/model.pkl',
+                'unsupervised_model_path': 'local_untracked/analysis/runs/demo/demo-unit-001/models/unsupervised/model.pkl',
+                'evaluation_run_json': 'local_untracked/analysis/runs/demo/demo-unit-001/evaluation/run.json',
+                'scores_csv': 'local_untracked/analysis/runs/demo/demo-unit-001/scoring/scores.csv',
+            },
+            'finalization': {
+                'derived_reports_enabled': False,
+                'step_order': [],
+                'steps': {},
+            },
+            'publication': {
+                'decision': 'skipped',
+                'reason_codes': ['publication_skipped:derived_reports_disabled'],
+            },
+            'reason_codes': [],
+        },
+    )
+
+    rc = main(['ds', 'run', 'demo'])
+
+    assert rc == 0
+    rendered = [strip_ansi(line) for line in capsys.readouterr().out.splitlines()]
+    assert rendered[0] == 'ObserverCTL DS demo'
+    assert 'Summary' in rendered
+    assert 'Evaluation' in rendered
+    assert 'Outputs' in rendered
+    assert 'Guidance' in rendered
+    assert any('Derived reports:' in line and 'disabled (default)' in line for line in rendered)
+    assert any('Publication:' in line and 'skipped' in line for line in rendered)
+    assert any('Root dir:' in line and 'local_untracked/analysis/runs/demo/demo-unit-001' in line for line in rendered)
+    assert any('--derived-reports' in line for line in rendered)
 
 
 def test_ds_run_pipeline_executes_supervised_flow_and_emits_artifact_summary(tmp_path: Path, monkeypatch, capsys) -> None:
@@ -3881,6 +4215,7 @@ def test_ds_finalize_run_packet_exposes_explicit_finalization_order(tmp_path: Pa
             'implementation_state': 'command-available',
             'underlying_surface': 'analysis.dataset_builder',
             'summary': 'Dataset built through observerctl ds.',
+            'collection_alias': 'can-frame1-order',
             'artifacts': {},
             'reason_codes': [],
         },
@@ -3912,6 +4247,56 @@ def test_ds_finalize_run_packet_exposes_explicit_finalization_order(tmp_path: Pa
     assert final_packet['finalization']['steps']['publication_eligibility']['eligible'] is True
     assert final_packet['finalization']['steps']['tracked_publication']['decision'] == 'go'
     assert final_packet['publication']['decision'] == 'go'
+
+
+def test_ds_finalize_run_packet_fails_closed_when_collection_alias_is_unresolved(tmp_path: Path, monkeypatch) -> None:
+    from analysis.report_pack import prepare_report_bundle
+
+    project_root, anchor = _make_temp_observer_project(tmp_path)
+    monkeypatch.setattr(observerctl_module, '_project_root', lambda: project_root)
+    monkeypatch.setattr(observerctl_module, '_project_anchor', lambda: anchor)
+    monkeypatch.setattr(observerctl_module, '__file__', str(anchor))
+
+    bundle = prepare_report_bundle(anchor, 'evaluate', run_id='frame1-missing-alias')
+    evaluation_dir = bundle.artifact_dirs['evaluation']
+    evaluation_dir.mkdir(parents=True, exist_ok=True)
+    run_json = evaluation_dir / 'run.json'
+    run_md = evaluation_dir / 'run.md'
+    run_json.write_text('{}\n', encoding='utf-8')
+    run_md.write_text('# eval\n', encoding='utf-8')
+
+    final_packet = observerctl_module._ds_finalize_run_packet(
+        {
+            'timestamp_utc': '2026-04-04T12:00:00Z',
+            'runtime_cli_surface': 'observerctl',
+            'decision': 'go',
+            'action': 'ds-evaluate',
+            'command_family': 'ds',
+            'command_path': 'observerctl ds evaluate',
+            'implementation_state': 'command-available',
+            'underlying_surface': 'analysis.evaluation_harness',
+            'summary': 'Evaluation completed through observerctl ds.',
+            'artifacts': {},
+            'reason_codes': [],
+        },
+        bundle=bundle,
+        artifact_paths={
+            'run_json': run_json,
+            'run_md': run_md,
+        },
+        context={'max_fpr': 0.02},
+        lineage={},
+    )
+
+    assert final_packet['decision'] == 'no-go'
+    assert 'critical_check_failed:collection_alias_unresolved' in final_packet['reason_codes']
+    assert final_packet['publication']['decision'] == 'skipped'
+    assert final_packet['publication']['reason_codes'] == ['publication_skipped:collection_alias_missing']
+    assert final_packet['finalization']['steps']['report_bundle']['decision'] == 'no-go'
+    assert final_packet['finalization']['steps']['run_index']['decision'] == 'skipped'
+    assert final_packet['finalization']['steps']['publication_eligibility']['eligible'] is False
+    assert 'report_json' not in final_packet['artifacts']
+    assert 'ds_run_index_jsonl' not in final_packet['artifacts']
 
 
 def test_ds_finalize_run_packet_marks_all_finalization_steps_skipped_when_derived_reporting_is_disabled(tmp_path: Path, monkeypatch) -> None:
@@ -4045,6 +4430,7 @@ def test_ds_report_aggregate_appends_history_and_refreshes_latest_by_workflow(tm
                 'underlying_surface': 'analysis.evaluation_harness',
                 'summary': 'Evaluation completed through observerctl ds.',
                 'run_id': bundle.run_id,
+                'collection_alias': 'can-eval-history',
                 'threshold': 0.5,
                 'artifacts': {},
                 'reason_codes': [],
@@ -4185,6 +4571,7 @@ def test_ds_report_publication_requires_canonical_run_root(tmp_path: Path) -> No
             'underlying_surface': 'analysis.evaluation_harness',
             'summary': 'Evaluation completed through observerctl ds.',
             'run_id': evaluate_bundle.run_id,
+            'collection_alias': 'can-canonical',
             'threshold': 0.42,
             'artifacts': {},
             'reason_codes': [],
@@ -4215,6 +4602,7 @@ def test_ds_report_publication_requires_canonical_run_root(tmp_path: Path) -> No
             'underlying_surface': 'analysis.score_unsupervised',
             'summary': 'Unsupervised scoring completed through observerctl ds.',
             'run_id': score_bundle.run_id,
+            'collection_alias': 'can-canonical',
             'records_scored': 1,
             'artifacts': {},
             'reason_codes': [],
@@ -4251,6 +4639,58 @@ def test_ds_report_publication_requires_canonical_run_root(tmp_path: Path) -> No
     assert latest_payload['latest_run']['run_id'] == 'score-canonical'
 
 
+def test_ds_report_publication_skips_ephemeral_dataset_manifest_lineage(tmp_path: Path) -> None:
+    from analysis.report_aggregate import append_ds_run_index, publication_eligibility_reasons, refresh_tracked_ds_publication
+    from analysis.report_pack import prepare_report_bundle, write_report_bundle
+
+    project_root = tmp_path / 'observer_project'
+    anchor = project_root / 'src' / 'observerctl_anchor.py'
+    anchor.parent.mkdir(parents=True, exist_ok=True)
+    anchor.write_text('# anchor\n', encoding='utf-8')
+    (project_root / 'PROJECT_MANIFEST.json').write_text('{}\n', encoding='utf-8')
+
+    build_bundle = prepare_report_bundle(anchor, 'build', run_id='build-temp-lineage')
+    build_dataset_dir = build_bundle.artifact_dirs['dataset']
+    build_dataset_dir.mkdir(parents=True, exist_ok=True)
+    (build_dataset_dir / 'dataset_manifest.json').write_text('{}\n', encoding='utf-8')
+    (build_dataset_dir / 'features.csv').write_text('record_id\n', encoding='utf-8')
+
+    build_report_bundle = write_report_bundle(
+        project_anchor=anchor,
+        bundle=build_bundle,
+        packet={
+            'timestamp_utc': '2026-03-31T12:00:00Z',
+            'runtime_cli_surface': 'observerctl',
+            'decision': 'go',
+            'action': 'ds-build',
+            'command_family': 'ds',
+            'command_path': 'observerctl ds build',
+            'implementation_state': 'command-available',
+            'underlying_surface': 'analysis.dataset_builder',
+            'summary': 'Dataset built through observerctl ds.',
+            'run_id': build_bundle.run_id,
+            'artifacts': {},
+            'reason_codes': [],
+        },
+        artifact_paths={
+            'dataset_manifest': build_dataset_dir / 'dataset_manifest.json',
+            'features_csv': build_dataset_dir / 'features.csv',
+        },
+        context={'output_override': False},
+        lineage={'dataset_manifest': 'C:/Users/tester/AppData/Local/Temp/pytest-of-user/test_ds_build/dataset_manifest.json'},
+    )
+
+    reasons = publication_eligibility_reasons(project_anchor=anchor, manifest_payload=build_report_bundle['manifest'])
+    append_ds_run_index(project_anchor=anchor, manifest_payload=build_report_bundle['manifest'])
+    publication = refresh_tracked_ds_publication(project_anchor=anchor, current_manifest_payload=build_report_bundle['manifest'])
+
+    assert 'publication_skipped:dataset_manifest_ephemeral' in reasons
+    assert publication['decision'] == 'go'
+    assert publication['published_run_count'] == 0
+    assert publication['current_run'] == {}
+    assert not (project_root / 'docs' / 'reports' / 'collections' / 'build-temp-lineage').exists()
+
+
 def test_ds_report_publication_refresh_copies_visual_figures_and_rewrites_links(tmp_path: Path) -> None:
     from analysis.report_aggregate import append_ds_run_index, refresh_tracked_ds_publication
     from analysis.report_pack import prepare_report_bundle, write_report_bundle
@@ -4284,6 +4724,7 @@ def test_ds_report_publication_refresh_copies_visual_figures_and_rewrites_links(
             'underlying_surface': 'analysis.score_unsupervised',
             'summary': 'Unsupervised scoring completed through observerctl ds.',
             'run_id': score_bundle.run_id,
+            'collection_alias': 'can-score-visual',
             'anomaly_direction': 'lower-is-more-anomalous',
             'visuals': {
                 'decision': 'go',
@@ -4360,6 +4801,7 @@ def test_ds_report_publication_refresh_rewrites_tracked_report_paths_and_strips_
             'underlying_surface': 'analysis.score_unsupervised',
             'summary': 'Unsupervised scoring completed through observerctl ds.',
             'run_id': score_bundle.run_id,
+            'collection_alias': 'can-score-publication-clean',
             'records_scored': 2,
             'anomaly_direction': 'lower-is-more-anomalous',
             'score_column': 'score_anomaly',
@@ -4512,6 +4954,7 @@ def test_ds_report_publication_refresh_prefers_declared_visual_registry_over_str
             'underlying_surface': 'analysis.score_unsupervised',
             'summary': 'Unsupervised scoring completed through observerctl ds.',
             'run_id': score_bundle.run_id,
+            'collection_alias': 'can-score-declared-figures',
             'anomaly_direction': 'lower-is-more-anomalous',
             'visuals': {
                 'decision': 'go',
@@ -4632,9 +5075,11 @@ def test_ds_report_publication_groups_multiple_stage_runs_under_one_collection_a
 
     first_stage_doc = project_root / 'docs' / 'reports' / 'collections' / 'can-r1a2b' / 'processing' / 'eval' / '20260331T120500000000Z.eval.md'
     second_stage_doc = project_root / publication['current_run']['published_report_paths']['processing_markdown']
+    collection_dir = project_root / 'docs' / 'reports' / 'collections' / 'can-r1a2b' / 'collection'
     collection_report = project_root / publication['current_run']['published_report_paths']['markdown']
-    first_collection_doc = project_root / 'docs' / 'reports' / 'collections' / 'can-r1a2b' / 'collection' / '20260331T120500000000Z.collection.md'
+    first_collection_doc = collection_dir / '20260331T120500000000Z.collection.md'
     second_collection_doc = project_root / publication['current_run']['published_report_paths']['collection_history_markdown']
+    collection_packets = sorted(path.name for path in collection_dir.glob('*.collection.md'))
     latest_collections_md = project_root / publication['aggregate_paths']['latest_md']
     workflow_rollup_md = project_root / publication['aggregate_paths']['by_workflow_md']
     aggregate_report_md = project_root / publication['aggregate_paths']['aggregate_report_md']
@@ -4646,8 +5091,9 @@ def test_ds_report_publication_groups_multiple_stage_runs_under_one_collection_a
     assert publication['published_run_count'] == 2
     assert first_stage_doc.exists()
     assert second_stage_doc.exists()
-    assert first_collection_doc.exists()
+    assert not first_collection_doc.exists()
     assert second_collection_doc.exists()
+    assert collection_packets == ['20260331T120500123456Z.collection.md']
     assert second_stage_doc.name == '20260331T120500123456Z.eval.md'
     assert second_collection_doc.name == '20260331T120500123456Z.collection.md'
     assert collection_report.exists()
@@ -4659,10 +5105,9 @@ def test_ds_report_publication_groups_multiple_stage_runs_under_one_collection_a
     public_run_ledger_text = public_run_ledger_md.read_text(encoding='utf-8')
     reports_index_text = reports_index_md.read_text(encoding='utf-8')
     generated_surfaces_text = generated_surfaces_md.read_text(encoding='utf-8')
-    assert '20260331T120500000000Z.collection.md' in collection_report_text
-    assert '20260331T120500123456Z.collection.md' in collection_report_text
     assert '20260331T120500000000Z.eval.md' in collection_report_text
     assert '20260331T120500123456Z.eval.md' in collection_report_text
+    assert '20260331T120500000000Z.collection.md' not in collection_report_text
     assert '## Collection identity' in collection_report_text
     assert '## Run summary' in collection_report_text
     assert '## Collection handoff map' in collection_report_text
@@ -4679,6 +5124,9 @@ def test_ds_report_publication_groups_multiple_stage_runs_under_one_collection_a
     assert 'collection/report.md' not in latest_collections_text
     assert 'collection/report.md' not in workflow_rollup_text
     assert 'collection/report.md' not in reports_index_text
+    assert '20260331T120500000000Z.collection.md' not in latest_collections_text
+    assert '20260331T120500000000Z.collection.md' not in workflow_rollup_text
+    assert '20260331T120500000000Z.collection.md' not in reports_index_text
     assert '# Aggregate Report' in aggregate_report_text
     assert '# Public Run Ledger' in public_run_ledger_text
     assert '## What to open first' in aggregate_report_text
@@ -4755,6 +5203,7 @@ def test_ds_report_publication_uses_registered_dataset_alias_when_manifest_colle
         context={'seed': 42},
         lineage={'dataset_manifest': manifest_path},
     )
+    assert train_report_bundle['manifest']['collection_alias'] == 'presentation-demo'
     append_ds_run_index(project_anchor=anchor, manifest_payload=train_report_bundle['manifest'])
 
     score_bundle = prepare_report_bundle(anchor, 'score', run_id='score-presentation-demo')
@@ -4781,6 +5230,7 @@ def test_ds_report_publication_uses_registered_dataset_alias_when_manifest_colle
         context={'output_override': False},
         lineage={'dataset_manifest': manifest_path},
     )
+    assert score_report_bundle['manifest']['collection_alias'] == 'presentation-demo'
     append_ds_run_index(project_anchor=anchor, manifest_payload=score_report_bundle['manifest'])
 
     publication = refresh_tracked_ds_publication(project_anchor=anchor, current_manifest_payload=score_report_bundle['manifest'])
@@ -5367,6 +5817,37 @@ def test_gate_check_go_in_sim_mode(tmp_path: Path, monkeypatch) -> None:
     gate = evaluate_gate_decision(status, target_mode='canary')
     assert gate['decision'] == 'go'
     assert gate['reason_codes'] == []
+
+
+def test_canary_gate_marks_stage5_prerequisites_not_applicable(tmp_path: Path, monkeypatch) -> None:
+    log_dir = tmp_path / 'logs'
+    health = log_dir / 'health'
+    data = log_dir / 'data' / 'calamum'
+    control = log_dir / 'control' / 'calamum'
+
+    for d in [health, data, control]:
+        d.mkdir(parents=True, exist_ok=True)
+
+    _touch(health / 'calamum_ops_watchdog.heartbeat')
+    _touch(health / 'calamum_observer.heartbeat')
+    _touch(health / 'calamum_librarian.heartbeat')
+
+    monkeypatch.setenv('CALAMUM_LOG_DIR', str(log_dir))
+    monkeypatch.setenv('CALAMUM_DATA_SIGNING_KEY', 'unit-test-signing-key')
+    _set_security_report_ref(monkeypatch, log_dir)
+    observerctl_module._save_state('sim', 'watch')
+    _write_watchdog_posture(control, posture='isolation', heartbeat_interval=10, baseline_interval=120)
+    _write_watchdog_resource(control, cpu_now=55, ram_now=60, cpu_p95=50, ram_p95=55, score=0.2, age_s=5)
+
+    status = collect_runtime_status(source='sim')
+    gate = evaluate_gate_decision(status, target_mode='canary')
+
+    assert gate['decision'] == 'go'
+    assert gate['stage5_prerequisites']['C22_baseline_validation_rate_escalated']['status'] == 'not_applicable'
+    assert gate['stage5_prerequisites']['C24_resource_stream_retention_ready']['status'] == 'not_applicable'
+    assert gate['stage5_prerequisites']['C25_resource_baseline_window_ready']['status'] == 'not_applicable'
+    assert gate['stage5_prerequisites']['baseline_monitor_runtime_ready']['status'] == 'not_applicable'
+    assert gate['stage5_prerequisites']['overall']['status'] == 'not_applicable'
 
 
 def test_gate_noop_transition_denied(tmp_path: Path, monkeypatch) -> None:

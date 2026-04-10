@@ -4,11 +4,10 @@ This synthesis page summarizes the strongest current reader-facing conclusions a
 
 ## Executive summary
 
-- Published packets: 5
-- Collection aliases represented: 1
-- Workflow families represented: 4
-- Threshold-bearing packets: 1
-- Current front-door packet: [p3-demo-current-20260406](../collections/p3-demo-current-20260406/collection/20260406T213205644819Z.collection.md)
+- Published packets: 0
+- Collection aliases represented: 0
+- Workflow families represented: 0
+- Threshold-bearing packets: 0
 
 ## Why this aggregate exists
 
@@ -16,42 +15,23 @@ The tracked report family now has multiple reader roles: packet entry, workflow 
 
 ## Runtime-safe current picture
 
-- Latest published workflow: build
-- Latest packet timestamp (UTC): 2026-04-06T21:32:05.644819Z
-- Latest packet summary: Approved dataset materialized through observerctl ds.
+- No published packets are available yet.
 
 ## What to open first
 
-| Collection alias | Current packet date | Latest stages | Current focus | Collection packet |
-|---|---|---|---|---|
-| `p3-demo-current-20260406` | 2026-04-06T21:32:05.644819Z | build, evaluate, score, train | Build-stage packet for current dataset-materialization readiness. | [collection packet](../collections/p3-demo-current-20260406/collection/20260406T213205644819Z.collection.md) |
+No collection packets are published yet.
 
 ## Current packet family at a glance
 
-- Collections with figure-backed packets: 1
-- Collections with threshold-bearing packets: 1
-- Current packet summary: Approved dataset materialized through observerctl ds.
-- Current front-door packet: [p3-demo-current-20260406](../collections/p3-demo-current-20260406/collection/20260406T213205644819Z.collection.md)
+- Collections with figure-backed packets: 0
+- Collections with threshold-bearing packets: 0
 
 ## Strongest findings
 
-- The tracked report family is now organized around 1 collection aliases instead of a single cache-shaped run list.
-- Collection packets now act as reader-first entry surfaces rather than history-only routing stubs.
-- Workflow coverage is currently spread across `build`, `evaluate`, `score`, `train`.
-- Threshold-bearing packets remain visible as dated packet leaves, with the latest threshold summary routed through `THRESHOLD_SUMMARY.md`.
+- No threshold-bearing packets are currently present in the tracked family.
 
 ## Workflow and threshold synthesis
 
-| Workflow family | Published packets | Latest collection | Current contribution |
-|---|---:|---|---|
-| build | 2 | `p3-demo-current-20260406` | Defines the dataset packet baseline. |
-| evaluate | 1 | `p3-demo-current-20260406` | Captures validation and threshold interpretation. |
-| score | 1 | `p3-demo-current-20260406` | Captures scored anomaly output for reader follow-through. |
-| train | 1 | `p3-demo-current-20260406` | Carries the latest model-training outcome. |
-
-| Threshold-bearing packet | Threshold | Target guardrail | Eval packet |
-|---|---:|---:|---|
-| `p3-demo-current-20260406` / `evaluate_20260406T211232484108Z` | 0 | 0.01 | [eval packet](../collections/p3-demo-current-20260406/processing/eval/20260406T211246486478Z.eval.md) |
 
 ## Limits and caution notes
 

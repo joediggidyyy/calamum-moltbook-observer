@@ -41,6 +41,7 @@ from analysis._util import (
     librarian_vault_dataset_manifest_path,
     librarian_vault_integrity_dir,
     librarian_vault_quarantine_dir,
+    librarian_vault_report_quarantine_dir,
     librarian_vault_root,
     normalize_repo_or_absolute_path,
     sanitize_run_id,
@@ -529,6 +530,10 @@ def _vault_integrity_files(paths: Dict[str, Path]) -> List[Path]:
         for candidate in sorted(paths['authority_access_root'].rglob('*')):
             if candidate.is_file():
                 tracked.append(candidate)
+    if paths['quarantine_root'].exists():
+        for candidate in sorted(paths['quarantine_root'].rglob('*')):
+            if candidate.is_file():
+                tracked.append(candidate)
     return tracked
 
 
@@ -966,6 +971,21 @@ def _dataset_display_alias_from_scope(source: str, mode: str, manifest_sha: str)
     return '{0}-{1}{2}'.format(mode_alias, source_alias, sha_token[-4:])
 
 
+def _dataset_manifest_fallback_alias(manifest_path: Path, payload: Dict[str, Any], manifest_sha: str) -> str:
+    for candidate in (
+        payload.get('display_alias', ''),
+        payload.get('run_id', ''),
+        payload.get('display_name', ''),
+    ):
+        text = sanitize_run_id(str(candidate or '').strip())
+        if text:
+            return text
+    sha_token = str(manifest_sha or '').strip().lower()
+    if len(sha_token) >= 6:
+        return 'dataset-{0}'.format(sha_token[-6:])
+    return sanitize_run_id(manifest_path.stem) or 'dataset'
+
+
 def dataset_display_alias_for_manifest(project_anchor: Path, dataset_manifest_ref: Any) -> str:
     paths = _dataset_catalog_paths(project_anchor)
     _bootstrap_librarian_vault(paths)
@@ -996,7 +1016,7 @@ def dataset_display_alias_for_manifest(project_anchor: Path, dataset_manifest_re
 
     payload = _read_json_dict(manifest_path, default={})
     if not payload:
-        return ''
+        return 'dataset-{0}'.format(manifest_sha[-6:]) if len(manifest_sha) >= 6 else ''
     inferred_source, inferred_mode = _infer_dataset_scope(
         manifest_path,
         payload,
@@ -1004,7 +1024,10 @@ def dataset_display_alias_for_manifest(project_anchor: Path, dataset_manifest_re
         run_id=str(payload.get('run_id', '') or '').strip(),
         source_binding='dataset_manifest_sha256:{0}'.format(manifest_sha),
     )
-    return _dataset_display_alias_from_scope(inferred_source, inferred_mode, manifest_sha)
+    scoped_alias = _dataset_display_alias_from_scope(inferred_source, inferred_mode, manifest_sha)
+    if scoped_alias:
+        return scoped_alias
+    return _dataset_manifest_fallback_alias(manifest_path, payload, manifest_sha)
 
 
 def _load_dataset_snapshot(paths: Dict[str, Path]) -> List[Dict[str, Any]]:
@@ -1396,16 +1419,14 @@ def list_librarian_datasets_packet(project_anchor: Path) -> Dict[str, Any]:
 
 def _report_store_paths(project_anchor: Path) -> Dict[str, Path]:
     project_root = find_project_root(project_anchor)
-    repo_root = project_root.parent.parent if project_root.parent.name == 'projects' else project_root.parent
     reports_root = project_root / 'docs' / 'reports'
     collections_root = reports_root / 'collections'
-    archive_parent = repo_root / 'quarantine_legacy_archive' / project_root.name
+    vault_quarantine_root = librarian_vault_report_quarantine_dir(project_anchor) / (sanitize_run_id(project_root.name) or project_root.name)
     return {
         'project_root': project_root,
-        'repo_root': repo_root,
         'reports_root': reports_root,
         'collections_root': collections_root,
-        'archive_parent': archive_parent,
+        'vault_quarantine_root': vault_quarantine_root,
     }
 
 
@@ -1462,20 +1483,26 @@ def _report_store_archive_manifest(
     reason: str,
     archive_root: Path,
     archived_paths: List[Path],
+    archived_aliases: Optional[List[str]] = None,
     archived_auxiliary_paths: Optional[List[Path]] = None,
     live_target: Path,
 ) -> Dict[str, Any]:
     project_root = paths['project_root']
     auxiliary_paths = list(archived_auxiliary_paths or [])
+    alias_rows = sorted({str(alias).strip() for alias in list(archived_aliases or []) if str(alias).strip()})
+    if not alias_rows:
+        alias_rows = [path.name for path in archived_paths]
     manifest = {
         'action': str(action or '').strip(),
         'reason': str(reason or '').strip(),
+        'quarantine_surface': 'librarian_vault_quarantine',
         'project_root': str(project_root),
         'archive_root': str(archive_root),
+        'quarantine_root': str(archive_root),
         'live_target': str(live_target),
         'archived_paths': [str(path) for path in archived_paths],
-        'archived_aliases': [path.name for path in archived_paths],
-        'archived_alias_count': int(len(archived_paths)),
+        'archived_aliases': alias_rows,
+        'archived_alias_count': int(len(alias_rows)),
         'archived_auxiliary_paths': [str(path) for path in auxiliary_paths],
         'archived_auxiliary_count': int(len(auxiliary_paths)),
         'archived_at_utc': utc_now_iso(),
@@ -1490,32 +1517,44 @@ def librarian_report_store_packet(
     *,
     show: bool = False,
     purge: bool = False,
+    republish: bool = False,
     delete_alias: str = '',
 ) -> Dict[str, Any]:
+    from analysis.report_aggregate import set_tracked_ds_publication_republish_state, tracked_ds_publication_republish_state
+
     paths = _report_store_paths(project_anchor)
+    vault_paths = _dataset_catalog_paths(project_anchor)
+    _bootstrap_librarian_vault(vault_paths)
+
     project_root = paths['project_root']
     collections_root = paths['collections_root']
     reports_root = paths['reports_root']
-    archive_parent = paths['archive_parent']
+    vault_quarantine_root = paths['vault_quarantine_root']
+    republish_state = tracked_ds_publication_republish_state(project_anchor=project_anchor)
+    base_artifacts = {
+        **_vault_artifact_refs(vault_paths),
+        'reports_root': normalize_repo_or_absolute_path(reports_root, project_root),
+        'collections_root': normalize_repo_or_absolute_path(collections_root, project_root),
+        'vault_quarantine_root': normalize_repo_or_absolute_path(vault_quarantine_root, project_root),
+        'archive_parent': normalize_repo_or_absolute_path(vault_quarantine_root, project_root),
+        'publication_control_json': str(republish_state.get('control_path', '') or ''),
+    }
 
     delete_token = str(delete_alias or '').strip()
-    if not show and not purge and not delete_token:
+    if not show and not purge and not republish and not delete_token:
         show = True
 
-    action_count = int(bool(show)) + int(bool(purge)) + int(bool(delete_token))
+    action_count = int(bool(show)) + int(bool(purge)) + int(bool(republish)) + int(bool(delete_token))
     if action_count != 1:
         return {
             'timestamp_utc': utc_now_iso(),
             'runtime_cli_surface': 'observerctl',
             'decision': 'no-go',
             'action': 'librarian-store-reports',
-            'summary': 'Choose exactly one report-store action: --show, --purge, or --delete <wizard-alias>.',
+            'summary': 'Choose exactly one report-store action: --show, --purge, --republish, or --delete <wizard-alias>.',
             'reason_codes': ['policy_denied:librarian_store_reports_action_conflict'],
-            'artifacts': {
-                'reports_root': normalize_repo_or_absolute_path(reports_root, project_root),
-                'collections_root': normalize_repo_or_absolute_path(collections_root, project_root),
-                'archive_parent': normalize_repo_or_absolute_path(archive_parent, project_root),
-            },
+            'republish_required': bool(republish_state.get('republish_required', False)),
+            'artifacts': dict(base_artifacts),
         }
 
     if show:
@@ -1530,28 +1569,65 @@ def librarian_report_store_packet(
             'count': int(len(rows)),
             'stale_report_md_count': stale_count,
             'report_collections': rows,
+            'republish_required': bool(republish_state.get('republish_required', False)),
+            'reason_codes': [],
+            'artifacts': dict(base_artifacts),
+        }
+
+    if republish:
+        from analysis.report_aggregate import refresh_tracked_ds_publication
+
+        publication = refresh_tracked_ds_publication(project_anchor=project_anchor, explicit_republish=True)
+        aggregate_paths = publication.get('aggregate_paths', {}) if isinstance(publication.get('aggregate_paths', {}), dict) else {}
+        current_run = publication.get('current_run', {}) if isinstance(publication.get('current_run', {}), dict) else {}
+        refreshed_state = tracked_ds_publication_republish_state(project_anchor=project_anchor)
+        return {
+            'timestamp_utc': utc_now_iso(),
+            'runtime_cli_surface': 'observerctl',
+            'decision': 'go',
+            'action': 'librarian-store-reports-republish',
+            'summary': 'Tracked report publication rebuilt from the canonical saved-run ledger.',
+            'count': int(len(_report_store_collection_rows(paths))),
+            'published_run_count': int(publication.get('published_run_count', 0) or 0),
+            'current_run_id': str(current_run.get('run_id', '') or '').strip(),
+            'report_collections': _report_store_collection_rows(paths),
+            'republish_required': bool(refreshed_state.get('republish_required', False)),
             'reason_codes': [],
             'artifacts': {
+                **_vault_artifact_refs(vault_paths),
                 'reports_root': normalize_repo_or_absolute_path(reports_root, project_root),
                 'collections_root': normalize_repo_or_absolute_path(collections_root, project_root),
-                'archive_parent': normalize_repo_or_absolute_path(archive_parent, project_root),
+                'vault_quarantine_root': normalize_repo_or_absolute_path(vault_quarantine_root, project_root),
+                'archive_parent': normalize_repo_or_absolute_path(vault_quarantine_root, project_root),
+                'publication_control_json': str(refreshed_state.get('control_path', '') or ''),
+                'ds_run_index_jsonl': normalize_repo_or_absolute_path(_report_store_auxiliary_reset_paths(project_anchor)['ledger_path'], project_root),
+                'ds_latest_json': normalize_repo_or_absolute_path(_report_store_auxiliary_reset_paths(project_anchor)['latest_index_path'], project_root),
+                'aggregate_report_md': str(aggregate_paths.get('aggregate_report_md', '') or ''),
+                'latest_md': str(aggregate_paths.get('latest_md', '') or ''),
+                'generated_surfaces_md': str(aggregate_paths.get('generated_surfaces_md', '') or ''),
             },
         }
 
     stamp = datetime.now(timezone.utc).strftime('%Y%m%dT%H%M%SZ')
-    archive_parent.mkdir(parents=True, exist_ok=True)
+    vault_quarantine_root.mkdir(parents=True, exist_ok=True)
 
     if purge:
         from analysis.report_aggregate import reset_tracked_ds_publication_state
 
         archived_paths: List[Path] = []
         archived_auxiliary_paths: List[Path] = []
-        archive_root = archive_parent / 'report_collections_reset_{0}'.format(stamp)
-        destination_dir = archive_root / 'collections'
-        if collections_root.exists():
-            archived_paths = sorted(path for path in collections_root.iterdir() if path.exists())
-            shutil.move(str(collections_root), str(destination_dir))
-        collections_root.mkdir(parents=True, exist_ok=True)
+        archived_aliases = [str(row.get('collection_alias', '') or '').strip() for row in _report_store_collection_rows(paths) if isinstance(row, dict)]
+        archive_root = vault_quarantine_root / 'report_collections_reset_{0}'.format(stamp)
+        report_archive_targets = {
+            reports_root / 'INDEX.md': archive_root / 'docs' / 'reports' / 'INDEX.md',
+            reports_root / 'aggregates': archive_root / 'docs' / 'reports' / 'aggregates',
+            reports_root / 'reference': archive_root / 'docs' / 'reports' / 'reference',
+            collections_root: archive_root / 'docs' / 'reports' / 'collections',
+        }
+        for source, destination in report_archive_targets.items():
+            archived_path = _archive_reset_surface(source, destination)
+            if archived_path is not None:
+                archived_paths.append(archived_path)
 
         auxiliary_paths = _report_store_auxiliary_reset_paths(project_anchor)
         archive_targets = {
@@ -1568,28 +1644,48 @@ def librarian_report_store_packet(
         manifest = _report_store_archive_manifest(
             paths,
             action='archive-and-reset-report-collections',
-            reason='reset tracked report collections, selector authority, and aggregate publication before rerun from full collection pipeline',
+            reason='move materialized tracked report publication into the librarian vault quarantine and reset live reporting to zero-state',
             archive_root=archive_root,
             archived_paths=archived_paths,
+            archived_aliases=archived_aliases,
             archived_auxiliary_paths=archived_auxiliary_paths,
-            live_target=collections_root,
+            live_target=reports_root,
+        )
+        baseline = _write_vault_baseline(vault_paths, reason='librarian-store-reports-purge')
+        _append_vault_audit_record(
+            vault_paths,
+            action='librarian-store-reports-purge',
+            status='ok',
+            ordinary_mutation=True,
+            reason='tracked-report-quarantine',
+            details={
+                'archived_alias_count': int(manifest.get('archived_alias_count', 0) or 0),
+                'archive_root': normalize_repo_or_absolute_path(archive_root, project_root),
+                'baseline_checksum': str(baseline.get('checksum_sha256', '') or '').strip(),
+            },
         )
         return {
             'timestamp_utc': utc_now_iso(),
             'runtime_cli_surface': 'observerctl',
             'decision': 'go',
             'action': 'librarian-store-reports-purge',
-            'summary': 'Tracked report collection tree archived, selector authority cleared, and aggregate files reset to zero-state.',
+            'summary': 'Tracked report publication moved into the librarian vault quarantine, selector authority cleared, and live report surfaces reset to zero-state.',
             'archived_aliases': list(manifest.get('archived_aliases', []) or []),
             'archived_alias_count': int(manifest.get('archived_alias_count', 0) or 0),
             'archived_auxiliary_count': int(manifest.get('archived_auxiliary_count', 0) or 0),
             'report_collections': _report_store_collection_rows(paths),
+            'republish_required': bool(reset_packet.get('republish_required', False)),
             'reason_codes': [],
             'artifacts': {
+                **_vault_artifact_refs(vault_paths),
                 'reports_root': normalize_repo_or_absolute_path(reports_root, project_root),
                 'collections_root': normalize_repo_or_absolute_path(collections_root, project_root),
+                'vault_quarantine_root': normalize_repo_or_absolute_path(vault_quarantine_root, project_root),
+                'vault_quarantine_manifest_json': normalize_repo_or_absolute_path(archive_root / 'archive_manifest.json', project_root),
                 'archive_root': normalize_repo_or_absolute_path(archive_root, project_root),
                 'archive_manifest_json': normalize_repo_or_absolute_path(archive_root / 'archive_manifest.json', project_root),
+                'librarian_vault_baseline_checksum': str(baseline.get('checksum_sha256', '') or '').strip(),
+                'publication_control_json': str(reset_packet.get('publication_control_path', '') or ''),
                 'ds_run_index_jsonl': str(((reset_packet.get('index_paths', {}) if isinstance(reset_packet.get('index_paths', {}), dict) else {}).get('ledger_path', '') or '').strip()),
                 'ds_latest_json': str(((reset_packet.get('index_paths', {}) if isinstance(reset_packet.get('index_paths', {}), dict) else {}).get('latest_index_path', '') or '').strip()),
                 'aggregate_report_md': str(((reset_packet.get('aggregate_paths', {}) if isinstance(reset_packet.get('aggregate_paths', {}), dict) else {}).get('aggregate_report_md', '') or '').strip()),
@@ -1609,23 +1705,39 @@ def librarian_report_store_packet(
             'reason_codes': ['critical_check_failed:librarian_report_collection_not_found'],
             'delete_alias': delete_token,
             'report_collections': _report_store_collection_rows(paths),
-            'artifacts': {
-                'reports_root': normalize_repo_or_absolute_path(reports_root, project_root),
-                'collections_root': normalize_repo_or_absolute_path(collections_root, project_root),
-                'archive_parent': normalize_repo_or_absolute_path(archive_parent, project_root),
-            },
+            'artifacts': dict(base_artifacts),
         }
 
-    archive_root = archive_parent / 'report_collection_delete_{0}_{1}'.format(sanitize_run_id(delete_token) or 'collection', stamp)
+    archive_root = vault_quarantine_root / 'report_collection_delete_{0}_{1}'.format(sanitize_run_id(delete_token) or 'collection', stamp)
     destination_dir = archive_root / 'collections' / alias_dir.name
+    destination_dir.parent.mkdir(parents=True, exist_ok=True)
     shutil.move(str(alias_dir), str(destination_dir))
+    control_state = set_tracked_ds_publication_republish_state(
+        project_anchor=project_anchor,
+        republish_required=True,
+        reason='tracked-report-alias-archived',
+    )
     manifest = _report_store_archive_manifest(
         paths,
         action='archive-and-delete-report-collection',
-        reason='archive-first removal of one tracked report collection alias',
+        reason='move one tracked report collection alias into the librarian vault quarantine',
         archive_root=archive_root,
         archived_paths=[destination_dir],
+        archived_aliases=[alias_dir.name],
         live_target=collections_root,
+    )
+    baseline = _write_vault_baseline(vault_paths, reason='librarian-store-reports-delete')
+    _append_vault_audit_record(
+        vault_paths,
+        action='librarian-store-reports-delete',
+        status='ok',
+        ordinary_mutation=True,
+        reason='tracked-report-quarantine',
+        details={
+            'delete_alias': alias_dir.name,
+            'archive_root': normalize_repo_or_absolute_path(archive_root, project_root),
+            'baseline_checksum': str(baseline.get('checksum_sha256', '') or '').strip(),
+        },
     )
     collections_root.mkdir(parents=True, exist_ok=True)
     return {
@@ -1633,17 +1745,23 @@ def librarian_report_store_packet(
         'runtime_cli_surface': 'observerctl',
         'decision': 'go',
         'action': 'librarian-store-reports-delete',
-        'summary': 'Tracked report collection alias archived out of the live report tree.',
+        'summary': 'Tracked report collection alias moved into the librarian vault quarantine and automatic republish is now blocked until an explicit republish.',
         'delete_alias': delete_token,
         'archived_aliases': list(manifest.get('archived_aliases', []) or []),
         'archived_alias_count': int(manifest.get('archived_alias_count', 0) or 0),
         'report_collections': _report_store_collection_rows(paths),
+        'republish_required': bool(control_state.get('republish_required', False)),
         'reason_codes': [],
         'artifacts': {
+            **_vault_artifact_refs(vault_paths),
             'reports_root': normalize_repo_or_absolute_path(reports_root, project_root),
             'collections_root': normalize_repo_or_absolute_path(collections_root, project_root),
+            'vault_quarantine_root': normalize_repo_or_absolute_path(vault_quarantine_root, project_root),
+            'vault_quarantine_manifest_json': normalize_repo_or_absolute_path(archive_root / 'archive_manifest.json', project_root),
             'archive_root': normalize_repo_or_absolute_path(archive_root, project_root),
             'archive_manifest_json': normalize_repo_or_absolute_path(archive_root / 'archive_manifest.json', project_root),
+            'librarian_vault_baseline_checksum': str(baseline.get('checksum_sha256', '') or '').strip(),
+            'publication_control_json': str(control_state.get('control_path', '') or ''),
         },
     }
 

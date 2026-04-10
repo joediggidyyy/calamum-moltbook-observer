@@ -188,6 +188,13 @@ def write_report_bundle(
     normalized_lineage = _normalize_json_value(dict(lineage or {}), project_root)
     normalized_artifact_dirs = _normalize_json_value(dict(bundle.artifact_dirs), project_root)
     result_payload = _packet_result_payload(packet, project_root)
+    collection_alias = resolve_collection_alias(
+        project_anchor=project_anchor,
+        packet=packet,
+        artifact_paths=artifact_paths,
+        context=context or {},
+        lineage=lineage or {},
+    )
     timestamp_utc = str(packet.get('timestamp_utc') or '').strip() or packet.get('created_at_utc') or ''
     if not timestamp_utc:
         from ._util import utc_now_iso
@@ -206,7 +213,7 @@ def write_report_bundle(
         'schema_version': REPORT_SCHEMA_VERSION,
         'workflow': bundle.workflow,
         'run_id': bundle.run_id,
-        'collection_alias': str(packet.get('collection_alias', '') or '').strip(),
+        'collection_alias': collection_alias,
         'timestamp_utc': timestamp_utc,
         'decision': str(packet.get('decision', '')),
         'summary': str(packet.get('summary', '')),
@@ -230,7 +237,7 @@ def write_report_bundle(
         'category': WORKFLOW_CATEGORIES.get(bundle.workflow, 'ds-run'),
         'workflow': bundle.workflow,
         'run_id': bundle.run_id,
-        'collection_alias': str(packet.get('collection_alias', '') or '').strip(),
+        'collection_alias': collection_alias,
         'timestamp_utc': timestamp_utc,
         'producer_command': str(packet.get('command_path', '')),
         'producer_entrypoint': 'projects/calamum-moltbook-observer/src/observerctl.py',
@@ -269,6 +276,69 @@ def write_report_bundle(
         'report': report_payload,
         'manifest': manifest_payload,
     }
+
+
+def _explicit_collection_alias(mapping: Optional[Mapping[str, Any]]) -> str:
+    if not isinstance(mapping, MappingABC):
+        return ''
+    alias = str(mapping.get('collection_alias', '') or mapping.get('dataset_alias', '') or '').strip()
+    return sanitize_run_id(alias) or ''
+
+
+def _collection_alias_dataset_refs(
+    packet: Optional[Mapping[str, Any]],
+    artifact_paths: Optional[Mapping[str, Optional[Path]]],
+    context: Optional[Mapping[str, Any]],
+    lineage: Optional[Mapping[str, Any]],
+) -> list[str]:
+    refs: list[str] = []
+    seen: set[str] = set()
+
+    def _append_ref(value: Any) -> None:
+        text = str(value or '').strip()
+        if not text or text in seen:
+            return
+        seen.add(text)
+        refs.append(text)
+
+    if isinstance(packet, MappingABC):
+        artifacts = packet.get('artifacts', {}) if isinstance(packet.get('artifacts', {}), MappingABC) else {}
+        _append_ref(artifacts.get('dataset_manifest', ''))
+    if isinstance(artifact_paths, MappingABC):
+        _append_ref(artifact_paths.get('dataset_manifest'))
+    for mapping in (context, lineage):
+        if not isinstance(mapping, MappingABC):
+            continue
+        _append_ref(mapping.get('dataset_manifest', ''))
+    return refs
+
+
+def resolve_collection_alias(
+    *,
+    project_anchor: Path,
+    packet: Optional[Mapping[str, Any]] = None,
+    artifact_paths: Optional[Mapping[str, Optional[Path]]] = None,
+    context: Optional[Mapping[str, Any]] = None,
+    lineage: Optional[Mapping[str, Any]] = None,
+) -> str:
+    for mapping in (packet, context, lineage):
+        alias = _explicit_collection_alias(mapping)
+        if alias:
+            return alias
+
+    try:
+        from calamum_librarian import dataset_display_alias_for_manifest
+    except Exception:
+        dataset_display_alias_for_manifest = None
+
+    if dataset_display_alias_for_manifest is None:
+        return ''
+
+    for manifest_ref in _collection_alias_dataset_refs(packet, artifact_paths, context, lineage):
+        alias = sanitize_run_id(dataset_display_alias_for_manifest(project_anchor, manifest_ref) or '')
+        if alias:
+            return alias
+    return ''
 
 
 def _packet_result_payload(packet: Mapping[str, Any], project_root: Path) -> Dict[str, Any]:

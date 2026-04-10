@@ -70,6 +70,18 @@ def test_validate_jsonl_blocks_forbidden_payload_keys(tmp_path: Path) -> None:
     assert any('forbidden_raw_payload_key' in e for e in errors)
 
 
+def test_run_demo_default_root_uses_local_untracked_analysis_spine() -> None:
+    from analysis._util import default_analysis_dir
+    from analysis.run_demo import _default_demo_root
+
+    root = _default_demo_root()
+
+    assert root.is_absolute()
+    assert root.parent == default_analysis_dir(Path(__file__)) / 'runs' / 'demo'
+    assert root != default_analysis_dir(Path(__file__)).parent / 'demo_output'
+    assert root.name != 'demo_output'
+
+
 def test_build_dataset_deterministic_splits_and_eval(tmp_path: Path) -> None:
     # Create a small labeled synthetic dataset (tv_id) and sign it.
     records = []

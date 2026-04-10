@@ -165,7 +165,7 @@ def _norm_status(raw: str) -> str:
         return "in-progress"
     if v in {"planned", "plan", "todo", "open", "opened", "pending", "queued", "backlog", "draft"}:
         return "open"
-    if v in {"blocked", "stuck"}:
+    if v in {"paused", "pause", "on-hold", "hold", "blocked", "stuck"}:
         return "blocked"
     if v in {"done", "closed", "complete", "completed"}:
         return "completed"
@@ -190,6 +190,39 @@ def _extract_status_from_markdown(text: str) -> str:
         # Trim common trailing punctuation.
         raw = raw.rstrip(" .")
         return _norm_status(raw)
+    return ""
+
+
+def _extract_status_from_queststack_json(text: str) -> str:
+    """Best-effort status extraction from JSON-backed QuestStack artifacts."""
+    if not text:
+        return ""
+    try:
+        obj = json.loads(text)
+    except Exception:
+        return ""
+    if not isinstance(obj, dict):
+        return ""
+
+    top_level = _norm_status(str(obj.get("status") or ""))
+    if top_level:
+        return top_level
+
+    current_focus = str(obj.get("current_focus_frame") or "").strip()
+    frames = obj.get("frames")
+    if isinstance(frames, list):
+        if current_focus:
+            for frame in frames:
+                if not isinstance(frame, dict):
+                    continue
+                if str(frame.get("frame_id") or "").strip() != current_focus:
+                    continue
+                focused = _norm_status(str(frame.get("status") or ""))
+                if focused:
+                    return focused
+                break
+        if len(frames) == 1 and isinstance(frames[0], dict):
+            return _norm_status(str(frames[0].get("status") or ""))
     return ""
 
 
@@ -310,7 +343,10 @@ def _check_job_status_sync(repo_root: Path, project_root: Path) -> Dict[str, Any
                 qs_text = qs_abs.read_text(encoding="utf-8", errors="ignore")
             except Exception:
                 qs_text = ""
-            qs_found = _extract_status_from_markdown(qs_text)
+            if qs_abs.suffix.lower() == ".json":
+                qs_found = _extract_status_from_queststack_json(qs_text)
+            else:
+                qs_found = _extract_status_from_markdown(qs_text)
             if qs_found and qs_found != expected:
                 add_violation(_rel_to(qs_abs, repo_root), qs_found, expected, "QuestStack status mismatch")
             if not qs_found:

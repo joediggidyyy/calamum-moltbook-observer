@@ -198,6 +198,38 @@ def _extract_status_from_markdown(text: str) -> str:
     return ""
 
 
+def _extract_status_from_queststack_json(text: str) -> str:
+    if not text:
+        return ""
+    try:
+        obj = json.loads(text)
+    except Exception:
+        return ""
+    if not isinstance(obj, dict):
+        return ""
+
+    top_level = _norm_status(str(obj.get("status") or ""))
+    if top_level:
+        return top_level
+
+    current_focus = str(obj.get("current_focus_frame") or "").strip()
+    frames = obj.get("frames")
+    if isinstance(frames, list):
+        if current_focus:
+            for frame in frames:
+                if not isinstance(frame, dict):
+                    continue
+                if str(frame.get("frame_id") or "").strip() != current_focus:
+                    continue
+                focused = _norm_status(str(frame.get("status") or ""))
+                if focused:
+                    return focused
+                break
+        if len(frames) == 1 and isinstance(frames[0], dict):
+            return _norm_status(str(frames[0].get("status") or ""))
+    return ""
+
+
 def _extract_backticked_paths(text: str) -> List[str]:
     if not text:
         return []
@@ -336,7 +368,10 @@ def _check_status_sync_global(repo_root: Path) -> Dict[str, Any]:
         except Exception:
             qs_text = ""
 
-        qs_found = _extract_status_from_markdown(qs_text)
+        if qs_abs.suffix.lower() == ".json":
+            qs_found = _extract_status_from_queststack_json(qs_text)
+        else:
+            qs_found = _extract_status_from_markdown(qs_text)
         if qs_found and qs_found != expected:
             add_violation(t_path, qs_found, expected, "QuestStack status mismatch")
         if not qs_found:
@@ -628,6 +663,65 @@ def _candidate_test_paths_for_module(module_rel: str) -> List[str]:
     return sorted(set(candidates))
 
 
+def _module_import_refs(module_rel: str, project_prefix: str) -> List[str]:
+    rel = module_rel.replace("\\", "/")
+    if not rel.startswith(project_prefix):
+        return []
+
+    project_rel = rel[len(project_prefix) :]
+    if not project_rel.startswith("src/") or not project_rel.endswith(".py"):
+        return []
+
+    dotted = project_rel[len("src/") : -3].replace("/", ".")
+    if dotted.endswith(".__init__"):
+        dotted = dotted[: -len(".__init__")]
+    return [dotted] if dotted else []
+
+
+def _test_file_mentions_module(test_path: Path, module_refs: Sequence[str]) -> bool:
+    try:
+        text = test_path.read_text(encoding="utf-8", errors="ignore")
+    except Exception:
+        return False
+
+    for ref in module_refs:
+        if not ref:
+            continue
+
+        patterns = [
+            rf"\bfrom\s+{re.escape(ref)}\s+import\b",
+            rf"\bimport\s+{re.escape(ref)}\b",
+        ]
+        if "." in ref:
+            pkg, leaf = ref.rsplit(".", 1)
+            patterns.append(rf"\bfrom\s+{re.escape(pkg)}\s+import\s+{re.escape(leaf)}\b")
+
+        for pat in patterns:
+            if re.search(pat, text):
+                return True
+    return False
+
+
+def _find_covering_tests_for_module(repo_root: Path, project_root: Path, module_rel: str) -> List[str]:
+    found: List[str] = []
+    for rel in _candidate_test_paths_for_module(module_rel):
+        if (repo_root / rel).exists():
+            found.append(rel)
+
+    project_prefix = _rel_to(project_root, repo_root).replace("\\", "/") + "/"
+    module_refs = _module_import_refs(module_rel, project_prefix)
+    tests_dir = project_root / "src" / "tests"
+    if module_refs and tests_dir.exists():
+        for test_path in sorted(tests_dir.glob("test_*.py")):
+            rel_test = _rel_to(test_path, repo_root)
+            if rel_test in found:
+                continue
+            if _test_file_mentions_module(test_path, module_refs):
+                found.append(rel_test)
+
+    return sorted(set(found))
+
+
 def _check_changed_files_unit_test_coverage(repo_root: Path, project_root: Path) -> Dict[str, Any]:
     changed = _git_changed_files(repo_root)
     project_prefix = _rel_to(project_root, repo_root).replace("\\", "/") + "/"
@@ -647,10 +741,9 @@ def _check_changed_files_unit_test_coverage(repo_root: Path, project_root: Path)
 
     missing: List[Dict[str, Any]] = []
     for mod in sorted(set(target_py)):
-        candidates = _candidate_test_paths_for_module(mod)
-        exists_any = any((repo_root / c).exists() for c in candidates)
-        if not exists_any:
-            missing.append({"module": mod, "expected_any_of": candidates})
+        covering_tests = _find_covering_tests_for_module(repo_root, project_root, mod)
+        if not covering_tests:
+            missing.append({"module": mod, "expected_any_of": _candidate_test_paths_for_module(mod)})
 
     return {
         "scope": "changed_python_files_only",

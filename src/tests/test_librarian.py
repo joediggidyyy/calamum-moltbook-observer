@@ -25,6 +25,7 @@ from calamum_librarian import (
     librarian_vault_verify_packet,
     register_librarian_dataset_packet,
 )
+from analysis._util import sha256_path
 
 
 def _make_temp_project(tmp_path: Path) -> tuple[Path, Path]:
@@ -276,6 +277,24 @@ def test_dataset_display_alias_for_manifest_falls_back_to_registered_run_id_when
     assert packet['decision'] == 'go'
     assert packet['dataset']['display_alias'] == 'presentation-alpha'
     assert dataset_display_alias_for_manifest(anchor, manifest_path) == 'presentation-alpha'
+
+
+def test_dataset_display_alias_for_manifest_uses_stable_manifest_fallback_when_unregistered(tmp_path: Path) -> None:
+    project_root, anchor = _make_temp_project(tmp_path)
+    dataset_dir = project_root / 'datasets' / 'unregistered_alpha'
+    dataset_dir.mkdir(parents=True, exist_ok=True)
+    features_csv = dataset_dir / 'features.csv'
+    manifest_path = dataset_dir / 'dataset_manifest.json'
+    features_csv.write_text('record_id,feature\n', encoding='utf-8')
+    manifest_path.write_text(json.dumps({
+        'features_csv': str(features_csv),
+        'total_records': 2,
+        'has_labels': False,
+    }), encoding='utf-8')
+
+    alias = dataset_display_alias_for_manifest(anchor, manifest_path)
+
+    assert alias == 'dataset-{0}'.format(sha256_path(manifest_path)[-6:])
 
 
 def test_register_dataset_links_latest_baseline_context_for_inferred_scope(tmp_path: Path) -> None:

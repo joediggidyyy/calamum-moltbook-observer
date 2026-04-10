@@ -70,6 +70,8 @@ def test_manifest_authoritative_root_alignment() -> None:
     assert "docs/reports/aggregates/THRESHOLD_SUMMARY.md" in public_reports, "Threshold summary must remain declared as a public report"
     assert "docs/reports/reference/GENERATED_REPORT_SURFACES.md" in public_reports, "Generated-report reference must use the reference lane"
     assert "docs/reports/validations/INDEX.md" in public_reports, "Validation index must use the validations lane"
+    assert "docs/reports/validations/APEXLAB_REFERENCE_VALIDATION_REPORT_20260324.md" in public_reports, "ApexLab validation markdown must remain declared as a public report"
+    assert "docs/reports/validations/APEXLAB_REFERENCE_VALIDATION_REPORT_20260324.html" in public_reports, "ApexLab validation HTML must remain declared as a public report"
 
     assert "docs/reports/PUBLIC_RUN_LEDGER.md" not in public_reports, "Legacy root-level public run ledger path must not remain in the manifest"
     assert "docs/reports/AGGREGATE_REPORT.md" not in public_reports, "Legacy root-level aggregate report path must not remain in the manifest"
@@ -96,6 +98,19 @@ def test_stale_collection_report_landing_pages_remain_absent() -> None:
     )
 
     assert not stale_report_paths, f"Stale tracked collection landing pages found: {stale_report_paths}"
+
+
+def test_validation_lane_retains_apex_reference_reports() -> None:
+    root = _project_root()
+    validations_root = root / "docs" / "reports" / "validations"
+    validations_index = (validations_root / "INDEX.md").read_text(encoding="utf-8")
+    apex_md = validations_root / "APEXLAB_REFERENCE_VALIDATION_REPORT_20260324.md"
+    apex_html = validations_root / "APEXLAB_REFERENCE_VALIDATION_REPORT_20260324.html"
+
+    assert apex_md.exists(), "ApexLab validation markdown must remain present in the tracked validations lane"
+    assert apex_html.exists(), "ApexLab validation HTML must remain present in the tracked validations lane"
+    assert apex_md.name in validations_index, "Validation index must route to the ApexLab validation markdown"
+    assert apex_html.name in validations_index, "Validation index must route to the ApexLab validation HTML"
 
 
 def test_reports_index_and_generated_surfaces_follow_current_public_report_contract() -> None:

@@ -139,6 +139,11 @@ def _project_env_path() -> Path:
     return _project_root() / '.env'
 
 
+_PROJECT_DOTENV_SKIP_AUTOLOAD = {
+    'CALAMUM_MOLTBOOK_SOURCE',
+    'CALAMUM_OPS_MODE',
+}
+
 def _load_project_dotenv() -> Dict[str, Any]:
     env_path = _project_env_path()
     loaded: List[str] = []
@@ -165,6 +170,8 @@ def _load_project_dotenv() -> Dict[str, Any]:
         key, value = line.split('=', 1)
         key = str(key or '').strip()
         if not key:
+            continue
+        if key in _PROJECT_DOTENV_SKIP_AUTOLOAD:
             continue
         value = str(value or '').strip()
         if len(value) >= 2 and ((value[0] == '"' and value[-1] == '"') or (value[0] == "'" and value[-1] == "'")):
@@ -599,7 +606,7 @@ def _ops_keysmith_status(venue: str = 'moltbook') -> Dict[str, Any]:
     elif decision != 'go':
         summary = 'KEYSMITH lane is incomplete for the current observer venue stub.'
 
-    return {
+    packet = {
         'timestamp_utc': _utc_now(),
         'runtime_cli_surface': 'observerctl',
         'decision': decision,
@@ -614,6 +621,10 @@ def _ops_keysmith_status(venue: str = 'moltbook') -> Dict[str, Any]:
         'env_presence': env_presence,
         'artifacts': artifacts,
     }
+    if decision == 'go' and not live_mint_ready:
+        packet['json_exit_code'] = 2
+        packet['human_exit_code'] = 0
+    return packet
 
 
 def _ops_keysmith_mint(
@@ -3627,10 +3638,12 @@ def _build_stage5_prerequisites(readiness_surfaces: Dict[str, Any]) -> Dict[str,
         cadence_source = projected_posture_receipt
         cadence_evidence_refs = [str(posture_receipt.get('path', ''))] if str(posture_receipt.get('path', '')).strip() else []
 
+    live_lane = bool(target_posture == 'lockdown')
+
     hb_interval = _to_float_or_none(cadence_source.get('heartbeat_interval_seconds'))
     baseline_interval = _to_float_or_none(cadence_source.get('baseline_validation_interval_seconds'))
     cadence_ready = bool(
-        target_posture == 'lockdown'
+        live_lane
         and hb_interval is not None and 3.0 <= hb_interval <= 5.0
         and _is_lockdown_baseline_cadence(baseline_interval)
     )
@@ -3643,8 +3656,8 @@ def _build_stage5_prerequisites(readiness_surfaces: Dict[str, Any]) -> Dict[str,
 
     prereqs = {
         'C22_baseline_validation_rate_escalated': {
-            'status': 'ok' if cadence_ready else ('not_applicable' if target_posture != 'lockdown' else 'err'),
-            'reason_codes': [] if cadence_ready or target_posture != 'lockdown' else ['critical_check_failed:lockdown_baseline_rate_not_escalated'],
+            'status': 'ok' if cadence_ready else ('not_applicable' if not live_lane else 'err'),
+            'reason_codes': [] if cadence_ready or not live_lane else ['critical_check_failed:lockdown_baseline_rate_not_escalated'],
             'expected_heartbeat_interval_seconds_band': [3, 5],
             'expected_baseline_validation_interval_seconds_band': [30, 60],
             'actual_heartbeat_interval_seconds': hb_interval,
@@ -3653,8 +3666,8 @@ def _build_stage5_prerequisites(readiness_surfaces: Dict[str, Any]) -> Dict[str,
             'evidence_refs': cadence_evidence_refs,
         },
         'C24_resource_stream_retention_ready': {
-            'status': 'ok' if resource_ready else 'err',
-            'reason_codes': [] if resource_ready else ['critical_check_failed:resource_stream_retention_unavailable'],
+            'status': ('ok' if resource_ready else 'err') if live_lane else 'not_applicable',
+            'reason_codes': [] if resource_ready or not live_lane else ['critical_check_failed:resource_stream_retention_unavailable'],
             'records_indexed': int(resource_stream.get('records_indexed', 0) or 0),
             'segment_resolution': str(resource_stream.get('segment_resolution', 'missing')),
             'evidence_refs': [
@@ -3667,8 +3680,8 @@ def _build_stage5_prerequisites(readiness_surfaces: Dict[str, Any]) -> Dict[str,
             ],
         },
         'C25_resource_baseline_window_ready': {
-            'status': 'ok' if baseline_ready else 'err',
-            'reason_codes': [] if baseline_ready else ['critical_check_failed:resource_baseline_window_incomplete'],
+            'status': ('ok' if baseline_ready else 'err') if live_lane else 'not_applicable',
+            'reason_codes': [] if baseline_ready or not live_lane else ['critical_check_failed:resource_baseline_window_incomplete'],
             'decision': str(baseline_window.get('decision', 'no-go')),
             'baseline_window_id': str(baseline_window.get('baseline_window_id', '')),
             'sample_counts': baseline_window.get('sample_counts', {}) if isinstance(baseline_window.get('sample_counts', {}), dict) else {},
@@ -3689,8 +3702,8 @@ def _build_stage5_prerequisites(readiness_surfaces: Dict[str, Any]) -> Dict[str,
             ],
         },
         'baseline_monitor_runtime_ready': {
-            'status': 'ok' if monitor_ready else 'err',
-            'reason_codes': [] if monitor_ready else ['critical_check_failed:baseline_monitor_runtime_inactive'],
+            'status': ('ok' if monitor_ready else 'err') if live_lane else 'not_applicable',
+            'reason_codes': [] if monitor_ready or not live_lane else ['critical_check_failed:baseline_monitor_runtime_inactive'],
             'state': str(baseline_monitor.get('state', 'stopped')),
             'evidence_refs': [
                 ref for ref in [
@@ -3702,13 +3715,13 @@ def _build_stage5_prerequisites(readiness_surfaces: Dict[str, Any]) -> Dict[str,
         },
     }
 
-    overall_ready = all(
-        str((row or {}).get('status', 'err')).lower() == 'ok'
-        for row in prereqs.values()
+    applicable_rows = [
+        row for row in prereqs.values()
         if isinstance(row, dict) and str((row or {}).get('status', 'err')).lower() != 'not_applicable'
-    )
+    ]
+    overall_ready = all(str((row or {}).get('status', 'err')).lower() == 'ok' for row in applicable_rows)
     prereqs['overall'] = {
-        'status': 'ok' if overall_ready else 'err',
+        'status': 'not_applicable' if not live_lane else ('ok' if overall_ready else 'err'),
         'target_posture': target_posture,
         'evaluated_classes': ['C22_baseline_validation_rate_escalated', 'C24_resource_stream_retention_ready', 'C25_resource_baseline_window_ready', 'baseline_monitor_runtime_ready'],
     }
@@ -4491,6 +4504,7 @@ def _render_librarian_store_reports_human(packet: Dict[str, Any]) -> List[str]:
         'librarian-store-reports-show': 'Librarian store reports',
         'librarian-store-reports-delete': 'Librarian store reports delete',
         'librarian-store-reports-purge': 'Librarian store reports purge',
+        'librarian-store-reports-republish': 'Librarian store reports republish',
     }.get(action, 'Librarian store reports')
 
     lines: List[str] = [_style_section_title(title)]
@@ -4511,9 +4525,11 @@ def _render_librarian_store_reports_human(packet: Dict[str, Any]) -> List[str]:
         _render_human_kv_rows(
             [
                 ('Collections', str(int(packet.get('count', len(packet.get('report_collections', []) if isinstance(packet.get('report_collections', []), list) else [])) or 0))),
+                ('Published runs', str(int(packet.get('published_run_count', 0) or 0))),
                 ('Archived aliases', str(int(packet.get('archived_alias_count', 0) or 0))),
                 ('Archived auxiliary', str(int(packet.get('archived_auxiliary_count', 0) or 0))),
                 ('Stale report.md', str(int(packet.get('stale_report_md_count', 0) or 0))),
+                ('Republish required', _yes_no_text(bool(packet.get('republish_required', False)))),
                 ('Delete target', str(packet.get('delete_alias', '') or '').strip()),
             ],
             indent='  ',
@@ -4552,9 +4568,14 @@ def _render_librarian_store_reports_human(packet: Dict[str, Any]) -> List[str]:
     for label, key in (
         ('Reports root', 'reports_root'),
         ('Collections root', 'collections_root'),
+        ('Vault quarantine root', 'vault_quarantine_root'),
+        ('Vault quarantine manifest', 'vault_quarantine_manifest_json'),
+        ('Librarian vault baseline', 'librarian_vault_baseline_json'),
+        ('Librarian vault audit', 'librarian_vault_audit_jsonl'),
         ('Archive root', 'archive_root'),
         ('Archive parent', 'archive_parent'),
         ('Archive manifest', 'archive_manifest_json'),
+        ('Publication control', 'publication_control_json'),
         ('Saved-run ledger', 'ds_run_index_jsonl'),
         ('Saved-run latest', 'ds_latest_json'),
         ('Aggregate report', 'aggregate_report_md'),
@@ -4573,15 +4594,19 @@ def _render_librarian_store_reports_human(packet: Dict[str, Any]) -> List[str]:
     guidance: List[str] = []
     if action == 'librarian-store-reports-show':
         guidance = [
-            'Next: use observerctl librarian store reports --delete <wizard-alias> for one alias or --purge to archive the full live collection tree.',
+            'Next: use observerctl librarian store reports --delete <wizard-alias> for one alias, --purge to move the live derived-report tree into the librarian vault quarantine, or --republish to rebuild tracked publication explicitly.',
         ]
     elif action == 'librarian-store-reports-delete':
         guidance = [
-            'Next: rerun observerctl librarian store reports --show to confirm the live collection tree, then regenerate tracked publication only if you intentionally want the alias back.',
+            'Next: rerun observerctl librarian store reports --show to confirm the live collection tree, then use observerctl librarian store reports --republish only if you intentionally want the alias back from the saved-run ledger.',
         ]
     elif action == 'librarian-store-reports-purge':
         guidance = [
-            'Next: rerun observerctl librarian store reports --show to confirm zero-state, then regenerate tracked publication only from the canonical lane you want to keep.',
+            'Next: rerun observerctl librarian store reports --show to confirm zero-state, then use observerctl librarian store reports --republish only when you intentionally want tracked publication back from the canonical saved-run ledger.',
+        ]
+    elif action == 'librarian-store-reports-republish':
+        guidance = [
+            'Next: rerun observerctl librarian store reports --show to inspect the rebuilt collection tree or continue normal DS finalization now that tracked publication is re-enabled.',
         ]
     if guidance:
         _append_human_section(lines, 'Guidance', ['  {0}'.format(line) for line in guidance])
@@ -4654,10 +4679,8 @@ def _render_human_path_tail(value: Any) -> str:
         if anchor in lowered:
             return '/'.join(parts[lowered.index(anchor):])
     if 'local_untracked' in lowered:
-        idx = lowered.index('local_untracked') + 1
-        tail = parts[idx:]
-        if tail:
-            return '/'.join(tail[-4:] if len(tail) > 4 else tail)
+        idx = lowered.index('local_untracked')
+        return '/'.join(parts[idx:])
     if len(parts) >= 3:
         return '/'.join(parts[-3:])
     if len(parts) >= 2:
@@ -5821,10 +5844,137 @@ def _render_health_packet_human(packet: Dict[str, Any]) -> List[str]:
     return lines
 
 
+def _ds_packet_is_demo(packet: Dict[str, Any]) -> bool:
+    if not isinstance(packet, dict):
+        return False
+    run_mode = str(packet.get('run_mode', '') or '').strip().lower()
+    command_path = str(packet.get('command_path', '') or '').strip().lower()
+    workflow = str(packet.get('workflow', '') or packet.get('wizard_workflow', '') or '').strip().lower()
+    return run_mode == 'demo' or workflow == 'demo' or command_path == 'observerctl ds run demo'
+
+
+def _render_ds_demo_publication_text(packet: Dict[str, Any]) -> str:
+    publication = packet.get('publication', {}) if isinstance(packet.get('publication', {}), dict) else {}
+    decision = str(publication.get('decision', '') or 'unknown').strip().lower()
+    reason_codes = list(publication.get('reason_codes', [])) if isinstance(publication.get('reason_codes', []), list) else []
+    if 'publication_skipped:workflow_not_publishable' in reason_codes:
+        return 'skipped (demo stays local-only)'
+    if 'publication_skipped:derived_reports_disabled' in reason_codes:
+        return 'skipped (derived reports disabled)'
+    if reason_codes:
+        return '{0} ({1})'.format(decision or 'skipped', ', '.join(str(code) for code in reason_codes if str(code).strip()))
+    return decision or 'unknown'
+
+
+def _render_ds_demo_guidance_lines(packet: Dict[str, Any]) -> List[str]:
+    finalization = packet.get('finalization', {}) if isinstance(packet.get('finalization', {}), dict) else {}
+    derived_reports_enabled = bool(finalization.get('derived_reports_enabled', False))
+    if derived_reports_enabled:
+        return [
+            'Demo derived reports were generated locally only; tracked docs/reports publication stays disabled for the demo lane.',
+            'Use --out-dir <dir> when you want the local demo artifact root somewhere other than the default run root.',
+            'Use --json for machine-readable output.',
+        ]
+    return [
+        'Demo stays local-only by default and skips the derived report bundle.',
+        'Use --derived-reports when you explicitly want a local report bundle; pair it with --out-dir <dir> to choose the artifact root.',
+        'Use --json for machine-readable output.',
+    ]
+
+
+def _render_ds_demo_human(packet: Dict[str, Any]) -> List[str]:
+    lines: List[str] = [_style_section_title('ObserverCTL DS demo')]
+    timestamp_utc = str(packet.get('timestamp_utc', '') or '').strip()
+    if timestamp_utc:
+        lines.append('generated_at_utc: {0}'.format(timestamp_utc))
+
+    decision = str(packet.get('decision', '') or '').strip().lower()
+    summary = str(packet.get('summary', '') or '').strip()
+    if summary:
+        lines.append('decision: {0} - {1}'.format(_style_decision_value(decision or 'go'), summary))
+    elif decision:
+        lines.append('decision: {0}'.format(_style_decision_value(decision)))
+
+    finalization = packet.get('finalization', {}) if isinstance(packet.get('finalization', {}), dict) else {}
+    thresholding = packet.get('thresholding', {}) if isinstance(packet.get('thresholding', {}), dict) else {}
+    counts = packet.get('counts', {}) if isinstance(packet.get('counts', {}), dict) else {}
+    artifacts = packet.get('artifacts', {}) if isinstance(packet.get('artifacts', {}), dict) else {}
+    derived_reports_enabled = bool(finalization.get('derived_reports_enabled', False))
+
+    _append_human_section(
+        lines,
+        'Summary',
+        _render_human_kv_rows(
+            [
+                ('Run ID', str(packet.get('run_id', '') or '').strip()),
+                ('Derived reports', 'enabled (local-only)' if derived_reports_enabled else 'disabled (default)'),
+                ('Publication', _render_ds_demo_publication_text(packet)),
+                ('Records', int(packet.get('total_records', 0) or 0)),
+                ('Max FPR', packet.get('max_fpr', '')),
+                ('Dataset seed', packet.get('dataset_seed', '')),
+                ('Model seed', packet.get('model_seed', '')),
+            ],
+            indent='  ',
+            min_label_width=16,
+            max_label_width=18,
+        ),
+    )
+
+    _append_human_section(
+        lines,
+        'Evaluation',
+        _render_human_kv_rows(
+            [
+                ('Threshold', thresholding.get('threshold', '')),
+                ('Target FPR', thresholding.get('target_fpr', packet.get('max_fpr', ''))),
+                ('Actual FPR', thresholding.get('actual_fpr', '')),
+                ('Flagged', thresholding.get('flagged_records', _ds_positive_prediction_count(counts))),
+                ('Scored', thresholding.get('records_scored', _ds_total_prediction_count(counts))),
+                ('Score column', str(packet.get('score_column', '') or '').strip()),
+                ('Direction', str(packet.get('anomaly_direction', '') or '').strip()),
+            ],
+            indent='  ',
+            min_label_width=14,
+            max_label_width=16,
+        ),
+    )
+
+    _append_human_section(
+        lines,
+        'Outputs',
+        _render_human_kv_rows(
+            [
+                ('Root dir', _render_human_path_tail(artifacts.get('root_dir', ''))),
+                ('Dataset manifest', _render_human_path_tail(artifacts.get('dataset_manifest', ''))),
+                ('Supervised model', _render_human_path_tail(artifacts.get('supervised_model_path', ''))),
+                ('Unsupervised model', _render_human_path_tail(artifacts.get('unsupervised_model_path', ''))),
+                ('Evaluation run', _render_human_path_tail(artifacts.get('evaluation_run_json', ''))),
+                ('Scores CSV', _render_human_path_tail(artifacts.get('scores_csv', ''))),
+                ('Threshold report', _render_human_path_tail(artifacts.get('threshold_report_md', '') or artifacts.get('threshold_report_json', ''))),
+                ('Local report JSON', _render_human_path_tail(artifacts.get('report_json', ''))),
+                ('Local report MD', _render_human_path_tail(artifacts.get('report_md', ''))),
+                ('Local manifest', _render_human_path_tail(artifacts.get('report_manifest_json', ''))),
+            ],
+            indent='  ',
+            min_label_width=16,
+            max_label_width=18,
+        ),
+    )
+
+    reason_codes = packet.get('reason_codes', []) if isinstance(packet.get('reason_codes', []), list) else []
+    if reason_codes:
+        _append_human_section(lines, 'Reasons', ['  {0}'.format(reason) for reason in reason_codes])
+
+    _append_human_section(lines, 'Guidance', ['  {0}'.format(line) for line in _render_ds_demo_guidance_lines(packet)])
+    return lines
+
+
 def _render_ds_human(packet: Dict[str, Any]) -> List[str]:
     wizard_view = packet.get('wizard_view', []) if isinstance(packet.get('wizard_view', []), list) else []
     if str(packet.get('action', '')).strip().lower() == 'ds-wizard' and wizard_view:
         return [str(line) for line in wizard_view]
+    if _ds_packet_is_demo(packet):
+        return _render_ds_demo_human(packet)
     lines: List[str] = []
     lines.append(_style_section_title('ObserverCTL DS'))
     lines.append('action: {0}'.format(str(packet.get('action', '') or 'ds')))
@@ -7920,13 +8070,14 @@ def _librarian_stores() -> Dict[str, Any]:
     return {'timestamp_utc': _utc_now(), 'runtime_cli_surface': 'observerctl', 'stores': stores}
 
 
-def _librarian_store_reports(show: bool = False, purge: bool = False, delete_alias: str = '') -> Dict[str, Any]:
+def _librarian_store_reports(show: bool = False, purge: bool = False, republish: bool = False, delete_alias: str = '') -> Dict[str, Any]:
     from calamum_librarian import librarian_report_store_packet
 
     return librarian_report_store_packet(
         _project_anchor(),
         show=bool(show),
         purge=bool(purge),
+        republish=bool(republish),
         delete_alias=str(delete_alias or '').strip(),
     )
 
@@ -11306,6 +11457,9 @@ def _ds_wizard_load_draft(draft_path: Path) -> _DSWizardState:
         except (TypeError, ValueError):
             continue
 
+    if 'dataset_alias' in values:
+        state.values['dataset_alias'] = str(values.get('dataset_alias', '') or '').strip()
+
     if workflow in _DS_WIZARD_WORKFLOWS:
         state.workflow = workflow
         state.values['workflow'] = workflow
@@ -13065,6 +13219,16 @@ def _ds_skipped_finalization_steps(reason_code: str) -> Dict[str, Dict[str, Any]
     }
 
 
+def _ds_requires_frozen_collection_alias(packet: Mapping[str, Any], bundle, *, derived_reports_enabled: bool) -> bool:
+    if not bool(derived_reports_enabled):
+        return False
+    if str(packet.get('decision', '') or '').strip().lower() != 'go':
+        return False
+    if str(getattr(bundle, 'run_root_policy', '') or '').strip().lower() != 'canonical':
+        return False
+    return str(getattr(bundle, 'workflow', '') or '').strip().lower() != 'demo'
+
+
 def _ds_visual_artifact_paths(visual_state: Mapping[str, Any]) -> Dict[str, Path]:
     artifact_paths: Dict[str, Path] = {}
     if not isinstance(visual_state, Mapping):
@@ -13179,11 +13343,20 @@ def _ds_finalize_run_packet(
 ) -> Dict[str, Any]:
     from calamum_librarian import refresh_librarian_dataset_catalog_from_run_manifest
     from analysis.report_aggregate import append_ds_run_index, publication_eligibility_reasons, refresh_tracked_ds_publication
-    from analysis.report_pack import write_report_bundle
+    from analysis.report_pack import resolve_collection_alias, write_report_bundle
 
     final_packet = dict(packet)
     final_packet['run_id'] = str(bundle.run_id)
     final_packet['artifacts'] = dict(final_packet.get('artifacts', {}))
+    frozen_collection_alias = resolve_collection_alias(
+        project_anchor=_project_anchor(),
+        packet=final_packet,
+        artifact_paths=artifact_paths,
+        context=context or {},
+        lineage=lineage or {},
+    )
+    if frozen_collection_alias:
+        final_packet['collection_alias'] = frozen_collection_alias
     finalization_state: Dict[str, Any] = {
         'derived_reports_enabled': bool(derived_reports_enabled),
         'step_order': list(_DS_FINALIZATION_STEP_ORDER),
@@ -13193,6 +13366,29 @@ def _ds_finalize_run_packet(
         'decision': 'skipped',
         'reason_codes': ['publication_skipped:derived_reports_disabled'],
     }
+
+    if _ds_requires_frozen_collection_alias(final_packet, bundle, derived_reports_enabled=derived_reports_enabled):
+        if not str(final_packet.get('collection_alias', '') or '').strip():
+            failure_reason = 'critical_check_failed:collection_alias_unresolved'
+            publication_reason = 'publication_skipped:collection_alias_missing'
+            existing_reason_codes = list(final_packet.get('reason_codes', []) or []) if isinstance(final_packet.get('reason_codes', []), list) else []
+            if failure_reason not in existing_reason_codes:
+                existing_reason_codes.append(failure_reason)
+            final_packet['reason_codes'] = existing_reason_codes
+            final_packet['decision'] = 'no-go'
+            finalization_state['steps'] = {
+                'report_bundle': _ds_finalization_step('no-go', reason_codes=[failure_reason]),
+                'run_index': _ds_finalization_step('skipped', reason_codes=[publication_reason]),
+                'librarian_dataset_catalog': _ds_finalization_step('skipped', reason_codes=[publication_reason]),
+                'publication_eligibility': _ds_finalization_step('skipped', reason_codes=[publication_reason], eligible=False),
+                'tracked_publication': _ds_finalization_step('skipped', reason_codes=[publication_reason]),
+            }
+            final_packet['finalization'] = finalization_state
+            final_packet['publication'] = {
+                'decision': 'skipped',
+                'reason_codes': [publication_reason],
+            }
+            return final_packet
 
     if derived_reports_enabled:
         report_bundle = write_report_bundle(
@@ -13208,11 +13404,35 @@ def _ds_finalize_run_packet(
             report_json=str(report_bundle['paths'].get('report_json', '') or ''),
             report_md=str(report_bundle['paths'].get('report_md', '') or ''),
             manifest_json=str(report_bundle['paths'].get('manifest_json', '') or ''),
+            collection_alias=str(report_bundle['manifest'].get('collection_alias', '') or ''),
         )
-        aggregate_state = append_ds_run_index(
-            project_anchor=Path(__file__),
-            manifest_payload=report_bundle['manifest'],
-        )
+        try:
+            aggregate_state = append_ds_run_index(
+                project_anchor=Path(__file__),
+                manifest_payload=report_bundle['manifest'],
+            )
+        except ValueError as exc:
+            failure_reason = 'critical_check_failed:collection_alias_unresolved'
+            publication_reason = 'publication_skipped:collection_alias_missing'
+            existing_reason_codes = list(final_packet.get('reason_codes', []) or []) if isinstance(final_packet.get('reason_codes', []), list) else []
+            if failure_reason not in existing_reason_codes:
+                existing_reason_codes.append(failure_reason)
+            final_packet['reason_codes'] = existing_reason_codes
+            final_packet['decision'] = 'no-go'
+            finalization_state['steps']['run_index'] = _ds_finalization_step(
+                'no-go',
+                reason_codes=[publication_reason],
+                error=str(exc),
+            )
+            finalization_state['steps']['librarian_dataset_catalog'] = _ds_finalization_step('skipped', reason_codes=[publication_reason])
+            finalization_state['steps']['publication_eligibility'] = _ds_finalization_step('skipped', reason_codes=[publication_reason], eligible=False)
+            finalization_state['steps']['tracked_publication'] = _ds_finalization_step('skipped', reason_codes=[publication_reason])
+            final_packet['finalization'] = finalization_state
+            final_packet['publication'] = {
+                'decision': 'skipped',
+                'reason_codes': [publication_reason],
+            }
+            return final_packet
         finalization_state['steps']['run_index'] = _ds_finalization_step(
             'go',
             ledger_path=str(aggregate_state.get('ledger_path', '') or ''),
@@ -13692,7 +13912,7 @@ def _ds_score(dataset: str, model: str, out_file: str) -> Dict[str, Any]:
     )
 
 
-def _ds_run_demo(out_dir: str, dataset_seed: int, model_seed: int, max_fpr: float, derived_reports_enabled: bool = True) -> Dict[str, Any]:
+def _ds_run_demo(out_dir: str, dataset_seed: int, model_seed: int, max_fpr: float, derived_reports_enabled: bool = False) -> Dict[str, Any]:
     from analysis.report_visuals import ANOMALY_DIRECTION, generate_evaluation_visuals, generate_score_visuals, generate_summary_card_visual, merge_visual_states
     from analysis.run_demo import run_demo
 
@@ -13765,6 +13985,8 @@ def _ds_run_demo(out_dir: str, dataset_seed: int, model_seed: int, max_fpr: floa
         'run_mode': 'demo',
         'summary': 'Demo pipeline completed through observerctl ds.',
         'run_id': bundle.run_id,
+        'dataset_seed': int(dataset_seed),
+        'model_seed': int(model_seed),
         'total_records': int(summary.get('record_count', 0)),
         'max_fpr': float(summary.get('max_fpr', max_fpr)),
         'workflow_steps': ['generate', 'build', 'train-supervised', 'train-unsupervised', 'evaluate', 'score', 'threshold', 'visualize'],
@@ -14062,13 +14284,17 @@ def _ds_spine_packet(ds_cmd: str, command_path: str, underlying_surface: str, ru
     return packet
 
 
-def _exit_from_packet(packet: Dict[str, Any], schema_error: bool = False, dependency_error: bool = False, io_error: bool = False) -> int:
+def _exit_from_packet(packet: Dict[str, Any], as_json: bool = False, schema_error: bool = False, dependency_error: bool = False, io_error: bool = False) -> int:
     if schema_error:
         return 3
     if dependency_error:
         return 4
     if io_error:
         return 5
+    exit_code_key = 'json_exit_code' if bool(as_json) else 'human_exit_code'
+    exit_code_value = packet.get(exit_code_key, packet.get('exit_code')) if isinstance(packet, dict) else None
+    if isinstance(exit_code_value, int):
+        return int(exit_code_value)
     if 'decision' not in packet:
         reasons = packet.get('reason_codes', [])
         if isinstance(reasons, list) and len(reasons) == 0:
@@ -14297,7 +14523,12 @@ def _dispatch(args: argparse.Namespace) -> Dict[str, Any]:
         if args.lib_cmd == 'stores':
             return _librarian_stores()
         if args.lib_cmd == 'store-reports':
-            return _librarian_store_reports(show=args.reports_show, purge=args.reports_purge, delete_alias=args.reports_delete)
+            return _librarian_store_reports(
+                show=args.reports_show,
+                purge=args.reports_purge,
+                republish=args.reports_republish,
+                delete_alias=args.reports_delete,
+            )
         if args.lib_cmd == 'datasets':
             return _librarian_datasets()
         if args.lib_cmd == 'dataset-register':
@@ -14494,7 +14725,7 @@ def _dispatch(args: argparse.Namespace) -> Dict[str, Any]:
                 dataset_seed=args.dataset_seed,
                 model_seed=args.model_seed,
                 max_fpr=args.max_fpr,
-                derived_reports_enabled=not bool(args.no_derived_reports),
+                derived_reports_enabled=bool(getattr(args, 'derived_reports', False)),
             )
         if args.ds_cmd == 'run-pipeline':
             return _ds_run_pipeline(
@@ -14717,6 +14948,7 @@ def _build_parser() -> argparse.ArgumentParser:
     lib_store_reports_action = lib_store_reports.add_mutually_exclusive_group(required=False)
     lib_store_reports_action.add_argument('--show', dest='reports_show', action='store_true', help='Show the live docs/reports/collections alias inventory')
     lib_store_reports_action.add_argument('--purge', dest='reports_purge', action='store_true', help='Archive and recreate the full docs/reports/collections tree empty')
+    lib_store_reports_action.add_argument('--republish', dest='reports_republish', action='store_true', help='Explicitly rebuild tracked publication from the canonical saved-run ledger')
     lib_store_reports_action.add_argument('--delete', dest='reports_delete', default='', metavar='wizard-alias', help='Archive one live collection alias from docs/reports/collections/<wizard-alias>')
 
     lib_dataset = librarian_sub.add_parser('dataset', help='Approved dataset authority surface')
@@ -14836,11 +15068,24 @@ def _build_parser() -> argparse.ArgumentParser:
     ds_run = ds_sub.add_parser('run', help='Run opinionated end-to-end DS flows')
     ds_run_sub = ds_run.add_subparsers(dest='ds_run_cmd', required=True)
     ds_run_demo = ds_run_sub.add_parser('demo', help='Run the existing observer demo flow')
-    ds_run_demo.add_argument('--out-dir', default='', help='Output directory for demo artifacts')
+    ds_run_demo.add_argument('--out-dir', default='', help='Output directory for local demo artifacts')
     ds_run_demo.add_argument('--dataset-seed', type=int, default=123)
     ds_run_demo.add_argument('--model-seed', type=int, default=42)
     ds_run_demo.add_argument('--max-fpr', type=float, default=0.01)
-    ds_run_demo.add_argument('--no-derived-reports', action='store_true', help='Skip derived report bundle generation and tracked DS publication refresh')
+    ds_run_demo_report_mode = ds_run_demo.add_mutually_exclusive_group(required=False)
+    ds_run_demo_report_mode.add_argument(
+        '--derived-reports',
+        dest='derived_reports',
+        action='store_true',
+        help='Opt in to local derived report bundle generation; demo remains non-publishable for tracked docs/reports output',
+    )
+    ds_run_demo_report_mode.add_argument(
+        '--no-derived-reports',
+        dest='derived_reports',
+        action='store_false',
+        help='Keep the demo local-only and skip derived report bundle generation (default)',
+    )
+    ds_run_demo.set_defaults(derived_reports=False)
 
     ds_run_pipeline = ds_run_sub.add_parser('pipeline', help='Run the default build/train/evaluate pipeline')
     ds_run_pipeline.add_argument('--input', action='append', required=True, type=Path, help='JSONL input path (repeatable)')
@@ -14896,7 +15141,7 @@ def _normalize_nested_aliases(args: argparse.Namespace) -> argparse.Namespace:
             args.lib_cmd = 'compact'
         elif args.lib_store_cmd == 'reports':
             args.lib_cmd = 'store-reports'
-            if not bool(getattr(args, 'reports_show', False)) and not bool(getattr(args, 'reports_purge', False)) and not str(getattr(args, 'reports_delete', '') or '').strip():
+            if not bool(getattr(args, 'reports_show', False)) and not bool(getattr(args, 'reports_purge', False)) and not bool(getattr(args, 'reports_republish', False)) and not str(getattr(args, 'reports_delete', '') or '').strip():
                 args.reports_show = True
     if args.command == 'librarian' and args.lib_cmd == 'dataset':
         if args.lib_dataset_cmd == 'list':
@@ -14993,7 +15238,7 @@ def main(argv: Optional[List[str]] = None) -> int:
             'runtime_cli_surface': 'observerctl',
         }
         _emit(packet, as_json=bool(getattr(args, 'json', False)))
-        return _exit_from_packet(packet, schema_error=True)
+        return _exit_from_packet(packet, as_json=bool(getattr(args, 'json', False)), schema_error=True)
     except (FileNotFoundError, PermissionError):
         packet = {
             'timestamp_utc': _utc_now(),
@@ -15002,7 +15247,7 @@ def main(argv: Optional[List[str]] = None) -> int:
             'runtime_cli_surface': 'observerctl',
         }
         _emit(packet, as_json=bool(getattr(args, 'json', False)))
-        return _exit_from_packet(packet, dependency_error=True)
+        return _exit_from_packet(packet, as_json=bool(getattr(args, 'json', False)), dependency_error=True)
     except OSError:
         packet = {
             'timestamp_utc': _utc_now(),
@@ -15011,10 +15256,10 @@ def main(argv: Optional[List[str]] = None) -> int:
             'runtime_cli_surface': 'observerctl',
         }
         _emit(packet, as_json=bool(getattr(args, 'json', False)))
-        return _exit_from_packet(packet, io_error=True)
+        return _exit_from_packet(packet, as_json=bool(getattr(args, 'json', False)), io_error=True)
 
     _emit(packet, as_json=bool(getattr(args, 'json', False)))
-    return _exit_from_packet(packet)
+    return _exit_from_packet(packet, as_json=bool(getattr(args, 'json', False)))
 
 
 if __name__ == '__main__':
