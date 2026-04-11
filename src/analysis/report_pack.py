@@ -301,15 +301,15 @@ def _collection_alias_dataset_refs(
         seen.add(text)
         refs.append(text)
 
-    if isinstance(packet, MappingABC):
-        artifacts = packet.get('artifacts', {}) if isinstance(packet.get('artifacts', {}), MappingABC) else {}
-        _append_ref(artifacts.get('dataset_manifest', ''))
-    if isinstance(artifact_paths, MappingABC):
-        _append_ref(artifact_paths.get('dataset_manifest'))
     for mapping in (context, lineage):
         if not isinstance(mapping, MappingABC):
             continue
         _append_ref(mapping.get('dataset_manifest', ''))
+    if isinstance(artifact_paths, MappingABC):
+        _append_ref(artifact_paths.get('dataset_manifest'))
+    if isinstance(packet, MappingABC):
+        artifacts = packet.get('artifacts', {}) if isinstance(packet.get('artifacts', {}), MappingABC) else {}
+        _append_ref(artifacts.get('dataset_manifest', ''))
     return refs
 
 

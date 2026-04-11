@@ -254,6 +254,45 @@ def test_register_dataset_infers_source_and_mode_from_manifest_inputs(tmp_path: 
     assert packet['dataset']['mode'] == 'canary'
 
 
+def test_register_dataset_uses_dominant_mixed_input_scope_for_display_alias(tmp_path: Path) -> None:
+    project_root, anchor = _make_temp_project(tmp_path)
+    dataset_dir = project_root / 'datasets' / 'dominant_scope_alpha'
+    dataset_dir.mkdir(parents=True, exist_ok=True)
+    features_csv = dataset_dir / 'features.csv'
+    manifest_path = dataset_dir / 'dataset_manifest.json'
+    features_csv.write_text('record_id,feature\n', encoding='utf-8')
+    manifest_path.write_text(json.dumps({
+        'features_csv': str(features_csv),
+        'total_records': 13842,
+        'has_labels': False,
+        'inputs': [
+            {
+                'path': str(project_root / 'local_untracked' / 'analysis' / 'observer_derived' / 'real' / 'live' / 'real_live_recent_20260405T000000Z.jsonl'),
+                'records': 13718,
+            },
+            {
+                'path': str(project_root / 'local_untracked' / 'analysis' / 'observer_derived' / 'sim' / 'canary' / 'sim_canary_recent_20260406T155800Z.jsonl'),
+                'records': 124,
+            },
+        ],
+    }), encoding='utf-8')
+
+    packet = register_librarian_dataset_packet(
+        anchor,
+        manifest_path,
+        display_name='Dominant Scope Alpha',
+        run_id='dominant-scope-alpha',
+    )
+
+    expected_alias = 'liv-r{0}'.format(sha256_path(manifest_path)[-4:])
+
+    assert packet['decision'] == 'go'
+    assert packet['dataset']['source'] == 'real'
+    assert packet['dataset']['mode'] == 'live'
+    assert packet['dataset']['display_alias'] == expected_alias
+    assert dataset_display_alias_for_manifest(anchor, manifest_path) == expected_alias
+
+
 def test_dataset_display_alias_for_manifest_falls_back_to_registered_run_id_when_scope_alias_missing(tmp_path: Path) -> None:
     project_root, anchor = _make_temp_project(tmp_path)
     dataset_dir = project_root / 'datasets' / 'presentation_alpha'

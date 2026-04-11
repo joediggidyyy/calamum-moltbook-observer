@@ -4055,6 +4055,92 @@ def test_ds_finalize_run_packet_keeps_librarian_authority_unchanged(tmp_path: Pa
     assert _resolve_reported_path(final_packet['artifacts']['ds_latest_json']).exists()
 
 
+def test_ds_finalize_run_packet_build_prefers_lineage_dataset_alias_over_materialized_manifest(tmp_path: Path, monkeypatch) -> None:
+    from analysis.report_pack import prepare_report_bundle
+    from analysis._util import sha256_path
+    from calamum_librarian import register_librarian_dataset_packet
+
+    project_root, anchor = _make_temp_observer_project(tmp_path)
+    monkeypatch.setattr(observerctl_module, '_project_root', lambda: project_root)
+    monkeypatch.setattr(observerctl_module, '_project_anchor', lambda: anchor)
+    monkeypatch.setattr(observerctl_module, '__file__', str(anchor))
+
+    authority_dir = project_root / 'datasets' / 'authority_live'
+    authority_dir.mkdir(parents=True, exist_ok=True)
+    authority_features_csv = authority_dir / 'features.csv'
+    authority_manifest = authority_dir / 'dataset_manifest.json'
+    authority_features_csv.write_text('record_id,feature\n1,0.1\n', encoding='utf-8')
+    authority_manifest.write_text(json.dumps({
+        'features_csv': str(authority_features_csv),
+        'total_records': 13842,
+        'has_labels': False,
+        'inputs': [
+            {
+                'path': str(project_root / 'local_untracked' / 'analysis' / 'observer_derived' / 'real' / 'live' / 'real_live_recent_20260405T000000Z.jsonl'),
+                'records': 13718,
+            },
+            {
+                'path': str(project_root / 'local_untracked' / 'analysis' / 'observer_derived' / 'sim' / 'canary' / 'sim_canary_recent_20260406T155800Z.jsonl'),
+                'records': 124,
+            },
+        ],
+    }), encoding='utf-8')
+
+    dataset_packet = register_librarian_dataset_packet(
+        anchor,
+        authority_manifest,
+        display_name='Authority Live Dataset',
+        run_id='authority-live-dataset',
+    )
+    assert dataset_packet['decision'] == 'go'
+    expected_alias = str(dataset_packet['dataset']['display_alias'])
+
+    bundle = prepare_report_bundle(anchor, 'build', run_id='frame-d3-build')
+    dataset_dir = bundle.artifact_dirs['dataset']
+    dataset_dir.mkdir(parents=True, exist_ok=True)
+    materialized_features_csv = dataset_dir / 'features.csv'
+    materialized_manifest = dataset_dir / 'dataset_manifest.json'
+    materialized_features_csv.write_text('record_id,feature\n1,0.1\n', encoding='utf-8')
+    materialized_manifest.write_text(json.dumps({
+        'features_csv': str(materialized_features_csv),
+        'total_records': 13842,
+        'has_labels': False,
+    }), encoding='utf-8')
+
+    final_packet = observerctl_module._ds_finalize_run_packet(
+        {
+            'timestamp_utc': '2026-04-11T12:00:00Z',
+            'runtime_cli_surface': 'observerctl',
+            'decision': 'go',
+            'action': 'ds-build',
+            'command_family': 'ds',
+            'command_path': 'observerctl ds build',
+            'implementation_state': 'command-available',
+            'underlying_surface': 'analysis.dataset_builder',
+            'summary': 'Dataset built through observerctl ds.',
+            'run_id': bundle.run_id,
+            'total_records': 13842,
+            'has_labels': False,
+            'artifacts': {},
+            'reason_codes': [],
+        },
+        bundle=bundle,
+        artifact_paths={
+            'dataset_manifest': materialized_manifest,
+            'features_csv': materialized_features_csv,
+        },
+        context={'output_override': False},
+        lineage={'dataset_manifest': authority_manifest},
+    )
+
+    report_payload = json.loads(_resolve_reported_path(final_packet['artifacts']['report_json']).read_text(encoding='utf-8'))
+
+    assert final_packet['decision'] == 'go'
+    assert final_packet['collection_alias'] == expected_alias
+    assert report_payload['collection_alias'] == expected_alias
+    assert final_packet['collection_alias'] != 'dataset-{0}'.format(sha256_path(materialized_manifest)[-6:])
+
+
 def test_ds_finalize_run_packet_can_skip_derived_reporting_side_effects(tmp_path: Path, monkeypatch) -> None:
     from analysis.report_pack import prepare_report_bundle
 
@@ -4637,6 +4723,83 @@ def test_ds_report_publication_requires_canonical_run_root(tmp_path: Path) -> No
     assert by_workflow_payload['workflows']['evaluate']['latest_run']['run_id'] == 'eval-canonical'
     assert by_workflow_payload['workflows']['score']['latest_run']['run_id'] == 'score-canonical'
     assert latest_payload['latest_run']['run_id'] == 'score-canonical'
+
+
+def test_ds_report_publication_explicit_republish_allows_explicit_override_runs_inside_canonical_spine(tmp_path: Path) -> None:
+    from analysis.report_aggregate import append_ds_run_index, publication_eligibility_reasons, refresh_tracked_ds_publication
+    from analysis.report_pack import prepare_report_bundle, write_report_bundle
+
+    project_root = tmp_path / 'observer_project'
+    anchor = project_root / 'src' / 'observerctl_anchor.py'
+    anchor.parent.mkdir(parents=True, exist_ok=True)
+    anchor.write_text('# anchor\n', encoding='utf-8')
+    (project_root / 'PROJECT_MANIFEST.json').write_text('{}\n', encoding='utf-8')
+
+    explicit_run_root = project_root / 'local_untracked' / 'analysis' / 'runs' / 'score' / 'd4_projection_score'
+    bundle = prepare_report_bundle(
+        anchor,
+        'score',
+        explicit_run_root=explicit_run_root,
+        run_id='score-d4-projection',
+    )
+    scoring_dir = bundle.artifact_dirs['scoring']
+    scoring_dir.mkdir(parents=True, exist_ok=True)
+    scores_csv = scoring_dir / 'scores.csv'
+    scores_csv.write_text('record_id,score_anomaly\na,0.1\nb,0.9\n', encoding='utf-8')
+
+    report_bundle = write_report_bundle(
+        project_anchor=anchor,
+        bundle=bundle,
+        packet={
+            'timestamp_utc': '2026-04-11T04:24:59.318423Z',
+            'runtime_cli_surface': 'observerctl',
+            'decision': 'go',
+            'action': 'ds-score',
+            'command_family': 'ds',
+            'command_path': 'observerctl ds score',
+            'implementation_state': 'command-available',
+            'underlying_surface': 'analysis.score_unsupervised',
+            'summary': 'Projected tracked publication for repaired local score run.',
+            'run_id': bundle.run_id,
+            'collection_alias': 'liv-r8bc9',
+            'records_scored': 2,
+            'anomaly_direction': 'lower-is-more-anomalous',
+            'score_column': 'score_anomaly',
+            'artifacts': {},
+            'reason_codes': [],
+        },
+        artifact_paths={
+            'scores_csv': scores_csv,
+        },
+        context={'output_override': True},
+    )
+    append_ds_run_index(project_anchor=anchor, manifest_payload=report_bundle['manifest'])
+
+    reasons = publication_eligibility_reasons(project_anchor=anchor, manifest_payload=report_bundle['manifest'])
+    skipped_publication = refresh_tracked_ds_publication(
+        project_anchor=anchor,
+        current_manifest_payload=report_bundle['manifest'],
+    )
+    explicit_publication = refresh_tracked_ds_publication(
+        project_anchor=anchor,
+        current_manifest_payload=report_bundle['manifest'],
+        explicit_republish=True,
+    )
+
+    assert 'publication_skipped:noncanonical_run_root' in reasons
+    assert 'publication_skipped:run_root_outside_canonical_spine' not in reasons
+    assert skipped_publication['decision'] == 'go'
+    assert skipped_publication['published_run_count'] == 0
+    assert skipped_publication['current_run'] == {}
+
+    assert explicit_publication['decision'] == 'go'
+    assert explicit_publication['published_run_count'] == 1
+    assert explicit_publication['current_run']['run_id'] == 'score-d4-projection'
+    assert explicit_publication['current_run']['collection_alias'] == 'liv-r8bc9'
+    assert explicit_publication['current_run']['source_run_root'] == report_bundle['manifest']['run_root']
+    assert (project_root / explicit_publication['current_run']['published_run_dir']).exists()
+    assert (project_root / explicit_publication['current_run']['published_report_paths']['processing_markdown']).exists()
+    assert (project_root / 'docs' / 'reports' / 'collections' / 'liv-r8bc9' / 'processing' / 'score').exists()
 
 
 def test_ds_report_publication_skips_ephemeral_dataset_manifest_lineage(tmp_path: Path) -> None:

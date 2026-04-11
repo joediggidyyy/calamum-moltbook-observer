@@ -806,6 +806,65 @@ def _infer_dataset_scope_token(texts: List[str], patterns_by_token: Dict[str, Tu
     return winners[0] if len(winners) == 1 else 'unknown'
 
 
+def _dataset_scope_weighted_token(scores: Dict[str, int]) -> str:
+    if not scores:
+        return 'unknown'
+    best_score = max(scores.values())
+    if best_score <= 0:
+        return 'unknown'
+    winners = [token for token, score in scores.items() if score == best_score]
+    return winners[0] if len(winners) == 1 else 'unknown'
+
+
+def _dataset_scope_input_weight(value: Any) -> int:
+    try:
+        weight = int(value)
+    except Exception:
+        return 1
+    return weight if weight > 0 else 1
+
+
+def _infer_dataset_scope_from_inputs(payload: Dict[str, Any]) -> Tuple[str, str]:
+    inputs = list(payload.get('inputs', []) or [])
+    if not inputs:
+        return 'unknown', 'unknown'
+
+    source_scores: Dict[str, int] = {'sim': 0, 'real': 0}
+    mode_scores: Dict[str, int] = {'watch': 0, 'canary': 0, 'live': 0, 'honeypot': 0}
+
+    for item in inputs:
+        item_texts: List[str] = []
+        item_weight = 1
+        if isinstance(item, dict):
+            item_texts = [
+                str(item.get('path', '') or ''),
+                str(item.get('source', '') or ''),
+                str(item.get('mode', '') or ''),
+                str(item.get('profile', '') or ''),
+                str(item.get('stream_type', '') or ''),
+                str(item.get('name', '') or ''),
+                str(item.get('label', '') or ''),
+            ]
+            item_weight = _dataset_scope_input_weight(
+                item.get('records', item.get('record_count', item.get('total_records', 1)))
+            )
+        else:
+            item_texts = [str(item or '')]
+
+        normalized_texts = [str(text).strip().lower() for text in item_texts if str(text or '').strip()]
+        if not normalized_texts:
+            continue
+
+        source_token = _infer_dataset_scope_token(normalized_texts, _DATASET_SCOPE_SOURCE_PATTERNS)
+        mode_token = _infer_dataset_scope_token(normalized_texts, _DATASET_SCOPE_MODE_PATTERNS)
+        if source_token in source_scores:
+            source_scores[source_token] += item_weight
+        if mode_token in mode_scores:
+            mode_scores[mode_token] += item_weight
+
+    return _dataset_scope_weighted_token(source_scores), _dataset_scope_weighted_token(mode_scores)
+
+
 def _infer_dataset_scope(
     manifest_path: Path,
     payload: Dict[str, Any],
@@ -832,6 +891,12 @@ def _infer_dataset_scope(
         resolved_source = _infer_dataset_scope_token(texts, _DATASET_SCOPE_SOURCE_PATTERNS)
     if resolved_mode == 'unknown':
         resolved_mode = _infer_dataset_scope_token(texts, _DATASET_SCOPE_MODE_PATTERNS)
+    if resolved_source == 'unknown' or resolved_mode == 'unknown':
+        input_source, input_mode = _infer_dataset_scope_from_inputs(payload)
+        if resolved_source == 'unknown':
+            resolved_source = input_source
+        if resolved_mode == 'unknown':
+            resolved_mode = input_mode
     return resolved_source, resolved_mode
 
 

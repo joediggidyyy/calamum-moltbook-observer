@@ -60,6 +60,16 @@ def _is_ephemeral_run_root(run_root: str) -> bool:
     return _is_ephemeral_path_ref(run_root)
 
 
+def _path_is_within_root(path: Optional[Path], root: Path) -> bool:
+    if path is None:
+        return False
+    try:
+        path.resolve().relative_to(root.resolve())
+        return True
+    except Exception:
+        return False
+
+
 def _dataset_manifest_refs(manifest_payload: Mapping[str, Any]) -> List[str]:
     refs: List[str] = []
     seen: set[str] = set()
@@ -505,7 +515,12 @@ def refresh_tracked_ds_publication(
     publishable: List[Dict[str, Any]] = []
     excluded_entries = 0
     for record in records:
-        candidate = _build_publication_candidate(record, project_root, project_anchor)
+        candidate = _build_publication_candidate(
+            record,
+            project_root,
+            project_anchor,
+            explicit_republish=bool(explicit_republish),
+        )
         if candidate is None:
             excluded_entries += 1
             continue
@@ -565,29 +580,36 @@ def refresh_tracked_ds_publication(
     }
 
 
-def publication_eligibility_reasons(*, project_anchor: Path, manifest_payload: Mapping[str, Any]) -> List[str]:
+def publication_eligibility_reasons(
+    *,
+    project_anchor: Path,
+    manifest_payload: Mapping[str, Any],
+    allow_explicit_override: bool = False,
+) -> List[str]:
     project_root = find_project_root(project_anchor)
     reasons: List[str] = []
+    run_root_path = _resolve_repo_path(project_root, str(manifest_payload.get('run_root', '') or '').strip())
+    canonical_runs_root = ds_runs_dir(project_anchor)
+    explicit_override_publishable = bool(
+        allow_explicit_override
+        and str(manifest_payload.get('run_root_policy', '') or '').strip().lower() == 'explicit-override'
+        and _path_is_within_root(run_root_path, canonical_runs_root)
+    )
     workflow = canonical_ds_workflow_name(str(manifest_payload.get('workflow', '') or '').strip())
     if workflow in _NON_PUBLISHABLE_WORKFLOWS:
         reasons.append('publication_skipped:workflow_not_publishable')
     decision = str(manifest_payload.get('decision', '') or '').strip().lower()
     if decision != 'go':
         reasons.append('publication_skipped:decision_not_publishable')
-    if str(manifest_payload.get('run_root_policy', '') or '').strip().lower() != 'canonical':
+    if str(manifest_payload.get('run_root_policy', '') or '').strip().lower() != 'canonical' and not explicit_override_publishable:
         reasons.append('publication_skipped:noncanonical_run_root')
-    if _collection_identity_required(manifest_payload) and not _manifest_collection_alias(manifest_payload):
+    if (_collection_identity_required(manifest_payload) or explicit_override_publishable) and not _manifest_collection_alias(manifest_payload):
         reasons.append('publication_skipped:collection_alias_missing')
 
-    run_root_path = _resolve_repo_path(project_root, str(manifest_payload.get('run_root', '') or '').strip())
-    canonical_runs_root = ds_runs_dir(project_anchor)
     if run_root_path is None:
         reasons.append('publication_skipped:run_root_missing')
-    else:
-        try:
-            run_root_path.resolve().relative_to(canonical_runs_root.resolve())
-        except Exception:
-            reasons.append('publication_skipped:run_root_outside_canonical_spine')
+    elif not _path_is_within_root(run_root_path, canonical_runs_root):
+        reasons.append('publication_skipped:run_root_outside_canonical_spine')
 
     report_paths = dict(manifest_payload.get('report_paths', {}) or {})
     for key in PUBLISHED_REPORT_REQUIRED_KEYS:
@@ -700,12 +722,22 @@ def _entry_summary(entry: Mapping[str, Any]) -> Dict[str, Any]:
     }
 
 
-def _build_publication_candidate(record: Mapping[str, Any], project_root: Path, project_anchor: Path) -> Optional[Dict[str, Any]]:
+def _build_publication_candidate(
+    record: Mapping[str, Any],
+    project_root: Path,
+    project_anchor: Path,
+    *,
+    explicit_republish: bool = False,
+) -> Optional[Dict[str, Any]]:
     entry = dict(record.get('entry', {}) or {}) if isinstance(record.get('entry', {}), dict) else {}
     manifest_payload = dict(record.get('manifest_payload', {}) or {}) if isinstance(record.get('manifest_payload', {}), dict) else {}
     if not manifest_payload:
         return None
-    if publication_eligibility_reasons(project_anchor=project_anchor, manifest_payload=manifest_payload):
+    if publication_eligibility_reasons(
+        project_anchor=project_anchor,
+        manifest_payload=manifest_payload,
+        allow_explicit_override=bool(explicit_republish),
+    ):
         return None
 
     run_id = sanitize_run_id(str(manifest_payload.get('run_id', '') or entry.get('run_id', '') or '').strip())
