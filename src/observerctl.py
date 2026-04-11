@@ -25,6 +25,20 @@ from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any, Dict, List, Mapping, Optional, Tuple
 
+from analysis._util import (
+    default_analysis_dir,
+    ds_drafts_dir,
+    ds_indexes_dir,
+    ds_runs_dir,
+    librarian_vault_access_dir,
+    librarian_vault_authority_dir,
+    librarian_vault_baseline_path,
+    librarian_vault_control_state_path,
+    librarian_vault_history_dir,
+    librarian_vault_integrity_dir,
+    librarian_vault_quarantine_dir,
+    normalize_repo_or_absolute_path,
+)
 from calamum_config import get_calamum_control_dir, get_calamum_data_dir, get_calamum_health_dir, get_calamum_log_dir
 from observerctl_sandbox_registry import get_definition as sandbox_get_definition
 from observerctl_sandbox_registry import get_definitions as sandbox_get_definitions
@@ -268,6 +282,38 @@ def _hydrate_moltbook_key_from_sealed_drop(sealed_drop_path: Path, persist_proje
 
 def _project_anchor() -> Path:
     return _project_root() / 'src' / 'observerctl.py'
+
+
+def _ops_bootstrap_root_specs() -> List[Dict[str, str]]:
+    project_root = _project_root()
+    project_anchor = _project_anchor()
+    reports_root = project_root / 'local_untracked' / 'reports'
+    return [
+        {'id': 'analysis_root', 'owner': 'analysis._util', 'path': str(default_analysis_dir(project_anchor))},
+        {'id': 'analysis_runs_root', 'owner': 'analysis._util', 'path': str(ds_runs_dir(project_anchor))},
+        {'id': 'analysis_indexes_root', 'owner': 'analysis._util', 'path': str(ds_indexes_dir(project_anchor))},
+        {'id': 'analysis_drafts_root', 'owner': 'analysis._util', 'path': str(ds_drafts_dir(project_anchor))},
+        {'id': 'librarian_authority_root', 'owner': 'calamum_librarian', 'path': str(librarian_vault_authority_dir(project_anchor))},
+        {'id': 'librarian_history_root', 'owner': 'calamum_librarian', 'path': str(librarian_vault_history_dir(project_anchor))},
+        {'id': 'librarian_delegated_access_root', 'owner': 'calamum_librarian', 'path': str(librarian_vault_access_dir(project_anchor))},
+        {'id': 'librarian_integrity_root', 'owner': 'calamum_librarian', 'path': str(librarian_vault_integrity_dir(project_anchor))},
+        {'id': 'librarian_quarantine_root', 'owner': 'calamum_librarian', 'path': str(librarian_vault_quarantine_dir(project_anchor))},
+        {'id': 'reports_operations_root', 'owner': 'package_contract', 'path': str(reports_root / 'operations')},
+        {'id': 'reports_ops_parameters_root', 'owner': 'package_contract', 'path': str(reports_root / 'ops_parameters')},
+        {'id': 'reports_queststack_root', 'owner': 'package_contract', 'path': str(reports_root / 'queststack')},
+        {'id': 'reports_package_root', 'owner': 'package_contract', 'path': str(reports_root / 'package')},
+        {'id': 'reports_user_root', 'owner': 'package_contract', 'path': str(reports_root / 'user')},
+        {'id': 'keysmith_exports_root', 'owner': 'keysmith', 'path': str(project_root / 'local_untracked' / 'keysmith_exports')},
+        {'id': 'scheduler_root', 'owner': 'calamum_watchdog', 'path': str(project_root / 'local_untracked' / 'scheduler')},
+        {'id': 'locks_root', 'owner': 'calamum_watchdog', 'path': str(project_root / 'local_untracked' / 'locks')},
+        {'id': 'observerctl_root', 'owner': 'observerctl', 'path': str(project_root / 'local_untracked' / 'observerctl')},
+    ]
+
+
+def _ops_bootstrap_root_reason(root_id: str, *, blocked: bool = False) -> str:
+    token = str(root_id or '').strip().lower()
+    prefix = 'critical_check_failed:runtime_bootstrap_blocked_' if blocked else 'critical_check_failed:runtime_bootstrap_missing_'
+    return '{0}{1}'.format(prefix, token)
 
 
 def _read_env_presence(name: str) -> bool:
@@ -4728,6 +4774,102 @@ def _append_human_section(lines: List[str], title: str, body_lines: List[str]) -
     lines.extend(body)
 
 
+def _render_bootstrap_root_lines(rows: List[Dict[str, Any]]) -> List[str]:
+    lines: List[str] = []
+    for row in rows:
+        if not isinstance(row, dict):
+            continue
+        if lines:
+            lines.append('')
+        lines.append('  {0}'.format(_style_structural_label(str(row.get('id', '') or 'root'))))
+        lines.extend(
+            _render_human_kv_rows(
+                [
+                    ('Path', _render_human_path_tail(row.get('path', ''))),
+                    ('Owner', str(row.get('owner', '') or '').replace('_', ' ')),
+                    ('Status', str(row.get('status', '') or '').replace('-', ' ')),
+                    ('Error', str(row.get('error_detail', '') or '').strip()),
+                ],
+                indent='    ',
+                min_label_width=10,
+                max_label_width=14,
+            )
+        )
+    return lines
+
+
+def _render_ops_bootstrap_human(packet: Dict[str, Any]) -> List[str]:
+    lines: List[str] = [_style_section_title('Observer runtime bootstrap')]
+    ts = str(packet.get('timestamp_utc', '') or '').strip()
+    if ts:
+        lines.append('generated_at_utc: {0}'.format(ts))
+    decision = str(packet.get('decision', '') or '').strip().lower()
+    summary = str(packet.get('summary', '') or '').strip()
+    if decision or summary:
+        if summary:
+            lines.append('decision: {0} - {1}'.format(_style_decision_value(decision or 'go'), summary))
+        else:
+            lines.append('decision: {0}'.format(_style_decision_value(decision)))
+
+    counts = packet.get('counts', {}) if isinstance(packet.get('counts', {}), dict) else {}
+    _append_human_section(
+        lines,
+        'Summary',
+        _render_human_kv_rows(
+            [
+                ('Mode', 'check' if bool(packet.get('check_only', False)) else 'create-validate'),
+                ('Required roots', str(int(counts.get('required_roots', 0) or 0))),
+                ('Present after', str(int(counts.get('present_roots', 0) or 0))),
+                ('Created now', str(int(counts.get('created_roots', 0) or 0))),
+                ('Missing', str(int(counts.get('missing_roots', 0) or 0))),
+                ('Blocked', str(int(counts.get('blocked_roots', 0) or 0))),
+                ('Vault integrity', str(packet.get('vault_integrity_status', '') or 'not_checked')),
+            ],
+            indent='  ',
+        ),
+    )
+
+    roots = packet.get('roots', []) if isinstance(packet.get('roots', []), list) else []
+    created = [row for row in roots if isinstance(row, dict) and str(row.get('status', '')).strip().lower() == 'created']
+    ready = [row for row in roots if isinstance(row, dict) and str(row.get('status', '')).strip().lower() == 'ready']
+    missing = [row for row in roots if isinstance(row, dict) and str(row.get('status', '')).strip().lower() == 'missing']
+    blocked = [row for row in roots if isinstance(row, dict) and str(row.get('status', '')).strip().lower() == 'blocked']
+
+    _append_human_section(lines, 'Created roots', _render_bootstrap_root_lines(created))
+    _append_human_section(lines, 'Validated roots', _render_bootstrap_root_lines(ready))
+    _append_human_section(lines, 'Missing roots', _render_bootstrap_root_lines(missing))
+    _append_human_section(lines, 'Blocked roots', _render_bootstrap_root_lines(blocked))
+
+    artifacts = packet.get('artifacts', {}) if isinstance(packet.get('artifacts', {}), dict) else {}
+    evidence_lines: List[str] = []
+    for label, key in (
+        ('Analysis root', 'analysis_root'),
+        ('Reports root', 'reports_root'),
+        ('Observerctl root', 'observerctl_root'),
+        ('Vault control state', 'librarian_vault_control_state_json'),
+        ('Vault checksum baseline', 'librarian_vault_baseline_json'),
+    ):
+        value = _render_human_path_tail(artifacts.get(key, ''))
+        if value:
+            evidence_lines.extend(_render_human_kv_rows([(label, value)], indent='  ', min_label_width=20, max_label_width=22))
+    _append_human_section(lines, 'Evidence', evidence_lines)
+
+    reason_codes = packet.get('reason_codes', []) if isinstance(packet.get('reason_codes', []), list) else []
+    if reason_codes:
+        _append_human_section(lines, 'Reasons', ['  {0}'.format(reason) for reason in reason_codes])
+
+    if decision == 'go' and bool(packet.get('check_only', False)):
+        guidance = ['Next: runtime readiness is already present; continue with normal observerctl workflows.']
+    elif decision == 'go':
+        guidance = ['Next: rerun observerctl ops bootstrap --check for a non-mutating readiness proof, then continue with normal observerctl workflows.']
+    elif bool(packet.get('check_only', False)):
+        guidance = ['Next: rerun observerctl ops bootstrap to create the missing local runtime roots without touching tracked docs/reports publication.']
+    else:
+        guidance = ['Next: repair the blocked or missing roots above, then rerun observerctl ops bootstrap; tracked docs/reports publication remains outside bootstrap scope.']
+    _append_human_section(lines, 'Guidance', ['  {0}'.format(line) for line in guidance])
+    return lines
+
+
 def _render_librarian_dataset_heading(row: Dict[str, Any], include_index: bool = True) -> str:
     label = str(row.get('display_name', '') or row.get('entry_id', '') or 'dataset').strip()
     index_value = int(row.get('index', 0) or 0)
@@ -6050,6 +6192,8 @@ def _render_human_known_packet(packet: Dict[str, Any]) -> Optional[List[str]]:
     if not isinstance(packet, dict):
         return None
     action = str(packet.get('action', '') or '').strip().lower()
+    if action == 'ops-bootstrap':
+        return _render_ops_bootstrap_human(packet)
     if action in ('baseline-status', 'baseline-check', 'baseline-monitor-status'):
         return _render_baseline_human(packet)
     if action == 'runtime-status':
@@ -8139,6 +8283,127 @@ def _librarian_vault_rebaseline(reason: str) -> Dict[str, Any]:
     from calamum_librarian import librarian_vault_rebaseline_packet
 
     return librarian_vault_rebaseline_packet(_project_anchor(), reason=str(reason or '').strip())
+
+
+def _ops_bootstrap(check_only: bool = False) -> Dict[str, Any]:
+    from calamum_librarian import librarian_vault_status_packet
+
+    project_root = _project_root()
+    project_anchor = _project_anchor()
+    specs = _ops_bootstrap_root_specs()
+    state_before: Dict[str, Dict[str, bool]] = {}
+    for spec in specs:
+        path = Path(str(spec.get('path', '') or ''))
+        state_before[str(spec.get('id', '') or '')] = {
+            'exists': bool(path.exists()),
+            'is_dir': bool(path.is_dir()),
+            'blocked': bool(path.exists() and not path.is_dir()),
+        }
+
+    creation_errors: Dict[str, str] = {}
+    vault_packet: Dict[str, Any] = {}
+    if not bool(check_only):
+        for spec in specs:
+            root_id = str(spec.get('id', '') or '')
+            path = Path(str(spec.get('path', '') or ''))
+            before = state_before.get(root_id, {})
+            if bool(before.get('blocked', False)) or bool(before.get('is_dir', False)):
+                continue
+            try:
+                path.mkdir(parents=True, exist_ok=True)
+            except Exception as exc:
+                creation_errors[root_id] = str(exc)
+        vault_packet = librarian_vault_status_packet(project_anchor)
+
+    roots: List[Dict[str, Any]] = []
+    reason_codes: List[str] = []
+    created_roots = 0
+    present_roots = 0
+    missing_roots = 0
+    blocked_roots = 0
+
+    for spec in specs:
+        root_id = str(spec.get('id', '') or '')
+        path = Path(str(spec.get('path', '') or ''))
+        before = state_before.get(root_id, {})
+        blocked = bool(path.exists() and not path.is_dir())
+        exists_now = bool(path.is_dir())
+        if blocked:
+            status = 'blocked'
+            blocked_roots += 1
+            reason_codes.append(_ops_bootstrap_root_reason(root_id, blocked=True))
+        elif exists_now:
+            status = 'created' if not bool(before.get('is_dir', False)) else 'ready'
+            present_roots += 1
+            if status == 'created':
+                created_roots += 1
+        else:
+            status = 'missing'
+            missing_roots += 1
+            reason_codes.append(_ops_bootstrap_root_reason(root_id, blocked=False))
+        roots.append(
+            {
+                'id': root_id,
+                'owner': str(spec.get('owner', '') or ''),
+                'path': normalize_repo_or_absolute_path(path, project_root),
+                'status': status,
+                'existed_before': bool(before.get('is_dir', False)),
+                'blocked_before': bool(before.get('blocked', False)),
+                'error_detail': str(creation_errors.get(root_id, '') or '').strip(),
+            }
+        )
+
+    if isinstance(vault_packet, dict) and str(vault_packet.get('decision', 'go')).strip().lower() != 'go':
+        for reason in vault_packet.get('reason_codes', []):
+            if isinstance(reason, str) and reason not in reason_codes:
+                reason_codes.append(reason)
+        if 'critical_check_failed:runtime_bootstrap_vault_prepare_failed' not in reason_codes:
+            reason_codes.append('critical_check_failed:runtime_bootstrap_vault_prepare_failed')
+
+    decision = 'go' if len(reason_codes) == 0 else 'no-go'
+    if decision == 'go' and bool(check_only):
+        summary = 'Runtime bootstrap readiness verified.'
+    elif decision == 'go':
+        summary = 'Runtime bootstrap roots created or validated.'
+    elif bool(check_only):
+        summary = 'Runtime bootstrap readiness check failed because required local roots are missing or blocked.'
+    else:
+        summary = 'Runtime bootstrap could not prepare all required local roots.'
+
+    artifacts = {
+        'analysis_root': normalize_repo_or_absolute_path(default_analysis_dir(project_anchor), project_root),
+        'reports_root': normalize_repo_or_absolute_path(project_root / 'local_untracked' / 'reports', project_root),
+        'observerctl_root': normalize_repo_or_absolute_path(project_root / 'local_untracked' / 'observerctl', project_root),
+        'librarian_vault_control_state_json': normalize_repo_or_absolute_path(librarian_vault_control_state_path(project_anchor), project_root),
+        'librarian_vault_baseline_json': normalize_repo_or_absolute_path(librarian_vault_baseline_path(project_anchor), project_root),
+    }
+    if isinstance(vault_packet, dict):
+        vault_artifacts = vault_packet.get('artifacts', {}) if isinstance(vault_packet.get('artifacts', {}), dict) else {}
+        for key, value in vault_artifacts.items():
+            if value not in (None, '', [], {}):
+                artifacts[str(key)] = str(value)
+
+    return {
+        'timestamp_utc': _utc_now(),
+        'runtime_cli_surface': 'observerctl',
+        'decision': decision,
+        'action': 'ops-bootstrap',
+        'command_family': 'ops',
+        'command_path': 'observerctl ops bootstrap',
+        'summary': summary,
+        'check_only': bool(check_only),
+        'reason_codes': reason_codes,
+        'counts': {
+            'required_roots': int(len(specs)),
+            'present_roots': int(present_roots),
+            'created_roots': int(created_roots),
+            'missing_roots': int(missing_roots),
+            'blocked_roots': int(blocked_roots),
+        },
+        'roots': roots,
+        'vault_integrity_status': str(vault_packet.get('integrity_status', 'not_checked') or 'not_checked') if isinstance(vault_packet, dict) and not bool(check_only) else 'not_checked',
+        'artifacts': artifacts,
+    }
 
 
 def _ds_saved_manifest_records() -> List[Dict[str, Any]]:
@@ -14322,6 +14587,8 @@ def _dispatch(args: argparse.Namespace) -> Dict[str, Any]:
             return _ops_preflight(args.source)
         if args.ops_cmd == 'gate-check':
             return _ops_gate_check(args.source)
+        if args.ops_cmd == 'bootstrap':
+            return _ops_bootstrap(check_only=bool(args.check))
         if args.ops_cmd == 'keysmith':
             return _ops_keysmith_status(args.venue)
         if args.ops_cmd == 'keysmith-mint':
@@ -14768,6 +15035,9 @@ def _build_parser() -> argparse.ArgumentParser:
 
     op_gatecheck = ops_sub.add_parser('gate-check', help='Evaluate go/no-go over current state')
     op_gatecheck.add_argument('--source', choices=['sim', 'real'], default=_state_default_source())
+
+    op_bootstrap = ops_sub.add_parser('bootstrap', help='Create or validate the shipped local runtime roots')
+    op_bootstrap.add_argument('--check', action='store_true', help='Validate only; do not create missing roots')
 
     op_keysmith = ops_sub.add_parser('keysmith', help='KEYSMITH readiness and mint surface')
     op_keysmith.add_argument('--venue', default='moltbook', help='Venue profile stub (currently only moltbook)')

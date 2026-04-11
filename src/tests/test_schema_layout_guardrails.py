@@ -288,6 +288,26 @@ def test_public_contract_surfaces_are_scrubbed_of_dev_lineage() -> None:
     assert "semantics_staging/" not in vscode_tasks, "Active VS Code tasks must not target semantics_staging helpers"
 
 
+def test_runtime_operator_docs_surface_bootstrap_readiness_path() -> None:
+    root = _project_root()
+    readme = (root / "README.md").read_text(encoding="utf-8")
+    manual_index = (root / "docs" / "manuals" / "INDEX.md").read_text(encoding="utf-8")
+    runtime_index = (root / "docs" / "manuals" / "runtime" / "INDEX.md").read_text(encoding="utf-8")
+    runtime_workflows = (root / "docs" / "manuals" / "runtime" / "RUNTIME_WORKFLOWS.md").read_text(encoding="utf-8")
+    runtime_ops = (root / "docs" / "manuals" / "runtime" / "RUNTIME_OPERATIONS.md").read_text(encoding="utf-8")
+    contributing = (root / "CONTRIBUTING.md").read_text(encoding="utf-8")
+
+    assert "observerctl ops bootstrap --json" in readme, "README must route operators to the bootstrap entry surface"
+    assert "observerctl ops bootstrap --check --json" in readme, "README must surface non-mutating bootstrap validation"
+    assert "[`runtime/INDEX.md`](runtime/INDEX.md) -> [`runtime/RUNTIME_WORKFLOWS.md`](runtime/RUNTIME_WORKFLOWS.md)" in manual_index, "Manual index must route runtime readers through the bootstrap-aware runtime index"
+    assert "bootstrap readiness through closure and analysis handoff" in runtime_index, "Runtime index must describe bootstrap readiness as part of the operator path"
+    assert "observerctl ops bootstrap --check --json" in runtime_workflows, "Runtime workflows must include bootstrap validation before runtime execution"
+    assert "local_untracked/" in runtime_workflows, "Runtime workflows must explain the local runtime-root family explicitly"
+    assert "Fresh environment or temp-root readiness" in runtime_ops, "Runtime operations must include a dedicated bootstrap playbook"
+    assert "observerctl ops bootstrap --check --json" in runtime_ops, "Runtime operations must include bootstrap validation in common playbooks"
+    assert "observerctl ops bootstrap --check --json" in contributing, "Contributing guide must include bootstrap validation in the typical workflow"
+
+
 def test_active_surfaces_exclude_backup_and_oneoff_patch_artifacts() -> None:
     root = _project_root()
 
@@ -300,3 +320,16 @@ def test_active_surfaces_exclude_backup_and_oneoff_patch_artifacts() -> None:
         if path.is_file()
     )
     assert not src_backup_paths, f"Active source tree must not retain backup artifacts: {src_backup_paths}"
+
+
+def test_semantics_staging_active_helper_inventory_is_cleared() -> None:
+    root = _project_root()
+    staging_root = root / "semantics_staging"
+
+    remaining_files = sorted(
+        path.relative_to(root).as_posix()
+        for path in staging_root.glob("**/*")
+        if path.is_file()
+    )
+
+    assert not remaining_files, f"Active semantics_staging helper inventory must be cleared after P5 classification: {remaining_files}"

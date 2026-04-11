@@ -17,7 +17,7 @@ This index routes readers through the public manual-class documents for Calamum 
 | If you want to understand... | Read |
 | --- | --- |
 | the overall project and where to begin | [`../../README.md`](../../README.md) -> [`../INDEX.md`](../INDEX.md) |
-| the safest runtime path through the system | [`runtime/RUNTIME_WORKFLOWS.md`](runtime/RUNTIME_WORKFLOWS.md) -> [`runtime/RUNTIME_OPERATIONS.md`](runtime/RUNTIME_OPERATIONS.md) |
+| the safest runtime path through the system | [`runtime/INDEX.md`](runtime/INDEX.md) -> [`runtime/RUNTIME_WORKFLOWS.md`](runtime/RUNTIME_WORKFLOWS.md) -> [`runtime/RUNTIME_OPERATIONS.md`](runtime/RUNTIME_OPERATIONS.md) |
 | posture, denial behavior, and security boundaries | [`reference/SECURITY_MODEL.md`](reference/SECURITY_MODEL.md) -> [`reference/RUNTIME_TRANSITIONS.md`](reference/RUNTIME_TRANSITIONS.md) |
 | the analysis and reporting lane | [`data-science/DS_OPERATIONS.md`](data-science/DS_OPERATIONS.md) -> [`data-science/DS_WIZARD.md`](data-science/DS_WIZARD.md) -> [`../reports/INDEX.md`](../reports/INDEX.md) |
 

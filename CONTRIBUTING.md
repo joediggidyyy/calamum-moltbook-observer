@@ -31,17 +31,19 @@ The public policy surfaces for these rules are `README.md`, `SECURITY.md`, and `
 
 ## Typical validation workflow
 
-1. Use `src/deployment/secure_run.ps1` when you need to validate the hardened runtime path.
-2. Use the native `observerctl` surface for data-science and report work:
+1. Use `observerctl ops bootstrap --check --json` to validate the local runtime-root family before command-level runtime work.
+2. Use `src/deployment/secure_run.ps1` when you need to validate the hardened runtime path.
+3. Use the native `observerctl` surface for data-science and report work:
 	- `observerctl ds build ...`
 	- `observerctl ds train ...`
 	- `observerctl ds evaluate ...`
 	- `observerctl ds score ...`
 	- `observerctl ds run demo --json`
-3. Run targeted tests for the surfaces you changed:
+	- `observerctl ops bootstrap --json` when you are preparing a fresh local runtime tree for a new environment or temp project root
+4. Run targeted tests for the surfaces you changed:
 	- `pytest src/tests/`
 	- or a focused slice such as `pytest src/tests/test_observerctl.py -k ds_`
-4. If your change alters public behavior, update the public entry docs in the same pass:
+5. If your change alters public behavior, update the public entry docs in the same pass:
 	- `README.md`
 	- `SECURITY.md`
 	- `DATA_METHODOLOGY.md`

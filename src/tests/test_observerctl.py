@@ -474,6 +474,92 @@ def test_ops_runtime_status_human_render_surfaces_healthy_real_fetch_state(monke
     assert any('Collection status:' in strip_ansi(line) and 'ok' in strip_ansi(line) for line in rendered)
 
 
+def test_ops_bootstrap_creates_frozen_runtime_roots_without_publication_contamination(monkeypatch, tmp_path: Path, capsys) -> None:
+    project_root, anchor = _make_temp_observer_project(tmp_path)
+    _bind_temp_observer_project(monkeypatch, project_root, anchor)
+
+    rc = main(['ops', 'bootstrap', '--json'])
+
+    assert rc == 0
+    payload = json.loads(capsys.readouterr().out)
+    assert payload['action'] == 'ops-bootstrap'
+    assert payload['decision'] == 'go'
+    assert payload['check_only'] is False
+    assert payload['counts']['missing_roots'] == 0
+    assert payload['counts']['blocked_roots'] == 0
+    assert payload['counts']['created_roots'] > 0
+
+    status_by_id = {row['id']: row['status'] for row in payload['roots']}
+    for root_id in (
+        'analysis_root',
+        'analysis_runs_root',
+        'analysis_indexes_root',
+        'analysis_drafts_root',
+        'librarian_authority_root',
+        'librarian_history_root',
+        'librarian_delegated_access_root',
+        'librarian_integrity_root',
+        'librarian_quarantine_root',
+        'reports_operations_root',
+        'reports_ops_parameters_root',
+        'reports_queststack_root',
+        'reports_package_root',
+        'reports_user_root',
+        'keysmith_exports_root',
+        'scheduler_root',
+        'locks_root',
+        'observerctl_root',
+    ):
+        assert status_by_id[root_id] in ('created', 'ready')
+
+    assert (project_root / 'local_untracked' / 'analysis').is_dir()
+    assert (project_root / 'local_untracked' / 'analysis' / 'vaults' / 'librarian' / 'authority').is_dir()
+    assert (project_root / 'local_untracked' / 'reports' / 'operations').is_dir()
+    assert (project_root / 'local_untracked' / 'reports' / 'ops_parameters').is_dir()
+    assert (project_root / 'local_untracked' / 'reports' / 'package').is_dir()
+    assert (project_root / 'local_untracked' / 'reports' / 'user').is_dir()
+    assert (project_root / 'local_untracked' / 'keysmith_exports').is_dir()
+    assert (project_root / 'local_untracked' / 'scheduler').is_dir()
+    assert (project_root / 'local_untracked' / 'locks').is_dir()
+    assert (project_root / 'local_untracked' / 'observerctl').is_dir()
+    assert (project_root / 'local_untracked' / 'analysis' / 'vaults' / 'librarian' / 'integrity' / 'vault_control_state.json').exists()
+    assert (project_root / 'local_untracked' / 'analysis' / 'vaults' / 'librarian' / 'integrity' / 'vault_checksum.json').exists()
+    assert not (project_root / 'docs' / 'reports').exists()
+
+
+def test_ops_bootstrap_check_is_non_mutating_and_fails_closed_when_roots_are_missing(monkeypatch, tmp_path: Path, capsys) -> None:
+    project_root, anchor = _make_temp_observer_project(tmp_path)
+    _bind_temp_observer_project(monkeypatch, project_root, anchor)
+
+    rc = main(['ops', 'bootstrap', '--check', '--json'])
+
+    assert rc == 2
+    payload = json.loads(capsys.readouterr().out)
+    assert payload['action'] == 'ops-bootstrap'
+    assert payload['decision'] == 'no-go'
+    assert payload['check_only'] is True
+    assert payload['counts']['created_roots'] == 0
+    assert payload['counts']['missing_roots'] > 0
+    assert (project_root / 'local_untracked').exists() is False
+    assert not (project_root / 'docs' / 'reports').exists()
+
+
+def test_ops_bootstrap_human_render_uses_sectioned_packet_layout(monkeypatch, tmp_path: Path, capsys) -> None:
+    project_root, anchor = _make_temp_observer_project(tmp_path)
+    _bind_temp_observer_project(monkeypatch, project_root, anchor)
+
+    rc = main(['ops', 'bootstrap'])
+
+    assert rc == 0
+    rendered = capsys.readouterr().out.splitlines()
+    assert rendered[0] == 'Observer runtime bootstrap'
+    assert 'Summary' in rendered
+    assert 'Created roots' in rendered
+    assert 'Evidence' in rendered
+    assert 'Guidance' in rendered
+    assert any('Mode:' in strip_ansi(line) and 'create-validate' in strip_ansi(line) for line in rendered)
+
+
 def test_ops_keysmith_mint_dry_run_delegates_and_keeps_output_names_only(tmp_path: Path, capsys) -> None:
     out_dir = tmp_path / 'keysmith_exports'
 

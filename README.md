@@ -213,6 +213,8 @@ The current public contract can be summarized as follows:
 
 Observer runtime operations are exposed through `src/observerctl.py` and remain standalone from CodeSentinel runtime process surfaces.
 
+Before preflight, baseline, or mode-transition work, initialize or validate the local runtime-root family under `local_untracked/` through the shipped bootstrap surface.
+
 Install the native CLI entrypoint once per environment:
 
 - `python -m pip install -e .`
@@ -224,6 +226,11 @@ Add the supported extras only when you need those lanes:
 
 After installation, use the observer-native command surface directly:
 
+- **Runtime bootstrap (create or validate required local roots)**  
+  `observerctl ops bootstrap --json`
+- **Runtime bootstrap check (non-mutating readiness validation)**  
+  `observerctl ops bootstrap --check --json`
+
 - **Preflight status packet**  
   `observerctl ops preflight --source sim --json`
 - **Gate decision packet**  
@@ -234,6 +241,8 @@ After installation, use the observer-native command surface directly:
   `observerctl ops mode transition --to canary --source sim --event transition-canary --output logs/data/calamum/observer_derived/sim/canary/evidence/transition_canary.json --json`
 
 `ops gate-check` is fail-closed and returns non-zero when required inputs are missing or invalid.
+
+`ops bootstrap` is the canonical local-readiness entry surface for the shipped package. It prepares or validates the required local runtime roots under `local_untracked/` without republishing the tracked public report tree under `docs/reports/`.
 
 ### Data science and report packet lane
 

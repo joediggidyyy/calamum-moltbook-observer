@@ -8,7 +8,7 @@ This document is the command-level reference for routine runtime work.
 
 | Command family | Use it for | Notes |
 | --- | --- | --- |
-| `observerctl ops *` | preflight, gate checks, mode state, transitions, and evidence packets | primary runtime control surface |
+| `observerctl ops *` | bootstrap readiness, preflight, gate checks, mode state, transitions, and evidence packets | primary runtime control surface |
 | `observerctl baseline *` | resource collection and readiness checks | baseline packets feed later comparison and readiness decisions |
 | `observerctl librarian *` | runtime/store controls and retained-artifact census | useful when checking what the lane actually produced |
 | `observerctl watchdog *` | heartbeat freshness, posture checks, and reason inspection | important when a gate denies on stale or invalid watchdog state |
@@ -28,12 +28,19 @@ This document is the command-level reference for routine runtime work.
 
 ## Common playbooks
 
+### Fresh environment or temp-root readiness
+
+1. `observerctl ops bootstrap --json`
+2. `observerctl ops bootstrap --check --json`
+3. continue into the matching runtime lane only after readiness is explicit
+
 ### Standard simulation run
 
-1. `observerctl ops preflight --source sim --json`
-2. `observerctl ops mode gate --to <watch|canary> --source sim --json`
-3. `observerctl ops mode transition --to <watch|canary> --source sim --event <event> --json`
-4. `observerctl ops evidence index --json`
+1. `observerctl ops bootstrap --check --json`
+2. `observerctl ops preflight --source sim --json`
+3. `observerctl ops mode gate --to <watch|canary> --source sim --json`
+4. `observerctl ops mode transition --to <watch|canary> --source sim --event <event> --json`
+5. `observerctl ops evidence index --json`
 
 ### Production-like simulation run
 
@@ -44,9 +51,10 @@ Use the same sequence as above, but add explicit approval capture and verify tha
 Use a stricter review path:
 
 1. confirm presence-checked dependencies and approvals
-2. `observerctl ops preflight --source real --json`
-3. `observerctl ops mode gate --to <mode> --source real --json`
-4. only if the gate returns `decision = go`, run `observerctl ops mode transition ...`
+2. `observerctl ops bootstrap --check --json`
+3. `observerctl ops preflight --source real --json`
+4. `observerctl ops mode gate --to <mode> --source real --json`
+5. only if the gate returns `decision = go`, run `observerctl ops mode transition ...`
 
 ## Evidence paths
 
@@ -76,10 +84,11 @@ Use it to inspect names-only telemetry and issue allowed control intents, but tr
 
 When something looks wrong, use this order:
 
-1. check current state: `observerctl ops mode current --json`
-2. inspect the latest gate/evidence packet: `observerctl ops evidence index --json`
-3. inspect watchdog and health surfaces: `observerctl watchdog check --json`, `observerctl health full --json`
-4. inspect the current lane census: `observerctl librarian stats --json`
+1. check bootstrap/readiness state: `observerctl ops bootstrap --check --json`
+2. check current state: `observerctl ops mode current --json`
+3. inspect the latest gate/evidence packet: `observerctl ops evidence index --json`
+4. inspect watchdog and health surfaces: `observerctl watchdog check --json`, `observerctl health full --json`
+5. inspect the current lane census: `observerctl librarian stats --json`
 
 ## High-signal failure patterns
 

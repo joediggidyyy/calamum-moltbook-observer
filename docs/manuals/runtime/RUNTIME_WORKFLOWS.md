@@ -8,7 +8,7 @@ This document is the practical operating path for the Calamum observer stack.
 
 | Stage | Goal | Primary command surfaces |
 | --- | --- | --- |
-| Prepare | confirm environment, approvals, and evidence expectations | `observerctl ops preflight`, `observerctl policy *` |
+| Prepare | create or validate local runtime roots, then confirm environment, approvals, and evidence expectations | `observerctl ops bootstrap`, `observerctl ops bootstrap --check`, `observerctl ops preflight`, `observerctl policy *` |
 | Baseline | collect and validate the resource baseline for the target lane | `observerctl baseline collect`, `observerctl baseline analyze` |
 | Execute | move into the requested runtime state through a guarded transition | `observerctl ops mode gate`, `observerctl ops mode transition` |
 | Close | verify current state, evidence emission, and runtime health | `observerctl ops mode current`, `observerctl ops evidence index`, `observerctl health full` |
@@ -21,6 +21,7 @@ Use this short checklist before you start a run:
 | Check | Why it matters |
 | --- | --- |
 | Python environment is active and `observerctl` resolves in that shell | keeps the command surface and installed dependencies aligned |
+| Local runtime roots are created or validated before preflight | keeps `local_untracked/` readiness explicit instead of relying on side effects from later commands |
 | If the run will hand off into `observerctl ds *`, the `ds` extra is installed in that environment | the supported DS lane depends on the ApexLab/reporting stack rather than the minimal core install |
 | Local operator configuration and required environment variables are present | stricter lanes fail closed when dependencies or credentials are missing |
 | You know whether the lane is `sim` or `real` | source changes alter the required safety bar |
@@ -28,6 +29,15 @@ Use this short checklist before you start a run:
 | You are prepared to keep runtime evidence local | public docs describe the contract; runtime artifacts remain local working evidence |
 
 Default first-contact rule: prefer a simulation-first path unless a stricter lane has already been justified and approved.
+
+## Bootstrap local runtime roots
+
+Use the bootstrap surface before preflight when you are preparing a fresh environment or when you want an explicit readiness check for the shipped local runtime tree.
+
+- Create or validate the required local runtime roots: `observerctl ops bootstrap --json`
+- Validate readiness without mutation: `observerctl ops bootstrap --check --json`
+
+The bootstrap surface is local-runtime only. It prepares or validates the required roots under `local_untracked/` and does not republish the tracked public report lane under `docs/reports/`.
 
 ## Baseline preparation
 
@@ -52,25 +62,31 @@ Treat the baseline as ready only when the analysis packet returns a `go` decisio
 
 For most readers, the safest first full run is `sim:canary`.
 
-### 1. Run preflight
+### 1. Bootstrap or verify readiness
+
+- `observerctl ops bootstrap --check --json`
+
+On a fresh environment or temp project root, use `observerctl ops bootstrap --json` instead so the required local runtime roots are created before preflight.
+
+### 2. Run preflight
 
 - `observerctl ops preflight --source sim --json`
 
 Confirm that the runtime packet is readable and that the current surfaces are coherent enough for a transition decision.
 
-### 2. Run the gate check
+### 3. Run the gate check
 
 - `observerctl ops mode gate --to canary --source sim --json`
 
 If the gate returns `no-go`, stop there, read the `reason_codes`, and fix the blocking condition before you try again.
 
-### 3. Perform the guarded transition
+### 4. Perform the guarded transition
 
 - `observerctl ops mode transition --to canary --source sim --event first-safe-run --json`
 
 The transition command is the preferred path because it performs gate, state change, and evidence emission as one guarded workflow.
 
-### 4. Verify closure
+### 5. Verify closure
 
 Use the three checks below before you treat the run as complete.
 
@@ -96,17 +112,19 @@ When a run closes cleanly, the analysis handoff set is usually the lane-scoped r
 
 ### Background simulation
 
-1. `observerctl ops preflight --source sim --json`
-2. `observerctl ops mode gate --to <watch|canary> --source sim --json`
-3. `observerctl ops mode transition --to <watch|canary> --source sim --event <event> --json`
-4. `observerctl ops evidence index --json`
+1. `observerctl ops bootstrap --check --json`
+2. `observerctl ops preflight --source sim --json`
+3. `observerctl ops mode gate --to <watch|canary> --source sim --json`
+4. `observerctl ops mode transition --to <watch|canary> --source sim --event <event> --json`
+5. `observerctl ops evidence index --json`
 
 ### Real-source lane
 
 1. confirm required environment variables and approvals are already in place
-2. `observerctl ops preflight --source real --json`
-3. `observerctl ops mode gate --to <mode> --source real --json`
-4. only proceed to `observerctl ops mode transition ...` if the gate packet returns `decision = go`
+2. `observerctl ops bootstrap --check --json`
+3. `observerctl ops preflight --source real --json`
+4. `observerctl ops mode gate --to <mode> --source real --json`
+5. only proceed to `observerctl ops mode transition ...` if the gate packet returns `decision = go`
 
 ## When to stop instead of pushing through
 
