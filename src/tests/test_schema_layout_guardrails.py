@@ -54,6 +54,7 @@ def test_manifest_authoritative_root_alignment() -> None:
     public_surface = manifest["public_surface"]
     content_roots = set(public_surface["content_roots"].keys())
     public_reports = set(manifest["public_reports"])
+    tracked_roots = set(manifest["layout"]["tracked_roots"])
 
     assert "src/" in content_roots, "src/ must remain a public content root"
     assert "docs/manuals/" in content_roots, "docs/manuals/ must remain a public content root"
@@ -62,6 +63,7 @@ def test_manifest_authoritative_root_alignment() -> None:
     assert "template_library/" in content_roots, "template_library/ must remain a public content root"
     assert "tools/" in content_roots, "tools/ must remain a public content root"
     assert "local_untracked/" not in content_roots, "local_untracked/ must not appear as a public content root"
+    assert "semantics_staging/" not in tracked_roots, "semantics_staging/ must not remain in tracked product roots"
 
     assert "docs/reports/aggregates/AGGREGATE_REPORT.md" in public_reports, "Aggregate report must remain declared as a public report"
     assert "docs/reports/aggregates/PUBLIC_RUN_LEDGER.md" in public_reports, "Public run ledger must remain declared as a public report"
@@ -177,3 +179,124 @@ def test_reports_index_and_generated_surfaces_follow_current_public_report_contr
         "Published runs are rendered under `docs/reports/collections/<collection-alias>/`.",
     ):
         assert forbidden not in generated_surfaces, f"Legacy generated-surface reference must not remain: {forbidden}"
+
+
+def test_honeypot_h_frame_packet_family_is_materialized_locally() -> None:
+    root = _project_root()
+    reports_root = root / "local_untracked" / "reports"
+
+    expected_packets = {
+        "CALAMUM_H1_TARGET_IDENTITY_PACKET_20260411.md",
+        "CALAMUM_H2_OUTWARD_CONTENT_BANK_PACKET_20260411.md",
+        "CALAMUM_H3_FRESHNESS_SCHEDULE_PACKET_20260411.md",
+        "CALAMUM_H4_DISCOVERABILITY_MAP_PACKET_20260411.md",
+        "CALAMUM_H5_COHERENCE_REVIEW_CHECKLIST_PACKET_20260411.md",
+    }
+
+    missing = sorted(name for name in expected_packets if not (reports_root / name).exists())
+    assert not missing, f"Expected H-frame packet artifacts are missing: {missing}"
+
+
+def test_active_final_deliverables_align_to_d2_through_d6_authority_chain() -> None:
+    root = _project_root()
+    final_writeup = (root / "deliverables" / "DATA780" / "BLIND_ML_FINAL_WRITEUP.md").read_text(encoding="utf-8")
+    ethical_report = (root / "deliverables" / "DATA740" / "BLIND_ML_ETHICAL_ANALYSIS_REPORT.md").read_text(encoding="utf-8")
+
+    for expected in (
+        "dataset-p3-demo-current-20260406",
+        "dataset-p3-provenance-labeled-20260410",
+        "build_20260411T042407214529Z",
+        "train_20260411T042431425146Z",
+        "score_20260411T042449359583Z",
+        "docs/reports/collections/liv-r8bc9/",
+    ):
+        assert expected in final_writeup, f"Final DATA780 write-up must align to the current D2-D4 authority chain: {expected}"
+
+    for forbidden in (
+        "selector run_id: `p3-demo-current-20260406`",
+        "build_20260406T213204617082Z",
+        "train_20260406T165940271708Z",
+        "evaluate_20260406T211232484108Z",
+        "score_20260406T170017731886Z",
+        "tracked public report collection lane remained in honest zero-state even after explicit republish",
+        "tracked public report collection lane is still in zero-state even after explicit republish",
+    ):
+        assert forbidden not in final_writeup, f"Final DATA780 write-up must not retain stale D6-preclose authority wording: {forbidden}"
+
+    assert "docs/reports/collections/liv-r8bc9/" in ethical_report, "DATA740 ethical report must acknowledge the current tracked public report family"
+    assert "public report publication lane is currently zero-state" not in ethical_report, "DATA740 ethical report must not describe the current report lane as zero-state"
+    assert "returned a truthful zero-state publication outcome" not in ethical_report, "DATA740 ethical report must not retain the stale pre-D4 republish description"
+
+
+def test_active_submission_readmes_point_to_current_final_surfaces() -> None:
+    root = _project_root()
+    data780_readme = (root / "deliverables" / "DATA780" / "README.md").read_text(encoding="utf-8")
+    data740_readme = (root / "deliverables" / "DATA740" / "README.md").read_text(encoding="utf-8")
+
+    assert "BLIND_ML_FINAL_WRITEUP.md" in data780_readme, "DATA780 README must point to the active final write-up"
+    assert "current D2-D6 authority chain" in data780_readme, "DATA780 README must describe the current closeout authority basis"
+    assert "R6 dataset and citation freeze" not in data780_readme, "DATA780 README must not describe the final write-up as R6-only"
+
+    assert "BLIND_ML_ETHICAL_ANALYSIS_REPORT.md" in data740_readme, "DATA740 README must point to the active ethical final write-up"
+    assert "current D2-D6 authority chain" in data740_readme, "DATA740 README must describe the current closeout authority basis"
+    assert "R6 dataset and citation freeze" not in data740_readme, "DATA740 README must not describe the final write-up as R6-only"
+
+
+def test_package_lane_bundle_artifacts_exist() -> None:
+    root = _project_root()
+    package_dirs = sorted((root / "local_untracked").glob("package_lane_*"))
+
+    bundle_dirs = [path for path in package_dirs if path.is_dir()]
+    bundle_zips = [path for path in package_dirs if path.is_file() and path.suffix.lower() == ".zip"]
+
+    assert bundle_dirs, "At least one package_lane bundle directory must exist after package-lane execution"
+    assert bundle_zips, "At least one package_lane zip archive must exist after package-lane execution"
+
+    latest_bundle = sorted(bundle_dirs)[-1]
+    assert (latest_bundle / "PACKAGE_MANIFEST.json").exists(), "Latest package_lane bundle must include PACKAGE_MANIFEST.json"
+    assert (latest_bundle / "README.md").exists(), "Latest package_lane bundle must include README.md"
+
+
+def test_public_contract_surfaces_are_scrubbed_of_dev_lineage() -> None:
+    root = _project_root()
+    contributing = (root / "CONTRIBUTING.md").read_text(encoding="utf-8")
+    methodology = (root / "DATA_METHODOLOGY.md").read_text(encoding="utf-8")
+    runtime_ops = (root / "docs" / "manuals" / "runtime" / "RUNTIME_OPERATIONS.md").read_text(encoding="utf-8")
+    vscode_tasks = (root / ".vscode" / "tasks.json").read_text(encoding="utf-8")
+
+    for forbidden in (
+        "Academic Integrity",
+        "coursework submission",
+        "semester grading period",
+        "Submission State",
+    ):
+        assert forbidden not in contributing, f"Contributing guide must not retain development-lineage wording: {forbidden}"
+
+    for forbidden in (
+        "PUBLIC / ACADEMIC OPEN",
+        "Stage-4 scalar feature quartet",
+        "frame8-proof-window",
+    ):
+        assert forbidden not in methodology, f"Methodology manual must not retain development-lineage wording: {forbidden}"
+
+    for forbidden in (
+        "quest logs",
+        "quest evidence",
+    ):
+        assert forbidden not in runtime_ops, f"Runtime manual must not advertise internal workflow residue: {forbidden}"
+
+    assert "semantics_staging/" not in vscode_tasks, "Active VS Code tasks must not target semantics_staging helpers"
+
+
+def test_active_surfaces_exclude_backup_and_oneoff_patch_artifacts() -> None:
+    root = _project_root()
+
+    assert not (root / "render_patch.py").exists(), "One-off root patch helpers must not remain in the active project root"
+    assert not (root / "src" / "observerctl.py.bak").exists(), "Backup copies must not remain in the active source tree"
+
+    src_backup_paths = sorted(
+        path.relative_to(root).as_posix()
+        for path in (root / "src").glob("**/*.bak")
+        if path.is_file()
+    )
+    assert not src_backup_paths, f"Active source tree must not retain backup artifacts: {src_backup_paths}"

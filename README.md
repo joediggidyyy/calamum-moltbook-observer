@@ -51,7 +51,7 @@ This README is the public front door for the project. Use it to understand what 
 
 ## Current release boundary
 
-The current tracked release boundary is **Stage-4 / canary-ready**.
+The current tracked release boundary is **canary-ready observer runtime**.
 
 | Included now | Governed separately |
 |---|---|

@@ -6245,9 +6245,9 @@ def test_evidence_pack_supports_non_activation_live_projection_and_saved_refs(tm
     archive_dir.mkdir(parents=True, exist_ok=True)
 
     segment_path = archive_dir / 'resource_sim_canary_normal_unit_seg0001.jsonl'
-    baseline_segment_path = archive_dir / 'resource_sim_canary_baseline_frame8-proof_seg0001.jsonl'
+    baseline_segment_path = archive_dir / 'resource_sim_canary_baseline_window_proof_seg0001.jsonl'
     segment_path.write_text('{"timestamp_utc":"2026-03-22T00:00:00Z"}\n', encoding='utf-8')
-    baseline_segment_path.write_text('{"timestamp_utc":"2026-03-22T00:00:00Z","baseline_window_id":"frame8-proof-window"}\n', encoding='utf-8')
+    baseline_segment_path.write_text('{"timestamp_utc":"2026-03-22T00:00:00Z","baseline_window_id":"baseline-proof-window"}\n', encoding='utf-8')
     resource_index = resource_dir / 'index.jsonl'
     resource_index.write_text(
         json.dumps({
@@ -6260,8 +6260,8 @@ def test_evidence_pack_supports_non_activation_live_projection_and_saved_refs(tm
             'segment_path': str(baseline_segment_path).replace('\\', '/'),
             'segment_records': 1,
             'stream_type': 'resource_baseline',
-            'baseline_window_id': 'frame8-proof-window',
-            'window_id': 'frame8-proof-window',
+            'baseline_window_id': 'baseline-proof-window',
+            'window_id': 'baseline-proof-window',
         }) + '\n',
         encoding='utf-8',
     )
@@ -6270,7 +6270,7 @@ def test_evidence_pack_supports_non_activation_live_projection_and_saved_refs(tm
     baseline_packet_path.write_text(json.dumps({
         'timestamp_utc': observerctl_module._utc_now(),
         'decision': 'go',
-        'baseline_window_id': 'frame8-proof-window',
+        'baseline_window_id': 'baseline-proof-window',
         'sample_counts': {'resource_normal': 5, 'resource_baseline': 5},
         'provenance': {'artifact_path': str(baseline_packet_path).replace('\\', '/')},
     }), encoding='utf-8')

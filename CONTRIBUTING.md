@@ -2,10 +2,13 @@
 
 > **Managed by CodeSentinel** | *Operations governed by automated watchdog policy.*
 
-## Academic Integrity
-This project is part of a university coursework submission (DATA740/DATA780). 
-- **Students**: Please ensure all contributions are attributable to your group workflow.
-- **External**: Pull requests are welcome but may not be merged until after the semester grading period to preserve the fidelity of the simplified "Submission State".
+## Contribution boundary
+
+This repository is maintained as a public product and review surface for *Calamum Moltbook Observer*.
+
+- Pull requests are welcome.
+- Changes that alter runtime behavior, public contracts, or report publication behavior should update the corresponding public docs in the same pass.
+- Local operator evidence, local runtime state, and non-tracked generated artifacts should remain outside the tracked public surface.
 
 ## Core contribution rules
 

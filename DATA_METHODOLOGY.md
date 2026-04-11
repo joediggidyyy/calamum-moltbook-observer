@@ -5,7 +5,7 @@
 **Owner**: ORACL-Prime  
 **Project**: Calamum Moltbook Observer  
 **Last updated**: 2026-04-06  
-**Classification**: PUBLIC / ACADEMIC OPEN
+**Classification**: PUBLIC / OPEN REFERENCE
 
 ---
 
@@ -261,7 +261,7 @@ Nominal additional fields:
 - `posture_trigger_id`
 - `posture_trigger`
 - `security_report_ref`
-- the current canonical runtime row also carries the Stage-4 scalar feature quartet for content rows and message-bearing canary rows:
+- the current canonical runtime row also carries the canonical scalar feature quartet for content rows and message-bearing canary rows:
     - `f_complexity`
     - `f_code_density`
     - `f_toxicity`
@@ -330,7 +330,7 @@ Representative row:
     "sampling_profile_id": "resource_baseline_v1",
     "mode_at_capture": "live",
     "source_axis": "real",
-    "baseline_window_id": "frame8-proof-window",
+    "baseline_window_id": "baseline-proof-window",
     "sample_index": 3,
     "runtime_cli_surface": "observerctl",
     "record_class": "resource_telemetry",

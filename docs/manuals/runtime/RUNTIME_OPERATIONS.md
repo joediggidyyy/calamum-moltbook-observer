@@ -57,8 +57,6 @@ Use a stricter review path:
 | evidence index | `logs/data/calamum/observer_derived/<source>/<mode>/evidence/index.jsonl` |
 | resource retention index | `logs/data/calamum/observer_derived/<source>/<mode>/resource/index.jsonl` |
 | gate events | `logs/behavioral/gates/gate_events.jsonl` |
-| quest logs | `logs/queststack/<QS-ID>_log.md` |
-| quest evidence | `logs/queststack/<QS-ID>_evidence.jsonl` |
 
 ## Runtime roles
 
