@@ -4,6 +4,8 @@ Updated: 2026-04-03
 
 This section covers the supported data-science workflow for `observerctl ds` and the associated reporting surfaces.
 
+This data-science manual is part of the shipped documentation library that travels with the installable application package.
+
 ## What lives here
 
 | Document | Purpose | Read it when you need... |

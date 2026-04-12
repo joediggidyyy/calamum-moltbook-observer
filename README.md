@@ -105,19 +105,32 @@ This repository presents the **public observer surface** only:
 
 Runtime logs and operator-local governance surfaces remain outside the tracked public presentation.
 
+## Documentation delivery boundary
+
+The tracked `docs/` tree currently serves two different readers, and the shipping boundary is now explicit.
+
+| Documentation surface | Current ship state | Role |
+|---|---|---|
+| `docs/INDEX.md` + `docs/manuals/**` | tracked in the repo and shipped with the installable application package | operator-facing documentation library bundled with the product |
+| `docs/reports/INDEX.md`, `docs/reports/aggregates/*`, `docs/reports/reference/GENERATED_REPORT_SURFACES.md`, `docs/reports/validations/INDEX.md`, and the structural `docs/reports/collections/` lane | tracked in the repo and shipped as the report framework baseline | reader-facing report routing, aggregate, reference, validation-index, and zero-state collection-lane framework surfaces |
+| dated packet leaves under `docs/reports/collections/<collection-alias>/...` and emitted validation packet files | tracked in the repo as publication-derived surfaces | populated report and validation packet content published from canonical local DS artifacts |
+| other adjacent `docs/` subtrees | evaluated individually | no blanket ship claim until the surface is intentionally classified |
+
+This keeps the manual library and report framework baseline available with the shipped runtime while leaving populated report packets in the tracked publication lane.
+
 ## Current public report spine
 
-Tracked public reports are rebuilt from the canonical local DS run spine into human-facing packet families under `docs/reports/`.
+Tracked public reports are rebuilt from the canonical local DS run spine into a shipped report framework baseline plus human-facing packet families under `docs/reports/`.
 The public entry surface for that lane is [Report Collections](docs/reports/INDEX.md).
 
 | If you need to... | Open |
 |---|---|
-| get the fastest route into the current collection packet | [docs/reports/INDEX.md](docs/reports/INDEX.md) |
+| get the report framework entry surface and the fastest route into the current packet family | [docs/reports/INDEX.md](docs/reports/INDEX.md) |
 | compare the latest build / train / evaluate / score packets | [docs/reports/aggregates/WORKFLOW_ROLLUP.md](docs/reports/aggregates/WORKFLOW_ROLLUP.md) |
 | understand the tracked packet filesystem contract | [docs/reports/reference/GENERATED_REPORT_SURFACES.md](docs/reports/reference/GENERATED_REPORT_SURFACES.md) |
 | review the current dated packet leaves | `docs/reports/collections/<collection-alias>/processing/{build,eval,score,train}/` |
 
-The public report tree is intentionally reader-first. Machine-readable authority stays in the local analysis indexes and is referenced from these public packet surfaces rather than duplicated there.
+The public report tree is intentionally reader-first. Its shipped baseline provides routing, aggregates, reference, validation entry, and structural collection-lane context. Machine-readable authority stays in the local analysis indexes and is referenced from these public packet surfaces rather than duplicated there.
 
 ## Project layout
 

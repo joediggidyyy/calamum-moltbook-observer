@@ -4,6 +4,8 @@ Updated: 2026-04-03
 
 This section covers day-to-day runtime use of the Calamum observer stack, from local bootstrap readiness through closure and analysis handoff.
 
+This runtime manual is part of the shipped documentation library that travels with the installable application package.
+
 ## What lives here
 
 | Document | Purpose | Read it when you need... |

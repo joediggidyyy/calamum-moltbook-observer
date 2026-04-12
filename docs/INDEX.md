@@ -4,6 +4,15 @@ Updated: 2026-04-06
 
 This index routes readers through the tracked documentation surfaces for Calamum Moltbook Observer.
 
+## Delivery boundary
+
+| Documentation surface | Current ship state | Role |
+| --- | --- | --- |
+| [`INDEX.md`](INDEX.md) + [`manuals/`](manuals/) | tracked in the repo and shipped with the installable application package | packaged documentation library for runtime operators and readers |
+| report framework baseline under [`reports/INDEX.md`](reports/INDEX.md), [`reports/aggregates/`](reports/aggregates/), [`reports/reference/GENERATED_REPORT_SURFACES.md`](reports/reference/GENERATED_REPORT_SURFACES.md), [`reports/validations/INDEX.md`](reports/validations/INDEX.md), and the structural [`reports/collections/`](reports/collections/) lane | tracked in the repo and shipped with the installable application package | reader-facing report routing, aggregate, reference, validation-index, and zero-state collection-lane framework surfaces |
+| populated packet leaves under [`reports/collections/<collection-alias>/...`](reports/collections/) and emitted validation report files | tracked in the repo as publication-derived surfaces | dated collection, workflow, figure-backed, and validation packet outputs rebuilt from canonical local artifacts |
+| other adjacent `docs/` subtrees | evaluated individually | no blanket ship claim until that subtree is intentionally classified |
+
 ## Start here
 
 | Reader goal | Start here | Then | Then |
@@ -33,8 +42,8 @@ This index routes readers through the tracked documentation surfaces for Calamum
 
 ## Reports
 
-Use [`reports/INDEX.md`](reports/INDEX.md) for the curated tracked report catalog.
-The current public packet family is organized by collection alias and then by dated `build`, `train`, `evaluate`, and `score` leaves.
+Use [`reports/INDEX.md`](reports/INDEX.md) for the curated tracked report framework and packet catalog.
+The shipped baseline covers report routing, aggregates, reference guidance, validation entry, and the structural `collections/` lane. Populated packet families are organized by collection alias and then by dated `build`, `train`, `evaluate`, and `score` leaves.
 
 ## Quick routes
 

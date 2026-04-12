@@ -27,6 +27,30 @@ class TrainManifest:
     git_sha: Optional[str] = None
 
 
+def _require_manifest_text(manifest: Dict[str, Any], key: str) -> str:
+    value = str(manifest.get(key, '') or '').strip()
+    if not value:
+        raise ValueError('dataset manifest missing required field: {0}'.format(key))
+    return value
+
+
+def _require_manifest_list(manifest: Dict[str, Any], key: str) -> List[str]:
+    value = manifest.get(key, [])
+    if not isinstance(value, list):
+        raise ValueError('dataset manifest missing required field: {0}'.format(key))
+    cleaned = [str(item).strip() for item in value if str(item).strip()]
+    if not cleaned:
+        raise ValueError('dataset manifest missing required field: {0}'.format(key))
+    return cleaned
+
+
+def _resolve_manifest_artifact(manifest_path: Path, artifact_ref: str, key: str) -> Path:
+    target = manifest_path.parent / Path(str(artifact_ref or '').strip()).name
+    if not target.exists():
+        raise ValueError('dataset manifest path missing: {0}'.format(key))
+    return target
+
+
 def load_dataset(manifest_path: Path) -> Tuple[List[Dict[str, Any]], Dict[str, str], Dict[str, Any]]:
     """
     Load features and splits from the dataset manifest.
@@ -35,10 +59,13 @@ def load_dataset(manifest_path: Path) -> Tuple[List[Dict[str, Any]], Dict[str, s
     with manifest_path.open('r', encoding='utf-8') as f:
         manifest = json.load(f)
 
+    if not isinstance(manifest, dict):
+        raise ValueError('dataset manifest is not a JSON object')
+
     base_dir = manifest_path.parent
     
     # Load features
-    features_path = base_dir / Path(manifest['features_csv']).name
+    features_path = _resolve_manifest_artifact(manifest_path, _require_manifest_text(manifest, 'features_csv'), 'features_csv')
     features = []
     with features_path.open('r', encoding='utf-8', newline='') as f:
         reader = csv.DictReader(f)
@@ -53,7 +80,7 @@ def load_dataset(manifest_path: Path) -> Tuple[List[Dict[str, Any]], Dict[str, s
             features.append(row)
 
     # Load splits
-    splits_path = base_dir / Path(manifest['splits_csv']).name
+    splits_path = _resolve_manifest_artifact(manifest_path, _require_manifest_text(manifest, 'splits_csv'), 'splits_csv')
     record_split_map = {}
     with splits_path.open('r', encoding='utf-8', newline='') as f:
         reader = csv.DictReader(f)
@@ -63,7 +90,7 @@ def load_dataset(manifest_path: Path) -> Tuple[List[Dict[str, Any]], Dict[str, s
     # Load labels if available
     labels_map = {}
     if manifest.get('labels_csv'):
-        labels_path = base_dir / Path(manifest['labels_csv']).name
+        labels_path = _resolve_manifest_artifact(manifest_path, str(manifest.get('labels_csv', '') or '').strip(), 'labels_csv')
         if labels_path.exists():
             with labels_path.open('r', encoding='utf-8', newline='') as f:
                 reader = csv.DictReader(f)
@@ -73,7 +100,7 @@ def load_dataset(manifest_path: Path) -> Tuple[List[Dict[str, Any]], Dict[str, s
                     if lbl:
                         labels_map[row['record_id']] = lbl
 
-    return features, record_split_map, labels_map, manifest['feature_columns']
+    return features, record_split_map, labels_map, _require_manifest_list(manifest, 'feature_columns')
 
 
 def train_model(
@@ -86,6 +113,8 @@ def train_model(
     out_dir.mkdir(parents=True, exist_ok=True)
 
     features, split_map, label_map, feature_cols = load_dataset(dataset_manifest_path)
+    if model_type == 'supervised' and not label_map:
+        raise ValueError('supervised training requires labels_csv in the dataset manifest')
     train_cols = [c for c in feature_cols if c != 'record_id']
 
     X_train = []
@@ -112,6 +141,9 @@ def train_model(
             X_val.append(vec)
             if label is not None:
                 y_val.append(label_value)
+
+    if not X_train:
+        raise ValueError('dataset did not yield any training rows')
 
     model = None
     metrics: Dict[str, Any] = {}

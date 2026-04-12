@@ -27,6 +27,12 @@ from analysis.score_unsupervised import score_dataset
 from analysis.train_model import main as train_main
 
 
+def _default_demo_root() -> Path:
+    from analysis.report_pack import prepare_report_bundle
+
+    return prepare_report_bundle(Path(__file__), 'demo').run_root
+
+
 def _run_command(args: List[str], func: Callable[[Optional[List[str]]], int]) -> None:
     with contextlib.redirect_stdout(io.StringIO()), contextlib.redirect_stderr(io.StringIO()):
         ret = func(args)
@@ -70,7 +76,7 @@ def run_demo(
     signing_key: str = 'demo-key',
     clean: bool = True,
 ) -> Dict[str, Any]:
-    target_root = Path(root_dir) if root_dir is not None else Path('demo_output')
+    target_root = Path(root_dir) if root_dir is not None else _default_demo_root()
     if clean and target_root.exists():
         shutil.rmtree(target_root)
     target_root.mkdir(parents=True, exist_ok=True)
@@ -165,7 +171,7 @@ def run_demo(
 
 def main(argv: Optional[List[str]] = None) -> int:
     parser = argparse.ArgumentParser(description='Run the observer demo pipeline and emit a summary packet.')
-    parser.add_argument('--out-dir', type=Path, default=Path('demo_output'))
+    parser.add_argument('--out-dir', type=Path, default=_default_demo_root())
     parser.add_argument('--dataset-seed', type=int, default=123)
     parser.add_argument('--model-seed', type=int, default=42)
     parser.add_argument('--max-fpr', type=float, default=0.01)

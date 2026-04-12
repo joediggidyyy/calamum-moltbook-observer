@@ -308,6 +308,53 @@ def test_runtime_operator_docs_surface_bootstrap_readiness_path() -> None:
     assert "observerctl ops bootstrap --check --json" in contributing, "Contributing guide must include bootstrap validation in the typical workflow"
 
 
+def test_packaged_docs_and_report_framework_boundary_is_explicit() -> None:
+    root = _project_root()
+    pyproject = (root / "pyproject.toml").read_text(encoding="utf-8")
+    manifest_in = (root / "MANIFEST.in").read_text(encoding="utf-8")
+    readme = (root / "README.md").read_text(encoding="utf-8")
+    docs_index = (root / "docs" / "INDEX.md").read_text(encoding="utf-8")
+    manuals_index = (root / "docs" / "manuals" / "INDEX.md").read_text(encoding="utf-8")
+    methodology = (root / "DATA_METHODOLOGY.md").read_text(encoding="utf-8")
+    contract_map = (root / "local_untracked" / "reports" / "CALAMUM_SHIPPED_PACKAGE_AND_PUBLIC_REPO_CONTRACT_MAP_20260411.md").read_text(encoding="utf-8")
+
+    assert '"share/calamum-moltbook-observer/docs"' in pyproject, "Package metadata must ship the docs root entry surface"
+    assert '"share/calamum-moltbook-observer/docs/manuals/runtime"' in pyproject, "Package metadata must ship runtime manuals"
+    assert '"share/calamum-moltbook-observer/docs/manuals/data-science"' in pyproject, "Package metadata must ship data-science manuals"
+    assert '"share/calamum-moltbook-observer/docs/manuals/reference"' in pyproject, "Package metadata must ship reference manuals"
+    assert '"share/calamum-moltbook-observer/docs/reports"' in pyproject, "Package metadata must ship the report framework entry surface"
+    assert '"share/calamum-moltbook-observer/docs/reports/aggregates"' in pyproject, "Package metadata must ship report aggregate framework surfaces"
+    assert '"share/calamum-moltbook-observer/docs/reports/collections"' in pyproject, "Package metadata must preserve the structural report collections lane"
+    assert '"share/calamum-moltbook-observer/docs/reports/reference"' in pyproject, "Package metadata must ship the generated-report reference surface"
+    assert '"share/calamum-moltbook-observer/docs/reports/validations"' in pyproject, "Package metadata must ship the validation index surface"
+    assert "recursive-include docs/manuals *.md" in manifest_in, "Installable source manifest must include the manual library"
+    assert "include docs/reports/INDEX.md" in manifest_in, "Installable source manifest must include the report framework entry surface"
+    assert "recursive-include docs/reports/aggregates *.md" in manifest_in, "Installable source manifest must include report aggregate framework surfaces"
+    assert "include docs/reports/collections/.gitkeep" in manifest_in, "Installable source manifest must preserve the structural collections lane"
+    assert "include docs/reports/reference/GENERATED_REPORT_SURFACES.md" in manifest_in, "Installable source manifest must include the generated-report reference surface"
+    assert "include docs/reports/validations/INDEX.md" in manifest_in, "Installable source manifest must include the validation index surface"
+    assert "Collection alias: `liv-r8bc9`" not in readme, "README must not package the current populated collection state as the shipped boundary"
+    assert "docs/INDEX.md` + `docs/manuals/**` | tracked in the repo and shipped with the installable application package" in readme, "README must describe the shipped manual-library boundary"
+    assert "docs/reports/INDEX.md`, `docs/reports/aggregates/*`, `docs/reports/reference/GENERATED_REPORT_SURFACES.md`, `docs/reports/validations/INDEX.md`, and the structural `docs/reports/collections/` lane | tracked in the repo and shipped as the report framework baseline" in readme, "README must describe the shipped report framework baseline"
+    assert "tracked in the repo and shipped with the installable application package" in docs_index, "Docs index must describe the shipped docs-library boundary"
+    assert "report framework baseline under [`reports/INDEX.md`](reports/INDEX.md)" in docs_index, "Docs index must describe the shipped report framework baseline"
+    assert "part of the shipped application documentation payload" in manuals_index, "Manual index must state that the manual library ships with the application package"
+    assert "report framework baseline under [`docs/reports/`](docs/reports/)" in methodology, "Methodology manual must describe the shipped report framework baseline"
+    assert "publication-derived repository surfaces built from canonical local artifacts" in methodology, "Methodology manual must keep populated tracked reports in the publication-derived lane"
+    assert "`docs/INDEX.md` and `docs/manuals/**` | shipped documentation library for the installable application package" in contract_map, "Contract map must name the shipped docs subtree explicitly"
+    assert "`docs/reports/INDEX.md`, aggregate surfaces, report reference, validation routing, and the structural `collections/` lane form the **v1 shipped report framework baseline**" in contract_map, "Contract map must name the shipped report framework baseline explicitly"
+    assert "dated collection leaves, dated processing leaves, figure-backed packet content, and emitted validation packet leaves form **derived populated publication content**" in contract_map, "Contract map must keep populated report packets in the derived publication class"
+
+    for forbidden in (
+        "recursive-include docs/reports *.md",
+        "recursive-include docs/reports/collections *.md",
+        "docs/reports/collections/liv-r8bc9",
+        "APEXLAB_REFERENCE_VALIDATION_REPORT_20260324.md",
+        "APEXLAB_REFERENCE_VALIDATION_REPORT_20260324.html",
+    ):
+        assert forbidden not in manifest_in, f"Installable source manifest must exclude derived populated report content: {forbidden}"
+
+
 def test_active_surfaces_exclude_backup_and_oneoff_patch_artifacts() -> None:
     root = _project_root()
 

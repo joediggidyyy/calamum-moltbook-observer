@@ -1,0 +1,7 @@
+include docs/INDEX.md
+recursive-include docs/manuals *.md
+include docs/reports/INDEX.md
+recursive-include docs/reports/aggregates *.md
+include docs/reports/collections/.gitkeep
+include docs/reports/reference/GENERATED_REPORT_SURFACES.md
+include docs/reports/validations/INDEX.md

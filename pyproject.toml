@@ -56,5 +56,47 @@ py-modules = [
 where = ["src"]
 include = ["analysis*", "ops*", "simulation*"]
 
+[tool.setuptools.data-files]
+"share/calamum-moltbook-observer/docs" = [
+	"docs/INDEX.md",
+]
+"share/calamum-moltbook-observer/docs/manuals" = [
+	"docs/manuals/INDEX.md",
+]
+"share/calamum-moltbook-observer/docs/manuals/runtime" = [
+	"docs/manuals/runtime/INDEX.md",
+	"docs/manuals/runtime/RUNTIME_WORKFLOWS.md",
+	"docs/manuals/runtime/RUNTIME_OPERATIONS.md",
+]
+"share/calamum-moltbook-observer/docs/manuals/data-science" = [
+	"docs/manuals/data-science/INDEX.md",
+	"docs/manuals/data-science/DS_OPERATIONS.md",
+	"docs/manuals/data-science/DS_WIZARD.md",
+]
+"share/calamum-moltbook-observer/docs/manuals/reference" = [
+	"docs/manuals/reference/INDEX.md",
+	"docs/manuals/reference/SECURITY_MODEL.md",
+	"docs/manuals/reference/RUNTIME_TRANSITIONS.md",
+]
+"share/calamum-moltbook-observer/docs/reports" = [
+	"docs/reports/INDEX.md",
+]
+"share/calamum-moltbook-observer/docs/reports/aggregates" = [
+	"docs/reports/aggregates/AGGREGATE_REPORT.md",
+	"docs/reports/aggregates/LATEST_COLLECTIONS.md",
+	"docs/reports/aggregates/PUBLIC_RUN_LEDGER.md",
+	"docs/reports/aggregates/THRESHOLD_SUMMARY.md",
+	"docs/reports/aggregates/WORKFLOW_ROLLUP.md",
+]
+"share/calamum-moltbook-observer/docs/reports/collections" = [
+	"docs/reports/collections/.gitkeep",
+]
+"share/calamum-moltbook-observer/docs/reports/reference" = [
+	"docs/reports/reference/GENERATED_REPORT_SURFACES.md",
+]
+"share/calamum-moltbook-observer/docs/reports/validations" = [
+	"docs/reports/validations/INDEX.md",
+]
+
 [tool.setuptools.package-dir]
 "" = "src"

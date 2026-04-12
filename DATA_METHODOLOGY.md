@@ -29,6 +29,14 @@ It covers:
 - [`Calamum Security Model`](docs/manuals/reference/SECURITY_MODEL.md) — posture and enforcement architecture
 - [`Calamum Runtime Transitions`](docs/manuals/reference/RUNTIME_TRANSITIONS.md) — runtime transition contract
 
+## Documentation delivery boundary
+
+The installable application package ships the documentation library rooted at [`docs/INDEX.md`](docs/INDEX.md) and [`docs/manuals/`](docs/manuals/), along with a report framework baseline under [`docs/reports/`](docs/reports/).
+
+That report framework baseline includes the report entry surface, aggregate routes, the generated-surfaces reference, the validation index, and the structural `collections/` lane in reader-facing zero-state form.
+
+Tracked populated report packets under [`docs/reports/collections/<collection-alias>/...`](docs/reports/collections/) and emitted validation report files remain publication-derived repository surfaces built from canonical local artifacts.
+
 ## 2. Verification basis
 
 This manual reflects the current code-defined contract and supporting reference surfaces.

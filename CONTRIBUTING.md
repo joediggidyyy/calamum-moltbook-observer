@@ -17,7 +17,9 @@ All contributions must preserve the project’s privacy, safety, and evidence-bo
 - Keep telemetry and reports names-only.
 - Keep secrets out of tracked files, examples, logs, and screenshots.
 - Preserve the `obfuscator_lib` safety boundary and fail-closed observer behavior.
-- Treat `docs/reports/` as a generated public surface, not as a hand-authored source of truth.
+- Treat `docs/INDEX.md` and `docs/manuals/**` as the shipped documentation library for the installable product.
+- Treat the report framework baseline under `docs/reports/` as shipped reader-facing routing/reference material for the installable product.
+- Treat populated collection packets, dated workflow packet leaves, figure-backed report leaves, and emitted validation report files under `docs/reports/` as publication-derived tracked surfaces rather than hand-authored source of truth.
 
 The public policy surfaces for these rules are `README.md`, `SECURITY.md`, and `DATA_METHODOLOGY.md`.
 
@@ -53,7 +55,8 @@ The public policy surfaces for these rules are `README.md`, `SECURITY.md`, and `
 
 The tracked report lane is rebuilt from canonical local DS run artifacts.
 
-- Public reader-facing outputs live under `docs/reports/`.
+- Public reader-facing report framework surfaces live under `docs/reports/INDEX.md`, `docs/reports/aggregates/`, `docs/reports/reference/GENERATED_REPORT_SURFACES.md`, `docs/reports/validations/INDEX.md`, and the structural `docs/reports/collections/` lane.
+- Populated packet outputs live under `docs/reports/collections/<collection-alias>/...` and emitted validation report files under `docs/reports/validations/`.
 - Canonical machine-readable authority remains under `local_untracked/analysis/`.
 - When command or report behavior changes, regenerate the report lane from the DS workflow rather than editing dated collection packets by hand.
 

@@ -130,7 +130,7 @@ def main():
         if args.mode == "sampler":
             if args.source == "live":
                 api_key = os.getenv("MOLTBOOK_API_KEY")
-                base_url = os.getenv("MOLTBOOK_HOST", "https://api.moltbook.com/v1")
+                base_url = os.getenv("MOLTBOOK_HOST", "https://www.moltbook.com/api/v1")
                 if not api_key:
                     raise EnvironmentError("MOLTBOOK_API_KEY required for live mode")
                 client = MoltbookAPIClient(base_url, api_key)
@@ -156,7 +156,7 @@ def main():
             if args.source == "live":
                 if 'client' not in locals(): # Reuse connection if possible, but sampler/canary are exclusive modes here
                     api_key = os.getenv("MOLTBOOK_API_KEY")
-                    base_url = os.getenv("MOLTBOOK_HOST", "https://api.moltbook.com/v1")
+                    base_url = os.getenv("MOLTBOOK_HOST", "https://www.moltbook.com/api/v1")
                     if not api_key:
                         raise EnvironmentError("MOLTBOOK_API_KEY required for live mode")
                     client = MoltbookAPIClient(base_url, api_key)

@@ -4,6 +4,8 @@ Updated: 2026-04-03
 
 This index routes readers through the public manual-class documents for Calamum Moltbook Observer.
 
+The manual library rooted here is part of the shipped application documentation payload. Derived publication packets under `../reports/` remain tracked repository surfaces rather than current installable-package manual payload.
+
 ## Manual library
 
 | Section | Purpose | Start with |

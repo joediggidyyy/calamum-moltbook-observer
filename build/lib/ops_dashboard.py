@@ -78,6 +78,7 @@ THEME_FONT = 'font-mono'
 # (Helps diagnose cases where a hidden old process keeps running and the launcher can't bind the port.)
 
 BUILD_STAMP = datetime.now(timezone.utc).strftime('%Y-%m-%d')
+RESOURCE_ARCHIVE_LOG_INTERVAL_SEC = 120.0
 
 # Unique per-backend-process id. Used to correlate client reloads with server restarts.
 SERVER_BOOT_ID = f"{int(time.time() * 1000)}-{random.randint(1000, 9999)}"
@@ -367,10 +368,15 @@ class SystemState:
         self._last_wd_active: Optional[bool] = None
         self._last_lib_active: Optional[bool] = None  # NEW
         self._last_archive_count: int = 0  # NEW
+        self._last_resource_archive_count: int = 0
+        self._last_resource_archive_log_at: float = 0.0
+        self._pending_resource_archive_delta: int = 0
         self._wd_sig_ok: Optional[bool] = None
         self._wd_sig_detail: Optional[str] = None
         self._obs_heartbeat_stale: Optional[bool] = None
         self._lib_heartbeat_stale: Optional[bool] = None
+        self._last_source_fetch_signature: Optional[Tuple[str, str, str]] = None
+        self._last_collection_state: Optional[str] = None
         # UI push throttles (monotonic seconds)
         self._last_density_push_at: float = 0.0
         self._last_charts_push_at: float = 0.0
@@ -395,6 +401,45 @@ def add_log(msg: str) -> None:
     # keep bounded
     if len(state.log_items) > 400:
         state.log_items = state.log_items[-400:]
+
+
+def _build_records_counter_payload(
+    *,
+    total_records: int,
+    total_display: int,
+    main_display_records: int,
+    session_raw: int,
+    archive_display: int,
+    resource_session_raw: int,
+    resource_archive: int,
+    resource_total: int,
+    source: str,
+    route_stream_mismatch: bool,
+) -> Dict[str, object]:
+    """Build the operator-facing header counter payload.
+
+    The dashboard headline already has route-aware semantics; preserve that for
+    the default TOTAL view while exposing an explicit SESSION count for the
+    clickable header toggle.
+    """
+    source_norm = normalize_ops_runtime_source(source)
+    total_value = int(total_display)
+    default_view = 'total'
+
+    if source_norm == 'sim' and not route_stream_mismatch:
+        default_view = 'session'
+    else:
+        total_value = int(main_display_records if route_stream_mismatch else total_display)
+
+    return {
+        'total': int(total_value),
+        'session': int(session_raw),
+        'archive': int(archive_display),
+        'resource_session': int(resource_session_raw),
+        'resource_archive': int(resource_archive),
+        'resource_total': int(resource_total),
+        'default_view': default_view,
+    }
 
 
 state = SystemState()
@@ -635,6 +680,21 @@ def _compute_snapshot() -> dict:
     archive_raw = int(snap.get('records_archive', snap.get('records_archive_display', 0)) or 0)
     session_display = int(snap.get('records_session_display', session_raw) or 0)
     archive_display = int(snap.get('records_archive_display', archive_raw) or 0)
+    resource_session_raw = int(snap.get('resource_total_records', 0) or 0)
+    resource_archive = int(snap.get('resource_archive_records', 0) or 0)
+    resource_total = int(snap.get('resource_total_display', resource_archive + resource_session_raw) or 0)
+    records_counter = _build_records_counter_payload(
+        total_records=int(total),
+        total_display=int(total_display),
+        main_display_records=int(main_display_records),
+        session_raw=int(session_raw),
+        archive_display=int(archive_display),
+        resource_session_raw=int(resource_session_raw),
+        resource_archive=int(resource_archive),
+        resource_total=int(resource_total),
+        source=state.source,
+        route_stream_mismatch=bool(route_stream_mismatch),
+    )
 
     bins = snap.get('density_bins')
     if isinstance(bins, list):
@@ -682,13 +742,54 @@ def _compute_snapshot() -> dict:
          
     integrity = state.integrity_score
 
+    runtime_source_fetch = snap.get('runtime_source_fetch', {}) if isinstance(snap.get('runtime_source_fetch', {}), dict) else {}
+    runtime_collection_state = snap.get('runtime_collection_state', {}) if isinstance(snap.get('runtime_collection_state', {}), dict) else {}
+    live_fetch_err = (
+        state.source == 'real'
+        and str(runtime_source_fetch.get('status', 'ok')).strip().lower() == 'err'
+    )
+    collection_error = (
+        str(runtime_collection_state.get('status', 'ok')).strip().lower() == 'err'
+        or str(runtime_collection_state.get('state', '')).strip().lower() == 'error'
+    )
+    collection_label = str(runtime_collection_state.get('state', '') or '').strip().lower()
+    metrics_age_seconds = runtime_collection_state.get('metrics_age_seconds')
+    metrics_age_text = ''
+    try:
+        metrics_age_text = '{0:.1f}s'.format(float(metrics_age_seconds))
+    except Exception:
+        metrics_age_text = ''
+    status_detail = 'nominal telemetry'
+
     # Status
     if not state.is_running:
         status = {'text': 'CRITICAL', 'color': 'red'}
+        status_detail = 'observer inactive'
+    elif live_fetch_err:
+        error_kind = str(runtime_source_fetch.get('error_kind', 'network') or 'network').strip().lower()
+        endpoint = str(runtime_source_fetch.get('endpoint', 'unknown') or 'unknown').strip()
+        status = {'text': 'DEGRADED', 'color': 'orange'}
+        status_detail = f'live source fetch error ({error_kind} @ {endpoint})'
+    elif collection_error:
+        collection_label = str(runtime_collection_state.get('state', 'error') or 'error').strip().lower()
+        status = {'text': 'DEGRADED', 'color': 'orange'}
+        status_detail = f'collection state {collection_label}'
     elif cpu >= 80:
         status = {'text': 'DEGRADED', 'color': 'orange'}
+        status_detail = 'high cpu load'
     else:
         status = {'text': 'NOMINAL', 'color': 'green'}
+        if state.source == 'real':
+            if collection_label == 'collecting':
+                status_detail = 'live collection healthy'
+                if metrics_age_text:
+                    status_detail = f'live collection healthy (metrics {metrics_age_text} old)'
+            elif collection_label:
+                status_detail = f'collection state {collection_label}'
+            else:
+                status_detail = 'live runtime nominal'
+        elif collection_label:
+            status_detail = f'collection state {collection_label}'
 
     # System log intentionally excludes ingest periodic/stall chatter.
 
@@ -705,6 +806,43 @@ def _compute_snapshot() -> dict:
     if state.librarian_active != state._last_lib_active:
         add_log(f"[SYS] Librarian state -> {'ACTIVE' if state.librarian_active else 'DOWN'}")
         state._last_lib_active = state.librarian_active
+
+    if state.source == 'real':
+        fetch_signature = (
+            str(runtime_source_fetch.get('status', 'ok') or 'ok').strip().lower(),
+            str(runtime_source_fetch.get('error_kind', '') or '').strip().lower(),
+            str(runtime_source_fetch.get('endpoint', '') or '').strip(),
+        )
+        prev_fetch_signature = state._last_source_fetch_signature
+        if prev_fetch_signature is None:
+            if fetch_signature[0] == 'err':
+                detail = fetch_signature[1] or 'network'
+                endpoint = fetch_signature[2] or 'unknown'
+                add_log(f"[WARN] Live source fetch error ({detail}) [{endpoint}]")
+        elif fetch_signature != prev_fetch_signature:
+            if fetch_signature[0] == 'err':
+                detail = fetch_signature[1] or 'network'
+                endpoint = fetch_signature[2] or 'unknown'
+                add_log(f"[WARN] Live source fetch error ({detail}) [{endpoint}]")
+            elif prev_fetch_signature[0] == 'err':
+                add_log('[SYS] Live source fetch recovered')
+        state._last_source_fetch_signature = fetch_signature
+    else:
+        state._last_source_fetch_signature = None
+
+    collection_state_label = collection_label
+    collection_state_changed = False
+    if collection_state_label:
+        if state._last_collection_state is None:
+            if collection_state_label == 'error':
+                add_log('[WARN] Collection state -> ERROR')
+        elif collection_state_label != state._last_collection_state:
+            collection_state_changed = True
+            if collection_state_label == 'error':
+                add_log('[WARN] Collection state -> ERROR')
+            elif state._last_collection_state == 'error':
+                add_log(f"[SYS] Collection state -> {collection_state_label.upper()}")
+        state._last_collection_state = collection_state_label
 
     wd_stats = snap.get('watchdog_stats', {}) if isinstance(snap.get('watchdog_stats', {}), dict) else {}
     if bool(wd_stats.get('signature_check_available', False)):
@@ -762,6 +900,31 @@ def _compute_snapshot() -> dict:
         add_log(f"[LIB] Archived +{delta_arch} records (Total: {current_archived})")
     state._last_archive_count = current_archived
 
+    now_ts = float(time.time())
+    current_resource_archived = int(snap.get('resource_archive_records', 0) or 0)
+    if state._last_resource_archive_log_at <= 0.0:
+        state._last_resource_archive_log_at = now_ts
+    if current_resource_archived < state._last_resource_archive_count:
+        state._pending_resource_archive_delta = 0
+        state._last_resource_archive_log_at = now_ts
+    elif current_resource_archived > state._last_resource_archive_count and state._last_resource_archive_count > 0:
+        delta_resource_arch = current_resource_archived - state._last_resource_archive_count
+        state._pending_resource_archive_delta += int(delta_resource_arch)
+    should_flush_resource_archive = (
+        state._pending_resource_archive_delta > 0
+        and (
+            collection_state_changed
+            or (now_ts - state._last_resource_archive_log_at) >= RESOURCE_ARCHIVE_LOG_INTERVAL_SEC
+        )
+    )
+    if should_flush_resource_archive:
+        add_log(
+            f"[RES] Archived +{int(state._pending_resource_archive_delta)} resource records (Total: {current_resource_archived})"
+        )
+        state._pending_resource_archive_delta = 0
+        state._last_resource_archive_log_at = now_ts
+    state._last_resource_archive_count = current_resource_archived
+
     return {
         'ts': datetime.now().isoformat(),
         'server_boot_id': SERVER_BOOT_ID,
@@ -782,6 +945,7 @@ def _compute_snapshot() -> dict:
         'total_records': total,
         'records_total_display': total_display,
         'display_main_records': int(main_display_records),
+        'records_counter': records_counter,
         'new_records': new,
         'density_bins': state.density_bins,
         'density_raw_window': state.density_raw_window,
@@ -806,14 +970,21 @@ def _compute_snapshot() -> dict:
             'archive': int(archive_display),
             'session_raw': int(session_raw),
             'archive_raw': int(archive_raw),
+            'resource_session': int(resource_session_raw),
+            'resource_archive': int(resource_archive),
+            'resource_total': int(resource_total),
         },
         'records_breakdown_display': {
             'session': int(session_display),
             'archive': int(archive_display),
             'main': int(main_display_records),
+            'resource_total': int(resource_total),
         },
         'uptime_s': time.time() - psutil.boot_time(),
         'status': status,
+        'status_detail': status_detail,
+        'runtime_source_fetch': runtime_source_fetch,
+        'runtime_collection_state': runtime_collection_state,
         'log_last_seq': state.log_seq,
     }
 
@@ -882,8 +1053,10 @@ def _data_uri_for_image(path: Optional[Path]) -> Optional[str]:
     return f'data:{mime};base64,{b64}'
 
 
-_BRAND_THUMB_SRC = _data_uri_for_image(_resolve_brand_path('CALAMUM_BRAND_THUMB_PATH', 'calamum_thumbnail.png'))
-_BRAND_PANEL_SRC = _data_uri_for_image(_resolve_brand_path('CALAMUM_BRAND_PANEL_PATH', 'calamum_logo_color.png'))
+_BRAND_THUMB_PATH = _resolve_brand_path('CALAMUM_BRAND_THUMB_PATH', 'calamum_thumbnail.png')
+_BRAND_PANEL_PATH = _resolve_brand_path('CALAMUM_BRAND_PANEL_PATH', 'calamum_logo_color.png')
+_BRAND_THUMB_SRC = _data_uri_for_image(_BRAND_THUMB_PATH)
+_BRAND_PANEL_SRC = _data_uri_for_image(_BRAND_PANEL_PATH)
 
 # --- COMPONENTS ---
 
@@ -928,9 +1101,12 @@ def create_header(toggle_drawer_fn):
             # Records Counter
             with ui.row().classes('items-center gap-2'):
                 ui.label('RECORDS:').classes('text-xs text-gray-500 font-bold')
+                ui.label(str(state.source).upper() == 'SIM' and 'SESSION' or 'TOTAL')\
+                    .props('id="cids-records-view"')\
+                    .classes('text-[10px] text-gray-500 font-bold tracking-wider cursor-pointer select-none')
                 ui.label(f"{int(state.records_main_display):,}")\
-                    .props('id="cids-records"')\
-                    .classes('text-xl font-bold text-white')
+                    .props('id="cids-records" role="button" tabindex="0"')\
+                    .classes('text-xl font-bold text-white cursor-pointer select-none')
                     # Tooltip logic handled by client-side JS updating the 'title' attribute
                     # to match the requested format: [ sess: <m> \n arch: <n> ]
 
@@ -3474,6 +3650,143 @@ def main_page():
                     }
                 }
 
+                var __CIDS_RECORDS_VIEW_KEY = 'cids_records_view';
+
+                function pickNumber() {
+                    try {
+                        for (var i = 0; i < arguments.length; i++) {
+                            var v = arguments[i];
+                            if (v === undefined || v === null || v === '') continue;
+                            var n = Number(v);
+                            if (isFinite(n)) return n;
+                        }
+                    } catch (e) {
+                        // swallow
+                    }
+                    return 0;
+                }
+
+                function normalizeRecordsView(v, fallback) {
+                    var out = String(v || fallback || 'total').toLowerCase();
+                    return out === 'session' ? 'session' : 'total';
+                }
+
+                function readRecordsViewSetting(fallback) {
+                    try {
+                        var raw = localStorage.getItem(__CIDS_RECORDS_VIEW_KEY);
+                        return normalizeRecordsView(raw, fallback);
+                    } catch (e) {
+                        return normalizeRecordsView(fallback, 'total');
+                    }
+                }
+
+                function writeRecordsViewSetting(v) {
+                    var nv = normalizeRecordsView(v, 'total');
+                    try { localStorage.setItem(__CIDS_RECORDS_VIEW_KEY, nv); } catch (e) { }
+                    return nv;
+                }
+
+                function resolveRecordsCounter(snap) {
+                    var empty = { total: 0, session: 0, archive: 0, resource_session: 0, resource_archive: 0, resource_total: 0, default_view: 'total' };
+                    try {
+                        if (!snap) return empty;
+                        var counter = (snap.records_counter && typeof snap.records_counter === 'object') ? snap.records_counter : {};
+                        var rb = (snap.records_breakdown && typeof snap.records_breakdown === 'object') ? snap.records_breakdown : {};
+                        var source = String(snap.source || 'sim').toLowerCase();
+                        return {
+                            total: pickNumber(counter.total, snap.display_main_records, snap.records_total_display, snap.total_records, 0),
+                            session: pickNumber(counter.session, rb.session_raw, rb.session, 0),
+                            archive: pickNumber(counter.archive, rb.archive, 0),
+                            resource_session: pickNumber(counter.resource_session, rb.resource_session, 0),
+                            resource_archive: pickNumber(counter.resource_archive, rb.resource_archive, 0),
+                            resource_total: pickNumber(counter.resource_total, rb.resource_total, snap.records_breakdown_display && snap.records_breakdown_display.resource_total, 0),
+                            default_view: normalizeRecordsView(counter.default_view, source === 'sim' ? 'session' : 'total'),
+                        };
+                    } catch (e) {
+                        return empty;
+                    }
+                }
+
+                function renderRecordsCounter(snap) {
+                    try {
+                        if (snap) window.__cids_last_snapshot = snap;
+                    } catch (e0) {
+                        // swallow
+                    }
+                    try {
+                        var curSnap = snap || window.__cids_last_snapshot || null;
+                        var counter = resolveRecordsCounter(curSnap);
+                        var view = readRecordsViewSetting(counter.default_view);
+                        var value = view === 'session' ? counter.session : counter.total;
+                        setText('cids-records', fmtInt(value));
+                        setText('cids-records-view', view === 'session' ? 'SESSION' : 'TOTAL');
+
+                        var elRecs = byId('cids-records');
+                        if (elRecs) {
+                            try { elRecs.dataset.recordsView = view; } catch (eD) { }
+                            var shownStr = (typeof fmtInt === 'function') ? fmtInt(value) : String(value);
+                            var sessStr = (typeof fmtInt === 'function') ? fmtInt(counter.session) : String(counter.session);
+                            var archStr = (typeof fmtInt === 'function') ? fmtInt(counter.archive) : String(counter.archive);
+                            var resourceSessionStr = (typeof fmtInt === 'function') ? fmtInt(counter.resource_session) : String(counter.resource_session);
+                            var resourceArchiveStr = (typeof fmtInt === 'function') ? fmtInt(counter.resource_archive) : String(counter.resource_archive);
+                            var resourceTotalStr = (typeof fmtInt === 'function') ? fmtInt(counter.resource_total) : String(counter.resource_total);
+                            elRecs.title = 'click to toggle\\nshowing ' + String(view).toUpperCase() + ': ' + shownStr + '\\nsession: ' + sessStr + '\\narchive: ' + archStr + '\\nresource total: ' + resourceTotalStr + '\\nresource session: ' + resourceSessionStr + '\\nresource archive: ' + resourceArchiveStr;
+                            elRecs.setAttribute('aria-label', 'Records ' + String(view) + ' count. Click to toggle view.');
+                        }
+
+                        var elView = byId('cids-records-view');
+                        if (elView) {
+                            elView.title = 'Click the records counter to toggle TOTAL / SESSION';
+                        }
+                    } catch (e1) {
+                        // swallow
+                    }
+                }
+
+                function toggleRecordsCounterView() {
+                    try {
+                        var counter = resolveRecordsCounter(window.__cids_last_snapshot || null);
+                        var current = readRecordsViewSetting(counter.default_view);
+                        var next = current === 'session' ? 'total' : 'session';
+                        writeRecordsViewSetting(next);
+                        renderRecordsCounter(window.__cids_last_snapshot || null);
+                    } catch (e) {
+                        // swallow
+                    }
+                }
+
+                function bindRecordsCounterToggle() {
+                    try {
+                        var targets = [byId('cids-records'), byId('cids-records-view')];
+                        var boundAny = false;
+                        for (var i = 0; i < targets.length; i++) {
+                            var el = targets[i];
+                            if (!el) continue;
+                            if (el.__cids_records_toggle_bound) {
+                                boundAny = true;
+                                continue;
+                            }
+                            el.__cids_records_toggle_bound = true;
+                            boundAny = true;
+                            el.addEventListener('click', function() { toggleRecordsCounterView(); });
+                            el.addEventListener('keydown', function(ev) {
+                                try {
+                                    var key = ev && ev.key ? String(ev.key) : '';
+                                    if (key === 'Enter' || key === ' ' || key === 'Spacebar') {
+                                        if (ev && ev.preventDefault) ev.preventDefault();
+                                        toggleRecordsCounterView();
+                                    }
+                                } catch (eKey) {
+                                    // swallow
+                                }
+                            });
+                        }
+                        if (boundAny) window.__cids_records_toggle_bound = true;
+                    } catch (e) {
+                        // swallow
+                    }
+                }
+
                 function aggregateDensityFromBase(rawBase, binWidthSec) {
                     try {
                         var w = Number(binWidthSec || 0);
@@ -3708,7 +4021,8 @@ def main_page():
                             // swallow
                         }
 
-                        setText('cids-records', fmtInt(snap.display_main_records || snap.records_total_display || snap.total_records || 0));
+                        bindRecordsCounterToggle();
+                        renderRecordsCounter(snap);
                         
                         // Detail pill (Removed from DOM, but logic might remain in old cached JS? No.)
                         // Tooltip update
@@ -3721,7 +4035,9 @@ def main_page():
                                 // Use fmtInt safely
                                 var sStr = (typeof fmtInt === 'function') ? fmtInt(sRec) : String(sRec);
                                 var aStr = (typeof fmtInt === 'function') ? fmtInt(aRec) : String(aRec);
-                                elRecs.title = 'sess: ' + sStr + ' \\narch: ' + aStr;
+                                if (!elRecs.title) {
+                                    elRecs.title = 'click to toggle\\nsession: ' + sStr + '\\narchive: ' + aStr;
+                                }
                             }
                         } catch (eTip) {
                             // swallow
@@ -3850,6 +4166,7 @@ def main_page():
                 postDiagThrottled('poll_started', 'poll_started', { poll_ms: POLL_MS, log_poll_ms: LOG_POLL_MS }, 60000);
                 tickClock();
                 bindBinWidthControl();
+                bindRecordsCounterToggle();
                 bindLogFollow();
                 pollSnapshot();
                 pollLog();
@@ -4154,6 +4471,7 @@ if __name__ in {"__main__", "__mp_main__"}:
         port=_port,  # Changed port to avoid zombie process conflicts
         title='CALAMUM OPS V2',
         dark=True,
+        favicon=_BRAND_THUMB_PATH,
         show=False,
         reload=False,
     )
