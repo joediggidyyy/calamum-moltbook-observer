@@ -1,6 +1,6 @@
 # Calamum Security Model
 
-Updated: 2026-04-03
+Updated: 2026-04-13
 
 This document explains the public security architecture for the Calamum observer stack.
 
@@ -68,6 +68,19 @@ The public documentation set explains the contract. Runtime evidence stays local
 | stable docs, code, curated reports | evidence packets, logs, control state, and execution residue |
 
 This separation helps preserve both auditability and containment.
+
+## Sandbox transaction proof
+
+Security-adjacent signed transaction proof follows a sandbox-first contract.
+
+| Rule | Meaning in practice |
+| --- | --- |
+| sandbox-contained mint surface | security-adjacent non-dry-run mint executes in the approved sandbox lane |
+| same-version proof | the sandbox artifact set uses the same project version and build identity as the live candidate under review |
+| attested build identity | reviewers can see the relevant version/build identity in the emitted sandbox packet or artifact set |
+| promotion review posture | promotion review consumes the already-proven sandbox result through the normal release lane |
+
+For KEYSMITH-class transaction work, sandbox proof becomes promotable evidence only when the artifact set clearly shows the same project version and build identity as the live candidate it is proving.
 
 ## Operator expectations
 

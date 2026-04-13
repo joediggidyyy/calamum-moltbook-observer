@@ -29,8 +29,20 @@ def _ds_wizard_hydration_run_index() -> Path:
     return _REPORT_TMP / 'frame4_ds_wizard_hydration_probe' / 'run_index.jsonl'
 
 
+def _ds_wizard_stale_state_continuity_run_index() -> Path:
+    return _REPORT_TMP / 'frameb_ds_wizard_stale_state_continuity_probe' / 'run_index.jsonl'
+
+
 def _ds_wizard_durability_run_index() -> Path:
     return _REPORT_TMP / 'frame6_ds_wizard_durability_probe' / 'run_index.jsonl'
+
+
+def _ds_wizard_labeled_eval_contract_coherence_run_index() -> Path:
+    return _REPORT_TMP / 'frameb_ds_wizard_labeled_eval_contract_coherence_probe' / 'run_index.jsonl'
+
+
+def _ds_wizard_blocked_execute_truthfulness_run_index() -> Path:
+    return _REPORT_TMP / 'frameb_ds_wizard_blocked_execute_truthfulness_probe' / 'run_index.jsonl'
 
 
 def _ds_alias_coherence_run_index() -> Path:
@@ -81,8 +93,20 @@ def _run_ds_wizard_hydration() -> int:
     return int(_load_simulation_runner().run_ds_wizard_hydration_probe())
 
 
+def _run_ds_wizard_stale_state_continuity() -> int:
+    return int(_load_simulation_runner().run_ds_wizard_stale_state_continuity_probe())
+
+
 def _run_ds_wizard_durability() -> int:
     return int(_load_simulation_runner().run_ds_wizard_durability_probe())
+
+
+def _run_ds_wizard_labeled_eval_contract_coherence() -> int:
+    return int(_load_simulation_runner().run_ds_wizard_labeled_eval_contract_coherence_probe())
+
+
+def _run_ds_wizard_blocked_execute_truthfulness() -> int:
+    return int(_load_simulation_runner().run_ds_wizard_blocked_execute_truthfulness_probe())
 
 
 def _run_ds_alias_coherence() -> int:
@@ -172,6 +196,20 @@ def get_definitions() -> List[DefinitionRecord]:
             'runner': _run_ds_wizard_hydration,
         },
         {
+            'id': 'ds-wizard-stale-state-continuity',
+            'title': 'DS wizard stale-state continuity probe',
+            'summary': 'Validate train-context hydration refreshes dataset-adjacent wizard state instead of retaining stale evaluate paths.',
+            'status': 'stable',
+            'category': 'ds-probe',
+            'aliases': [],
+            'selector_policy': 'exact-name-only',
+            'writes_to': 'report_tmp/frameb_ds_wizard_stale_state_continuity_probe',
+            'purpose': 'Prove cross-hydrating dataset and train context leaves one coherent evaluate lane with refreshed dataset, feature, label, and model paths.',
+            'command': 'observerctl sandbox run ds-wizard-stale-state-continuity',
+            'run_index_path': str(_ds_wizard_stale_state_continuity_run_index()).replace('\\', '/'),
+            'runner': _run_ds_wizard_stale_state_continuity,
+        },
+        {
             'id': 'ds-wizard-durability',
             'title': 'DS wizard durability probe',
             'summary': 'Validate prior-run ledger import and draft round-trip persistence for the DS wizard.',
@@ -184,6 +222,34 @@ def get_definitions() -> List[DefinitionRecord]:
             'command': 'observerctl sandbox run ds-wizard-durability',
             'run_index_path': str(_ds_wizard_durability_run_index()).replace('\\', '/'),
             'runner': _run_ds_wizard_durability,
+        },
+        {
+            'id': 'ds-wizard-labeled-eval-contract-coherence',
+            'title': 'DS wizard labeled eval contract coherence probe',
+            'summary': 'Validate wizard evaluation stays in labeled mode when the dataset uses the approved label-column contract.',
+            'status': 'stable',
+            'category': 'ds-probe',
+            'aliases': [],
+            'selector_policy': 'exact-name-only',
+            'writes_to': 'report_tmp/frameb_ds_wizard_labeled_eval_contract_coherence_probe',
+            'purpose': 'Prove supervised train and wizard evaluate agree on the same label file and retain a coherent labeled evaluation run ledger.',
+            'command': 'observerctl sandbox run ds-wizard-labeled-eval-contract-coherence',
+            'run_index_path': str(_ds_wizard_labeled_eval_contract_coherence_run_index()).replace('\\', '/'),
+            'runner': _run_ds_wizard_labeled_eval_contract_coherence,
+        },
+        {
+            'id': 'ds-wizard-blocked-execute-truthfulness',
+            'title': 'DS wizard blocked execute truthfulness probe',
+            'summary': 'Validate blocked wizard execution remains fail-closed, operator-legible, and free of false-success artifact claims.',
+            'status': 'stable',
+            'category': 'ds-probe',
+            'aliases': [],
+            'selector_policy': 'exact-name-only',
+            'writes_to': 'report_tmp/frameb_ds_wizard_blocked_execute_truthfulness_probe',
+            'purpose': 'Prove the wizard surfaces no-go execution truthfully with explicit blocker codes, validation issues, and no misleading artifact residue.',
+            'command': 'observerctl sandbox run ds-wizard-blocked-execute-truthfulness',
+            'run_index_path': str(_ds_wizard_blocked_execute_truthfulness_run_index()).replace('\\', '/'),
+            'runner': _run_ds_wizard_blocked_execute_truthfulness,
         },
         {
             'id': 'ds-alias-coherence',

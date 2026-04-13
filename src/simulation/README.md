@@ -19,6 +19,14 @@ List available definitions:
 python projects\calamum-moltbook-observer\src\simulation\run_simulation.py --list-definitions
 ```
 
+Operator-facing sandbox inventory and execution surfaces:
+
+```powershell
+python projects\calamum-moltbook-observer\src\observerctl.py sandbox list
+python projects\calamum-moltbook-observer\src\observerctl.py sandbox show ds-wizard-stale-state-continuity
+python projects\calamum-moltbook-observer\src\observerctl.py sandbox run ds-wizard-stale-state-continuity
+```
+
 Run the metadata-contract sandbox probe through the canonical entrypoint:
 
 ```powershell
@@ -84,10 +92,14 @@ Current retained probe lanes include:
 - `metadata-contract` for Frame 4 metadata parity
 - `metadata-contract-regression` for Frame 4 negative-path regression detection
 - `ds-wizard-hydration` for Frame 4 DS wizard artifact hydration and narrow latest-context proof
+- `ds-alias-coherence` for alias-preserving hydration and saved-state route coherence
+- `ds-wizard-stale-state-continuity` for stale-state preservation and continuity truthfulness
+- `ds-wizard-labeled-eval-contract-coherence` for evaluation label-contract coherence
+- `ds-wizard-blocked-execute-truthfulness` for blocked execute truthfulness and operator-facing denial explanation
 - `ds-wizard-durability` for Frame 6 prior-run import and draft round-trip proof
 - `baseline-monitor-runtime` for broad runtime/readiness continuity
 - `validation-cycle-lineage` for Frame 5 append-only validation-cycle lineage
 - `baseline-monitor-restart-continuity` for Frame 6 restart-safe continuity anchor preservation
 - `baseline-monitor-state-recovery` for Frame 6 malformed persisted-state degradation and repair
 
-The sandbox CLI family is now treated as implemented project behavior rather than a public planning surface; use the source code and tests in this subtree as the current authority.
+The sandbox CLI family is now treated as implemented project behavior rather than a public planning surface; use `observerctl sandbox list|show|run`, plus the source code and tests in this subtree, as the current authority.

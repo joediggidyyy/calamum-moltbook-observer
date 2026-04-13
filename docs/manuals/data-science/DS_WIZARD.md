@@ -1,6 +1,6 @@
 ﻿# Calamum DS Wizard
 
-Updated: 2026-04-12
+Updated: 2026-04-13
 
 This document explains how to use the guided data-science wizard for `observerctl ds`.
 
@@ -39,9 +39,10 @@ observerctl librarian datasets
 | `score`        | approved dataset picker (Librarian)                | selector resolved via `librarian dataset release`     |
 | `build`        | raw `--input` telemetry paths (CLI-seeded)         | pre-Librarian; raw JSONL telemetry is the input       |
 | `run-pipeline` | raw `--input` telemetry paths (CLI-seeded)         | pre-Librarian; same as `build`                        |
-| `run-demo`     | self-contained; no external dataset input required | generates its own synthetic data                      |
 
 The wizard `in` section for `train`/`evaluate`/`score` opens an approved dataset picker that resolves the entry through the Librarian before hydrating wizard fields. The `source` and `mode` advanced-route fields do not appear in the default `in` menu for `build` and `run-pipeline`.
+
+The packaged demo route remains available through `observerctl ds run demo`, but it is not a current wizard workflow preset.
 
 ### CLI dataset selectors
 
@@ -67,8 +68,9 @@ The current shipped workflow presets are:
 | `train`        | model training from an existing dataset manifest                            |
 | `evaluate`     | metric and threshold evaluation using prepared features and optional labels |
 | `score`        | scoring a dataset with an unsupervised model                                |
-| `run-demo`     | the packaged demo route                                                     |
 | `run-pipeline` | the default build/train/evaluate sequence                                   |
+
+If you need the packaged demo route, use `observerctl ds run demo`. The wizard itself currently ships only the five presets shown above.
 
 ## Wizard sections
 

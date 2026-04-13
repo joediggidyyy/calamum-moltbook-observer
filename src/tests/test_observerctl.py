@@ -1019,6 +1019,278 @@ def test_ds_wizard_hydrates_saved_artifacts(tmp_path: Path) -> None:
     assert state.values['baseline_window_id'] == 'frame4-window'
 
 
+def test_ds_wizard_train_hydration_refreshes_stale_dataset_adjacent_paths(tmp_path: Path) -> None:
+    stale_manifest = tmp_path / 'stale_dataset_manifest.json'
+    stale_features = tmp_path / 'stale_features.csv'
+    stale_labels = tmp_path / 'stale_labels.csv'
+    fresh_manifest = tmp_path / 'fresh_dataset_manifest.json'
+    fresh_features = tmp_path / 'fresh_features.csv'
+    fresh_labels = tmp_path / 'fresh_labels.csv'
+    train_manifest = tmp_path / 'fresh_train_manifest.json'
+    model_path = tmp_path / 'model.pkl'
+
+    stale_features.write_text('record_id,feature\na,0.1\n', encoding='utf-8')
+    stale_labels.write_text('record_id,label\na,TV-0\n', encoding='utf-8')
+    fresh_features.write_text('record_id,feature\nb,0.9\n', encoding='utf-8')
+    fresh_labels.write_text('record_id,label\nb,TV-3\n', encoding='utf-8')
+    stale_manifest.write_text(json.dumps({'features_csv': str(stale_features), 'labels_csv': str(stale_labels)}), encoding='utf-8')
+    fresh_manifest.write_text(json.dumps({'features_csv': str(fresh_features), 'labels_csv': str(fresh_labels)}), encoding='utf-8')
+    model_path.write_bytes(b'model')
+    train_manifest.write_text(json.dumps({
+        'dataset_manifest_path': str(fresh_manifest),
+        'model_path': str(model_path),
+        'model_type': 'unsupervised',
+    }), encoding='utf-8')
+
+    state = observerctl_module._ds_wizard_new_state('evaluate')
+    observerctl_module._ds_wizard_hydrate_dataset_manifest(state, stale_manifest)
+    observerctl_module._ds_wizard_hydrate_train_manifest(state, train_manifest)
+
+    assert state.values['dataset_manifest'] == str(fresh_manifest)
+    assert state.values['features_csv'] == str(fresh_features)
+    assert state.values['labels_csv'] == str(fresh_labels)
+    assert state.values['model_path'] == str(model_path)
+    assert state.hydrated_from['dataset_manifest'] == 'train_manifest'
+    assert state.hydrated_from['features_csv'] == 'train_manifest'
+    assert state.hydrated_from['labels_csv'] == 'train_manifest'
+
+
+def test_ds_wizard_cli_hydration_packet_reports_ready_state_and_artifacts(tmp_path: Path, monkeypatch, capsys) -> None:
+    from calamum_librarian import register_librarian_dataset_packet
+
+    project_root, anchor = _make_temp_observer_project(tmp_path)
+    _bind_temp_observer_project(monkeypatch, project_root, anchor)
+    _set_signing_env(monkeypatch)
+
+    dataset_manifest = tmp_path / 'dataset_manifest.json'
+    features_csv = tmp_path / 'features.csv'
+    labels_csv = tmp_path / 'labels.csv'
+    train_manifest = tmp_path / 'train_manifest.json'
+    model_path = tmp_path / 'model.pkl'
+    baseline_packet = tmp_path / 'baseline.json'
+
+    features_csv.write_text('record_id,feature\n1,0.1\n', encoding='utf-8')
+    labels_csv.write_text('record_id,label\n1,1\n', encoding='utf-8')
+    model_path.write_bytes(b'model')
+    dataset_manifest.write_text(json.dumps({
+        'features_csv': str(features_csv),
+        'labels_csv': str(labels_csv),
+    }), encoding='utf-8')
+    train_manifest.write_text(json.dumps({
+        'dataset_manifest_path': str(dataset_manifest),
+        'model_path': str(model_path),
+        'model_type': 'unsupervised',
+    }), encoding='utf-8')
+    baseline_packet.write_text(json.dumps({'baseline_window_id': 'frame4-window'}), encoding='utf-8')
+
+    dataset_packet = register_librarian_dataset_packet(
+        anchor,
+        dataset_manifest,
+        access_class='local',
+        display_name='Frame 4 Wizard Hydration',
+        run_id='frame4-hydration',
+    )
+
+    assert dataset_packet['decision'] == 'go'
+
+    rc = main([
+        'ds',
+        'wizard',
+        '--workflow',
+        'evaluate',
+        '--hydrate-dataset',
+        '1',
+        '--hydrate-train',
+        str(train_manifest),
+        '--hydrate-baseline-analysis',
+        str(baseline_packet),
+        '--section',
+        'report',
+        '--json',
+    ])
+    payload = json.loads(capsys.readouterr().out)
+
+    assert rc == 0
+    assert payload['decision'] == 'go'
+    assert payload['execution_state'] == 'ready'
+    assert payload['current_section'] == 'report'
+    assert payload['validation_issues'] == []
+    assert payload['artifacts']['dataset_manifest'] == str(dataset_manifest)
+    assert payload['artifacts']['train_manifest'] == str(train_manifest)
+    assert payload['artifacts']['model_path'] == str(model_path)
+    assert payload['artifacts']['baseline_analysis_packet'] == str(baseline_packet)
+    assert payload['hydrated_from']['baseline_window_id'] == 'baseline_analysis'
+    assert any(dataset_manifest.name in line for line in payload['wizard_view'])
+    assert any(train_manifest.name in line for line in payload['wizard_view'])
+    assert any(model_path.name in line for line in payload['wizard_view'])
+    assert any('run.json' in line for line in payload['wizard_view'])
+
+
+def test_ds_wizard_cli_train_hydration_refreshes_cross_wired_dataset_paths(tmp_path: Path, monkeypatch, capsys) -> None:
+    from calamum_librarian import register_librarian_dataset_packet
+
+    project_root, anchor = _make_temp_observer_project(tmp_path)
+    _bind_temp_observer_project(monkeypatch, project_root, anchor)
+    _set_signing_env(monkeypatch)
+
+    stale_manifest = tmp_path / 'stale_dataset_manifest.json'
+    stale_features = tmp_path / 'stale_features.csv'
+    stale_labels = tmp_path / 'stale_labels.csv'
+    fresh_manifest = tmp_path / 'fresh_dataset_manifest.json'
+    fresh_features = tmp_path / 'fresh_features.csv'
+    fresh_labels = tmp_path / 'fresh_labels.csv'
+    train_manifest = tmp_path / 'fresh_train_manifest.json'
+    model_path = tmp_path / 'model.pkl'
+
+    stale_features.write_text('record_id,feature\na,0.1\n', encoding='utf-8')
+    stale_labels.write_text('record_id,label\na,TV-0\n', encoding='utf-8')
+    fresh_features.write_text('record_id,feature\nb,0.9\n', encoding='utf-8')
+    fresh_labels.write_text('record_id,label\nb,TV-3\n', encoding='utf-8')
+    stale_manifest.write_text(json.dumps({'features_csv': str(stale_features), 'labels_csv': str(stale_labels)}), encoding='utf-8')
+    fresh_manifest.write_text(json.dumps({'features_csv': str(fresh_features), 'labels_csv': str(fresh_labels)}), encoding='utf-8')
+    model_path.write_bytes(b'model')
+    train_manifest.write_text(json.dumps({
+        'dataset_manifest_path': str(fresh_manifest),
+        'model_path': str(model_path),
+        'model_type': 'unsupervised',
+    }), encoding='utf-8')
+
+    register_librarian_dataset_packet(
+        anchor,
+        stale_manifest,
+        access_class='local',
+        display_name='Stale Alpha',
+        run_id='stale-alpha',
+    )
+
+    rc = main([
+        'ds',
+        'wizard',
+        '--workflow',
+        'evaluate',
+        '--hydrate-dataset',
+        '1',
+        '--hydrate-train',
+        str(train_manifest),
+        '--section',
+        'report',
+        '--json',
+    ])
+    payload = json.loads(capsys.readouterr().out)
+
+    assert rc == 0
+    assert payload['decision'] == 'go'
+    assert payload['execution_state'] == 'ready'
+    assert payload['artifacts']['dataset_manifest'] == str(fresh_manifest)
+    assert str(fresh_features) in payload['command_preview']
+    assert str(fresh_labels) in payload['command_preview']
+    assert str(stale_features) not in payload['command_preview']
+    assert str(stale_labels) not in payload['command_preview']
+
+
+def test_ds_wizard_cli_labeled_eval_with_label_column_stays_labeled(tmp_path: Path, monkeypatch, capsys) -> None:
+    from calamum_librarian import register_librarian_dataset_packet
+
+    project_root, anchor = _make_temp_observer_project(tmp_path)
+    _bind_temp_observer_project(monkeypatch, project_root, anchor)
+    _set_signing_env(monkeypatch)
+
+    dataset_dir = project_root / 'datasets' / 'labeled_contract'
+    dataset_dir.mkdir(parents=True, exist_ok=True)
+    dataset_manifest = dataset_dir / 'dataset_manifest.json'
+    features_csv = dataset_dir / 'features.csv'
+    labels_csv = dataset_dir / 'labels.csv'
+    splits_csv = dataset_dir / 'splits.csv'
+
+    features_csv.write_text(
+        'record_id,feature\nr1,0.0\nr2,0.1\nr3,0.9\nr4,1.0\n',
+        encoding='utf-8',
+    )
+    labels_csv.write_text(
+        'record_id,label\nr1,TV-0\nr2,TV-0\nr3,TV-3\nr4,TV-3\n',
+        encoding='utf-8',
+    )
+    splits_csv.write_text(
+        'record_id,split\nr1,train\nr2,val\nr3,train\nr4,val\n',
+        encoding='utf-8',
+    )
+    dataset_manifest.write_text(json.dumps({
+        'features_csv': str(features_csv),
+        'labels_csv': str(labels_csv),
+        'splits_csv': str(splits_csv),
+        'feature_columns': ['feature'],
+        'total_records': 4,
+        'has_labels': True,
+    }), encoding='utf-8')
+
+    register_librarian_dataset_packet(
+        anchor,
+        dataset_manifest,
+        access_class='local',
+        display_name='Label Column Dataset',
+        run_id='label-column-dataset',
+    )
+
+    train_packet = observerctl_module._ds_train(
+        dataset=str(dataset_manifest),
+        out_dir='',
+        model_type='supervised',
+        seed=42,
+    )
+    train_manifest = _resolve_reported_path(train_packet['artifacts']['train_manifest'])
+
+    rc = main([
+        'ds',
+        'wizard',
+        '--workflow',
+        'evaluate',
+        '--hydrate-dataset',
+        '1',
+        '--hydrate-train',
+        str(train_manifest),
+        '--execute',
+        '--json',
+    ])
+    payload = json.loads(capsys.readouterr().out)
+    run_json = json.loads(_resolve_reported_path(payload['artifacts']['run_json']).read_text(encoding='utf-8'))
+
+    assert rc == 0
+    assert payload['decision'] == 'go'
+    assert payload['has_labels'] is True
+    assert run_json['evaluation']['has_labels'] is True
+    assert run_json['evaluation']['thresholding'] == 'fpr_constrained_best_f1'
+    assert run_json['data']['labels_csv'] == str(labels_csv)
+
+
+def test_ds_wizard_cli_hydrate_latest_context_keeps_missing_dataset_truthful(monkeypatch, tmp_path: Path, capsys) -> None:
+    baseline_packet = tmp_path / 'baseline.json'
+    baseline_packet.write_text(json.dumps({'baseline_window_id': 'frame4-window'}), encoding='utf-8')
+
+    monkeypatch.setattr(observerctl_module, '_load_state', lambda: {'source': 'real', 'mode': 'canary'})
+    monkeypatch.setattr(observerctl_module, '_ds_wizard_latest_baseline_analysis_path', lambda source, mode: baseline_packet)
+
+    rc = main([
+        'ds',
+        'wizard',
+        '--workflow',
+        'evaluate',
+        '--hydrate-latest-context',
+        '--section',
+        'check',
+        '--json',
+    ])
+    payload = json.loads(capsys.readouterr().out)
+
+    assert rc == 0
+    assert payload['decision'] == 'go'
+    assert payload['current_section'] == 'check'
+    assert payload['execution_state'] == 'blocked'
+    assert payload['hydrated_from']['source'] == 'latest_context'
+    assert payload['hydrated_from']['mode'] == 'latest_context'
+    assert payload['artifacts']['baseline_analysis_packet'] == str(baseline_packet)
+    assert 'features_csv is required' in payload['validation_issues']
+
+
 def test_ds_wizard_hydrates_prior_run_ledger(tmp_path: Path) -> None:
     features_csv = tmp_path / 'features.csv'
     labels_csv = tmp_path / 'labels.csv'
@@ -1062,6 +1334,83 @@ def test_ds_wizard_hydrates_prior_run_ledger(tmp_path: Path) -> None:
     assert state.hydrated_from['model_path'] == 'run_ledger'
 
 
+def test_ds_wizard_cli_draft_round_trip_preserves_run_context_and_report_preview(tmp_path: Path, capsys) -> None:
+    features_csv = tmp_path / 'features.csv'
+    labels_csv = tmp_path / 'labels.csv'
+    dataset_manifest = tmp_path / 'dataset_manifest.json'
+    model_path = tmp_path / 'model.pkl'
+    run_json = tmp_path / 'run.json'
+    draft_path = tmp_path / 'wizard_draft.json'
+
+    features_csv.write_text('record_id,feature\n1,0.1\n', encoding='utf-8')
+    labels_csv.write_text('record_id,label\n1,1\n', encoding='utf-8')
+    model_path.write_bytes(b'model')
+    dataset_manifest.write_text(json.dumps({
+        'features_csv': str(features_csv),
+        'labels_csv': str(labels_csv),
+    }), encoding='utf-8')
+    run_json.write_text(json.dumps({
+        'identity': {'run_id': 'frame6-ledger-import'},
+        'context': {'constraints': {'max_fpr': 0.02}},
+        'data': {
+            'features_csv': str(features_csv),
+            'labels_csv': str(labels_csv),
+            'dataset_manifest': str(dataset_manifest),
+        },
+        'model': {
+            'family': 'trained_apexlab',
+            'source': str(model_path),
+        },
+    }), encoding='utf-8')
+
+    save_rc = main([
+        'ds',
+        'wizard',
+        '--workflow',
+        'evaluate',
+        '--hydrate-run',
+        str(run_json),
+        '--section',
+        'report',
+        '--save-draft',
+        str(draft_path),
+        '--json',
+    ])
+    save_payload = json.loads(capsys.readouterr().out)
+
+    load_rc = main([
+        'ds',
+        'wizard',
+        '--load-draft',
+        str(draft_path),
+        '--json',
+    ])
+    load_payload = json.loads(capsys.readouterr().out)
+    draft_payload = json.loads(draft_path.read_text(encoding='utf-8'))
+
+    assert save_rc == 0
+    assert load_rc == 0
+    assert save_payload['decision'] == 'go'
+    assert load_payload['decision'] == 'go'
+    assert save_payload['execution_state'] == 'ready'
+    assert load_payload['execution_state'] == 'ready'
+    assert save_payload['current_section'] == 'report'
+    assert load_payload['current_section'] == 'report'
+    assert save_payload['artifacts']['run_ledger_path'] == str(run_json)
+    assert load_payload['artifacts']['run_ledger_path'] == str(run_json)
+    assert save_payload['artifacts']['draft_path'] == str(draft_path)
+    assert load_payload['artifacts']['draft_path'] == str(draft_path)
+    assert save_payload['validation_issues'] == []
+    assert load_payload['validation_issues'] == []
+    assert save_payload['command_preview'] == load_payload['command_preview']
+    assert save_payload['hydrated_from'] == load_payload['hydrated_from']
+    assert draft_payload['run_ledger_path'] == str(run_json)
+    assert draft_payload['active_section'] == 'report'
+    assert any(run_json.name in line for line in load_payload['wizard_view'])
+    assert any(dataset_manifest.name in line for line in load_payload['wizard_view'])
+    assert any(model_path.name in line for line in load_payload['wizard_view'])
+
+
 def test_ds_wizard_reselection_supports_keep_clear_new() -> None:
     state = observerctl_module._ds_wizard_new_state('train')
     observerctl_module._ds_wizard_set_value(state, 'out_dir', 'alpha')
@@ -1083,6 +1432,19 @@ def test_ds_wizard_execute_is_blocked_when_validation_has_not_passed() -> None:
     assert packet['decision'] == 'no-go'
     assert 'critical_check_failed:wizard_validation_blocked' in packet['reason_codes']
     assert 'dataset_manifest is required' in packet['validation_issues']
+
+
+def test_ds_wizard_cli_blocked_execute_packet_is_truthful(capsys) -> None:
+    rc = main(['ds', 'wizard', '--workflow', 'evaluate', '--execute', '--json'])
+    payload = json.loads(capsys.readouterr().out)
+
+    assert rc == 2
+    assert payload['decision'] == 'no-go'
+    assert 'critical_check_failed:wizard_validation_blocked' in payload['reason_codes']
+    assert 'features_csv is required' in payload['validation_issues']
+    assert payload['wizard_workflow'] == 'evaluate'
+    assert payload['command_preview'].startswith('observerctl ds evaluate')
+    assert 'artifacts' not in payload or payload['artifacts'] == {}
 
 
 def test_ds_wizard_execute_command_uses_one_line_transient_block_message() -> None:
@@ -1179,6 +1541,38 @@ def test_ds_wizard_build_sync_preserves_collection_alias_from_build_packet(tmp_p
     assert synced.values['dataset_manifest'] == str(dataset_manifest)
     assert synced.values['dataset_alias'] == 'can-shared-build'
     assert synced.hydrated_from['dataset_manifest'] == 'wizard_execute'
+
+
+def test_ds_wizard_train_sync_preserves_collection_alias_from_train_packet(tmp_path: Path) -> None:
+    dataset_manifest = tmp_path / 'dataset_manifest.json'
+    model_path = tmp_path / 'model.pkl'
+    train_manifest = tmp_path / 'train_manifest.json'
+
+    dataset_manifest.write_text(json.dumps({'features_csv': str(tmp_path / 'features.csv')}), encoding='utf-8')
+    (tmp_path / 'features.csv').write_text('record_id,feature\n1,0.1\n', encoding='utf-8')
+    model_path.write_bytes(b'model')
+    train_manifest.write_text(json.dumps({
+        'dataset_manifest_path': str(dataset_manifest),
+        'model_path': str(model_path),
+        'model_type': 'unsupervised',
+    }), encoding='utf-8')
+
+    state = observerctl_module._ds_wizard_new_state('train')
+    state.values['dataset_alias'] = ''
+
+    synced = observerctl_module._ds_wizard_sync_execution_artifacts(
+        state,
+        {
+            'artifacts': {'train_manifest': str(train_manifest)},
+            'collection_alias': 'can-shared-train',
+        },
+    )
+
+    assert synced.values['train_manifest'] == str(train_manifest)
+    assert synced.values['dataset_manifest'] == str(dataset_manifest)
+    assert synced.values['model_path'] == str(model_path)
+    assert synced.values['dataset_alias'] == 'can-shared-train'
+    assert synced.hydrated_from['train_manifest'] == 'wizard_execute'
 
 
 def test_ds_wizard_attempt_execute_threads_collection_alias_to_downstream_workflows(tmp_path: Path, monkeypatch) -> None:
@@ -3308,11 +3702,11 @@ def test_ds_wizard_canonical_draft_slots_and_output_preview(monkeypatch, tmp_pat
     observerctl_module._ds_wizard_open_section(report_state, 'report')
     rendered = [strip_ansi(line) for line in observerctl_module._ds_wizard_render(report_state)]
     assert 'report:' in rendered
-    assert any(line.strip() == 'report json:' for line in rendered)
-    assert any(line.strip() == 'report md:' for line in rendered)
-    assert any(line.strip() == 'dataset manifest:' for line in rendered)
-    assert any(line.strip() == 'train manifest:' for line in rendered)
-    assert any(line.strip() == 'model artifact:' for line in rendered)
+    assert any(line.strip().startswith('report json:') for line in rendered)
+    assert any(line.strip().startswith('report md:') for line in rendered)
+    assert any(line.strip().startswith('dataset manifest:') for line in rendered)
+    assert any(line.strip().startswith('train manifest:') for line in rendered)
+    assert any(line.strip().startswith('model artifact:') for line in rendered)
     assert not any('Canonical run root:' in line for line in rendered)
     assert not any('Effective run root:' in line for line in rendered)
     assert not any('Run root mode:' in line for line in rendered)
@@ -3325,8 +3719,8 @@ def test_ds_wizard_canonical_draft_slots_and_output_preview(monkeypatch, tmp_pat
     build_report_state = observerctl_module._ds_wizard_new_state('build')
     observerctl_module._ds_wizard_open_section(build_report_state, 'report')
     build_rendered = [strip_ansi(line) for line in observerctl_module._ds_wizard_render(build_report_state)]
-    assert any(line.strip() == 'report json:' for line in build_rendered)
-    assert any(line.strip() == 'dataset manifest:' for line in build_rendered)
+    assert any(line.strip().startswith('report json:') for line in build_rendered)
+    assert any(line.strip().startswith('dataset manifest:') for line in build_rendered)
     assert not any('Input status:' in line for line in build_rendered)
 
     observerctl_module._ds_wizard_set_value(report_state, 'out_dir', str(tmp_path / 'override-root'))
@@ -3748,29 +4142,56 @@ def test_ds_wizard_cmd_surfaces_use_path_placeholders_across_workflows() -> None
     assert r'C:\demo\outputs\pipeline' not in pipeline_preview
 
 
-def test_ds_wizard_report_surface_uses_shared_row_contract_across_workflows() -> None:
-    expected_rows = [
-        'report json:',
-        'report md:',
-        'dataset manifest:',
-        'features csv:',
-        'labels csv:',
-        'train manifest:',
-        'model artifact:',
-        'metrics json:',
-        'run json:',
-        'run md:',
-        'scores csv:',
-        'threshold report json:',
-        'threshold report md:',
-    ]
+def test_ds_wizard_report_surface_only_renders_workflow_valid_rows() -> None:
+    expected = {
+        'build': {
+            'present': ['report json:', 'report md:', 'dataset manifest:', 'features csv:'],
+            'absent': ['train manifest:', 'metrics json:', 'run json:', 'scores csv:', 'threshold report json:'],
+        },
+        'train': {
+            'present': ['report json:', 'report md:', 'dataset manifest:', 'train manifest:', 'model artifact:', 'metrics json:'],
+            'absent': ['run json:', 'scores csv:', 'threshold report json:'],
+        },
+        'evaluate': {
+            'present': ['report json:', 'report md:', 'dataset manifest:', 'features csv:', 'model artifact:', 'run json:', 'run md:'],
+            'absent': ['metrics json:', 'threshold report json:', 'threshold report md:'],
+        },
+        'score': {
+            'present': ['report json:', 'report md:', 'dataset manifest:', 'model artifact:', 'scores csv:'],
+            'absent': ['metrics json:', 'run json:', 'threshold report json:', 'threshold report md:'],
+        },
+        'run-pipeline': {
+            'present': ['report json:', 'report md:', 'dataset manifest:', 'features csv:', 'train manifest:', 'model artifact:', 'metrics json:', 'run json:', 'run md:'],
+            'absent': ['threshold report json:', 'threshold report md:'],
+        },
+    }
 
-    for workflow in ('build', 'train', 'evaluate', 'score', 'run-pipeline'):
+    for workflow, contract in expected.items():
         state = observerctl_module._ds_wizard_new_state(workflow)
         observerctl_module._ds_wizard_open_section(state, 'report')
         rendered = [strip_ansi(line).strip() for line in observerctl_module._ds_wizard_render(state)]
-        for label in expected_rows:
-            assert label in rendered
+        for label in contract['present']:
+            assert any(line.startswith(label) for line in rendered)
+        for label in contract['absent']:
+            assert not any(line.startswith(label) for line in rendered)
+
+
+def test_ds_wizard_report_surface_shows_unsupervised_evaluate_threshold_rows_when_available() -> None:
+    state = observerctl_module._ds_wizard_new_state('evaluate')
+    state.completed_workflows['evaluate'] = {
+        'packet_artifacts': {
+            'scores_csv': r'C:\demo\runs\evaluate\score\scores.csv',
+            'threshold_report_json': r'C:\demo\runs\evaluate\score\threshold_report.json',
+            'threshold_report_md': r'C:\demo\runs\evaluate\score\threshold_report.md',
+        }
+    }
+
+    observerctl_module._ds_wizard_open_section(state, 'report')
+    rendered = [' '.join(strip_ansi(line).split()) for line in observerctl_module._ds_wizard_render(state)]
+
+    assert 'scores csv: scores.csv' in rendered
+    assert 'threshold report json: threshold_report.json' in rendered
+    assert 'threshold report md: threshold_report.md' in rendered
 
 
 def test_ds_wizard_score_execute_populates_report_results_and_completion_feedback(tmp_path: Path, monkeypatch) -> None:
@@ -5831,6 +6252,113 @@ def test_ds_report_publication_uses_registered_dataset_alias_when_manifest_colle
     assert '|        |- eval/' in generated_surfaces_text
     assert '|        |- score/' in generated_surfaces_text
     assert '|        `- train/' in generated_surfaces_text
+
+
+def test_ds_report_publication_repairs_stale_eval_alias_from_materialized_build_dataset(tmp_path: Path) -> None:
+    from analysis.report_aggregate import append_ds_run_index, refresh_tracked_ds_publication
+    from analysis.report_pack import prepare_report_bundle, write_report_bundle
+
+    project_root = tmp_path / 'observer_project'
+    anchor = project_root / 'src' / 'observerctl_anchor.py'
+    anchor.parent.mkdir(parents=True, exist_ok=True)
+    anchor.write_text('# anchor\n', encoding='utf-8')
+    (project_root / 'PROJECT_MANIFEST.json').write_text('{}\n', encoding='utf-8')
+
+    build_bundle = prepare_report_bundle(anchor, 'build', run_id='build-shared-canonical')
+    dataset_dir = build_bundle.artifact_dirs['dataset']
+    dataset_dir.mkdir(parents=True, exist_ok=True)
+    materialized_manifest = dataset_dir / 'dataset_manifest.json'
+    features_csv = dataset_dir / 'features.csv'
+    features_csv.write_text('record_id,feature\n1,0.1\n', encoding='utf-8')
+    materialized_manifest.write_text(json.dumps({
+        'features_csv': str(features_csv),
+        'total_records': 1,
+        'has_labels': False,
+    }), encoding='utf-8')
+
+    build_report_bundle = write_report_bundle(
+        project_anchor=anchor,
+        bundle=build_bundle,
+        packet={
+            'timestamp_utc': '2026-04-13T01:00:00Z',
+            'runtime_cli_surface': 'observerctl',
+            'decision': 'go',
+            'action': 'ds-build',
+            'collection_alias': 'can-r0b70',
+            'command_family': 'ds',
+            'command_path': 'observerctl ds build',
+            'implementation_state': 'command-available',
+            'underlying_surface': 'analysis.dataset_builder',
+            'summary': 'Dataset build completed through observerctl ds.',
+            'run_id': build_bundle.run_id,
+            'reason_codes': [],
+            'artifacts': {},
+        },
+        artifact_paths={
+            'dataset_manifest': materialized_manifest,
+            'features_csv': features_csv,
+        },
+        context={'dataset_seed': 42},
+        lineage={'source_run_root': build_bundle.run_root},
+    )
+    append_ds_run_index(project_anchor=anchor, manifest_payload=build_report_bundle['manifest'])
+
+    eval_bundle = prepare_report_bundle(anchor, 'evaluate', run_id='eval-stale-history')
+    evaluation_dir = eval_bundle.artifact_dirs['evaluation']
+    model_dir = eval_bundle.run_root / 'model'
+    evaluation_dir.mkdir(parents=True, exist_ok=True)
+    model_dir.mkdir(parents=True, exist_ok=True)
+    run_json = evaluation_dir / 'run.json'
+    run_md = evaluation_dir / 'run.md'
+    model_path = model_dir / 'model.pkl'
+    run_json.write_text('{"decision":"go"}\n', encoding='utf-8')
+    run_md.write_text('# eval\n', encoding='utf-8')
+    model_path.write_bytes(b'model')
+
+    eval_report_bundle = write_report_bundle(
+        project_anchor=anchor,
+        bundle=eval_bundle,
+        packet={
+            'timestamp_utc': '2026-04-13T01:10:00Z',
+            'runtime_cli_surface': 'observerctl',
+            'decision': 'go',
+            'action': 'ds-evaluate',
+            'collection_alias': 'can-r0b70',
+            'command_family': 'ds',
+            'command_path': 'observerctl ds evaluate',
+            'implementation_state': 'command-available',
+            'underlying_surface': 'analysis.evaluation_harness',
+            'summary': 'Evaluation completed through observerctl ds.',
+            'run_id': eval_bundle.run_id,
+            'threshold': 0.42,
+            'reason_codes': [],
+            'artifacts': {},
+        },
+        artifact_paths={
+            'dataset_manifest': materialized_manifest,
+            'run_json': run_json,
+            'run_md': run_md,
+            'model_path': model_path,
+        },
+        context={'max_fpr': 0.01},
+        lineage={'dataset_manifest': materialized_manifest, 'model_path': model_path},
+    )
+
+    stale_manifest = dict(eval_report_bundle['manifest'])
+    stale_manifest['collection_alias'] = 'can-r4ccf'
+    manifest_path = project_root / eval_report_bundle['paths']['manifest_json']
+    manifest_path.write_text(json.dumps(stale_manifest, indent=2, sort_keys=True), encoding='utf-8')
+    append_ds_run_index(project_anchor=anchor, manifest_payload=stale_manifest)
+
+    publication = refresh_tracked_ds_publication(project_anchor=anchor, current_manifest_payload=stale_manifest)
+
+    canonical_eval_doc = project_root / 'docs' / 'reports' / 'collections' / 'can-r0b70' / 'processing' / 'eval' / '20260413T011000000000Z.eval.md'
+    stale_alias_root = project_root / 'docs' / 'reports' / 'collections' / 'can-r4ccf'
+
+    assert publication['decision'] == 'go'
+    assert publication['current_run']['collection_alias'] == 'can-r0b70'
+    assert canonical_eval_doc.exists()
+    assert not stale_alias_root.exists()
 
 
 def test_ds_report_publication_threshold_summary_only_uses_evaluate_packets_and_pairs_scores_by_alias(tmp_path: Path) -> None:

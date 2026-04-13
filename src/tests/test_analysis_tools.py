@@ -349,6 +349,34 @@ def test_evaluate_supports_lower_tail_anomaly_direction(tmp_path: Path) -> None:
     assert result.metrics['f1'] == pytest.approx(1.0)
 
 
+def test_evaluate_accepts_label_column_for_labeled_mode(tmp_path: Path) -> None:
+    features_csv = tmp_path / 'features.csv'
+    labels_csv = tmp_path / 'labels.csv'
+    features_csv.write_text(
+        'record_id,feature\nr1,0.0\nr2,1.0\n',
+        encoding='utf-8',
+    )
+    labels_csv.write_text(
+        'record_id,label\nr1,TV-0\nr2,TV-3\n',
+        encoding='utf-8',
+    )
+    score_map = {
+        'r1': 0.1,
+        'r2': 0.9,
+    }
+
+    result = evaluate(
+        features_csv,
+        labels_csv=labels_csv,
+        max_fpr=1.0,
+        scorer=lambda row: score_map[str(row.get('record_id', ''))],
+    )
+
+    assert result.has_labels is True
+    assert result.counts == {'tp': 1, 'fp': 0, 'tn': 1, 'fn': 0}
+    assert result.metrics['precision'] == pytest.approx(1.0)
+
+
 def test_report_visuals_emit_threshold_report_and_score_figures(tmp_path: Path) -> None:
     from analysis.report_visuals import generate_score_visuals, summarize_threshold_scores_csv, write_threshold_report
 
@@ -845,3 +873,190 @@ def test_report_pack_stage_markdown_keeps_visual_links_and_compact_related_surfa
     assert '[Manifest JSON](manifest.json)' in report_md
     assert '[Score surface CSV](../scoring/scores.csv)' in report_md
     assert '![Score distribution](../figures/score_distribution.png)' in report_md
+
+
+def test_report_pack_prefers_canonical_dataset_alias_over_stale_explicit_alias(tmp_path: Path) -> None:
+    from analysis.report_pack import prepare_report_bundle, write_report_bundle
+    from calamum_librarian import register_librarian_dataset_packet
+
+    project_root = tmp_path / 'observer_project'
+    anchor = project_root / 'src' / 'observerctl_anchor.py'
+    anchor.parent.mkdir(parents=True, exist_ok=True)
+    anchor.write_text('# anchor\n', encoding='utf-8')
+    (project_root / 'PROJECT_MANIFEST.json').write_text('{}\n', encoding='utf-8')
+
+    dataset_dir = project_root / 'datasets' / 'canonical_alpha'
+    dataset_dir.mkdir(parents=True, exist_ok=True)
+    features_csv = dataset_dir / 'features.csv'
+    dataset_manifest = dataset_dir / 'dataset_manifest.json'
+    features_csv.write_text('record_id,feature\n', encoding='utf-8')
+    dataset_manifest.write_text(json.dumps({
+        'features_csv': str(features_csv),
+        'total_records': 4,
+        'has_labels': False,
+    }), encoding='utf-8')
+
+    dataset_packet = register_librarian_dataset_packet(
+        anchor,
+        dataset_manifest,
+        display_name='Canonical Alias Alpha',
+        run_id='canonical-alpha',
+    )
+    expected_alias = str(dataset_packet['dataset']['display_alias'])
+
+    bundle = prepare_report_bundle(anchor, 'evaluate', run_id='eval-alias-drift-001')
+    evaluation_dir = bundle.artifact_dirs['evaluation']
+    model_dir = bundle.run_root / 'model'
+    evaluation_dir.mkdir(parents=True, exist_ok=True)
+    model_dir.mkdir(parents=True, exist_ok=True)
+
+    run_json = evaluation_dir / 'run.json'
+    run_md = evaluation_dir / 'run.md'
+    model_path = model_dir / 'model.pkl'
+    run_json.write_text('{"decision":"go"}\n', encoding='utf-8')
+    run_md.write_text('# evaluation\n', encoding='utf-8')
+    model_path.write_bytes(b'model')
+
+    bundle_result = write_report_bundle(
+        project_anchor=anchor,
+        bundle=bundle,
+        packet={
+            'timestamp_utc': '2026-04-13T01:30:00Z',
+            'runtime_cli_surface': 'observerctl',
+            'decision': 'go',
+            'action': 'ds-evaluate',
+            'collection_alias': 'can-stale-drift',
+            'command_family': 'ds',
+            'command_path': 'observerctl ds evaluate',
+            'implementation_state': 'command-available',
+            'underlying_surface': 'analysis.evaluation_harness',
+            'summary': 'Evaluation completed through observerctl ds.',
+            'run_id': bundle.run_id,
+            'threshold': 0.42,
+            'reason_codes': [],
+            'artifacts': {},
+        },
+        artifact_paths={
+            'dataset_manifest': dataset_manifest,
+            'run_json': run_json,
+            'run_md': run_md,
+            'model_path': model_path,
+        },
+        context={
+            'collection_alias': 'can-stale-drift',
+            'max_fpr': 0.01,
+        },
+        lineage={
+            'dataset_manifest': dataset_manifest,
+            'model_path': model_path,
+        },
+    )
+
+    report_md = (project_root / bundle_result['paths']['report_md']).read_text(encoding='utf-8')
+
+    assert bundle_result['manifest']['collection_alias'] == expected_alias
+    assert bundle_result['report']['collection_alias'] == expected_alias
+    assert '**Collection alias**: `{0}`'.format(expected_alias) in report_md
+    assert '**Collection alias**: `can-stale-drift`' not in report_md
+
+
+def test_report_pack_prefers_build_publication_alias_for_materialized_dataset_descendants(tmp_path: Path) -> None:
+    from analysis.report_aggregate import append_ds_run_index
+    from analysis.report_pack import prepare_report_bundle, write_report_bundle
+
+    project_root = tmp_path / 'observer_project'
+    anchor = project_root / 'src' / 'observerctl_anchor.py'
+    anchor.parent.mkdir(parents=True, exist_ok=True)
+    anchor.write_text('# anchor\n', encoding='utf-8')
+    (project_root / 'PROJECT_MANIFEST.json').write_text('{}\n', encoding='utf-8')
+
+    build_bundle = prepare_report_bundle(anchor, 'build', run_id='build-canonical-shared')
+    dataset_dir = build_bundle.artifact_dirs['dataset']
+    dataset_dir.mkdir(parents=True, exist_ok=True)
+    materialized_manifest = dataset_dir / 'dataset_manifest.json'
+    features_csv = dataset_dir / 'features.csv'
+    features_csv.write_text('record_id,feature\n1,0.1\n', encoding='utf-8')
+    materialized_manifest.write_text(json.dumps({
+        'features_csv': str(features_csv),
+        'total_records': 1,
+        'has_labels': False,
+    }), encoding='utf-8')
+
+    build_report_bundle = write_report_bundle(
+        project_anchor=anchor,
+        bundle=build_bundle,
+        packet={
+            'timestamp_utc': '2026-04-13T01:00:00Z',
+            'runtime_cli_surface': 'observerctl',
+            'decision': 'go',
+            'action': 'ds-build',
+            'collection_alias': 'can-build-shared',
+            'command_family': 'ds',
+            'command_path': 'observerctl ds build',
+            'implementation_state': 'command-available',
+            'underlying_surface': 'analysis.dataset_builder',
+            'summary': 'Dataset build completed through observerctl ds.',
+            'run_id': build_bundle.run_id,
+            'reason_codes': [],
+            'artifacts': {},
+        },
+        artifact_paths={
+            'dataset_manifest': materialized_manifest,
+            'features_csv': features_csv,
+        },
+        context={'dataset_seed': 42},
+        lineage={'source_run_root': build_bundle.run_root},
+    )
+    append_ds_run_index(project_anchor=anchor, manifest_payload=build_report_bundle['manifest'])
+
+    eval_bundle = prepare_report_bundle(anchor, 'evaluate', run_id='eval-canonical-shared')
+    evaluation_dir = eval_bundle.artifact_dirs['evaluation']
+    model_dir = eval_bundle.run_root / 'model'
+    evaluation_dir.mkdir(parents=True, exist_ok=True)
+    model_dir.mkdir(parents=True, exist_ok=True)
+
+    run_json = evaluation_dir / 'run.json'
+    run_md = evaluation_dir / 'run.md'
+    model_path = model_dir / 'model.pkl'
+    run_json.write_text('{"decision":"go"}\n', encoding='utf-8')
+    run_md.write_text('# evaluation\n', encoding='utf-8')
+    model_path.write_bytes(b'model')
+
+    eval_report_bundle = write_report_bundle(
+        project_anchor=anchor,
+        bundle=eval_bundle,
+        packet={
+            'timestamp_utc': '2026-04-13T01:05:00Z',
+            'runtime_cli_surface': 'observerctl',
+            'decision': 'go',
+            'action': 'ds-evaluate',
+            'collection_alias': 'can-stale-drift',
+            'command_family': 'ds',
+            'command_path': 'observerctl ds evaluate',
+            'implementation_state': 'command-available',
+            'underlying_surface': 'analysis.evaluation_harness',
+            'summary': 'Evaluation completed through observerctl ds.',
+            'run_id': eval_bundle.run_id,
+            'threshold': 0.42,
+            'reason_codes': [],
+            'artifacts': {},
+        },
+        artifact_paths={
+            'dataset_manifest': materialized_manifest,
+            'run_json': run_json,
+            'run_md': run_md,
+            'model_path': model_path,
+        },
+        context={
+            'collection_alias': '',
+            'max_fpr': 0.01,
+        },
+        lineage={
+            'dataset_manifest': materialized_manifest,
+            'model_path': model_path,
+        },
+    )
+
+    assert build_report_bundle['manifest']['collection_alias'] == 'can-build-shared'
+    assert eval_report_bundle['manifest']['collection_alias'] == 'can-build-shared'
+    assert eval_report_bundle['report']['collection_alias'] == 'can-build-shared'

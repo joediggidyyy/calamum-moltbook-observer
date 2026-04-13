@@ -39,9 +39,12 @@ import observerctl as observerctl_module
 FRAME4_PROBE_DIR = REPO_ROOT / 'report_tmp' / 'frame4_metadata_contract_probe'
 FRAME4_REGRESSION_PROBE_DIR = REPO_ROOT / 'report_tmp' / 'frame4_metadata_contract_regression_probe'
 FRAME4_DS_WIZARD_HYDRATION_PROBE_DIR = REPO_ROOT / 'report_tmp' / 'frame4_ds_wizard_hydration_probe'
+FRAMEB_DS_WIZARD_STALE_STATE_CONTINUITY_PROBE_DIR = REPO_ROOT / 'report_tmp' / 'frameb_ds_wizard_stale_state_continuity_probe'
 JOB0022_PROBE_DIR = REPO_ROOT / 'report_tmp' / 'job0022_baseline_monitor_runtime_probe'
 FRAME5_LINEAGE_PROBE_DIR = REPO_ROOT / 'report_tmp' / 'frame5_validation_cycle_lineage_probe'
 FRAME6_DS_WIZARD_DURABILITY_PROBE_DIR = REPO_ROOT / 'report_tmp' / 'frame6_ds_wizard_durability_probe'
+FRAMEB_DS_WIZARD_LABELED_EVAL_CONTRACT_COHERENCE_PROBE_DIR = REPO_ROOT / 'report_tmp' / 'frameb_ds_wizard_labeled_eval_contract_coherence_probe'
+FRAMEB_DS_WIZARD_BLOCKED_EXECUTE_TRUTHFULNESS_PROBE_DIR = REPO_ROOT / 'report_tmp' / 'frameb_ds_wizard_blocked_execute_truthfulness_probe'
 FRAMED_DS_ALIAS_COHERENCE_PROBE_DIR = REPO_ROOT / 'report_tmp' / 'framed_ds_alias_coherence_probe'
 FRAME6_RESTART_PROBE_DIR = REPO_ROOT / 'report_tmp' / 'frame6_restart_continuity_probe'
 FRAME6_RECOVERY_PROBE_DIR = REPO_ROOT / 'report_tmp' / 'frame6_state_recovery_probe'
@@ -155,6 +158,35 @@ def _run_observerctl_cli(args: List[str]) -> Dict[str, Any]:
         'stderr_text': stderr_text,
         'stdout_json': stdout_json,
     }
+
+
+def _command_stdout_json(command_result: Dict[str, Any]) -> Dict[str, Any]:
+    stdout_json = command_result.get('stdout_json', {}) if isinstance(command_result.get('stdout_json', {}), dict) else {}
+    return dict(stdout_json)
+
+
+def _wizard_packet_artifact(command_result: Dict[str, Any], key: str) -> str:
+    packet = _command_stdout_json(command_result)
+    artifacts = packet.get('artifacts', {}) if isinstance(packet.get('artifacts', {}), dict) else {}
+    return str(artifacts.get(key, '') or '').strip()
+
+
+def _wizard_packet_validation_issues(command_result: Dict[str, Any]) -> List[str]:
+    packet = _command_stdout_json(command_result)
+    raw_issues = packet.get('validation_issues', []) if isinstance(packet.get('validation_issues', []), list) else []
+    return [str(issue) for issue in raw_issues if str(issue).strip()]
+
+
+def _wizard_packet_view(command_result: Dict[str, Any]) -> List[str]:
+    packet = _command_stdout_json(command_result)
+    raw_view = packet.get('wizard_view', []) if isinstance(packet.get('wizard_view', []), list) else []
+    return [str(line) for line in raw_view]
+
+
+def _wizard_packet_view_contains(command_result: Dict[str, Any], *tokens: str) -> bool:
+    haystack = '\n'.join(_wizard_packet_view(command_result))
+    expected_tokens = [str(token) for token in tokens if str(token or '').strip()]
+    return bool(expected_tokens) and all(token in haystack for token in expected_tokens)
 
 
 def _seed_probe_environment(run_dir: Path, signing_key: str, security_report_title: str) -> Tuple[Path, Path, Dict[str, Optional[str]], Any]:
@@ -445,19 +477,24 @@ def run_ds_wizard_hydration_probe() -> int:
 
     original_env: Dict[str, Optional[str]] = {}
     original_project_root = None
+    original_project_anchor = None
+    original_file = ''
     try:
         _sandbox_root, sandbox_log_dir, original_env, original_project_root = _seed_probe_environment(
             run_dir=run_dir,
             signing_key='frame4-ds-wizard-hydration-signing-key',
             security_report_title='# Frame 4 DS wizard hydration probe security report\n',
         )
+        _anchor, original_project_anchor, original_file = _bind_probe_observer_project(_sandbox_root)
 
         artifacts_dir = run_dir / 'artifacts'
         artifacts_dir.mkdir(parents=True, exist_ok=True)
 
-        dataset_manifest = artifacts_dir / 'dataset_manifest.json'
-        features_csv = artifacts_dir / 'features.csv'
-        labels_csv = artifacts_dir / 'labels.csv'
+        dataset_dir = _sandbox_root / 'datasets' / 'approved_hydration'
+        dataset_dir.mkdir(parents=True, exist_ok=True)
+        dataset_manifest = dataset_dir / 'dataset_manifest.json'
+        features_csv = dataset_dir / 'features.csv'
+        labels_csv = dataset_dir / 'labels.csv'
         train_manifest = artifacts_dir / 'train_manifest.json'
         model_path = artifacts_dir / 'model.pkl'
         baseline_packet = sandbox_log_dir / 'data' / 'calamum' / 'observer_derived' / 'sim' / 'canary' / 'evidence' / 'baseline_analysis_probe.json'
@@ -488,25 +525,79 @@ def run_ds_wizard_hydration_probe() -> int:
         })
         observerctl_module._save_state('sim', 'canary')
 
-        hydrated_state = observerctl_module._ds_wizard_new_state('evaluate')
-        observerctl_module._ds_wizard_hydrate_dataset_manifest(hydrated_state, dataset_manifest)
-        observerctl_module._ds_wizard_hydrate_train_manifest(hydrated_state, train_manifest)
-        observerctl_module._ds_wizard_hydrate_baseline_analysis(hydrated_state, baseline_packet)
+        command_runs = {
+            'register_hydration_dataset': _run_observerctl_cli([
+                'librarian',
+                'dataset',
+                'register',
+                str(dataset_manifest),
+                '--access-class',
+                'local',
+                '--display-name',
+                'Frame 4 Wizard Hydration',
+                '--run-id',
+                'frame4-ds-hydration',
+                '--json',
+            ]),
+            'wizard_hydrate_saved_artifacts': _run_observerctl_cli([
+                'ds',
+                'wizard',
+                '--workflow',
+                'evaluate',
+                '--hydrate-dataset',
+                '1',
+                '--hydrate-train',
+                str(train_manifest),
+                '--hydrate-baseline-analysis',
+                str(baseline_packet),
+                '--section',
+                'report',
+                '--json',
+            ]),
+            'wizard_hydrate_latest_context': _run_observerctl_cli([
+                'ds',
+                'wizard',
+                '--workflow',
+                'evaluate',
+                '--hydrate-latest-context',
+                '--section',
+                'check',
+                '--json',
+            ]),
+        }
 
-        latest_state = observerctl_module._ds_wizard_new_state('evaluate')
-        observerctl_module._ds_wizard_hydrate_latest_context(latest_state)
+        hydrated_packet = _command_stdout_json(command_runs['wizard_hydrate_saved_artifacts'])
+        latest_packet = _command_stdout_json(command_runs['wizard_hydrate_latest_context'])
+        latest_validation_issues = _wizard_packet_validation_issues(command_runs['wizard_hydrate_latest_context'])
+        register_packet = _command_stdout_json(command_runs['register_hydration_dataset'])
 
         result_matrix = {
-            'dataset_manifest_imported': str(hydrated_state.values.get('dataset_manifest', '')) == str(dataset_manifest),
-            'features_csv_imported': str(hydrated_state.values.get('features_csv', '')) == str(features_csv),
-            'labels_csv_imported': str(hydrated_state.values.get('labels_csv', '')) == str(labels_csv),
-            'train_manifest_imported': str(hydrated_state.values.get('train_manifest', '')) == str(train_manifest),
-            'model_path_imported': str(hydrated_state.values.get('model_path', '')) == str(model_path),
-            'model_type_imported': str(hydrated_state.values.get('model_type', '')) == 'unsupervised',
-            'baseline_window_imported': str(hydrated_state.values.get('baseline_window_id', '')) == 'frame4-ds-hydration-window',
-            'latest_context_source_imported': str(latest_state.values.get('source', '')) == 'sim',
-            'latest_context_mode_imported': str(latest_state.values.get('mode', '')) == 'canary',
-            'latest_context_baseline_imported': str(latest_state.values.get('baseline_analysis_packet', '')) == str(baseline_packet),
+            'approved_dataset_registered': int(command_runs['register_hydration_dataset'].get('returncode', 1)) == 0 and str(register_packet.get('decision', '')).strip().lower() == 'go',
+            'hydrate_cli_returncode_zero': int(command_runs['wizard_hydrate_saved_artifacts'].get('returncode', 1)) == 0,
+            'hydrate_packet_go': str(hydrated_packet.get('decision', '')).strip().lower() == 'go' and str(hydrated_packet.get('action', '')).strip() == 'ds-wizard',
+            'hydrate_execution_ready': str(hydrated_packet.get('execution_state', '')).strip().lower() == 'ready',
+            'hydrate_report_section_opened': str(hydrated_packet.get('current_section', '')).strip().lower() == 'report',
+            'hydrate_validation_clear': not _wizard_packet_validation_issues(command_runs['wizard_hydrate_saved_artifacts']),
+            'dataset_manifest_imported': _wizard_packet_artifact(command_runs['wizard_hydrate_saved_artifacts'], 'dataset_manifest') == str(dataset_manifest),
+            'train_manifest_imported': _wizard_packet_artifact(command_runs['wizard_hydrate_saved_artifacts'], 'train_manifest') == str(train_manifest),
+            'model_path_imported': _wizard_packet_artifact(command_runs['wizard_hydrate_saved_artifacts'], 'model_path') == str(model_path),
+            'baseline_packet_imported': _wizard_packet_artifact(command_runs['wizard_hydrate_saved_artifacts'], 'baseline_analysis_packet') == str(baseline_packet),
+            'baseline_context_marked_hydrated': str((hydrated_packet.get('hydrated_from', {}) if isinstance(hydrated_packet.get('hydrated_from', {}), dict) else {}).get('baseline_window_id', '')).strip() == 'baseline_analysis',
+            'report_preview_lists_dataset_and_model_artifacts': _wizard_packet_view_contains(
+                command_runs['wizard_hydrate_saved_artifacts'],
+                dataset_manifest.name,
+                train_manifest.name,
+                model_path.name,
+                'run.json',
+                'run.md',
+            ),
+            'latest_context_cli_returncode_zero': int(command_runs['wizard_hydrate_latest_context'].get('returncode', 1)) == 0,
+            'latest_context_packet_go': str(latest_packet.get('decision', '')).strip().lower() == 'go' and str(latest_packet.get('action', '')).strip() == 'ds-wizard',
+            'latest_context_source_marked': str((latest_packet.get('hydrated_from', {}) if isinstance(latest_packet.get('hydrated_from', {}), dict) else {}).get('source', '')).strip() == 'latest_context',
+            'latest_context_mode_marked': str((latest_packet.get('hydrated_from', {}) if isinstance(latest_packet.get('hydrated_from', {}), dict) else {}).get('mode', '')).strip() == 'latest_context',
+            'latest_context_baseline_imported': _wizard_packet_artifact(command_runs['wizard_hydrate_latest_context'], 'baseline_analysis_packet') == str(baseline_packet),
+            'latest_context_check_section_opened': str(latest_packet.get('current_section', '')).strip().lower() == 'check',
+            'latest_context_execution_truthful': str(latest_packet.get('execution_state', '')).strip().lower() == 'blocked' and 'features_csv is required' in latest_validation_issues,
         }
 
         report = {
@@ -515,33 +606,27 @@ def run_ds_wizard_hydration_probe() -> int:
             'probe_dir': _rel_to_repo(FRAME4_DS_WIZARD_HYDRATION_PROBE_DIR),
             'script': _rel_to_repo(Path(__file__)),
             'next_bite_result': _probe_result(result_matrix),
-            'command_runs': {
-                'seed_ds_hydration_artifacts': {
-                    'args': ['synthetic-ds-wizard-hydration-seed'],
-                    'returncode': 0,
-                    'stderr_text': '',
-                    'stdout_text': '',
-                    'stdout_json': {'seeded': True},
-                },
-            },
+            'command_runs': command_runs,
             'artifact_paths': _report_path_map({
                 'dataset_manifest': dataset_manifest,
+                'features_csv': features_csv,
+                'labels_csv': labels_csv,
                 'train_manifest': train_manifest,
                 'model_path': model_path,
                 'baseline_packet': baseline_packet,
                 'baseline_index': baseline_index,
             }),
             'artifact_snapshots': {
-                'hydrated_state_values': dict(hydrated_state.values),
-                'hydrated_state_sources': dict(hydrated_state.hydrated_from),
-                'latest_state_values': dict(latest_state.values),
-                'latest_state_sources': dict(latest_state.hydrated_from),
+                'registration_packet': register_packet,
+                'hydrated_packet': hydrated_packet,
+                'latest_context_packet': latest_packet,
             },
             'result_matrix': result_matrix,
             'findings': {
-                'hydrated_sources': dict(hydrated_state.hydrated_from),
-                'latest_sources': dict(latest_state.hydrated_from),
-                'latest_state_summary': observerctl_module._ds_wizard_summary_rows(latest_state),
+                'hydrated_sources': hydrated_packet.get('hydrated_from', {}),
+                'hydrated_view': _wizard_packet_view(command_runs['wizard_hydrate_saved_artifacts']),
+                'latest_sources': latest_packet.get('hydrated_from', {}),
+                'latest_validation_issues': latest_validation_issues,
             },
         }
 
@@ -557,7 +642,7 @@ def run_ds_wizard_hydration_probe() -> int:
             'report_json': _rel_to_repo(report_json),
             'report_md': _rel_to_repo(report_md),
             'next_bite_result': report['next_bite_result'],
-            'latest_context_mode': str(latest_state.values.get('mode', '')),
+            'latest_context_mode': str((latest_packet.get('hydrated_from', {}) if isinstance(latest_packet.get('hydrated_from', {}), dict) else {}).get('mode', '')),
         })
 
         print('run_id={0}'.format(run_id))
@@ -567,6 +652,8 @@ def run_ds_wizard_hydration_probe() -> int:
         print('next_bite_result={0}'.format(report['next_bite_result']))
         return 0
     finally:
+        if original_project_anchor is not None:
+            _restore_probe_observer_project(original_project_anchor, original_file)
         if original_project_root is not None:
             _restore_probe_environment(original_env, original_project_root)
 
@@ -624,22 +711,55 @@ def run_ds_wizard_durability_probe() -> int:
             },
         })
 
-        hydrated_state = observerctl_module._ds_wizard_new_state('evaluate')
-        observerctl_module._ds_wizard_hydrate_run_ledger(hydrated_state, run_ledger)
-        observerctl_module._ds_wizard_save_draft(hydrated_state, draft_path)
-        loaded_state = observerctl_module._ds_wizard_load_draft(draft_path)
+        command_runs = {
+            'wizard_hydrate_run_and_save_draft': _run_observerctl_cli([
+                'ds',
+                'wizard',
+                '--workflow',
+                'evaluate',
+                '--hydrate-run',
+                str(run_ledger),
+                '--section',
+                'report',
+                '--save-draft',
+                str(draft_path),
+                '--json',
+            ]),
+            'wizard_load_saved_draft': _run_observerctl_cli([
+                'ds',
+                'wizard',
+                '--load-draft',
+                str(draft_path),
+                '--json',
+            ]),
+        }
+
+        save_packet = _command_stdout_json(command_runs['wizard_hydrate_run_and_save_draft'])
+        load_packet = _command_stdout_json(command_runs['wizard_load_saved_draft'])
+        draft_payload = _read_json(draft_path)
 
         result_matrix = {
-            'run_ledger_path_tracked': str(hydrated_state.run_ledger_path) == str(run_ledger),
-            'run_id_imported': str(hydrated_state.values.get('run_id', '')) == 'frame6-durability-ledger',
-            'max_fpr_imported': float(hydrated_state.values.get('max_fpr', 0.0)) == 0.02,
-            'dataset_manifest_imported': str(hydrated_state.values.get('dataset_manifest', '')) == str(dataset_manifest),
-            'features_csv_imported': str(hydrated_state.values.get('features_csv', '')) == str(features_csv),
-            'labels_csv_imported': str(hydrated_state.values.get('labels_csv', '')) == str(labels_csv),
-            'model_path_imported': str(hydrated_state.values.get('model_path', '')) == str(model_path),
+            'hydrate_run_cli_returncode_zero': int(command_runs['wizard_hydrate_run_and_save_draft'].get('returncode', 1)) == 0,
+            'load_draft_cli_returncode_zero': int(command_runs['wizard_load_saved_draft'].get('returncode', 1)) == 0,
+            'save_packet_go': str(save_packet.get('decision', '')).strip().lower() == 'go' and str(save_packet.get('action', '')).strip() == 'ds-wizard',
+            'load_packet_go': str(load_packet.get('decision', '')).strip().lower() == 'go' and str(load_packet.get('action', '')).strip() == 'ds-wizard',
+            'save_execution_ready': str(save_packet.get('execution_state', '')).strip().lower() == 'ready',
+            'load_execution_ready': str(load_packet.get('execution_state', '')).strip().lower() == 'ready',
+            'run_ledger_path_tracked': _wizard_packet_artifact(command_runs['wizard_hydrate_run_and_save_draft'], 'run_ledger_path') == str(run_ledger) and _wizard_packet_artifact(command_runs['wizard_load_saved_draft'], 'run_ledger_path') == str(run_ledger),
+            'draft_path_tracked': _wizard_packet_artifact(command_runs['wizard_hydrate_run_and_save_draft'], 'draft_path') == str(draft_path) and _wizard_packet_artifact(command_runs['wizard_load_saved_draft'], 'draft_path') == str(draft_path),
+            'save_report_section_opened': str(save_packet.get('current_section', '')).strip().lower() == 'report',
+            'load_report_section_persisted': str(load_packet.get('current_section', '')).strip().lower() == 'report',
             'draft_saved': draft_path.exists(),
-            'draft_load_round_trip_values': dict(loaded_state.values) == dict(hydrated_state.values),
-            'draft_load_round_trip_hydration': dict(loaded_state.hydrated_from) == dict(hydrated_state.hydrated_from),
+            'draft_payload_tracks_run_context': str(draft_payload.get('run_ledger_path', '') or '').strip() == str(run_ledger) and str(draft_payload.get('active_section', '') or '').strip().lower() == 'report' and str(draft_payload.get('workflow', '') or '').strip() == 'evaluate',
+            'draft_round_trip_command_preview': str(save_packet.get('command_preview', '') or '').strip() == str(load_packet.get('command_preview', '') or '').strip(),
+            'draft_round_trip_hydration': dict(save_packet.get('hydrated_from', {}) if isinstance(save_packet.get('hydrated_from', {}), dict) else {}) == dict(load_packet.get('hydrated_from', {}) if isinstance(load_packet.get('hydrated_from', {}), dict) else {}),
+            'validation_clear_after_load': not _wizard_packet_validation_issues(command_runs['wizard_hydrate_run_and_save_draft']) and not _wizard_packet_validation_issues(command_runs['wizard_load_saved_draft']),
+            'report_preview_lists_run_dataset_and_model_artifacts': _wizard_packet_view_contains(
+                command_runs['wizard_load_saved_draft'],
+                run_ledger.name,
+                dataset_manifest.name,
+                model_path.name,
+            ),
         }
 
         report = {
@@ -648,33 +768,25 @@ def run_ds_wizard_durability_probe() -> int:
             'probe_dir': _rel_to_repo(FRAME6_DS_WIZARD_DURABILITY_PROBE_DIR),
             'script': _rel_to_repo(Path(__file__)),
             'next_bite_result': _probe_result(result_matrix),
-            'command_runs': {
-                'seed_ds_durability_artifacts': {
-                    'args': ['synthetic-ds-wizard-durability-seed'],
-                    'returncode': 0,
-                    'stderr_text': '',
-                    'stdout_text': '',
-                    'stdout_json': {'seeded': True},
-                },
-            },
+            'command_runs': command_runs,
             'artifact_paths': _report_path_map({
                 'run_ledger': run_ledger,
                 'dataset_manifest': dataset_manifest,
+                'features_csv': features_csv,
+                'labels_csv': labels_csv,
                 'draft_path': draft_path,
                 'model_path': model_path,
             }),
             'artifact_snapshots': {
-                'hydrated_state_values': dict(hydrated_state.values),
-                'hydrated_state_sources': dict(hydrated_state.hydrated_from),
-                'loaded_state_values': dict(loaded_state.values),
-                'loaded_state_sources': dict(loaded_state.hydrated_from),
-                'draft_payload': _read_json(draft_path),
+                'save_packet': save_packet,
+                'load_packet': load_packet,
+                'draft_payload': draft_payload,
             },
             'result_matrix': result_matrix,
             'findings': {
-                'run_ledger_path': str(hydrated_state.run_ledger_path),
-                'draft_path': str(loaded_state.draft_path),
-                'loaded_state_summary': observerctl_module._ds_wizard_summary_rows(loaded_state),
+                'save_hydrated_sources': save_packet.get('hydrated_from', {}),
+                'load_hydrated_sources': load_packet.get('hydrated_from', {}),
+                'load_view': _wizard_packet_view(command_runs['wizard_load_saved_draft']),
             },
         }
 
@@ -758,6 +870,17 @@ def run_ds_alias_coherence_probe() -> int:
                 'frame-d-alias-coherence',
                 '--json',
             ]),
+            'wizard_build_preview': _run_observerctl_cli([
+                'ds',
+                'wizard',
+                '--workflow',
+                'build',
+                '--hydrate-dataset',
+                '1',
+                '--section',
+                'report',
+                '--json',
+            ]),
             'wizard_build': _run_observerctl_cli([
                 'ds',
                 'wizard',
@@ -766,6 +889,19 @@ def run_ds_alias_coherence_probe() -> int:
                 '--hydrate-dataset',
                 '1',
                 '--execute',
+                '--json',
+            ]),
+            'wizard_train_preview': _run_observerctl_cli([
+                'ds',
+                'wizard',
+                '--workflow',
+                'train',
+                '--hydrate-dataset',
+                '1',
+                '--set',
+                'model_type=unsupervised',
+                '--section',
+                'report',
                 '--json',
             ]),
             'wizard_train': _run_observerctl_cli([
@@ -783,12 +919,27 @@ def run_ds_alias_coherence_probe() -> int:
         }
 
         register_packet = command_runs['register_authority_dataset'].get('stdout_json', {}) if isinstance(command_runs['register_authority_dataset'].get('stdout_json', {}), dict) else {}
+        build_preview_packet = _command_stdout_json(command_runs['wizard_build_preview'])
         build_packet = command_runs['wizard_build'].get('stdout_json', {}) if isinstance(command_runs['wizard_build'].get('stdout_json', {}), dict) else {}
+        train_preview_packet = _command_stdout_json(command_runs['wizard_train_preview'])
         train_packet = command_runs['wizard_train'].get('stdout_json', {}) if isinstance(command_runs['wizard_train'].get('stdout_json', {}), dict) else {}
 
         expected_alias = str(((register_packet.get('dataset', {}) if isinstance(register_packet.get('dataset', {}), dict) else {}).get('display_alias', '')) or '').strip()
         train_manifest_path = _resolve_probe_artifact_path(sandbox_root, str((train_packet.get('artifacts', {}) if isinstance(train_packet.get('artifacts', {}), dict) else {}).get('train_manifest', '') or ''))
 
+        command_runs['wizard_evaluate_preview'] = _run_observerctl_cli([
+            'ds',
+            'wizard',
+            '--workflow',
+            'evaluate',
+            '--hydrate-dataset',
+            '1',
+            '--hydrate-train',
+            str(train_manifest_path),
+            '--section',
+            'report',
+            '--json',
+        ])
         command_runs['wizard_evaluate'] = _run_observerctl_cli([
             'ds',
             'wizard',
@@ -799,6 +950,19 @@ def run_ds_alias_coherence_probe() -> int:
             '--hydrate-train',
             str(train_manifest_path),
             '--execute',
+            '--json',
+        ])
+        command_runs['wizard_score_preview'] = _run_observerctl_cli([
+            'ds',
+            'wizard',
+            '--workflow',
+            'score',
+            '--hydrate-dataset',
+            '1',
+            '--hydrate-train',
+            str(train_manifest_path),
+            '--section',
+            'report',
             '--json',
         ])
         command_runs['wizard_score'] = _run_observerctl_cli([
@@ -814,7 +978,9 @@ def run_ds_alias_coherence_probe() -> int:
             '--json',
         ])
 
+        evaluate_preview_packet = _command_stdout_json(command_runs['wizard_evaluate_preview'])
         evaluate_packet = command_runs['wizard_evaluate'].get('stdout_json', {}) if isinstance(command_runs['wizard_evaluate'].get('stdout_json', {}), dict) else {}
+        score_preview_packet = _command_stdout_json(command_runs['wizard_score_preview'])
         score_packet = command_runs['wizard_score'].get('stdout_json', {}) if isinstance(command_runs['wizard_score'].get('stdout_json', {}), dict) else {}
 
         alias_root = sandbox_root / 'docs' / 'reports' / 'collections' / expected_alias
@@ -871,6 +1037,14 @@ def run_ds_alias_coherence_probe() -> int:
 
         result_matrix = {
             'authority_dataset_registered': int(command_runs['register_authority_dataset'].get('returncode', 1)) == 0 and bool(expected_alias),
+            'build_preview_ready': int(command_runs['wizard_build_preview'].get('returncode', 1)) == 0 and str(build_preview_packet.get('execution_state', '')).strip().lower() == 'ready',
+            'train_preview_ready': int(command_runs['wizard_train_preview'].get('returncode', 1)) == 0 and str(train_preview_packet.get('execution_state', '')).strip().lower() == 'ready',
+            'evaluate_preview_ready': int(command_runs['wizard_evaluate_preview'].get('returncode', 1)) == 0 and str(evaluate_preview_packet.get('execution_state', '')).strip().lower() == 'ready',
+            'score_preview_ready': int(command_runs['wizard_score_preview'].get('returncode', 1)) == 0 and str(score_preview_packet.get('execution_state', '')).strip().lower() == 'ready',
+            'preview_packets_display_registered_alias': all(
+                _wizard_packet_view_contains(command_runs[name], expected_alias)
+                for name in ('wizard_build_preview', 'wizard_train_preview', 'wizard_evaluate_preview', 'wizard_score_preview')
+            ),
             'build_packet_go': str(build_packet.get('decision', '')).strip().lower() == 'go',
             'train_packet_go': str(train_packet.get('decision', '')).strip().lower() == 'go',
             'evaluate_packet_go': str(evaluate_packet.get('decision', '')).strip().lower() == 'go',
@@ -919,6 +1093,12 @@ def run_ds_alias_coherence_probe() -> int:
             }),
             'artifact_snapshots': {
                 'registered_dataset': register_packet.get('dataset', {}) if isinstance(register_packet.get('dataset', {}), dict) else {},
+                'preview_packets': {
+                    'build': build_preview_packet,
+                    'train': train_preview_packet,
+                    'evaluate': evaluate_preview_packet,
+                    'score': score_preview_packet,
+                },
                 'workflow_summary': {
                     workflow: {
                         'run_id': str(packet.get('run_id', '') or ''),
@@ -967,6 +1147,456 @@ def run_ds_alias_coherence_probe() -> int:
     finally:
         if original_project_anchor is not None:
             _restore_probe_observer_project(original_project_anchor, original_file)
+        if original_project_root is not None:
+            _restore_probe_environment(original_env, original_project_root)
+
+
+def run_ds_wizard_stale_state_continuity_probe() -> int:
+    from calamum_librarian import register_librarian_dataset_packet
+
+    run_id = 'frameb-ds-wizard-stale-state-continuity-{0}'.format(_utc_stamp())
+    run_dir = FRAMEB_DS_WIZARD_STALE_STATE_CONTINUITY_PROBE_DIR / 'runs' / run_id
+    run_index_jsonl = FRAMEB_DS_WIZARD_STALE_STATE_CONTINUITY_PROBE_DIR / 'run_index.jsonl'
+    run_dir.mkdir(parents=True, exist_ok=True)
+
+    original_env: Dict[str, Optional[str]] = {}
+    original_project_root = None
+    original_project_anchor = None
+    original_file = ''
+    try:
+        sandbox_root, _sandbox_log_dir, original_env, original_project_root = _seed_probe_environment(
+            run_dir=run_dir,
+            signing_key='frameb-ds-wizard-stale-state-continuity-signing-key',
+            security_report_title='# Frame B DS wizard stale-state continuity probe security report\n',
+        )
+        anchor, original_project_anchor, original_file = _bind_probe_observer_project(sandbox_root)
+
+        artifacts_dir = run_dir / 'artifacts'
+        artifacts_dir.mkdir(parents=True, exist_ok=True)
+
+        dataset_a_dir = sandbox_root / 'datasets' / 'stale_alpha'
+        dataset_b_dir = sandbox_root / 'datasets' / 'fresh_beta'
+        dataset_a_dir.mkdir(parents=True, exist_ok=True)
+        dataset_b_dir.mkdir(parents=True, exist_ok=True)
+
+        dataset_a_manifest = dataset_a_dir / 'dataset_manifest.json'
+        dataset_a_features = dataset_a_dir / 'features_alpha.csv'
+        dataset_a_labels = dataset_a_dir / 'labels_alpha.csv'
+        dataset_b_manifest = dataset_b_dir / 'dataset_manifest.json'
+        dataset_b_features = dataset_b_dir / 'features_beta.csv'
+        dataset_b_labels = dataset_b_dir / 'labels_beta.csv'
+        train_manifest = artifacts_dir / 'fresh_beta_train_manifest.json'
+        model_path = artifacts_dir / 'fresh_beta_model.pkl'
+
+        dataset_a_features.write_text('record_id,feature\na-1,0.1\n', encoding='utf-8')
+        dataset_a_labels.write_text('record_id,label\na-1,TV-0\n', encoding='utf-8')
+        dataset_b_features.write_text('record_id,feature\nb-1,0.9\n', encoding='utf-8')
+        dataset_b_labels.write_text('record_id,label\nb-1,TV-3\n', encoding='utf-8')
+        model_path.write_bytes(b'model')
+
+        _write_json(
+            dataset_a_manifest,
+            {
+                'features_csv': str(dataset_a_features),
+                'labels_csv': str(dataset_a_labels),
+                'has_labels': True,
+            },
+        )
+        _write_json(
+            dataset_b_manifest,
+            {
+                'features_csv': str(dataset_b_features),
+                'labels_csv': str(dataset_b_labels),
+                'has_labels': True,
+            },
+        )
+        _write_json(
+            train_manifest,
+            {
+                'dataset_manifest_path': str(dataset_b_manifest),
+                'model_path': str(model_path),
+                'model_type': 'unsupervised',
+            },
+        )
+
+        register_packet = register_librarian_dataset_packet(
+            anchor,
+            dataset_a_manifest,
+            access_class='local',
+            display_name='Frame B Stale Alpha',
+            run_id='frameb-stale-alpha',
+        )
+
+        state = observerctl_module._ds_wizard_new_state('evaluate')
+        observerctl_module._ds_wizard_hydrate_dataset_reference(state, '1')
+        observerctl_module._ds_wizard_hydrate_train_reference(state, str(train_manifest))
+
+        command_runs = {
+            'wizard_cross_hydrate_preview': _run_observerctl_cli([
+                'ds',
+                'wizard',
+                '--workflow',
+                'evaluate',
+                '--hydrate-dataset',
+                '1',
+                '--hydrate-train',
+                str(train_manifest),
+                '--section',
+                'report',
+                '--json',
+            ]),
+        }
+
+        preview_packet = _command_stdout_json(command_runs['wizard_cross_hydrate_preview'])
+        preview_view = _wizard_packet_view(command_runs['wizard_cross_hydrate_preview'])
+        command_preview = str(preview_packet.get('command_preview', '') or '').strip()
+        packet_artifacts = preview_packet.get('artifacts', {}) if isinstance(preview_packet.get('artifacts', {}), dict) else {}
+
+        result_matrix = {
+            'authority_dataset_registered': str(register_packet.get('decision', '')).strip().lower() == 'go',
+            'direct_train_hydration_refreshes_dataset_manifest': str(state.values.get('dataset_manifest', '') or '').strip() == str(dataset_b_manifest),
+            'direct_train_hydration_refreshes_features_csv': str(state.values.get('features_csv', '') or '').strip() == str(dataset_b_features),
+            'direct_train_hydration_refreshes_labels_csv': str(state.values.get('labels_csv', '') or '').strip() == str(dataset_b_labels),
+            'direct_train_hydration_refreshes_model_path': str(state.values.get('model_path', '') or '').strip() == str(model_path),
+            'preview_cli_returncode_zero': int(command_runs['wizard_cross_hydrate_preview'].get('returncode', 1)) == 0,
+            'preview_execution_ready': str(preview_packet.get('execution_state', '')).strip().lower() == 'ready',
+            'preview_dataset_manifest_matches_train_context': str(packet_artifacts.get('dataset_manifest', '') or '').strip() == str(dataset_b_manifest),
+            'preview_command_uses_refreshed_features': str(dataset_b_features) in command_preview and str(dataset_a_features) not in command_preview,
+            'preview_command_uses_refreshed_labels': str(dataset_b_labels) in command_preview and str(dataset_a_labels) not in command_preview,
+            'preview_view_lists_refreshed_dataset_and_model': dataset_b_manifest.name in '\n'.join(preview_view) and model_path.name in '\n'.join(preview_view),
+        }
+
+        report = {
+            'run_id': run_id,
+            'run_dir': _rel_to_repo(run_dir),
+            'probe_dir': _rel_to_repo(FRAMEB_DS_WIZARD_STALE_STATE_CONTINUITY_PROBE_DIR),
+            'script': _rel_to_repo(Path(__file__)),
+            'next_bite_result': _probe_result(result_matrix),
+            'command_runs': command_runs,
+            'artifact_paths': _report_path_map(
+                {
+                    'dataset_a_manifest': dataset_a_manifest,
+                    'dataset_a_features': dataset_a_features,
+                    'dataset_a_labels': dataset_a_labels,
+                    'dataset_b_manifest': dataset_b_manifest,
+                    'dataset_b_features': dataset_b_features,
+                    'dataset_b_labels': dataset_b_labels,
+                    'train_manifest': train_manifest,
+                    'model_path': model_path,
+                }
+            ),
+            'artifact_snapshots': {
+                'registered_dataset': register_packet,
+                'direct_state_after_cross_hydration': {
+                    'dataset_manifest': str(state.values.get('dataset_manifest', '') or ''),
+                    'features_csv': str(state.values.get('features_csv', '') or ''),
+                    'labels_csv': str(state.values.get('labels_csv', '') or ''),
+                    'model_path': str(state.values.get('model_path', '') or ''),
+                    'hydrated_from': dict(state.hydrated_from),
+                },
+                'preview_packet': preview_packet,
+            },
+            'result_matrix': result_matrix,
+            'findings': {
+                'preview_command': command_preview,
+                'preview_view': preview_view,
+                'hydrated_from': dict(state.hydrated_from),
+            },
+        }
+
+        report_json = run_dir / 'frameb_ds_wizard_stale_state_continuity_probe.json'
+        report_md = run_dir / 'frameb_ds_wizard_stale_state_continuity_probe.md'
+        _write_json(report_json, report)
+        report_md.write_text(_render_result_matrix_markdown('Frame B DS Wizard Stale-State Continuity Probe', report), encoding='utf-8')
+
+        _append_jsonl(
+            run_index_jsonl,
+            {
+                'run_id': run_id,
+                'timestamp_utc': _utc_stamp(),
+                'run_dir': _rel_to_repo(run_dir),
+                'report_json': _rel_to_repo(report_json),
+                'report_md': _rel_to_repo(report_md),
+                'next_bite_result': report['next_bite_result'],
+                'dataset_manifest': str(packet_artifacts.get('dataset_manifest', '') or ''),
+            },
+        )
+
+        print('run_id={0}'.format(run_id))
+        print('report_json={0}'.format(_rel_to_repo(report_json)))
+        print('report_md={0}'.format(_rel_to_repo(report_md)))
+        print('run_index={0}'.format(_rel_to_repo(run_index_jsonl)))
+        print('next_bite_result={0}'.format(report['next_bite_result']))
+        return 0
+    finally:
+        if original_project_anchor is not None:
+            _restore_probe_observer_project(original_project_anchor, original_file)
+        if original_project_root is not None:
+            _restore_probe_environment(original_env, original_project_root)
+
+
+def run_ds_wizard_labeled_eval_contract_coherence_probe() -> int:
+    from calamum_librarian import register_librarian_dataset_packet
+
+    run_id = 'frameb-ds-wizard-labeled-eval-contract-coherence-{0}'.format(_utc_stamp())
+    run_dir = FRAMEB_DS_WIZARD_LABELED_EVAL_CONTRACT_COHERENCE_PROBE_DIR / 'runs' / run_id
+    run_index_jsonl = FRAMEB_DS_WIZARD_LABELED_EVAL_CONTRACT_COHERENCE_PROBE_DIR / 'run_index.jsonl'
+    run_dir.mkdir(parents=True, exist_ok=True)
+
+    original_env: Dict[str, Optional[str]] = {}
+    original_project_root = None
+    original_project_anchor = None
+    original_file = ''
+    try:
+        sandbox_root, _sandbox_log_dir, original_env, original_project_root = _seed_probe_environment(
+            run_dir=run_dir,
+            signing_key='frameb-ds-wizard-labeled-eval-contract-coherence-signing-key',
+            security_report_title='# Frame B DS wizard labeled eval contract coherence probe security report\n',
+        )
+        anchor, original_project_anchor, original_file = _bind_probe_observer_project(sandbox_root)
+
+        artifacts_dir = run_dir / 'artifacts'
+        dataset_dir = sandbox_root / 'datasets' / 'labeled_contract'
+        dataset_dir.mkdir(parents=True, exist_ok=True)
+        artifacts_dir.mkdir(parents=True, exist_ok=True)
+
+        dataset_manifest = dataset_dir / 'dataset_manifest.json'
+        features_csv = dataset_dir / 'features.csv'
+        labels_csv = dataset_dir / 'labels.csv'
+        splits_csv = dataset_dir / 'splits.csv'
+        features_csv.write_text(
+            'record_id,feature\nr1,0.0\nr2,0.1\nr3,0.9\nr4,1.0\n',
+            encoding='utf-8',
+        )
+        labels_csv.write_text(
+            'record_id,label\nr1,TV-0\nr2,TV-0\nr3,TV-3\nr4,TV-3\n',
+            encoding='utf-8',
+        )
+        splits_csv.write_text(
+            'record_id,split\nr1,train\nr2,val\nr3,train\nr4,val\n',
+            encoding='utf-8',
+        )
+        _write_json(
+            dataset_manifest,
+            {
+                'features_csv': str(features_csv),
+                'labels_csv': str(labels_csv),
+                'splits_csv': str(splits_csv),
+                'feature_columns': ['feature'],
+                'total_records': 4,
+                'has_labels': True,
+            },
+        )
+
+        register_packet = register_librarian_dataset_packet(
+            anchor,
+            dataset_manifest,
+            access_class='local',
+            display_name='Frame B Labeled Contract',
+            run_id='frameb-labeled-contract',
+        )
+        train_packet = observerctl_module._ds_train(
+            dataset=str(dataset_manifest),
+            out_dir='',
+            model_type='supervised',
+            seed=42,
+        )
+        train_artifacts = dict(train_packet.get('artifacts', {}) or {}) if isinstance(train_packet.get('artifacts', {}), dict) else {}
+        train_manifest = _resolve_probe_artifact_path(sandbox_root, str(train_artifacts.get('train_manifest', '') or ''))
+
+        command_runs = {
+            'wizard_labeled_eval_execute': _run_observerctl_cli([
+                'ds',
+                'wizard',
+                '--workflow',
+                'evaluate',
+                '--hydrate-dataset',
+                '1',
+                '--hydrate-train',
+                str(train_manifest),
+                '--execute',
+                '--json',
+            ]),
+        }
+
+        evaluate_packet = _command_stdout_json(command_runs['wizard_labeled_eval_execute'])
+        evaluate_artifacts = dict(evaluate_packet.get('artifacts', {}) or {}) if isinstance(evaluate_packet.get('artifacts', {}), dict) else {}
+        run_json_path = _resolve_probe_artifact_path(sandbox_root, str(evaluate_artifacts.get('run_json', '') or ''))
+        run_json = _read_json(run_json_path) if run_json_path.exists() else {}
+        evaluation = run_json.get('evaluation', {}) if isinstance(run_json.get('evaluation', {}), dict) else {}
+        data = run_json.get('data', {}) if isinstance(run_json.get('data', {}), dict) else {}
+
+        result_matrix = {
+            'authority_dataset_registered': str(register_packet.get('decision', '')).strip().lower() == 'go',
+            'supervised_train_succeeds_on_label_column': str(train_packet.get('decision', '')).strip().lower() == 'go' and train_manifest.exists(),
+            'wizard_eval_execute_returncode_zero': int(command_runs['wizard_labeled_eval_execute'].get('returncode', 1)) == 0,
+            'wizard_eval_packet_go': str(evaluate_packet.get('decision', '')).strip().lower() == 'go',
+            'wizard_eval_packet_has_labels_true': bool(evaluate_packet.get('has_labels', False)) is True,
+            'wizard_eval_run_json_written': run_json_path.exists(),
+            'run_json_has_labels_true': bool(evaluation.get('has_labels', False)) is True,
+            'run_json_thresholding_is_labeled_mode': str(evaluation.get('thresholding', '') or '').strip() == 'fpr_constrained_best_f1',
+            'run_json_preserves_label_path': str(data.get('labels_csv', '') or '').strip() == str(labels_csv),
+            'run_json_preserves_dataset_manifest': str(data.get('dataset_manifest', '') or '').strip() == str(dataset_manifest),
+        }
+
+        report = {
+            'run_id': run_id,
+            'run_dir': _rel_to_repo(run_dir),
+            'probe_dir': _rel_to_repo(FRAMEB_DS_WIZARD_LABELED_EVAL_CONTRACT_COHERENCE_PROBE_DIR),
+            'script': _rel_to_repo(Path(__file__)),
+            'next_bite_result': _probe_result(result_matrix),
+            'command_runs': command_runs,
+            'artifact_paths': _report_path_map(
+                {
+                    'dataset_manifest': dataset_manifest,
+                    'features_csv': features_csv,
+                    'labels_csv': labels_csv,
+                    'splits_csv': splits_csv,
+                    'train_manifest': train_manifest,
+                    'run_json': run_json_path,
+                }
+            ),
+            'artifact_snapshots': {
+                'register_packet': register_packet,
+                'train_packet': train_packet,
+                'evaluate_packet': evaluate_packet,
+                'run_json': run_json,
+            },
+            'result_matrix': result_matrix,
+            'findings': {
+                'evaluation_summary': str(evaluate_packet.get('summary', '') or ''),
+                'evaluation_metrics': evaluation.get('metrics', {}),
+                'evaluation_counts': evaluation.get('counts', {}),
+            },
+        }
+
+        report_json = run_dir / 'frameb_ds_wizard_labeled_eval_contract_coherence_probe.json'
+        report_md = run_dir / 'frameb_ds_wizard_labeled_eval_contract_coherence_probe.md'
+        _write_json(report_json, report)
+        report_md.write_text(_render_result_matrix_markdown('Frame B DS Wizard Labeled Eval Contract Coherence Probe', report), encoding='utf-8')
+
+        _append_jsonl(
+            run_index_jsonl,
+            {
+                'run_id': run_id,
+                'timestamp_utc': _utc_stamp(),
+                'run_dir': _rel_to_repo(run_dir),
+                'report_json': _rel_to_repo(report_json),
+                'report_md': _rel_to_repo(report_md),
+                'next_bite_result': report['next_bite_result'],
+                'has_labels': bool(evaluate_packet.get('has_labels', False)),
+            },
+        )
+
+        print('run_id={0}'.format(run_id))
+        print('report_json={0}'.format(_rel_to_repo(report_json)))
+        print('report_md={0}'.format(_rel_to_repo(report_md)))
+        print('run_index={0}'.format(_rel_to_repo(run_index_jsonl)))
+        print('next_bite_result={0}'.format(report['next_bite_result']))
+        return 0
+    finally:
+        if original_project_anchor is not None:
+            _restore_probe_observer_project(original_project_anchor, original_file)
+        if original_project_root is not None:
+            _restore_probe_environment(original_env, original_project_root)
+
+
+def run_ds_wizard_blocked_execute_truthfulness_probe() -> int:
+    run_id = 'frameb-ds-wizard-blocked-execute-truthfulness-{0}'.format(_utc_stamp())
+    run_dir = FRAMEB_DS_WIZARD_BLOCKED_EXECUTE_TRUTHFULNESS_PROBE_DIR / 'runs' / run_id
+    run_index_jsonl = FRAMEB_DS_WIZARD_BLOCKED_EXECUTE_TRUTHFULNESS_PROBE_DIR / 'run_index.jsonl'
+    run_dir.mkdir(parents=True, exist_ok=True)
+
+    original_env: Dict[str, Optional[str]] = {}
+    original_project_root = None
+    try:
+        _sandbox_root, _sandbox_log_dir, original_env, original_project_root = _seed_probe_environment(
+            run_dir=run_dir,
+            signing_key='frameb-ds-wizard-blocked-execute-truthfulness-signing-key',
+            security_report_title='# Frame B DS wizard blocked execute truthfulness probe security report\n',
+        )
+
+        command_runs = {
+            'wizard_blocked_preview': _run_observerctl_cli([
+                'ds',
+                'wizard',
+                '--workflow',
+                'evaluate',
+                '--section',
+                'check',
+                '--json',
+            ]),
+            'wizard_blocked_execute': _run_observerctl_cli([
+                'ds',
+                'wizard',
+                '--workflow',
+                'evaluate',
+                '--execute',
+                '--json',
+            ]),
+        }
+
+        preview_packet = _command_stdout_json(command_runs['wizard_blocked_preview'])
+        execute_packet = _command_stdout_json(command_runs['wizard_blocked_execute'])
+        execute_artifacts = execute_packet.get('artifacts', {}) if isinstance(execute_packet.get('artifacts', {}), dict) else {}
+        validation_issues = _wizard_packet_validation_issues(command_runs['wizard_blocked_execute'])
+
+        result_matrix = {
+            'preview_cli_returncode_zero': int(command_runs['wizard_blocked_preview'].get('returncode', 1)) == 0,
+            'preview_reports_blocked_execution_state': str(preview_packet.get('execution_state', '')).strip().lower() == 'blocked',
+            'execute_packet_no_go': str(execute_packet.get('decision', '')).strip().lower() == 'no-go',
+            'execute_reason_code_is_validation_block': 'critical_check_failed:wizard_validation_blocked' in list(execute_packet.get('reason_codes', []) or []),
+            'execute_validation_issues_are_operator_legible': 'features_csv is required' in validation_issues,
+            'execute_packet_carries_command_preview': bool(str(execute_packet.get('command_preview', '') or '').strip()),
+            'execute_packet_claims_no_success_artifacts': not any(str(value or '').strip() for value in execute_artifacts.values()),
+            'execute_packet_stays_in_evaluate_lane': str(execute_packet.get('wizard_workflow', '')).strip() == 'evaluate',
+        }
+
+        report = {
+            'run_id': run_id,
+            'run_dir': _rel_to_repo(run_dir),
+            'probe_dir': _rel_to_repo(FRAMEB_DS_WIZARD_BLOCKED_EXECUTE_TRUTHFULNESS_PROBE_DIR),
+            'script': _rel_to_repo(Path(__file__)),
+            'next_bite_result': _probe_result(result_matrix),
+            'command_runs': command_runs,
+            'artifact_paths': _report_path_map({}),
+            'artifact_snapshots': {
+                'preview_packet': preview_packet,
+                'execute_packet': execute_packet,
+            },
+            'result_matrix': result_matrix,
+            'findings': {
+                'validation_issues': validation_issues,
+                'reason_codes': list(execute_packet.get('reason_codes', []) or []),
+                'command_preview': str(execute_packet.get('command_preview', '') or ''),
+            },
+        }
+
+        report_json = run_dir / 'frameb_ds_wizard_blocked_execute_truthfulness_probe.json'
+        report_md = run_dir / 'frameb_ds_wizard_blocked_execute_truthfulness_probe.md'
+        _write_json(report_json, report)
+        report_md.write_text(_render_result_matrix_markdown('Frame B DS Wizard Blocked Execute Truthfulness Probe', report), encoding='utf-8')
+
+        _append_jsonl(
+            run_index_jsonl,
+            {
+                'run_id': run_id,
+                'timestamp_utc': _utc_stamp(),
+                'run_dir': _rel_to_repo(run_dir),
+                'report_json': _rel_to_repo(report_json),
+                'report_md': _rel_to_repo(report_md),
+                'next_bite_result': report['next_bite_result'],
+                'decision': str(execute_packet.get('decision', '') or ''),
+            },
+        )
+
+        print('run_id={0}'.format(run_id))
+        print('report_json={0}'.format(_rel_to_repo(report_json)))
+        print('report_md={0}'.format(_rel_to_repo(report_md)))
+        print('run_index={0}'.format(_rel_to_repo(run_index_jsonl)))
+        print('next_bite_result={0}'.format(report['next_bite_result']))
+        return 0
+    finally:
         if original_project_root is not None:
             _restore_probe_environment(original_env, original_project_root)
 
@@ -2268,7 +2898,10 @@ def _definition_registry() -> Dict[str, Callable[[], int]]:
         'metadata-contract': run_metadata_contract_probe,
         'metadata-contract-regression': run_metadata_contract_regression_probe,
         'ds-wizard-hydration': run_ds_wizard_hydration_probe,
+        'ds-wizard-stale-state-continuity': run_ds_wizard_stale_state_continuity_probe,
         'ds-wizard-durability': run_ds_wizard_durability_probe,
+        'ds-wizard-labeled-eval-contract-coherence': run_ds_wizard_labeled_eval_contract_coherence_probe,
+        'ds-wizard-blocked-execute-truthfulness': run_ds_wizard_blocked_execute_truthfulness_probe,
         'ds-alias-coherence': run_ds_alias_coherence_probe,
         'baseline-monitor-runtime': run_baseline_monitor_runtime_probe,
         'validation-cycle-lineage': run_validation_cycle_lineage_probe,
@@ -2285,7 +2918,7 @@ def build_parser() -> argparse.ArgumentParser:
         'definition',
         nargs='?',
         default='feedback-loop',
-        help='Definition to run: feedback-loop, metadata-contract, metadata-contract-regression, ds-wizard-hydration, ds-wizard-durability, ds-alias-coherence, baseline-monitor-runtime, validation-cycle-lineage, baseline-monitor-restart-continuity, baseline-monitor-state-recovery, librarian-access-exchange, librarian-vault-controls',
+        help='Definition to run: feedback-loop, metadata-contract, metadata-contract-regression, ds-wizard-hydration, ds-wizard-stale-state-continuity, ds-wizard-durability, ds-wizard-labeled-eval-contract-coherence, ds-wizard-blocked-execute-truthfulness, ds-alias-coherence, baseline-monitor-runtime, validation-cycle-lineage, baseline-monitor-restart-continuity, baseline-monitor-state-recovery, librarian-access-exchange, librarian-vault-controls',
     )
     parser.add_argument(
         '--list-definitions',
@@ -2306,7 +2939,10 @@ def main(argv: Optional[List[str]] = None) -> int:
             'metadata-contract',
             'metadata-contract-regression',
             'ds-wizard-hydration',
+            'ds-wizard-stale-state-continuity',
             'ds-wizard-durability',
+            'ds-wizard-labeled-eval-contract-coherence',
+            'ds-wizard-blocked-execute-truthfulness',
             'ds-alias-coherence',
             'baseline-monitor-runtime',
             'validation-cycle-lineage',

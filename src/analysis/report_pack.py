@@ -16,6 +16,7 @@ from ._util import (
     default_run_root,
     ds_indexes_dir,
     find_project_root,
+    iter_jsonl,
     normalize_repo_or_absolute_path,
     sanitize_run_id,
 )
@@ -313,18 +314,144 @@ def _collection_alias_dataset_refs(
     return refs
 
 
-def resolve_collection_alias(
+def _normalized_collection_alias_dataset_ref(project_root: Path, ref: Any) -> str:
+    text = str(ref or '').strip()
+    if not text:
+        return ''
+    candidate = Path(text)
+    if not candidate.is_absolute():
+        candidate = project_root / candidate
+    try:
+        candidate = candidate.resolve()
+    except Exception:
+        pass
+    return normalize_repo_or_absolute_path(candidate, project_root)
+
+
+def _report_manifest_payload_from_index_entry(project_root: Path, entry: Mapping[str, Any]) -> Dict[str, Any]:
+    report_paths = entry.get('report_paths', {}) if isinstance(entry.get('report_paths', {}), MappingABC) else {}
+    manifest_ref = str(report_paths.get('manifest', '') or '').strip()
+    if not manifest_ref:
+        return {}
+    manifest_path = Path(manifest_ref)
+    if not manifest_path.is_absolute():
+        manifest_path = project_root / manifest_path
+    try:
+        manifest_path = manifest_path.resolve()
+    except Exception:
+        pass
+    if not manifest_path.exists():
+        return {}
+    try:
+        payload = json.loads(manifest_path.read_text(encoding='utf-8'))
+    except Exception:
+        return {}
+    return payload if isinstance(payload, dict) else {}
+
+
+def _collection_alias_looks_like_manifest_fallback(alias: str) -> bool:
+    token = sanitize_run_id(alias or '')
+    return bool(token) and token.startswith('dataset-')
+
+
+def _associated_dataset_manifest_collection_alias(
     *,
     project_anchor: Path,
     packet: Optional[Mapping[str, Any]] = None,
     artifact_paths: Optional[Mapping[str, Optional[Path]]] = None,
     context: Optional[Mapping[str, Any]] = None,
     lineage: Optional[Mapping[str, Any]] = None,
+    prefer_nonfallback: bool,
 ) -> str:
-    for mapping in (packet, context, lineage):
-        alias = _explicit_collection_alias(mapping)
-        if alias:
+    project_root = find_project_root(project_anchor)
+    manifest_refs = {
+        normalized
+        for normalized in (
+            _normalized_collection_alias_dataset_ref(project_root, manifest_ref)
+            for manifest_ref in _collection_alias_dataset_refs(packet, artifact_paths, context, lineage)
+        )
+        if normalized
+    }
+    if not manifest_refs:
+        return ''
+
+    ledger_path = ds_indexes_dir(project_anchor) / 'ds_run_index.jsonl'
+    if not ledger_path.exists():
+        return ''
+
+    preferred_fallback = ''
+    secondary_nonfallback = ''
+    secondary_fallback = ''
+
+    for line in iter_jsonl(ledger_path):
+        if not isinstance(line.obj, dict):
+            continue
+        entry = dict(line.obj)
+        alias = sanitize_run_id(str(entry.get('collection_alias', '') or '').strip())
+        if not alias:
+            continue
+
+        manifest_payload = _report_manifest_payload_from_index_entry(project_root, entry)
+        if not manifest_payload:
+            continue
+
+        candidate_refs = {
+            normalized
+            for normalized in (
+                _normalized_collection_alias_dataset_ref(project_root, manifest_ref)
+                for manifest_ref in _collection_alias_dataset_refs(
+                    manifest_payload,
+                    manifest_payload.get('artifacts', {}) if isinstance(manifest_payload.get('artifacts', {}), MappingABC) else {},
+                    manifest_payload.get('context', {}) if isinstance(manifest_payload.get('context', {}), MappingABC) else {},
+                    manifest_payload.get('lineage', {}) if isinstance(manifest_payload.get('lineage', {}), MappingABC) else {},
+                )
+            )
+            if normalized
+        }
+        if not (manifest_refs & candidate_refs):
+            continue
+
+        workflow = canonical_ds_workflow_name(str(manifest_payload.get('workflow', '') or entry.get('workflow', '') or '').strip())
+        is_preferred_workflow = workflow in {'build', 'pipeline'}
+        is_fallback = _collection_alias_looks_like_manifest_fallback(alias)
+
+        if is_preferred_workflow and not is_fallback:
             return alias
+        if is_preferred_workflow:
+            if not preferred_fallback:
+                preferred_fallback = alias
+            continue
+        if not is_fallback:
+            if not secondary_nonfallback:
+                secondary_nonfallback = alias
+            continue
+        if not secondary_fallback:
+            secondary_fallback = alias
+
+    if prefer_nonfallback:
+        return secondary_nonfallback
+    return preferred_fallback or secondary_nonfallback or secondary_fallback
+
+
+def _dataset_manifest_collection_alias(
+    *,
+    project_anchor: Path,
+    packet: Optional[Mapping[str, Any]] = None,
+    artifact_paths: Optional[Mapping[str, Optional[Path]]] = None,
+    context: Optional[Mapping[str, Any]] = None,
+    lineage: Optional[Mapping[str, Any]] = None,
+    prefer_nonfallback: bool,
+) -> str:
+    associated_alias = _associated_dataset_manifest_collection_alias(
+        project_anchor=project_anchor,
+        packet=packet,
+        artifact_paths=artifact_paths,
+        context=context,
+        lineage=lineage,
+        prefer_nonfallback=prefer_nonfallback,
+    )
+    if associated_alias:
+        return associated_alias
 
     try:
         from calamum_librarian import dataset_display_alias_for_manifest
@@ -334,11 +461,50 @@ def resolve_collection_alias(
     if dataset_display_alias_for_manifest is None:
         return ''
 
+    fallback_alias = ''
     for manifest_ref in _collection_alias_dataset_refs(packet, artifact_paths, context, lineage):
         alias = sanitize_run_id(dataset_display_alias_for_manifest(project_anchor, manifest_ref) or '')
+        if not alias:
+            continue
+        if not _collection_alias_looks_like_manifest_fallback(alias):
+            return alias
+        if not fallback_alias:
+            fallback_alias = alias
+    return '' if prefer_nonfallback else fallback_alias
+
+
+def resolve_collection_alias(
+    *,
+    project_anchor: Path,
+    packet: Optional[Mapping[str, Any]] = None,
+    artifact_paths: Optional[Mapping[str, Optional[Path]]] = None,
+    context: Optional[Mapping[str, Any]] = None,
+    lineage: Optional[Mapping[str, Any]] = None,
+) -> str:
+    dataset_alias = _dataset_manifest_collection_alias(
+        project_anchor=project_anchor,
+        packet=packet,
+        artifact_paths=artifact_paths,
+        context=context,
+        lineage=lineage,
+        prefer_nonfallback=True,
+    )
+    if dataset_alias:
+        return dataset_alias
+
+    for mapping in (packet, context, lineage):
+        alias = _explicit_collection_alias(mapping)
         if alias:
             return alias
-    return ''
+
+    return _dataset_manifest_collection_alias(
+        project_anchor=project_anchor,
+        packet=packet,
+        artifact_paths=artifact_paths,
+        context=context,
+        lineage=lineage,
+        prefer_nonfallback=False,
+    )
 
 
 def _packet_result_payload(packet: Mapping[str, Any], project_root: Path) -> Dict[str, Any]:

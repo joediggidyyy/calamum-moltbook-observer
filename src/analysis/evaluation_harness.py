@@ -107,7 +107,7 @@ def _read_labels(path: Path) -> Dict[str, str]:
         r = csv.DictReader(f)
         for row in r:
             rid = (row.get('record_id') or '').strip()
-            tv = (row.get('tv_id') or '').strip()
+            tv = (row.get('tv_id') or row.get('label') or '').strip()
             if rid and tv:
                 out[rid] = tv
     return out

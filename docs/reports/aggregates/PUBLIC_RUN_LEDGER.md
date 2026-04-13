@@ -17,33 +17,34 @@ This ledger defines the current public reporting population and provides a runti
 ## Current runtime-safe headline
 
 - Publish root: `docs/reports`
-- Published runs: 4
-- Collection aliases represented: 2
+- Published runs: 13
+- Collection aliases represented: 3
 - Workflow families represented: 4
-- Threshold-bearing packets: 1
-- Latest packet: [can-r4ccf](../collections/can-r4ccf/collection/20260412T183143055972Z.collection.md)
+- Threshold-bearing packets: 4
+- Latest packet: [liv-rd3bb](../collections/liv-rd3bb/collection/20260413T073446351438Z.collection.md)
 
 ## Current lane census
 
 | Workflow | Published packets | Latest collection | Latest packet |
 |---|---:|---|---|
-| build | 1 | `can-r0b70` | [20260412T181142763215Z.build.md](../collections/can-r0b70/processing/build/20260412T181142763215Z.build.md) |
-| evaluate | 1 | `can-r4ccf` | [20260412T182621255204Z.eval.md](../collections/can-r4ccf/processing/eval/20260412T182621255204Z.eval.md) |
-| score | 1 | `can-r4ccf` | [20260412T183143055972Z.score.md](../collections/can-r4ccf/processing/score/20260412T183143055972Z.score.md) |
-| train | 1 | `can-r4ccf` | [20260412T181602715320Z.train.md](../collections/can-r4ccf/processing/train/20260412T181602715320Z.train.md) |
+| build | 3 | `liv-rd3bb` | [20260413T024620493383Z.build.md](../collections/liv-rd3bb/processing/build/20260413T024620493383Z.build.md) |
+| evaluate | 4 | `liv-rd3bb` | [20260413T073446351438Z.eval.md](../collections/liv-rd3bb/processing/eval/20260413T073446351438Z.eval.md) |
+| score | 1 | `can-r0b70` | [20260412T183143055972Z.score.md](../collections/can-r0b70/processing/score/20260412T183143055972Z.score.md) |
+| train | 5 | `liv-rd3bb` | [20260413T073300032775Z.train.md](../collections/liv-rd3bb/processing/train/20260413T073300032775Z.train.md) |
 
 ## Publication-family census
 
 | Collection alias | Source / mode | Published packets | Latest packet date | Latest stages | Collection packet |
 |---|---|---:|---|---|---|
-| `can-r4ccf` | runtime-unspecified | 3 | 2026-04-12T18:31:43.055972Z | evaluate, score, train | [collection packet](../collections/can-r4ccf/collection/20260412T183143055972Z.collection.md) |
-| `can-r0b70` | runtime-unspecified | 1 | 2026-04-12T18:11:42.763215Z | build | [collection packet](../collections/can-r0b70/collection/20260412T181142763215Z.collection.md) |
+| `liv-rd3bb` | runtime-unspecified | 5 | 2026-04-13T07:34:46.351438Z | build, evaluate, train | [collection packet](../collections/liv-rd3bb/collection/20260413T073446351438Z.collection.md) |
+| `liv-r8bc9` | runtime-unspecified | 2 | 2026-04-13T02:41:19.308328Z | build, train | [collection packet](../collections/liv-r8bc9/collection/20260413T024119308328Z.collection.md) |
+| `can-r0b70` | runtime-unspecified | 6 | 2026-04-13T01:28:01.395015Z | build, evaluate, score, train | [collection packet](../collections/can-r0b70/collection/20260413T012801395015Z.collection.md) |
 
 ## Publication-source census
 
 | Source | Mode | Published packets |
 |---|---|---:|
-| unspecified | unspecified | 4 |
+| unspecified | unspecified | 13 |
 
 ## Interpretive notes
 

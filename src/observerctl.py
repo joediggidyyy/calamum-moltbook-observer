@@ -11356,10 +11356,18 @@ def _ds_wizard_hydrate_train_manifest(state: _DSWizardState, manifest_path: Path
     state.values['train_manifest'] = str(manifest_path)
     state.hydrated_from['train_manifest'] = 'train_manifest'
     dataset_manifest_ref = str(payload.get('dataset_manifest_path', '') or '').strip()
+    dataset_manifest_value = ''
     if dataset_manifest_ref:
         dataset_manifest_path = _resolve_existing_reference_path(dataset_manifest_ref, manifest_path.parent)
-        state.values['dataset_manifest'] = str(dataset_manifest_path or dataset_manifest_ref).strip()
-        state.hydrated_from['dataset_manifest'] = 'train_manifest'
+        dataset_manifest_value = str(dataset_manifest_path or dataset_manifest_ref).strip()
+        if dataset_manifest_path is not None:
+            state = _ds_wizard_hydrate_dataset_manifest(state, dataset_manifest_path)
+            for key in ('dataset_manifest', 'features_csv', 'labels_csv'):
+                if key in state.hydrated_from:
+                    state.hydrated_from[key] = 'train_manifest'
+        else:
+            state.values['dataset_manifest'] = dataset_manifest_value
+            state.hydrated_from['dataset_manifest'] = 'train_manifest'
     model_path_ref = str(payload.get('model_path', '') or '').strip()
     if model_path_ref:
         model_path = _resolve_existing_reference_path(model_path_ref, manifest_path.parent)
@@ -11368,6 +11376,23 @@ def _ds_wizard_hydrate_train_manifest(state: _DSWizardState, manifest_path: Path
     if str(payload.get('model_type', '')).strip():
         state.values['model_type'] = str(payload.get('model_type')).strip()
         state.hydrated_from['model_type'] = 'train_manifest'
+    dataset_alias = str(payload.get('collection_alias', '') or payload.get('dataset_alias', '') or '').strip()
+    if not dataset_alias and dataset_manifest_value:
+        try:
+            from analysis.report_pack import resolve_collection_alias as _resolve_report_collection_alias
+
+            dataset_alias = _resolve_report_collection_alias(
+                project_anchor=_project_anchor(),
+                packet=payload,
+                artifact_paths={'dataset_manifest': dataset_manifest_value},
+                context={'collection_alias': dataset_alias},
+                lineage={'dataset_manifest': dataset_manifest_value},
+            )
+        except Exception:
+            dataset_alias = ''
+    if dataset_alias:
+        state.values['dataset_alias'] = dataset_alias
+        state.hydrated_from['dataset_alias'] = 'train_manifest'
     state.last_action = 'hydrate:train_manifest'
     _ds_wizard_set_transient_lines(
         state,
@@ -11555,6 +11580,10 @@ def _ds_wizard_hydrate_train_reference(state: _DSWizardState, train_ref: str) ->
     for key in ('train_manifest', 'dataset_manifest', 'model_path', 'model_type'):
         if key in state.hydrated_from:
             state.hydrated_from[key] = 'saved_train'
+    dataset_alias = _ds_wizard_dataset_alias(entry)
+    if dataset_alias:
+        state.values['dataset_alias'] = dataset_alias
+        state.hydrated_from['dataset_alias'] = 'saved_train'
     _ds_wizard_apply_context_metadata(
         state,
         entry.get('source', ''),
@@ -12058,7 +12087,11 @@ def _ds_wizard_sync_execution_artifacts(state: _DSWizardState, packet: Dict[str,
     if workflow == 'train':
         train_manifest_path = _resolve_existing_reference_path(_ds_wizard_packet_artifact_text(packet, 'train_manifest'))
         if train_manifest_path is not None:
+            dataset_alias = str(packet.get('collection_alias', '') or state.values.get('dataset_alias', '') or '').strip()
             state = _ds_wizard_hydrate_train_manifest(state, train_manifest_path)
+            if dataset_alias:
+                state.values['dataset_alias'] = dataset_alias
+                state.hydrated_from['dataset_alias'] = 'wizard_execute'
             for key in ('train_manifest', 'dataset_manifest', 'model_path', 'model_type'):
                 if key in state.hydrated_from:
                     state.hydrated_from[key] = 'wizard_execute'
@@ -12071,15 +12104,22 @@ def _ds_wizard_sync_execution_artifacts(state: _DSWizardState, packet: Dict[str,
     if workflow == 'score':
         return state
     if workflow == 'run-pipeline':
+        dataset_alias = str(packet.get('collection_alias', '') or state.values.get('dataset_alias', '') or '').strip()
         dataset_manifest_path = _resolve_existing_reference_path(_ds_wizard_packet_artifact_text(packet, 'dataset_manifest'))
         if dataset_manifest_path is not None:
             state = _ds_wizard_hydrate_dataset_manifest(state, dataset_manifest_path)
+            if dataset_alias:
+                state.values['dataset_alias'] = dataset_alias
+                state.hydrated_from['dataset_alias'] = 'wizard_execute'
             for key in ('dataset_manifest', 'features_csv', 'labels_csv'):
                 if key in state.hydrated_from:
                     state.hydrated_from[key] = 'wizard_execute'
         train_manifest_path = _resolve_existing_reference_path(_ds_wizard_packet_artifact_text(packet, 'train_manifest'))
         if train_manifest_path is not None:
             state = _ds_wizard_hydrate_train_manifest(state, train_manifest_path)
+            if dataset_alias:
+                state.values['dataset_alias'] = dataset_alias
+                state.hydrated_from['dataset_alias'] = 'wizard_execute'
             for key in ('train_manifest', 'dataset_manifest', 'model_path', 'model_type'):
                 if key in state.hydrated_from:
                     state.hydrated_from[key] = 'wizard_execute'
@@ -12208,24 +12248,158 @@ def _ds_wizard_output_preview(state: _DSWizardState) -> Dict[str, Any]:
     return preview
 
 
-def _ds_wizard_report_row_labels(workflow: str) -> List[str]:
-    if not str(workflow or '').strip():
+_DS_WIZARD_REPORT_ROW_ORDER: Tuple[str, ...] = (
+    'report json',
+    'report md',
+    'dataset manifest',
+    'features csv',
+    'labels csv',
+    'train manifest',
+    'model artifact',
+    'metrics json',
+    'run json',
+    'run md',
+    'scores csv',
+    'threshold report json',
+    'threshold report md',
+)
+
+
+def _ds_wizard_output_preview_values(state: _DSWizardState) -> Dict[str, str]:
+    preview = _ds_wizard_output_preview(state)
+    if not isinstance(preview, dict) or not preview:
+        return {}
+
+    values: Dict[str, str] = {}
+    workflow = str(preview.get('workflow', '') or state.workflow or '').strip().lower()
+    effective_run_root_text = str(preview.get('effective_run_root', '') or '').strip()
+    effective_run_root = Path(effective_run_root_text) if effective_run_root_text else None
+    artifact_targets = {
+        str(label or '').strip().lower(): str(path or '').strip()
+        for label, path in preview.get('artifact_targets', [])
+        if isinstance(label, str)
+    }
+
+    _ds_wizard_apply_report_artifact(values, 'report json', preview.get('report_json', ''))
+    _ds_wizard_apply_report_artifact(values, 'report md', preview.get('report_md', ''))
+
+    if workflow == 'build':
+        _ds_wizard_apply_report_artifact(values, 'dataset manifest', artifact_targets.get('dataset manifest', ''))
+        _ds_wizard_apply_report_artifact(values, 'features csv', artifact_targets.get('features csv', ''))
+        return values
+
+    if workflow == 'train':
+        model_dir_text = artifact_targets.get('model dir', '')
+        _ds_wizard_apply_report_artifact(values, 'train manifest', artifact_targets.get('train manifest', ''))
+        _ds_wizard_apply_report_artifact(values, 'metrics json', artifact_targets.get('metrics path', ''))
+        if model_dir_text:
+            _ds_wizard_apply_report_artifact(values, 'model artifact', Path(model_dir_text) / 'model.pkl')
+        return values
+
+    if workflow == 'evaluate':
+        _ds_wizard_apply_report_artifact(values, 'run json', artifact_targets.get('run json', ''))
+        _ds_wizard_apply_report_artifact(values, 'run md', artifact_targets.get('run md', ''))
+        if effective_run_root is not None and str(state.values.get('model_type', '') or '').strip().lower() == 'unsupervised':
+            scoring_dir = effective_run_root / 'scoring'
+            _ds_wizard_apply_report_artifact(values, 'scores csv', scoring_dir / 'scores.csv')
+            _ds_wizard_apply_report_artifact(values, 'threshold report json', scoring_dir / 'threshold_report.json')
+            _ds_wizard_apply_report_artifact(values, 'threshold report md', scoring_dir / 'threshold_report.md')
+        return values
+
+    if workflow == 'score':
+        _ds_wizard_apply_report_artifact(values, 'scores csv', artifact_targets.get('scores csv', ''))
+        return values
+
+    if workflow == 'pipeline' and effective_run_root is not None:
+        model_type = str(state.values.get('model_type', 'supervised') or 'supervised').strip() or 'supervised'
+        dataset_dir = effective_run_root / 'dataset'
+        model_dir = effective_run_root / 'models' / model_type
+        evaluation_dir = effective_run_root / 'evaluation'
+        _ds_wizard_apply_report_artifact(values, 'dataset manifest', dataset_dir / 'dataset_manifest.json')
+        _ds_wizard_apply_report_artifact(values, 'features csv', dataset_dir / 'features.csv')
+        _ds_wizard_apply_report_artifact(values, 'train manifest', model_dir / 'train_manifest.json')
+        _ds_wizard_apply_report_artifact(values, 'model artifact', model_dir / 'model.pkl')
+        _ds_wizard_apply_report_artifact(values, 'metrics json', model_dir / 'metrics.json')
+        _ds_wizard_apply_report_artifact(values, 'run json', evaluation_dir / 'run.json')
+        _ds_wizard_apply_report_artifact(values, 'run md', evaluation_dir / 'run.md')
+        if model_type == 'unsupervised':
+            scoring_dir = effective_run_root / 'scoring'
+            _ds_wizard_apply_report_artifact(values, 'scores csv', scoring_dir / 'scores.csv')
+            _ds_wizard_apply_report_artifact(values, 'threshold report json', scoring_dir / 'threshold_report.json')
+            _ds_wizard_apply_report_artifact(values, 'threshold report md', scoring_dir / 'threshold_report.md')
+        return values
+
+    return values
+
+
+def _ds_wizard_report_row_labels(state: _DSWizardState, values: Dict[str, str]) -> List[str]:
+    workflow = str(state.workflow or '').strip().lower()
+    if not workflow:
         return []
-    return [
-        'report json',
-        'report md',
-        'dataset manifest',
-        'features csv',
-        'labels csv',
-        'train manifest',
-        'model artifact',
-        'metrics json',
-        'run json',
-        'run md',
-        'scores csv',
-        'threshold report json',
-        'threshold report md',
-    ]
+
+    labels: List[str] = []
+    seen: set[str] = set()
+
+    def add(label: str, include: bool = True) -> None:
+        token = str(label or '').strip().lower()
+        if not include or not token or token in seen:
+            return
+        labels.append(token)
+        seen.add(token)
+
+    add('report json')
+    add('report md')
+
+    if workflow == 'build':
+        add('dataset manifest')
+        add('features csv')
+        add('labels csv', bool(values.get('labels csv', '')))
+        return labels
+
+    if workflow == 'train':
+        add('dataset manifest')
+        add('features csv', bool(values.get('features csv', '')))
+        add('labels csv', bool(values.get('labels csv', '')))
+        add('train manifest')
+        add('model artifact')
+        add('metrics json')
+        return labels
+
+    if workflow == 'evaluate':
+        add('dataset manifest')
+        add('features csv')
+        add('labels csv', bool(values.get('labels csv', '')))
+        add('train manifest', bool(values.get('train manifest', '')))
+        add('model artifact')
+        add('run json')
+        add('run md')
+        add('scores csv', bool(values.get('scores csv', '')))
+        add('threshold report json', bool(values.get('threshold report json', '')))
+        add('threshold report md', bool(values.get('threshold report md', '')))
+        return labels
+
+    if workflow == 'score':
+        add('dataset manifest')
+        add('train manifest', bool(values.get('train manifest', '')))
+        add('model artifact')
+        add('scores csv')
+        return labels
+
+    if workflow == 'run-pipeline':
+        add('dataset manifest')
+        add('features csv')
+        add('labels csv', bool(values.get('labels csv', '')))
+        add('train manifest')
+        add('model artifact')
+        add('metrics json')
+        add('run json')
+        add('run md')
+        add('scores csv', bool(values.get('scores csv', '')))
+        add('threshold report json', bool(values.get('threshold report json', '')))
+        add('threshold report md', bool(values.get('threshold report md', '')))
+        return labels
+
+    return [label for label in _DS_WIZARD_REPORT_ROW_ORDER if values.get(label, '')]
 
 
 def _ds_wizard_report_filename(path_text: Any) -> str:
@@ -12488,12 +12662,15 @@ def _ds_wizard_output_preview_lines(state: _DSWizardState) -> List[str]:
     workflow = str(state.workflow or '').strip()
     if not workflow:
         return []
-    labels = _ds_wizard_report_row_labels(workflow)
+    values = _ds_wizard_report_values(state)
+    preview_values = _ds_wizard_output_preview_values(state)
+    merged_values = dict(preview_values)
+    merged_values.update(values)
+    labels = _ds_wizard_report_row_labels(state, merged_values)
     if not labels:
         return []
-    values = _ds_wizard_report_values(state)
     return _ds_wizard_report_render_rows(
-        [(label, values.get(label, '')) for label in labels],
+        [(label, merged_values.get(label, '')) for label in labels],
         min_label_width=18,
         max_label_width=20,
         indent='  ',
@@ -15106,13 +15283,21 @@ def _build_parser() -> argparse.ArgumentParser:
     op_bootstrap = ops_sub.add_parser('bootstrap', help='Create or validate the shipped local runtime roots')
     op_bootstrap.add_argument('--check', action='store_true', help='Validate only; do not create missing roots')
 
-    op_keysmith = ops_sub.add_parser('keysmith', help='KEYSMITH readiness and mint surface')
+    op_keysmith = ops_sub.add_parser(
+        'keysmith',
+        help='KEYSMITH readiness and sandbox mint surface',
+        description='KEYSMITH readiness and sandbox-contained mint surface for security-adjacent transaction proof. Promotion review expects the sandbox artifact set to stay version-matched to the live candidate build.',
+    )
     op_keysmith.add_argument('--venue', default='moltbook', help='Venue profile stub (currently only moltbook)')
     op_keysmith_sub = op_keysmith.add_subparsers(dest='keysmith_cmd', required=False)
-    op_keysmith_mint = op_keysmith_sub.add_parser('mint', help='Mint a claim-url plus sealed-drop KEYSMITH artifact set')
+    op_keysmith_mint = op_keysmith_sub.add_parser(
+        'mint',
+        help='Mint a claim-url plus sealed-drop KEYSMITH artifact set',
+        description='Mint a KEYSMITH claim-url plus sealed-drop artifact set. Non-dry-run minting is a sandbox-contained proof surface, and the resulting artifact set should remain version-matched to the live candidate build under review.',
+    )
     op_keysmith_mint.add_argument('--venue', default='moltbook', help='Venue profile stub (currently only moltbook)')
-    op_keysmith_mint.add_argument('--dry-run', action='store_true')
-    op_keysmith_mint.add_argument('--output-dir', default='')
+    op_keysmith_mint.add_argument('--dry-run', action='store_true', help='Preview the mint plan without requiring sandbox execution or sealed artifact emission')
+    op_keysmith_mint.add_argument('--output-dir', default='', help='Optional output root; sandbox-contained runs normally retain artifacts under local_untracked/')
     op_keysmith_mint.add_argument('--base-url', default='')
     op_keysmith_mint.add_argument('--register-path', default='')
     op_keysmith_mint.add_argument('--allow-host', action='append', default=[])

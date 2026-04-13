@@ -24,7 +24,7 @@ from ._util import (
     sanitize_run_id,
     utc_now_iso,
 )
-from .report_pack import _normalize_json_value, _report_markdown
+from .report_pack import _normalize_json_value, _report_markdown, resolve_collection_alias as _resolve_report_collection_alias
 
 
 PUBLISHED_REPORT_REQUIRED_KEYS = ('markdown', 'json', 'manifest')
@@ -2343,7 +2343,13 @@ def _resolve_collection_alias(
     project_anchor: Path,
     fallback_run_id: str,
 ) -> str:
-    return _manifest_collection_alias(manifest_payload)
+    return _resolve_report_collection_alias(
+        project_anchor=project_anchor,
+        packet=manifest_payload,
+        artifact_paths=manifest_payload.get('artifacts', {}) if isinstance(manifest_payload.get('artifacts', {}), dict) else {},
+        context=manifest_payload.get('context', {}) if isinstance(manifest_payload.get('context', {}), dict) else {},
+        lineage=manifest_payload.get('lineage', {}) if isinstance(manifest_payload.get('lineage', {}), dict) else {},
+    )
 
 
 def _write_collection_reports(candidates: List[Dict[str, Any]], project_root: Path) -> None:
