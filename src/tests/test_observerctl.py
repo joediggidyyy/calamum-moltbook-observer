@@ -286,6 +286,63 @@ def _make_ds_records() -> list[dict]:
     return records
 
 
+def _make_real_tv_review_records() -> list[dict]:
+    return [
+        {
+            'timestamp': '2026-02-10T00:00:00Z',
+            'type': 'post',
+            'author_hash': 'good' * 4,
+            'content_length': 48,
+            'content_length_words': 8,
+            'has_code_block': False,
+            'code_block_count': 0,
+            'has_link': False,
+            'link_count': 0,
+            'tags_count': 0,
+            'mentions_count': 0,
+            'line_count': 2,
+            'question_count': 0,
+            'exclamation_count': 0,
+            'contains_ignore_previous': False,
+            'contains_system_prompt_reference': False,
+            'contains_developer_message_reference': False,
+            'contains_env_var_reference': False,
+            'prompt_injection_score': 0,
+            'matched_pattern_count': 0,
+            'f_complexity': 0.01,
+            'f_code_density': 0.0,
+            'f_toxicity': 0,
+            'f_timestamp_epoch': 1.0,
+        },
+        {
+            'timestamp': '2026-02-10T00:00:01Z',
+            'type': 'post',
+            'author_hash': 'risk' * 4,
+            'content_length': 220,
+            'content_length_words': 30,
+            'has_code_block': True,
+            'code_block_count': 1,
+            'has_link': True,
+            'link_count': 1,
+            'tags_count': 1,
+            'mentions_count': 1,
+            'line_count': 6,
+            'question_count': 1,
+            'exclamation_count': 0,
+            'contains_ignore_previous': True,
+            'contains_system_prompt_reference': True,
+            'contains_developer_message_reference': False,
+            'contains_env_var_reference': False,
+            'prompt_injection_score': 2,
+            'matched_pattern_count': 1,
+            'f_complexity': 0.7,
+            'f_code_density': 0.3,
+            'f_toxicity': 1,
+            'f_timestamp_epoch': 2.0,
+        },
+    ]
+
+
 def test_observerctl_top_level_help_exposes_ds_namespace(capsys) -> None:
     parser = observerctl_module._build_parser()
 
@@ -1095,7 +1152,214 @@ def test_ds_wizard_build_execute_marks_build_go_and_train_stays_no_go(tmp_path: 
     report_lines = [' '.join(strip_ansi(line).split()) for line in observerctl_module._ds_wizard_render(state)]
     assert any(line == 'dataset manifest: dataset_manifest.json' for line in report_lines)
     assert any(line == 'features csv: features.csv' for line in report_lines)
-    assert any(line == 'labels csv: labels.csv' for line in report_lines)
+
+
+def test_ds_wizard_build_sync_preserves_collection_alias_from_build_packet(tmp_path: Path) -> None:
+    features_csv = tmp_path / 'features.csv'
+    dataset_manifest = tmp_path / 'dataset_manifest.json'
+
+    features_csv.write_text('record_id,feature\n1,0.1\n', encoding='utf-8')
+    dataset_manifest.write_text(json.dumps({
+        'features_csv': str(features_csv),
+        'total_records': 1,
+        'has_labels': False,
+    }), encoding='utf-8')
+
+    state = observerctl_module._ds_wizard_new_state('build')
+    state.values['dataset_alias'] = ''
+
+    synced = observerctl_module._ds_wizard_sync_execution_artifacts(
+        state,
+        {
+            'artifacts': {'dataset_manifest': str(dataset_manifest)},
+            'collection_alias': 'can-shared-build',
+        },
+    )
+
+    assert synced.values['dataset_manifest'] == str(dataset_manifest)
+    assert synced.values['dataset_alias'] == 'can-shared-build'
+    assert synced.hydrated_from['dataset_manifest'] == 'wizard_execute'
+
+
+def test_ds_wizard_attempt_execute_threads_collection_alias_to_downstream_workflows(tmp_path: Path, monkeypatch) -> None:
+    features_csv = tmp_path / 'features.csv'
+    labels_csv = tmp_path / 'labels.csv'
+    splits_csv = tmp_path / 'splits.csv'
+    split_manifest_json = tmp_path / 'split_manifest.json'
+    dataset_manifest = tmp_path / 'dataset_manifest.json'
+    model_path = tmp_path / 'model.pkl'
+    train_manifest = tmp_path / 'train_manifest.json'
+
+    features_csv.write_text('record_id,feature\n1,0.1\n', encoding='utf-8')
+    labels_csv.write_text('record_id,label\n1,1\n', encoding='utf-8')
+    splits_csv.write_text('record_id,split\n1,train\n', encoding='utf-8')
+    split_manifest_json.write_text(json.dumps({'split': 'ok'}), encoding='utf-8')
+    dataset_manifest.write_text(json.dumps({
+        'features_csv': str(features_csv),
+        'labels_csv': str(labels_csv),
+        'splits_csv': str(splits_csv),
+        'split_manifest_json': str(split_manifest_json),
+        'feature_columns': ['feature'],
+        'total_records': 1,
+        'has_labels': True,
+    }), encoding='utf-8')
+    model_path.write_bytes(b'model')
+    train_manifest.write_text(json.dumps({'model_path': str(model_path)}), encoding='utf-8')
+
+    captured_calls = []
+
+    def _fake_train(dataset: str, out_dir: str, model_type: str, seed: int, collection_alias: str = '') -> Dict[str, Any]:
+        captured_calls.append(('train', collection_alias, dataset))
+        return {
+            'timestamp_utc': '2026-04-12T12:00:00Z',
+            'decision': 'go',
+            'action': 'ds-train',
+            'summary': 'train ok',
+            'run_id': 'train-run-001',
+            'artifacts': {},
+            'reason_codes': [],
+        }
+
+    def _fake_evaluate(features_csv: str, labels_csv: str, dataset_manifest: str, max_fpr: float, out_dir: str, run_id: str, model_path: str, collection_alias: str = '') -> Dict[str, Any]:
+        captured_calls.append(('evaluate', collection_alias, dataset_manifest))
+        return {
+            'timestamp_utc': '2026-04-12T12:01:00Z',
+            'decision': 'go',
+            'action': 'ds-evaluate',
+            'summary': 'evaluate ok',
+            'run_id': 'eval-run-001',
+            'threshold': 0.42,
+            'artifacts': {},
+            'reason_codes': [],
+        }
+
+    def _fake_score(dataset: str, model: str, out_file: str, collection_alias: str = '') -> Dict[str, Any]:
+        captured_calls.append(('score', collection_alias, dataset))
+        return {
+            'timestamp_utc': '2026-04-12T12:02:00Z',
+            'decision': 'go',
+            'action': 'ds-score',
+            'summary': 'score ok',
+            'run_id': 'score-run-001',
+            'records_scored': 1,
+            'artifacts': {},
+            'reason_codes': [],
+        }
+
+    monkeypatch.setattr(observerctl_module, '_ds_train', _fake_train)
+    monkeypatch.setattr(observerctl_module, '_ds_evaluate', _fake_evaluate)
+    monkeypatch.setattr(observerctl_module, '_ds_score', _fake_score)
+
+    train_state = observerctl_module._ds_wizard_new_state('train')
+    train_state.values['dataset_manifest'] = str(dataset_manifest)
+    train_state.values['dataset_alias'] = 'can-shared-build'
+    train_packet = observerctl_module._ds_wizard_attempt_execute(train_state)
+
+    evaluate_state = observerctl_module._ds_wizard_new_state('evaluate')
+    evaluate_state.values['dataset_manifest'] = str(dataset_manifest)
+    evaluate_state.values['features_csv'] = str(features_csv)
+    evaluate_state.values['labels_csv'] = str(labels_csv)
+    evaluate_state.values['model_path'] = str(model_path)
+    evaluate_state.values['dataset_alias'] = 'can-shared-build'
+    evaluate_packet = observerctl_module._ds_wizard_attempt_execute(evaluate_state)
+
+    score_state = observerctl_module._ds_wizard_new_state('score')
+    score_state.values['dataset_manifest'] = str(dataset_manifest)
+    score_state.values['train_manifest'] = str(train_manifest)
+    score_state.values['model_path'] = str(model_path)
+    score_state.values['dataset_alias'] = 'can-shared-build'
+    score_packet = observerctl_module._ds_wizard_attempt_execute(score_state)
+
+    assert train_packet['decision'] == 'go'
+    assert evaluate_packet['decision'] == 'go'
+    assert score_packet['decision'] == 'go'
+    assert captured_calls == [
+        ('train', 'can-shared-build', str(dataset_manifest)),
+        ('evaluate', 'can-shared-build', str(dataset_manifest)),
+        ('score', 'can-shared-build', str(dataset_manifest)),
+    ]
+
+
+def test_ds_wizard_cli_publication_groups_build_train_evaluate_score_under_one_collection_alias(tmp_path: Path, monkeypatch, capsys) -> None:
+    from analysis.dataset_builder import build_dataset
+    from calamum_librarian import register_librarian_dataset_packet
+
+    project_root, anchor = _make_temp_observer_project(tmp_path)
+    _bind_temp_observer_project(monkeypatch, project_root, anchor)
+    _set_signing_env(monkeypatch)
+
+    input_path = tmp_path / 'authority_input.jsonl'
+    authority_dataset_dir = project_root / 'datasets' / 'authority_alias_source'
+    authority_manifest = authority_dataset_dir / 'dataset_manifest.json'
+
+    _write_signed_jsonl(input_path, _make_ds_records())
+    build_dataset(
+        [input_path],
+        out_dir=authority_dataset_dir,
+        seed=123,
+        split={
+            'train': 0.7,
+            'val': 0.15,
+            'test': 0.15,
+        },
+        max_lines_per_file=None,
+    )
+
+    dataset_packet = register_librarian_dataset_packet(
+        anchor,
+        authority_manifest,
+        access_class='local',
+        display_name='Frame D Alias Coherence',
+        run_id='frame-d-alias-coherence',
+    )
+    assert dataset_packet['decision'] == 'go'
+    expected_alias = str(dataset_packet['dataset']['display_alias'])
+
+    rc = main(['ds', 'wizard', '--workflow', 'build', '--hydrate-dataset', '1', '--execute', '--json'])
+    assert rc == 0
+    build_packet = json.loads(capsys.readouterr().out)
+
+    rc = main(['ds', 'wizard', '--workflow', 'train', '--hydrate-dataset', '1', '--set', 'model_type=unsupervised', '--execute', '--json'])
+    assert rc == 0
+    train_packet = json.loads(capsys.readouterr().out)
+    train_manifest_path = _resolve_reported_path(train_packet['artifacts']['train_manifest'])
+
+    rc = main(['ds', 'wizard', '--workflow', 'evaluate', '--hydrate-dataset', '1', '--hydrate-train', str(train_manifest_path), '--execute', '--json'])
+    assert rc == 0
+    evaluate_packet = json.loads(capsys.readouterr().out)
+
+    rc = main(['ds', 'wizard', '--workflow', 'score', '--hydrate-dataset', '1', '--hydrate-train', str(train_manifest_path), '--execute', '--json'])
+    assert rc == 0
+    score_packet = json.loads(capsys.readouterr().out)
+
+    alias_root = project_root / 'docs' / 'reports' / 'collections' / expected_alias
+    publication_root = project_root / 'docs' / 'reports' / 'collections'
+    packets = {
+        'build': build_packet,
+        'train': train_packet,
+        'evaluate': evaluate_packet,
+        'score': score_packet,
+    }
+
+    for packet in packets.values():
+        assert packet['decision'] == 'go'
+        assert packet['collection_alias'] == expected_alias
+        assert packet['publication']['decision'] == 'go'
+        assert packet['publication']['current_run']['collection_alias'] == expected_alias
+
+    assert alias_root.exists()
+    assert (alias_root / 'processing' / 'build').exists()
+    assert (alias_root / 'processing' / 'train').exists()
+    assert (alias_root / 'processing' / 'eval').exists()
+    assert (alias_root / 'processing' / 'score').exists()
+
+    for workflow, packet in packets.items():
+        processing_md = _resolve_reported_path(packet['publication']['current_run']['published_report_paths']['processing_markdown'])
+        assert processing_md.exists()
+        assert '**Collection alias**: `{0}`'.format(expected_alias) in processing_md.read_text(encoding='utf-8')
+        assert not (publication_root / str(packet['run_id'])).exists()
+
+    assert sorted(path.name for path in publication_root.iterdir() if path.is_dir()) == [expected_alias]
 
 
 def test_ds_wizard_unlabeled_build_switches_train_to_unsupervised(tmp_path: Path) -> None:
@@ -3891,6 +4155,69 @@ def test_ds_build_executes_from_registered_dataset_selector(tmp_path: Path, monk
             assert _resolve_reported_path(payload['artifacts']['report_md']).exists()
 
 
+def test_ds_build_real_source_emits_tv_review_artifacts_and_manifest_labels(tmp_path: Path, monkeypatch, capsys) -> None:
+    with _bind_temp_observer_project_ctx(monkeypatch, tmp_path):
+            log_dir = tmp_path / 'logs'
+            (log_dir / 'health').mkdir(parents=True, exist_ok=True)
+            (log_dir / 'data' / 'calamum').mkdir(parents=True, exist_ok=True)
+            (log_dir / 'control' / 'calamum').mkdir(parents=True, exist_ok=True)
+
+            monkeypatch.setenv('CALAMUM_LOG_DIR', str(log_dir))
+            monkeypatch.setenv('CALAMUM_DATA_SIGNING_KEY', 'unit-test-signing-key')
+            monkeypatch.setattr(observerctl_module, '_load_state', lambda: {'source': 'real', 'mode': 'honeypot'})
+
+            input_path = tmp_path / 'real_source.jsonl'
+            _write_signed_jsonl(input_path, _make_real_tv_review_records())
+            out_dir = tmp_path / 'dataset'
+
+            rc = main(['ds', 'build', '--input', str(input_path), '--out-dir', str(out_dir), '--json'])
+            assert rc == 0
+
+            payload = json.loads(capsys.readouterr().out)
+            manifest_payload = json.loads((out_dir / 'dataset_manifest.json').read_text(encoding='utf-8'))
+
+            assert payload['action'] == 'ds-build'
+            assert payload['source'] == 'real'
+            assert payload['tv_review']['decision'] == 'go'
+            assert payload['tv_review']['labeled_unique_count'] == 2
+            assert payload['has_labels'] is True
+            assert Path(payload['artifacts']['tv_review_inventory_csv']).exists()
+            assert Path(payload['artifacts']['tv_suggested_labels_csv']).exists()
+            assert Path(payload['artifacts']['labels_csv']).exists()
+            assert manifest_payload['has_labels'] is True
+            assert Path(str(manifest_payload['labels_csv'])).name == 'labels.csv'
+
+
+def test_ds_build_sim_source_skips_tv_review_runtime_branch(tmp_path: Path, monkeypatch, capsys) -> None:
+    with _bind_temp_observer_project_ctx(monkeypatch, tmp_path):
+            log_dir = tmp_path / 'logs'
+            (log_dir / 'health').mkdir(parents=True, exist_ok=True)
+            (log_dir / 'data' / 'calamum').mkdir(parents=True, exist_ok=True)
+            (log_dir / 'control' / 'calamum').mkdir(parents=True, exist_ok=True)
+
+            monkeypatch.setenv('CALAMUM_LOG_DIR', str(log_dir))
+            monkeypatch.setenv('CALAMUM_DATA_SIGNING_KEY', 'unit-test-signing-key')
+            monkeypatch.setattr(observerctl_module, '_load_state', lambda: {'source': 'sim', 'mode': 'canary'})
+
+            input_path = tmp_path / 'sim_source.jsonl'
+            _write_signed_jsonl(input_path, _make_real_tv_review_records())
+            out_dir = tmp_path / 'dataset'
+
+            rc = main(['ds', 'build', '--input', str(input_path), '--out-dir', str(out_dir), '--json'])
+            assert rc == 0
+
+            payload = json.loads(capsys.readouterr().out)
+            manifest_payload = json.loads((out_dir / 'dataset_manifest.json').read_text(encoding='utf-8'))
+
+            assert payload['source'] == 'sim'
+            assert payload['tv_review']['decision'] == 'skipped'
+            assert payload['tv_review']['reason_codes'] == ['tv_review_skipped:source_not_real']
+            assert 'tv_review_inventory_csv' not in payload['artifacts']
+            assert 'tv_suggested_labels_csv' not in payload['artifacts']
+            assert payload['has_labels'] is False
+            assert manifest_payload['has_labels'] is False
+
+
 def test_ds_train_executes_wrapper_and_emits_expected_artifacts(tmp_path: Path, monkeypatch, capsys) -> None:
     with _bind_temp_observer_project_ctx(monkeypatch, tmp_path) as project_dir:
             try:
@@ -5907,6 +6234,15 @@ def test_real_sandbox_registry_includes_ds_wizard_durability_definition() -> Non
     assert definition['id'] == 'ds-wizard-durability'
     assert definition['command'] == 'observerctl sandbox run ds-wizard-durability'
     assert definition['run_index_path'].endswith('frame6_ds_wizard_durability_probe/run_index.jsonl')
+
+
+def test_real_sandbox_registry_includes_ds_alias_coherence_definition() -> None:
+    definition = observerctl_module.sandbox_get_definition('ds-alias-coherence')
+
+    assert definition is not None
+    assert definition['id'] == 'ds-alias-coherence'
+    assert definition['command'] == 'observerctl sandbox run ds-alias-coherence'
+    assert definition['run_index_path'].endswith('framed_ds_alias_coherence_probe/run_index.jsonl')
 
 
 def test_real_sandbox_registry_includes_librarian_access_exchange_definition() -> None:

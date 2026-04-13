@@ -33,6 +33,10 @@ def _ds_wizard_durability_run_index() -> Path:
     return _REPORT_TMP / 'frame6_ds_wizard_durability_probe' / 'run_index.jsonl'
 
 
+def _ds_alias_coherence_run_index() -> Path:
+    return _REPORT_TMP / 'framed_ds_alias_coherence_probe' / 'run_index.jsonl'
+
+
 def _baseline_monitor_runtime_run_index() -> Path:
     return _REPORT_TMP / 'job0022_baseline_monitor_runtime_probe' / 'run_index.jsonl'
 
@@ -79,6 +83,10 @@ def _run_ds_wizard_hydration() -> int:
 
 def _run_ds_wizard_durability() -> int:
     return int(_load_simulation_runner().run_ds_wizard_durability_probe())
+
+
+def _run_ds_alias_coherence() -> int:
+    return int(_load_simulation_runner().run_ds_alias_coherence_probe())
 
 
 def _run_baseline_monitor_runtime() -> int:
@@ -176,6 +184,20 @@ def get_definitions() -> List[DefinitionRecord]:
             'command': 'observerctl sandbox run ds-wizard-durability',
             'run_index_path': str(_ds_wizard_durability_run_index()).replace('\\', '/'),
             'runner': _run_ds_wizard_durability,
+        },
+        {
+            'id': 'ds-alias-coherence',
+            'title': 'DS alias coherence probe',
+            'summary': 'Validate one collection alias across build, train, evaluate, and score publication plus fail-closed unresolved-alias behavior.',
+            'status': 'stable',
+            'category': 'ds-probe',
+            'aliases': [],
+            'selector_policy': 'exact-name-only',
+            'writes_to': 'report_tmp/framed_ds_alias_coherence_probe',
+            'purpose': 'Prove the sandboxed DS lane keeps one registered collection alias across four workflows without fallback alias drift or unresolved-alias residue.',
+            'command': 'observerctl sandbox run ds-alias-coherence',
+            'run_index_path': str(_ds_alias_coherence_run_index()).replace('\\', '/'),
+            'runner': _run_ds_alias_coherence,
         },
         {
             'id': 'baseline-monitor-runtime',

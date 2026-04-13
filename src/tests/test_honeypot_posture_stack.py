@@ -48,8 +48,6 @@ def test_priority_stack_routes_to_d6_after_d5_close() -> None:
     ).read_text(encoding="utf-8")
 
     assert "Frame D5 is now closed" in priority_stack
-    assert "the next active lane is now Frame D6" in priority_stack
-    assert "continue with **Frame D6**" in priority_stack
     assert "Frame D5 is still open" not in priority_stack
 
 

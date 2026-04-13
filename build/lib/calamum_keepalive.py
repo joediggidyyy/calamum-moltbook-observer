@@ -83,7 +83,7 @@ if __name__ == "__main__":
     print("Initializing KeepaliveHelper test...")
     helper = KeepaliveHelper("TestService", interval_seconds=2)
     
-    helper.force_emit("STARTUP", {"version": "1.0.0"})
+    helper.force_emit("STARTUP", {"version": "1.0.1"})
     time.sleep(0.5)
     helper.emit("IGNORED") # Should be skipped due to rate limit
     time.sleep(2.0)

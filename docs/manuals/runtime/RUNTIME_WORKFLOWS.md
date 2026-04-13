@@ -1,32 +1,32 @@
 # Calamum Runtime Workflows
 
-Updated: 2026-04-03
+Updated: 2026-04-12
 
 This document is the practical operating path for the Calamum observer stack.
 
 ## Start here
 
-| Stage | Goal | Primary command surfaces |
-| --- | --- | --- |
-| Prepare | create or validate local runtime roots, then confirm environment, approvals, and evidence expectations | `observerctl ops bootstrap`, `observerctl ops bootstrap --check`, `observerctl ops preflight`, `observerctl policy *` |
-| Baseline | collect and validate the resource baseline for the target lane | `observerctl baseline collect`, `observerctl baseline analyze` |
-| Execute | move into the requested runtime state through a guarded transition | `observerctl ops mode gate`, `observerctl ops mode transition` |
-| Close | verify current state, evidence emission, and runtime health | `observerctl ops mode current`, `observerctl ops evidence index`, `observerctl health full` |
-| Hand off | route retained artifacts into analysis and reporting work | `observerctl librarian stats`, `observerctl ds *`, `docs/reports/INDEX.md` |
+| Stage    | Goal                                                                                                   | Primary command surfaces                                                                                              |
+| -------- | ------------------------------------------------------------------------------------------------------ | --------------------------------------------------------------------------------------------------------------------- |
+| Prepare  | create or validate local runtime roots, then confirm environment, approvals, and evidence expectations | `observerctl ops bootstrap`, `observerctl ops bootstrap --check`, `observerctl ops preflight`, `observerctl policy *` |
+| Baseline | collect and validate the resource baseline for the target lane                                         | `observerctl baseline collect`, `observerctl baseline analyze`                                                        |
+| Execute  | move into the requested runtime state through a guarded transition                                     | `observerctl ops mode gate`, `observerctl ops mode transition`                                                        |
+| Close    | verify current state, evidence emission, and runtime health                                            | `observerctl ops mode current`, `observerctl ops evidence index`, `observerctl health full`                           |
+| Hand off | route retained artifacts into analysis and reporting work                                              | `observerctl librarian stats`, `observerctl ds *`, `docs/reports/INDEX.md`                                            |
 
 ## Before touching the system
 
 Use this short checklist before you start a run:
 
-| Check | Why it matters |
-| --- | --- |
-| Python environment is active and `observerctl` resolves in that shell | keeps the command surface and installed dependencies aligned |
-| Local runtime roots are created or validated before preflight | keeps `local_untracked/` readiness explicit instead of relying on side effects from later commands |
-| If the run will hand off into `observerctl ds *`, the `ds` extra is installed in that environment | the supported DS lane depends on the ApexLab/reporting stack rather than the minimal core install |
-| Local operator configuration and required environment variables are present | stricter lanes fail closed when dependencies or credentials are missing |
-| You know whether the lane is `sim` or `real` | source changes alter the required safety bar |
-| You know whether the target mode is `watch`, `canary`, `live`, or `honeypot` | the mode determines the trigger posture and gate rules |
-| You are prepared to keep runtime evidence local | public docs describe the contract; runtime artifacts remain local working evidence |
+| Check                                                                                             | Why it matters                                                                                     |
+| ------------------------------------------------------------------------------------------------- | -------------------------------------------------------------------------------------------------- |
+| Python environment is active and `observerctl` resolves in that shell                             | keeps the command surface and installed dependencies aligned                                       |
+| Local runtime roots are created or validated before preflight                                     | keeps `local_untracked/` readiness explicit instead of relying on side effects from later commands |
+| If the run will hand off into `observerctl ds *`, the `ds` extra is installed in that environment | the supported DS lane depends on the ApexLab/reporting stack rather than the minimal core install  |
+| Local operator configuration and required environment variables are present                       | stricter lanes fail closed when dependencies or credentials are missing                            |
+| You know whether the lane is `sim` or `real`                                                      | source changes alter the required safety bar                                                       |
+| You know whether the target mode is `watch`, `canary`, `live`, or `honeypot`                      | the mode determines the trigger posture and gate rules                                             |
+| You are prepared to keep runtime evidence local                                                   | public docs describe the contract; runtime artifacts remain local working evidence                 |
 
 Default first-contact rule: prefer a simulation-first path unless a stricter lane has already been justified and approved.
 
@@ -90,23 +90,23 @@ The transition command is the preferred path because it performs gate, state cha
 
 Use the three checks below before you treat the run as complete.
 
-| Check | Command | What a healthy result looks like |
-| --- | --- | --- |
-| current runtime state | `observerctl ops mode current --json` | the packet reflects the intended source/mode tuple |
-| evidence surface | `observerctl ops evidence index --json` | the latest retained evidence includes the run you just performed |
-| closure health | `observerctl health full --json` | runtime, baseline, watchdog, librarian, and policy surfaces remain readable |
+| Check                 | Command                                 | What a healthy result looks like                                            |
+| --------------------- | --------------------------------------- | --------------------------------------------------------------------------- |
+| current runtime state | `observerctl ops mode current --json`   | the packet reflects the intended source/mode tuple                          |
+| evidence surface      | `observerctl ops evidence index --json` | the latest retained evidence includes the run you just performed            |
+| closure health        | `observerctl health full --json`        | runtime, baseline, watchdog, librarian, and policy surfaces remain readable |
 
 ## Retained outputs for analysis
 
 When a run closes cleanly, the analysis handoff set is usually the lane-scoped runtime stream plus the corresponding evidence and baseline packets.
 
-| Output family | Canonical surface | Use it for |
-| --- | --- | --- |
-| lane metrics stream | `logs/data/calamum/observer_derived/<source>/<mode>/moltbook_metrics.jsonl` | names-only runtime telemetry for the executed lane |
-| evidence index | `logs/data/calamum/observer_derived/<source>/<mode>/evidence/index.jsonl` | quick confirmation of the latest retained packets |
-| per-event evidence packets | `logs/data/calamum/observer_derived/<source>/<mode>/evidence/observerctl_<event>_<timestamp>.json` | detailed gate, transition, and closeout evidence |
-| baseline packets | lane `evidence/` output from `observerctl baseline analyze` | readiness and comparison framing |
-| reader-facing reports | `docs/reports/` | tracked summaries and publication-oriented material |
+| Output family              | Canonical surface                                                                                  | Use it for                                          |
+| -------------------------- | -------------------------------------------------------------------------------------------------- | --------------------------------------------------- |
+| lane metrics stream        | `logs/data/calamum/observer_derived/<source>/<mode>/moltbook_metrics.jsonl`                        | names-only runtime telemetry for the executed lane  |
+| evidence index             | `logs/data/calamum/observer_derived/<source>/<mode>/evidence/index.jsonl`                          | quick confirmation of the latest retained packets   |
+| per-event evidence packets | `logs/data/calamum/observer_derived/<source>/<mode>/evidence/observerctl_<event>_<timestamp>.json` | detailed gate, transition, and closeout evidence    |
+| baseline packets           | lane `evidence/` output from `observerctl baseline analyze`                                        | readiness and comparison framing                    |
+| reader-facing reports      | `docs/reports/`                                                                                    | tracked summaries and publication-oriented material |
 
 ## Quick operating paths
 

@@ -15,7 +15,7 @@ It enforces 'Stay in Line' policy:
 This component MUST run as a distinct process with its own PID.
 """
 
-__version__ = "1.1.0"
+__version__ = "1.0.1"
 
 import atexit
 import hashlib

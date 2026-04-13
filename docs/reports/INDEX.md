@@ -6,7 +6,7 @@ Machine-readable authority remains outside `docs/reports/` and is referenced fro
 
 ## Summary
 
-- Published runs: 3
+- Published runs: 4
 - Aggregate report: [AGGREGATE_REPORT.md](aggregates/AGGREGATE_REPORT.md)
 - Public run ledger: [PUBLIC_RUN_LEDGER.md](aggregates/PUBLIC_RUN_LEDGER.md)
 - Latest collections: [LATEST_COLLECTIONS.md](aggregates/LATEST_COLLECTIONS.md)
@@ -29,26 +29,28 @@ Machine-readable authority remains outside `docs/reports/` and is referenced fro
 
 ## Latest collection
 
-- Collection alias: `liv-r8bc9`
-- Run ID: `score_20260411T042449359583Z`
+- Collection alias: `can-r4ccf`
+- Run ID: `score_20260412T182840525749Z`
 - Workflow: score
-- Timestamp (UTC): 2026-04-11T04:24:59.318423Z
+- Timestamp (UTC): 2026-04-12T18:31:43.055972Z
 - Why open it now: Score-stage packet with figure-backed anomaly-surface context.
-- Collection packet: [20260411T042459318423Z.collection.md](collections/liv-r8bc9/collection/20260411T042459318423Z.collection.md)
-- Latest stage report: [20260411T042459318423Z.score.md](collections/liv-r8bc9/processing/score/20260411T042459318423Z.score.md)
+- Collection packet: [20260412T183143055972Z.collection.md](collections/can-r4ccf/collection/20260412T183143055972Z.collection.md)
+- Latest stage report: [20260412T183143055972Z.score.md](collections/can-r4ccf/processing/score/20260412T183143055972Z.score.md)
 
 ## Workflow latest
 
 | Workflow | Published runs | Collection alias | Latest run | Collection packet | Latest stage doc |
 |---|---:|---|---|---|---|
-| build | 1 | `liv-r8bc9` | `build_20260411T042407214529Z` | [collection packet](collections/liv-r8bc9/collection/20260411T042459318423Z.collection.md) | [20260411T042409067088Z.build.md](collections/liv-r8bc9/processing/build/20260411T042409067088Z.build.md) |
-| score | 1 | `liv-r8bc9` | `score_20260411T042449359583Z` | [collection packet](collections/liv-r8bc9/collection/20260411T042459318423Z.collection.md) | [20260411T042459318423Z.score.md](collections/liv-r8bc9/processing/score/20260411T042459318423Z.score.md) |
-| train | 1 | `liv-r8bc9` | `train_20260411T042431425146Z` | [collection packet](collections/liv-r8bc9/collection/20260411T042459318423Z.collection.md) | [20260411T042436698004Z.train.md](collections/liv-r8bc9/processing/train/20260411T042436698004Z.train.md) |
+| build | 1 | `can-r0b70` | `build_20260412T181141515764Z` | [collection packet](collections/can-r0b70/collection/20260412T181142763215Z.collection.md) | [20260412T181142763215Z.build.md](collections/can-r0b70/processing/build/20260412T181142763215Z.build.md) |
+| evaluate | 1 | `can-r4ccf` | `evaluate_20260412T181954946962Z` | [collection packet](collections/can-r4ccf/collection/20260412T183143055972Z.collection.md) | [20260412T182621255204Z.eval.md](collections/can-r4ccf/processing/eval/20260412T182621255204Z.eval.md) |
+| score | 1 | `can-r4ccf` | `score_20260412T182840525749Z` | [collection packet](collections/can-r4ccf/collection/20260412T183143055972Z.collection.md) | [20260412T183143055972Z.score.md](collections/can-r4ccf/processing/score/20260412T183143055972Z.score.md) |
+| train | 1 | `can-r4ccf` | `train_20260412T181433425502Z` | [collection packet](collections/can-r4ccf/collection/20260412T183143055972Z.collection.md) | [20260412T181602715320Z.train.md](collections/can-r4ccf/processing/train/20260412T181602715320Z.train.md) |
 
 ## Recent collections
 
 | Timestamp (UTC) | Workflow | Collection alias | Run ID | Collection packet | Stage doc |
 |---|---|---|---|---|---|
-| 2026-04-11T04:24:59.318423Z | score | `liv-r8bc9` | `score_20260411T042449359583Z` | [collection packet](collections/liv-r8bc9/collection/20260411T042459318423Z.collection.md) | [20260411T042459318423Z.score.md](collections/liv-r8bc9/processing/score/20260411T042459318423Z.score.md) |
-| 2026-04-11T04:24:36.698004Z | train | `liv-r8bc9` | `train_20260411T042431425146Z` | [collection packet](collections/liv-r8bc9/collection/20260411T042459318423Z.collection.md) | [20260411T042436698004Z.train.md](collections/liv-r8bc9/processing/train/20260411T042436698004Z.train.md) |
-| 2026-04-11T04:24:09.067088Z | build | `liv-r8bc9` | `build_20260411T042407214529Z` | [collection packet](collections/liv-r8bc9/collection/20260411T042459318423Z.collection.md) | [20260411T042409067088Z.build.md](collections/liv-r8bc9/processing/build/20260411T042409067088Z.build.md) |
+| 2026-04-12T18:31:43.055972Z | score | `can-r4ccf` | `score_20260412T182840525749Z` | [collection packet](collections/can-r4ccf/collection/20260412T183143055972Z.collection.md) | [20260412T183143055972Z.score.md](collections/can-r4ccf/processing/score/20260412T183143055972Z.score.md) |
+| 2026-04-12T18:26:21.255204Z | evaluate | `can-r4ccf` | `evaluate_20260412T181954946962Z` | [collection packet](collections/can-r4ccf/collection/20260412T183143055972Z.collection.md) | [20260412T182621255204Z.eval.md](collections/can-r4ccf/processing/eval/20260412T182621255204Z.eval.md) |
+| 2026-04-12T18:16:02.715320Z | train | `can-r4ccf` | `train_20260412T181433425502Z` | [collection packet](collections/can-r4ccf/collection/20260412T183143055972Z.collection.md) | [20260412T181602715320Z.train.md](collections/can-r4ccf/processing/train/20260412T181602715320Z.train.md) |
+| 2026-04-12T18:11:42.763215Z | build | `can-r0b70` | `build_20260412T181141515764Z` | [collection packet](collections/can-r0b70/collection/20260412T181142763215Z.collection.md) | [20260412T181142763215Z.build.md](collections/can-r0b70/processing/build/20260412T181142763215Z.build.md) |

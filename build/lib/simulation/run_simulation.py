@@ -32,7 +32,7 @@ if str(SRC_DIR) not in sys.path:
 
 from calamum_librarian import Librarian
 from calamum_observer_agent import append_record
-from obfuscator_lib import verify_detached_payload
+from obfuscator_lib import Obfuscator, verify_detached_payload
 import observerctl as observerctl_module
 
 
@@ -42,6 +42,7 @@ FRAME4_DS_WIZARD_HYDRATION_PROBE_DIR = REPO_ROOT / 'report_tmp' / 'frame4_ds_wiz
 JOB0022_PROBE_DIR = REPO_ROOT / 'report_tmp' / 'job0022_baseline_monitor_runtime_probe'
 FRAME5_LINEAGE_PROBE_DIR = REPO_ROOT / 'report_tmp' / 'frame5_validation_cycle_lineage_probe'
 FRAME6_DS_WIZARD_DURABILITY_PROBE_DIR = REPO_ROOT / 'report_tmp' / 'frame6_ds_wizard_durability_probe'
+FRAMED_DS_ALIAS_COHERENCE_PROBE_DIR = REPO_ROOT / 'report_tmp' / 'framed_ds_alias_coherence_probe'
 FRAME6_RESTART_PROBE_DIR = REPO_ROOT / 'report_tmp' / 'frame6_restart_continuity_probe'
 FRAME6_RECOVERY_PROBE_DIR = REPO_ROOT / 'report_tmp' / 'frame6_state_recovery_probe'
 LIBRARIAN_ACCESS_EXCHANGE_PROBE_DIR = REPO_ROOT / 'report_tmp' / 'librarian_access_exchange_probe'
@@ -230,6 +231,62 @@ def _touch(path: Path, content: str = '{"status":"ok"}\n') -> None:
 def _write_pid(path: Path) -> None:
     path.parent.mkdir(parents=True, exist_ok=True)
     path.write_text(str(os.getpid()), encoding='utf-8')
+
+
+def _bind_probe_observer_project(project_root: Path) -> Tuple[Path, Any, str]:
+    anchor = _seed_probe_project_root(project_root)
+    original_project_anchor = observerctl_module._project_anchor
+    original_file = str(getattr(observerctl_module, '__file__', '') or '')
+    observerctl_module._project_anchor = lambda: anchor
+    observerctl_module.__file__ = str(anchor)
+    return anchor, original_project_anchor, original_file
+
+
+def _restore_probe_observer_project(original_project_anchor: Any, original_file: str) -> None:
+    observerctl_module._project_anchor = original_project_anchor
+    observerctl_module.__file__ = str(original_file)
+
+
+def _write_signed_jsonl(path: Path, records: List[Dict[str, Any]]) -> None:
+    path.parent.mkdir(parents=True, exist_ok=True)
+    with path.open('w', encoding='utf-8') as handle:
+        for record in records:
+            handle.write(json.dumps(Obfuscator.sign_record(record)) + '\n')
+
+
+def _make_ds_records() -> List[Dict[str, Any]]:
+    records: List[Dict[str, Any]] = []
+    for i in range(8):
+        records.append({
+            'timestamp': '2026-02-10T00:00:{0:02d}Z'.format(i),
+            'type': 'post',
+            'author_hash': 'norm{0:012d}'.format(i),
+            'content_length': 10,
+            'has_code_block': False,
+            'tags_count': 0,
+            'mentions_count': 0,
+            'f_complexity': 0.1,
+            'f_code_density': 0.0,
+            'f_toxicity': 0,
+            'f_timestamp_epoch': float(i),
+            'tv_id': 'TV-0',
+        })
+    for i in range(4):
+        records.append({
+            'timestamp': '2026-02-10T00:01:{0:02d}Z'.format(i),
+            'type': 'post',
+            'author_hash': 'bad{0:013d}'.format(i),
+            'content_length': 500,
+            'has_code_block': True,
+            'tags_count': 1,
+            'mentions_count': 1,
+            'f_complexity': 0.8,
+            'f_code_density': 0.2,
+            'f_toxicity': 1,
+            'f_timestamp_epoch': float(100 + i),
+            'tv_id': 'TV-3',
+        })
+    return records
 
 
 def _seed_runtime_liveness(sandbox_root: Path, log_dir: Path) -> Dict[str, str]:
@@ -643,6 +700,273 @@ def run_ds_wizard_durability_probe() -> int:
         print('next_bite_result={0}'.format(report['next_bite_result']))
         return 0
     finally:
+        if original_project_root is not None:
+            _restore_probe_environment(original_env, original_project_root)
+
+
+def run_ds_alias_coherence_probe() -> int:
+    from analysis.dataset_builder import build_dataset
+    from analysis.report_pack import prepare_report_bundle
+
+    run_id = 'framed-ds-alias-coherence-{0}'.format(_utc_stamp())
+    run_dir = FRAMED_DS_ALIAS_COHERENCE_PROBE_DIR / 'runs' / run_id
+    run_index_jsonl = FRAMED_DS_ALIAS_COHERENCE_PROBE_DIR / 'run_index.jsonl'
+    run_dir.mkdir(parents=True, exist_ok=True)
+
+    original_env: Dict[str, Optional[str]] = {}
+    original_project_root = None
+    original_project_anchor = None
+    original_file = ''
+    try:
+        sandbox_root, _sandbox_log_dir, original_env, original_project_root = _seed_probe_environment(
+            run_dir=run_dir,
+            signing_key='framed-ds-alias-coherence-signing-key',
+            security_report_title='# Frame D DS alias coherence probe security report\n',
+        )
+        anchor, original_project_anchor, original_file = _bind_probe_observer_project(sandbox_root)
+
+        artifacts_dir = run_dir / 'artifacts'
+        artifacts_dir.mkdir(parents=True, exist_ok=True)
+
+        input_path = artifacts_dir / 'authority_input.jsonl'
+        authority_dataset_dir = sandbox_root / 'datasets' / 'authority_alias_source'
+        authority_manifest = authority_dataset_dir / 'dataset_manifest.json'
+        _write_signed_jsonl(input_path, _make_ds_records())
+        build_dataset(
+            [input_path],
+            out_dir=authority_dataset_dir,
+            seed=123,
+            split={
+                'train': 0.7,
+                'val': 0.15,
+                'test': 0.15,
+            },
+            max_lines_per_file=None,
+        )
+
+        command_runs: Dict[str, Dict[str, Any]] = {
+            'register_authority_dataset': _run_observerctl_cli([
+                'librarian',
+                'dataset',
+                'register',
+                str(authority_manifest),
+                '--access-class',
+                'local',
+                '--display-name',
+                'Frame D Alias Coherence',
+                '--run-id',
+                'frame-d-alias-coherence',
+                '--json',
+            ]),
+            'wizard_build': _run_observerctl_cli([
+                'ds',
+                'wizard',
+                '--workflow',
+                'build',
+                '--hydrate-dataset',
+                '1',
+                '--execute',
+                '--json',
+            ]),
+            'wizard_train': _run_observerctl_cli([
+                'ds',
+                'wizard',
+                '--workflow',
+                'train',
+                '--hydrate-dataset',
+                '1',
+                '--set',
+                'model_type=unsupervised',
+                '--execute',
+                '--json',
+            ]),
+        }
+
+        register_packet = command_runs['register_authority_dataset'].get('stdout_json', {}) if isinstance(command_runs['register_authority_dataset'].get('stdout_json', {}), dict) else {}
+        build_packet = command_runs['wizard_build'].get('stdout_json', {}) if isinstance(command_runs['wizard_build'].get('stdout_json', {}), dict) else {}
+        train_packet = command_runs['wizard_train'].get('stdout_json', {}) if isinstance(command_runs['wizard_train'].get('stdout_json', {}), dict) else {}
+
+        expected_alias = str(((register_packet.get('dataset', {}) if isinstance(register_packet.get('dataset', {}), dict) else {}).get('display_alias', '')) or '').strip()
+        train_manifest_path = _resolve_probe_artifact_path(sandbox_root, str((train_packet.get('artifacts', {}) if isinstance(train_packet.get('artifacts', {}), dict) else {}).get('train_manifest', '') or ''))
+
+        command_runs['wizard_evaluate'] = _run_observerctl_cli([
+            'ds',
+            'wizard',
+            '--workflow',
+            'evaluate',
+            '--hydrate-dataset',
+            '1',
+            '--hydrate-train',
+            str(train_manifest_path),
+            '--execute',
+            '--json',
+        ])
+        command_runs['wizard_score'] = _run_observerctl_cli([
+            'ds',
+            'wizard',
+            '--workflow',
+            'score',
+            '--hydrate-dataset',
+            '1',
+            '--hydrate-train',
+            str(train_manifest_path),
+            '--execute',
+            '--json',
+        ])
+
+        evaluate_packet = command_runs['wizard_evaluate'].get('stdout_json', {}) if isinstance(command_runs['wizard_evaluate'].get('stdout_json', {}), dict) else {}
+        score_packet = command_runs['wizard_score'].get('stdout_json', {}) if isinstance(command_runs['wizard_score'].get('stdout_json', {}), dict) else {}
+
+        alias_root = sandbox_root / 'docs' / 'reports' / 'collections' / expected_alias
+        publication_root = sandbox_root / 'docs' / 'reports' / 'collections'
+        collection_directory_names = sorted(path.name for path in publication_root.iterdir() if path.is_dir()) if publication_root.exists() else []
+
+        workflow_packets = {
+            'build': build_packet,
+            'train': train_packet,
+            'evaluate': evaluate_packet,
+            'score': score_packet,
+        }
+        published_stage_paths: Dict[str, Path] = {}
+        stage_alias_texts: Dict[str, str] = {}
+        for workflow, packet in workflow_packets.items():
+            publication = packet.get('publication', {}) if isinstance(packet.get('publication', {}), dict) else {}
+            current_run = publication.get('current_run', {}) if isinstance(publication.get('current_run', {}), dict) else {}
+            published_paths = current_run.get('published_report_paths', {}) if isinstance(current_run.get('published_report_paths', {}), dict) else {}
+            stage_path = _resolve_probe_artifact_path(sandbox_root, str(published_paths.get('processing_markdown', '') or ''))
+            published_stage_paths[workflow] = stage_path
+            if str(stage_path) and stage_path.is_file():
+                stage_alias_texts[workflow] = stage_path.read_text(encoding='utf-8')
+
+        unresolved_bundle = prepare_report_bundle(anchor, 'evaluate', run_id='frame-d-missing-alias')
+        unresolved_eval_dir = unresolved_bundle.artifact_dirs['evaluation']
+        unresolved_eval_dir.mkdir(parents=True, exist_ok=True)
+        unresolved_run_json = unresolved_eval_dir / 'run.json'
+        unresolved_run_md = unresolved_eval_dir / 'run.md'
+        unresolved_run_json.write_text('{}\n', encoding='utf-8')
+        unresolved_run_md.write_text('# unresolved alias\n', encoding='utf-8')
+        unresolved_packet = observerctl_module._ds_finalize_run_packet(
+            {
+                'timestamp_utc': observerctl_module._utc_now(),
+                'runtime_cli_surface': 'observerctl',
+                'decision': 'go',
+                'action': 'ds-evaluate',
+                'command_family': 'ds',
+                'command_path': 'observerctl ds evaluate',
+                'implementation_state': 'command-available',
+                'underlying_surface': 'analysis.evaluation_harness',
+                'summary': 'Unresolved alias negative path probe.',
+                'artifacts': {},
+                'reason_codes': [],
+            },
+            bundle=unresolved_bundle,
+            artifact_paths={
+                'run_json': unresolved_run_json,
+                'run_md': unresolved_run_md,
+            },
+            context={'max_fpr': 0.02},
+            lineage={},
+        )
+        unresolved_fallback_dir = sandbox_root / 'docs' / 'reports' / 'collections' / 'frame-d-missing-alias'
+
+        result_matrix = {
+            'authority_dataset_registered': int(command_runs['register_authority_dataset'].get('returncode', 1)) == 0 and bool(expected_alias),
+            'build_packet_go': str(build_packet.get('decision', '')).strip().lower() == 'go',
+            'train_packet_go': str(train_packet.get('decision', '')).strip().lower() == 'go',
+            'evaluate_packet_go': str(evaluate_packet.get('decision', '')).strip().lower() == 'go',
+            'score_packet_go': str(score_packet.get('decision', '')).strip().lower() == 'go',
+            'build_alias_matches_registered_alias': str(build_packet.get('collection_alias', '') or '').strip() == expected_alias,
+            'train_alias_matches_registered_alias': str(train_packet.get('collection_alias', '') or '').strip() == expected_alias,
+            'evaluate_alias_matches_registered_alias': str(evaluate_packet.get('collection_alias', '') or '').strip() == expected_alias,
+            'score_alias_matches_registered_alias': str(score_packet.get('collection_alias', '') or '').strip() == expected_alias,
+            'publications_all_go': all(
+                str(((packet.get('publication', {}) if isinstance(packet.get('publication', {}), dict) else {}).get('decision', '') or '')).strip().lower() == 'go'
+                for packet in workflow_packets.values()
+            ),
+            'publication_alias_root_exists': alias_root.exists(),
+            'publication_alias_root_has_all_workflow_dirs': all((alias_root / 'processing' / lane).exists() for lane in ('build', 'train', 'eval', 'score')),
+            'stage_reports_include_registered_alias': all(
+                ('**Collection alias**: `{0}`'.format(expected_alias) in stage_alias_texts.get(workflow, ''))
+                for workflow in workflow_packets.keys()
+            ),
+            'no_run_id_fallback_directories_created': all(
+                not (publication_root / str(packet.get('run_id', '') or '').strip()).exists()
+                for packet in workflow_packets.values()
+                if str(packet.get('run_id', '') or '').strip()
+            ),
+            'only_registered_alias_directory_present': collection_directory_names == [expected_alias],
+            'missing_alias_fails_closed': str(unresolved_packet.get('decision', '')).strip().lower() == 'no-go' and 'critical_check_failed:collection_alias_unresolved' in list(unresolved_packet.get('reason_codes', []) or []),
+            'missing_alias_skips_publication_and_artifacts': str(((unresolved_packet.get('publication', {}) if isinstance(unresolved_packet.get('publication', {}), dict) else {}).get('decision', '') or '')).strip().lower() == 'skipped' and 'report_json' not in dict(unresolved_packet.get('artifacts', {}) or {}) and 'ds_run_index_jsonl' not in dict(unresolved_packet.get('artifacts', {}) or {}),
+            'missing_alias_creates_no_fallback_directory': not unresolved_fallback_dir.exists(),
+        }
+
+        report = {
+            'run_id': run_id,
+            'run_dir': _rel_to_repo(run_dir),
+            'probe_dir': _rel_to_repo(FRAMED_DS_ALIAS_COHERENCE_PROBE_DIR),
+            'script': _rel_to_repo(Path(__file__)),
+            'next_bite_result': _probe_result(result_matrix),
+            'command_runs': command_runs,
+            'artifact_paths': _report_path_map({
+                'authority_input': input_path,
+                'authority_manifest': authority_manifest,
+                'train_manifest': train_manifest_path,
+                'alias_root': alias_root,
+                'build_stage_report': published_stage_paths.get('build', Path()),
+                'train_stage_report': published_stage_paths.get('train', Path()),
+                'evaluate_stage_report': published_stage_paths.get('evaluate', Path()),
+                'score_stage_report': published_stage_paths.get('score', Path()),
+            }),
+            'artifact_snapshots': {
+                'registered_dataset': register_packet.get('dataset', {}) if isinstance(register_packet.get('dataset', {}), dict) else {},
+                'workflow_summary': {
+                    workflow: {
+                        'run_id': str(packet.get('run_id', '') or ''),
+                        'collection_alias': str(packet.get('collection_alias', '') or ''),
+                        'publication_decision': str(((packet.get('publication', {}) if isinstance(packet.get('publication', {}), dict) else {}).get('decision', '') or '')),
+                        'processing_markdown': _rel_to_repo(published_stage_paths.get(workflow, Path())) if str(published_stage_paths.get(workflow, Path())) else '',
+                    }
+                    for workflow, packet in workflow_packets.items()
+                },
+                'unresolved_alias_packet': {
+                    'decision': str(unresolved_packet.get('decision', '') or ''),
+                    'reason_codes': list(unresolved_packet.get('reason_codes', []) or []),
+                    'publication': unresolved_packet.get('publication', {}),
+                    'finalization': unresolved_packet.get('finalization', {}),
+                },
+            },
+            'result_matrix': result_matrix,
+            'findings': {
+                'expected_alias': expected_alias,
+                'collection_directory_names': collection_directory_names,
+                'published_stage_paths': _report_path_map(published_stage_paths),
+            },
+        }
+
+        report_json = run_dir / 'framed_ds_alias_coherence_probe.json'
+        report_md = run_dir / 'framed_ds_alias_coherence_probe.md'
+        _write_json(report_json, report)
+        report_md.write_text(_render_result_matrix_markdown('Frame D DS Alias Coherence Probe', report), encoding='utf-8')
+
+        _append_jsonl(run_index_jsonl, {
+            'run_id': run_id,
+            'timestamp_utc': _utc_stamp(),
+            'run_dir': _rel_to_repo(run_dir),
+            'report_json': _rel_to_repo(report_json),
+            'report_md': _rel_to_repo(report_md),
+            'next_bite_result': report['next_bite_result'],
+            'collection_alias': expected_alias,
+        })
+
+        print('run_id={0}'.format(run_id))
+        print('report_json={0}'.format(_rel_to_repo(report_json)))
+        print('report_md={0}'.format(_rel_to_repo(report_md)))
+        print('run_index={0}'.format(_rel_to_repo(run_index_jsonl)))
+        print('next_bite_result={0}'.format(report['next_bite_result']))
+        return 0
+    finally:
+        if original_project_anchor is not None:
+            _restore_probe_observer_project(original_project_anchor, original_file)
         if original_project_root is not None:
             _restore_probe_environment(original_env, original_project_root)
 
@@ -1945,6 +2269,7 @@ def _definition_registry() -> Dict[str, Callable[[], int]]:
         'metadata-contract-regression': run_metadata_contract_regression_probe,
         'ds-wizard-hydration': run_ds_wizard_hydration_probe,
         'ds-wizard-durability': run_ds_wizard_durability_probe,
+        'ds-alias-coherence': run_ds_alias_coherence_probe,
         'baseline-monitor-runtime': run_baseline_monitor_runtime_probe,
         'validation-cycle-lineage': run_validation_cycle_lineage_probe,
         'baseline-monitor-restart-continuity': run_baseline_monitor_restart_continuity_probe,
@@ -1960,7 +2285,7 @@ def build_parser() -> argparse.ArgumentParser:
         'definition',
         nargs='?',
         default='feedback-loop',
-        help='Definition to run: feedback-loop, metadata-contract, metadata-contract-regression, ds-wizard-hydration, ds-wizard-durability, baseline-monitor-runtime, validation-cycle-lineage, baseline-monitor-restart-continuity, baseline-monitor-state-recovery, librarian-access-exchange, librarian-vault-controls',
+        help='Definition to run: feedback-loop, metadata-contract, metadata-contract-regression, ds-wizard-hydration, ds-wizard-durability, ds-alias-coherence, baseline-monitor-runtime, validation-cycle-lineage, baseline-monitor-restart-continuity, baseline-monitor-state-recovery, librarian-access-exchange, librarian-vault-controls',
     )
     parser.add_argument(
         '--list-definitions',
@@ -1982,6 +2307,7 @@ def main(argv: Optional[List[str]] = None) -> int:
             'metadata-contract-regression',
             'ds-wizard-hydration',
             'ds-wizard-durability',
+            'ds-alias-coherence',
             'baseline-monitor-runtime',
             'validation-cycle-lineage',
             'baseline-monitor-restart-continuity',

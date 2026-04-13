@@ -5,7 +5,7 @@ import os
 import re
 from typing import Any, Dict, Iterable, List
 
-__version__ = "1.1.0"
+__version__ = "1.0.1"
 
 _PACKET_VERSION = 'p1'
 _VENUE_ID = 'moltbook'

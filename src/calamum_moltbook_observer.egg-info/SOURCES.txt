@@ -50,6 +50,7 @@ src/analysis/run_demo.py
 src/analysis/score_unsupervised.py
 src/analysis/threshold_selection.py
 src/analysis/train_model.py
+src/analysis/tv_review.py
 src/analysis/validate_jsonl.py
 src/calamum_moltbook_observer.egg-info/PKG-INFO
 src/calamum_moltbook_observer.egg-info/SOURCES.txt

@@ -12047,7 +12047,7 @@ def _ds_wizard_sync_execution_artifacts(state: _DSWizardState, packet: Dict[str,
     if workflow == 'build':
         manifest_path = _resolve_existing_reference_path(_ds_wizard_packet_artifact_text(packet, 'dataset_manifest'))
         if manifest_path is not None:
-            dataset_alias = str(state.values.get('dataset_alias', '') or '').strip()
+            dataset_alias = str(packet.get('collection_alias', '') or state.values.get('dataset_alias', '') or '').strip()
             state = _ds_wizard_hydrate_dataset_manifest(state, manifest_path)
             if dataset_alias:
                 state.values['dataset_alias'] = dataset_alias
@@ -12954,6 +12954,7 @@ def _ds_wizard_attempt_execute(state: _DSWizardState) -> Dict[str, Any]:
             'wizard_workflow': str(state.workflow or ''),
         }
     workflow = str(state.workflow or '').strip()
+    collection_alias = str(state.values.get('dataset_alias', '') or '').strip()
     try:
         if workflow == 'build':
             build_input_paths = [Path(str(item)) for item in state.values.get('input_paths', [])]
@@ -12967,6 +12968,8 @@ def _ds_wizard_attempt_execute(state: _DSWizardState) -> Dict[str, Any]:
                     split_val=split_val,
                     split_test=split_test,
                     max_lines_per_file=None,
+                    source=str(state.values.get('source', state.source or 'sim')),
+                    mode=str(state.values.get('mode', state.mode or 'watch')),
                 )
             else:
                 packet = _ds_build_from_dataset_manifest(
@@ -12980,6 +12983,7 @@ def _ds_wizard_attempt_execute(state: _DSWizardState) -> Dict[str, Any]:
                 out_dir=str(state.values.get('out_dir', '')),
                 model_type=str(state.values.get('model_type', 'supervised')),
                 seed=int(state.values.get('seed', 42)),
+                collection_alias=collection_alias,
             )
         elif workflow == 'evaluate':
             packet = _ds_evaluate(
@@ -12990,13 +12994,17 @@ def _ds_wizard_attempt_execute(state: _DSWizardState) -> Dict[str, Any]:
                 out_dir=str(state.values.get('out_dir', '')),
                 run_id=str(state.values.get('run_id', '')) if _ds_wizard_run_id_override_active(state) else '',
                 model_path=str(state.values.get('model_path', '')),
+                collection_alias=collection_alias,
             )
         elif workflow == 'score':
-            packet = _ds_score(
-                dataset=str(state.values.get('dataset_manifest', '')),
-                model=str(state.values.get('train_manifest') or state.values.get('model_path', '')),
-                out_file=str(state.values.get('scores_out', '')),
-            )
+                score_kwargs = {
+                    'dataset': str(state.values.get('dataset_manifest', '')),
+                    'model': str(state.values.get('train_manifest') or state.values.get('model_path', '')),
+                    'out_file': str(state.values.get('scores_out', '')),
+                }
+                if collection_alias:
+                    score_kwargs['collection_alias'] = collection_alias
+                packet = _ds_score(**score_kwargs)
         elif workflow == 'run-pipeline':
             split_train, split_val, split_test = _ds_wizard_resolved_split_values(state)
             packet = _ds_run_pipeline(
@@ -13794,6 +13802,8 @@ def _ds_build(
     split_val: float,
     split_test: float,
     max_lines_per_file: Optional[int],
+    source: str = '',
+    mode: str = '',
 ) -> Dict[str, Any]:
     from dataclasses import asdict
 
@@ -13801,6 +13811,9 @@ def _ds_build(
     from analysis.report_visuals import generate_build_visuals
 
     bundle, target_out_dir = _ds_prepare_bundle_for_artifact('build', out_dir, 'dataset', ['datasets'])
+    state_snapshot = _load_state()
+    resolved_source = _normalize_source(str(source or state_snapshot.get('source', 'sim') or 'sim'))
+    resolved_mode = str(mode or state_snapshot.get('mode', '') or '').strip().lower()
     manifest = build_dataset(
         input_paths,
         out_dir=target_out_dir,
@@ -13820,6 +13833,43 @@ def _ds_build(
         'splits_csv': target_out_dir / 'splits.csv',
         'split_manifest_json': target_out_dir / 'split_manifest.json',
     }
+    tv_review_state: Dict[str, Any] = {
+        'decision': 'skipped',
+        'reason_codes': ['tv_review_skipped:source_not_real'],
+        'source': resolved_source,
+        'mode': resolved_mode,
+        'labeled_unique_count': 0,
+        'review_inventory_csv': '',
+        'suggested_labels_csv': '',
+        'labels_applied': False,
+    }
+    if resolved_source == 'real':
+        from analysis.tv_review import apply_suggested_labels_to_dataset_manifest, run_tv_review
+
+        tv_review_state = run_tv_review(
+            input_paths,
+            target_out_dir,
+        )
+        tv_review_state.update({
+            'decision': 'go',
+            'reason_codes': [],
+            'source': resolved_source,
+            'mode': resolved_mode,
+        })
+        artifact_paths['tv_review_inventory_csv'] = Path(str(tv_review_state.get('review_inventory_csv', '') or ''))
+        artifact_paths['tv_suggested_labels_csv'] = Path(str(tv_review_state.get('suggested_labels_csv', '') or ''))
+        applied_labels = apply_suggested_labels_to_dataset_manifest(
+            artifact_paths['dataset_manifest'],
+            artifact_paths['tv_suggested_labels_csv'],
+            labeled_unique_count=int(tv_review_state.get('labeled_unique_count', 0) or 0),
+        )
+        tv_review_state.update(applied_labels)
+        refreshed_manifest_payload = json.loads(artifact_paths['dataset_manifest'].read_text(encoding='utf-8'))
+        if isinstance(refreshed_manifest_payload, dict):
+            manifest_dict = refreshed_manifest_payload
+        labels_csv_text = str(applied_labels.get('labels_csv', '') or '').strip()
+        if labels_csv_text:
+            artifact_paths['labels_csv'] = Path(labels_csv_text)
     visual_state = generate_build_visuals(
         figures_dir=bundle.run_root / 'figures',
         dataset_manifest_path=artifact_paths['dataset_manifest'],
@@ -13837,10 +13887,13 @@ def _ds_build(
         'underlying_surface': 'analysis.dataset_builder',
         'summary': 'Dataset built through observerctl ds.',
         'run_id': bundle.run_id,
+        'source': resolved_source,
+        'mode': resolved_mode,
         'seed': int(seed),
         'split': dict(manifest_dict.get('split', {})),
         'total_records': int(manifest_dict.get('total_records', 0)),
         'has_labels': bool(manifest_dict.get('has_labels', False)),
+        'tv_review': tv_review_state,
         'visuals': visual_state,
         'artifacts': _ds_artifact_strings(artifact_paths),
         'reason_codes': [],
@@ -13851,6 +13904,8 @@ def _ds_build(
         artifact_paths=artifact_paths,
         context={
             'output_override': bool(str(out_dir).strip()),
+            'source': resolved_source,
+            'mode': resolved_mode,
         },
         lineage={
             'input_paths': list(input_paths),
@@ -13953,7 +14008,7 @@ def _ds_build_from_dataset_manifest(dataset_manifest: str, out_dir: str, seed: i
     )
 
 
-def _ds_train(dataset: str, out_dir: str, model_type: str, seed: int) -> Dict[str, Any]:
+def _ds_train(dataset: str, out_dir: str, model_type: str, seed: int, collection_alias: str = '') -> Dict[str, Any]:
     from dataclasses import asdict
 
     from analysis.train_model import train_model
@@ -13987,6 +14042,9 @@ def _ds_train(dataset: str, out_dir: str, model_type: str, seed: int) -> Dict[st
         'metrics': manifest_dict.get('metrics', {}),
         'reason_codes': [],
     }
+    explicit_collection_alias = str(collection_alias or '').strip()
+    if explicit_collection_alias:
+        packet['collection_alias'] = explicit_collection_alias
     return _ds_finalize_run_packet(
         packet,
         bundle=bundle,
@@ -13994,6 +14052,7 @@ def _ds_train(dataset: str, out_dir: str, model_type: str, seed: int) -> Dict[st
         context={
             'output_override': bool(str(out_dir).strip()),
             'seed': int(seed),
+            'collection_alias': explicit_collection_alias,
         },
         lineage={
             'dataset_manifest': Path(dataset),
@@ -14001,7 +14060,7 @@ def _ds_train(dataset: str, out_dir: str, model_type: str, seed: int) -> Dict[st
     )
 
 
-def _ds_evaluate(features_csv: str, labels_csv: str, dataset_manifest: str, max_fpr: float, out_dir: str, run_id: str, model_path: str) -> Dict[str, Any]:
+def _ds_evaluate(features_csv: str, labels_csv: str, dataset_manifest: str, max_fpr: float, out_dir: str, run_id: str, model_path: str, collection_alias: str = '') -> Dict[str, Any]:
     from dataclasses import asdict
     import pickle
 
@@ -14113,6 +14172,9 @@ def _ds_evaluate(features_csv: str, labels_csv: str, dataset_manifest: str, max_
         'artifacts': _ds_artifact_strings(artifact_paths),
         'reason_codes': [],
     }
+    explicit_collection_alias = str(collection_alias or '').strip()
+    if explicit_collection_alias:
+        packet['collection_alias'] = explicit_collection_alias
     return _ds_finalize_run_packet(
         packet,
         bundle=bundle,
@@ -14120,6 +14182,7 @@ def _ds_evaluate(features_csv: str, labels_csv: str, dataset_manifest: str, max_
         context={
             'max_fpr': float(max_fpr),
             'output_override': bool(str(out_dir).strip()),
+            'collection_alias': explicit_collection_alias,
         },
         lineage={
             'features_csv': Path(features_csv),
@@ -14130,7 +14193,7 @@ def _ds_evaluate(features_csv: str, labels_csv: str, dataset_manifest: str, max_
     )
 
 
-def _ds_score(dataset: str, model: str, out_file: str) -> Dict[str, Any]:
+def _ds_score(dataset: str, model: str, out_file: str, collection_alias: str = '') -> Dict[str, Any]:
     from analysis.report_visuals import ANOMALY_DIRECTION, generate_score_visuals
     from analysis.score_unsupervised import score_dataset
 
@@ -14163,12 +14226,16 @@ def _ds_score(dataset: str, model: str, out_file: str) -> Dict[str, Any]:
         'score_column': str(summary.get('score_column', 'score_anomaly')),
         'reason_codes': [],
     }
+    explicit_collection_alias = str(collection_alias or '').strip()
+    if explicit_collection_alias:
+        packet['collection_alias'] = explicit_collection_alias
     return _ds_finalize_run_packet(
         packet,
         bundle=bundle,
         artifact_paths=artifact_paths,
         context={
             'output_override': bool(str(out_file).strip()),
+            'collection_alias': explicit_collection_alias,
         },
         lineage={
             'dataset_manifest': Path(dataset),

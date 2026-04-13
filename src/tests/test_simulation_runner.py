@@ -23,6 +23,7 @@ def test_simulation_runner_lists_available_definitions(capsys) -> None:
     assert 'metadata-contract-regression' in out
     assert 'ds-wizard-hydration' in out
     assert 'ds-wizard-durability' in out
+    assert 'ds-alias-coherence' in out
     assert 'baseline-monitor-runtime' in out
     assert 'validation-cycle-lineage' in out
     assert 'baseline-monitor-restart-continuity' in out
@@ -98,6 +99,21 @@ def test_simulation_runner_dispatches_ds_wizard_durability_definition(monkeypatc
 
     assert rc == 0
     assert called['ds_wizard_durability'] is True
+
+
+def test_simulation_runner_dispatches_ds_alias_coherence_definition(monkeypatch) -> None:
+    called = {'ds_alias_coherence': False}
+
+    def fake_runner() -> int:
+        called['ds_alias_coherence'] = True
+        return 0
+
+    monkeypatch.setattr(simulation_runner, 'run_ds_alias_coherence_probe', fake_runner)
+
+    rc = simulation_runner.main(['ds-alias-coherence'])
+
+    assert rc == 0
+    assert called['ds_alias_coherence'] is True
 
 
 def test_simulation_runner_defaults_to_feedback_loop_definition(monkeypatch) -> None:
@@ -195,6 +211,7 @@ def _configure_probe_roots(monkeypatch, tmp_path: Path) -> None:
     monkeypatch.setattr(simulation_runner, 'FRAME4_PROBE_DIR', tmp_path / 'report_tmp' / 'frame4_metadata_contract_probe')
     monkeypatch.setattr(simulation_runner, 'FRAME4_REGRESSION_PROBE_DIR', tmp_path / 'report_tmp' / 'frame4_metadata_contract_regression_probe')
     monkeypatch.setattr(simulation_runner, 'FRAME4_DS_WIZARD_HYDRATION_PROBE_DIR', tmp_path / 'report_tmp' / 'frame4_ds_wizard_hydration_probe')
+    monkeypatch.setattr(simulation_runner, 'FRAMED_DS_ALIAS_COHERENCE_PROBE_DIR', tmp_path / 'report_tmp' / 'framed_ds_alias_coherence_probe')
     monkeypatch.setattr(simulation_runner, 'JOB0022_PROBE_DIR', tmp_path / 'report_tmp' / 'job0022_baseline_monitor_runtime_probe')
     monkeypatch.setattr(simulation_runner, 'FRAME5_LINEAGE_PROBE_DIR', tmp_path / 'report_tmp' / 'frame5_validation_cycle_lineage_probe')
     monkeypatch.setattr(simulation_runner, 'FRAME6_DS_WIZARD_DURABILITY_PROBE_DIR', tmp_path / 'report_tmp' / 'frame6_ds_wizard_durability_probe')
@@ -222,6 +239,11 @@ def test_new_probe_definitions_emit_retained_reports(tmp_path: Path, monkeypatch
             simulation_runner.run_ds_wizard_durability_probe,
             tmp_path / 'report_tmp' / 'frame6_ds_wizard_durability_probe' / 'run_index.jsonl',
             'frame6_ds_wizard_durability_probe.json',
+        ),
+        (
+            simulation_runner.run_ds_alias_coherence_probe,
+            tmp_path / 'report_tmp' / 'framed_ds_alias_coherence_probe' / 'run_index.jsonl',
+            'framed_ds_alias_coherence_probe.json',
         ),
         (
             simulation_runner.run_validation_cycle_lineage_probe,

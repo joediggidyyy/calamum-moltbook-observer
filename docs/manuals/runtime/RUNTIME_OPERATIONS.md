@@ -1,30 +1,30 @@
 # Calamum Runtime Operations
 
-Updated: 2026-04-03
+Updated: 2026-04-12
 
 This document is the command-level reference for routine runtime work.
 
 ## Runtime command families
 
-| Command family | Use it for | Notes |
-| --- | --- | --- |
-| `observerctl ops *` | bootstrap readiness, preflight, gate checks, mode state, transitions, and evidence packets | primary runtime control surface |
-| `observerctl baseline *` | resource collection and readiness checks | baseline packets feed later comparison and readiness decisions |
-| `observerctl librarian *` | runtime/store controls and retained-artifact census | useful when checking what the lane actually produced |
-| `observerctl watchdog *` | heartbeat freshness, posture checks, and reason inspection | important when a gate denies on stale or invalid watchdog state |
-| `observerctl health *` | quick or full runtime diagnostics | use during closeout and troubleshooting |
-| `observerctl policy *` | read-only policy introspection | explains why the runtime is denying a move |
-| `observerctl ds *` | downstream data-science workflows | use after runtime artifacts are ready for analysis |
+| Command family            | Use it for                                                                                 | Notes                                                           |
+| ------------------------- | ------------------------------------------------------------------------------------------ | --------------------------------------------------------------- |
+| `observerctl ops *`       | bootstrap readiness, preflight, gate checks, mode state, transitions, and evidence packets | primary runtime control surface                                 |
+| `observerctl baseline *`  | resource collection and readiness checks                                                   | baseline packets feed later comparison and readiness decisions  |
+| `observerctl librarian *` | runtime/store controls and retained-artifact census                                        | useful when checking what the lane actually produced            |
+| `observerctl watchdog *`  | heartbeat freshness, posture checks, and reason inspection                                 | important when a gate denies on stale or invalid watchdog state |
+| `observerctl health *`    | quick or full runtime diagnostics                                                          | use during closeout and troubleshooting                         |
+| `observerctl policy *`    | read-only policy introspection                                                             | explains why the runtime is denying a move                      |
+| `observerctl ds *`        | downstream data-science workflows                                                          | use after runtime artifacts are ready for analysis              |
 
 ## Exit-code contract
 
-| Exit code | Meaning |
-| --- | --- |
-| `0` | success / go |
-| `2` | fail-closed / no-go |
-| `3` | schema or contract invalid |
-| `4` | dependency or context missing |
-| `5` | runtime I/O failure |
+| Exit code | Meaning                       |
+| --------- | ----------------------------- |
+| `0`       | success / go                  |
+| `2`       | fail-closed / no-go           |
+| `3`       | schema or contract invalid    |
+| `4`       | dependency or context missing |
+| `5`       | runtime I/O failure           |
 
 ## Common playbooks
 
@@ -58,21 +58,21 @@ Use a stricter review path:
 
 ## Evidence paths
 
-| Evidence family | Canonical path |
-| --- | --- |
-| metrics stream | `logs/data/calamum/observer_derived/<source>/<mode>/moltbook_metrics.jsonl` |
-| event packets | `logs/data/calamum/observer_derived/<source>/<mode>/evidence/observerctl_<event>_<timestamp>.json` |
-| evidence index | `logs/data/calamum/observer_derived/<source>/<mode>/evidence/index.jsonl` |
-| resource retention index | `logs/data/calamum/observer_derived/<source>/<mode>/resource/index.jsonl` |
-| gate events | `logs/behavioral/gates/gate_events.jsonl` |
+| Evidence family          | Canonical path                                                                                     |
+| ------------------------ | -------------------------------------------------------------------------------------------------- |
+| metrics stream           | `logs/data/calamum/observer_derived/<source>/<mode>/moltbook_metrics.jsonl`                        |
+| event packets            | `logs/data/calamum/observer_derived/<source>/<mode>/evidence/observerctl_<event>_<timestamp>.json` |
+| evidence index           | `logs/data/calamum/observer_derived/<source>/<mode>/evidence/index.jsonl`                          |
+| resource retention index | `logs/data/calamum/observer_derived/<source>/<mode>/resource/index.jsonl`                          |
+| gate events              | `logs/behavioral/gates/gate_events.jsonl`                                                          |
 
 ## Runtime roles
 
-| Role | Responsibility |
-| --- | --- |
-| `joediggidyyy` | approval authority for execution windows |
-| `ORACL-Prime` | prepares runbooks, executes approved commands, and records evidence |
-| shared | maintain continuity between the runtime lane and its governance evidence |
+| Role           | Responsibility                                                           |
+| -------------- | ------------------------------------------------------------------------ |
+| `joediggidyyy` | approval authority for execution windows                                 |
+| `ORACL-Prime`  | prepares runbooks, executes approved commands, and records evidence      |
+| shared         | maintain continuity between the runtime lane and its governance evidence |
 
 ## Dashboard and control surfaces
 
@@ -92,13 +92,13 @@ When something looks wrong, use this order:
 
 ## High-signal failure patterns
 
-| Symptom | First thing to check |
-| --- | --- |
-| transition denied | `reason_codes` in the gate packet |
-| evidence file appears missing | the lane-scoped `index.jsonl` in the matching source/mode scope |
-| closure packet looks incomplete | `observerctl health full --json` plus current-state output |
-| density or record counts look strange | separate active vs archived totals before drawing conclusions |
-| dashboard view disagrees with the CLI | trust the CLI and retained packets first |
+| Symptom                               | First thing to check                                            |
+| ------------------------------------- | --------------------------------------------------------------- |
+| transition denied                     | `reason_codes` in the gate packet                               |
+| evidence file appears missing         | the lane-scoped `index.jsonl` in the matching source/mode scope |
+| closure packet looks incomplete       | `observerctl health full --json` plus current-state output      |
+| density or record counts look strange | separate active vs archived totals before drawing conclusions   |
+| dashboard view disagrees with the CLI | trust the CLI and retained packets first                        |
 
 ## Related documents
 

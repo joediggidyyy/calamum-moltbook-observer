@@ -16,6 +16,7 @@ from obfuscator_lib import Obfuscator
 
 from analysis.dataset_builder import build_dataset
 from analysis.evaluation_harness import EvalResult, evaluate, write_run_artifacts
+from analysis.tv_review import apply_suggested_labels_to_dataset_manifest, run_tv_review
 from analysis.validate_jsonl import validate_jsonl_file
 
 
@@ -194,6 +195,86 @@ def test_build_dataset_carries_packet_uplift_fields(tmp_path: Path) -> None:
     assert row['contains_env_var_reference'] == '1'
     assert row['prompt_injection_score'] == '2'
     assert row['matched_pattern_count'] == '3'
+
+
+def test_tv_review_emits_runtime_artifacts_and_updates_manifest_labels(tmp_path: Path) -> None:
+    benign = Obfuscator.sign_record({
+        'timestamp': '2026-02-10T00:00:00Z',
+        'type': 'post',
+        'author_hash': 'good' * 4,
+        'content_length': 48,
+        'content_length_words': 8,
+        'has_code_block': False,
+        'code_block_count': 0,
+        'has_link': False,
+        'link_count': 0,
+        'tags_count': 0,
+        'mentions_count': 0,
+        'line_count': 2,
+        'question_count': 0,
+        'exclamation_count': 0,
+        'contains_ignore_previous': False,
+        'contains_system_prompt_reference': False,
+        'contains_developer_message_reference': False,
+        'contains_env_var_reference': False,
+        'prompt_injection_score': 0,
+        'matched_pattern_count': 0,
+        'f_complexity': 0.01,
+        'f_code_density': 0.0,
+        'f_toxicity': 0,
+        'f_timestamp_epoch': 1.0,
+    })
+    risky = Obfuscator.sign_record({
+        'timestamp': '2026-02-10T00:00:01Z',
+        'type': 'post',
+        'author_hash': 'risk' * 4,
+        'content_length': 220,
+        'content_length_words': 30,
+        'has_code_block': True,
+        'code_block_count': 1,
+        'has_link': True,
+        'link_count': 1,
+        'tags_count': 1,
+        'mentions_count': 1,
+        'line_count': 6,
+        'question_count': 1,
+        'exclamation_count': 0,
+        'contains_ignore_previous': True,
+        'contains_system_prompt_reference': True,
+        'contains_developer_message_reference': False,
+        'contains_env_var_reference': False,
+        'prompt_injection_score': 2,
+        'matched_pattern_count': 1,
+        'f_complexity': 0.7,
+        'f_code_density': 0.3,
+        'f_toxicity': 1,
+        'f_timestamp_epoch': 2.0,
+    })
+    input_path = tmp_path / 'real_source.jsonl'
+    _write_jsonl(input_path, [benign, risky])
+
+    dataset_dir = tmp_path / 'dataset'
+    manifest = build_dataset([input_path], out_dir=dataset_dir, seed=42)
+    assert manifest.has_labels is False
+
+    review_summary = run_tv_review([input_path], dataset_dir)
+    apply_result = apply_suggested_labels_to_dataset_manifest(
+        dataset_dir / 'dataset_manifest.json',
+        Path(str(review_summary['suggested_labels_csv'])),
+        labeled_unique_count=int(review_summary['labeled_unique_count']),
+    )
+
+    manifest_payload = json.loads((dataset_dir / 'dataset_manifest.json').read_text(encoding='utf-8'))
+    labels_text = (dataset_dir / 'labels.csv').read_text(encoding='utf-8')
+
+    assert Path(str(review_summary['review_inventory_csv'])).name == 'tv_review_inventory.csv'
+    assert Path(str(review_summary['suggested_labels_csv'])).name == 'tv_suggested_labels.csv'
+    assert review_summary['labeled_unique_count'] == 2
+    assert apply_result['labels_applied'] is True
+    assert manifest_payload['has_labels'] is True
+    assert Path(str(manifest_payload['labels_csv'])).name == 'labels.csv'
+    assert 'TV-0' in labels_text
+    assert 'TV-3' in labels_text
 
 
 def test_evaluation_run_ledger_emits_fields_needed_for_ds_wizard_import(tmp_path: Path) -> None:

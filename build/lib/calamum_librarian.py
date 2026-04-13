@@ -13,7 +13,7 @@ Design:
 -   Fail-safe: Corrupt files are quarantined, not deleted.
 """
 
-__version__ = "1.1.0"
+__version__ = "1.0.1"
 
 import gzip
 import hashlib
@@ -1850,12 +1850,6 @@ def release_librarian_dataset_packet(
 ) -> Dict[str, Any]:
     paths = _dataset_catalog_paths(project_anchor)
     _bootstrap_librarian_vault(paths)
-    if _vault_locked(paths):
-        return _vault_locked_packet(
-            paths,
-            action='librarian-dataset-release',
-            summary='Dataset release denied because the protected librarian vault is locked.',
-        )
     resolved = _resolve_dataset_entry(paths, selector)
     if not isinstance(resolved, dict):
         return {
@@ -2024,7 +2018,7 @@ def release_librarian_dataset_packet(
         purpose='dataset_access_release',
     )
     _write_json_atomic(projection_release_path, release_doc)
-    baseline = _write_vault_baseline(paths, reason='librarian-dataset-release')
+    baseline = _vault_checksum_payload(paths)
     _append_vault_audit_record(
         paths,
         action='librarian-dataset-release',

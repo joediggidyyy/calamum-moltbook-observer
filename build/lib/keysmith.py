@@ -25,7 +25,7 @@ from typing import Any, Dict, Iterable, Optional, Tuple
 from urllib.parse import urlparse
 
 
-KEYSMITH_VERSION = "1.0.0"
+KEYSMITH_VERSION = "1.0.1"
 MOLTBOOK_CANONICAL_BASE_URL = "https://www.moltbook.com/api/v1"
 MOLTBOOK_STALE_BASE_URLS = (
     "https://api.moltbook.com/v1",
