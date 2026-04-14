@@ -20,12 +20,14 @@ if str(src_dir) not in sys.path:
 
 from calamum_librarian import (
     Librarian,
+    dataset_authority_entry_for_manifest,
+    dataset_authority_entry_for_selector,
     dataset_display_alias_for_manifest,
     librarian_vault_lock_packet,
     librarian_vault_verify_packet,
     register_librarian_dataset_packet,
 )
-from analysis._util import sha256_path
+from analysis._util import normalize_repo_or_absolute_path, sha256_path
 
 
 def _make_temp_project(tmp_path: Path) -> tuple[Path, Path]:
@@ -35,6 +37,50 @@ def _make_temp_project(tmp_path: Path) -> tuple[Path, Path]:
     anchor.write_text('# observerctl anchor\n', encoding='utf-8')
     (project_root / 'PROJECT_MANIFEST.json').write_text('{}\n', encoding='utf-8')
     return project_root, anchor
+
+
+def _write_dataset_manifest(
+    project_root: Path,
+    slug: str,
+    *,
+    total_records: int = 1,
+    has_labels: bool = False,
+    source: str = '',
+    mode: str = '',
+) -> Path:
+    dataset_dir = project_root / 'datasets' / slug
+    dataset_dir.mkdir(parents=True, exist_ok=True)
+    features_csv = dataset_dir / 'features.csv'
+    labels_csv = dataset_dir / 'labels.csv'
+    manifest_path = dataset_dir / 'dataset_manifest.json'
+    features_csv.write_text('record_id,feature\n1,0.1\n', encoding='utf-8')
+    if has_labels:
+        labels_csv.write_text('record_id,label\n1,1\n', encoding='utf-8')
+    manifest_payload = {
+        'features_csv': str(features_csv),
+        'total_records': int(total_records),
+        'has_labels': bool(has_labels),
+    }
+    source_token = str(source or '').strip().lower()
+    mode_token = str(mode or '').strip().lower()
+    if source_token and mode_token:
+        manifest_payload['inputs'] = [
+            {
+                'path': str(
+                    project_root
+                    / 'logs'
+                    / 'data'
+                    / 'calamum'
+                    / 'archive'
+                    / 'resource_{0}_{1}_fixture_{2}_seg0001.jsonl.gz'.format(source_token, mode_token, slug)
+                ),
+                'records': int(total_records),
+            },
+        ]
+    if has_labels:
+        manifest_payload['labels_csv'] = str(labels_csv)
+    manifest_path.write_text(json.dumps(manifest_payload), encoding='utf-8')
+    return manifest_path
 
 @pytest.fixture
 def librarian_env():
@@ -336,6 +382,41 @@ def test_dataset_display_alias_for_manifest_uses_stable_manifest_fallback_when_u
     assert alias == 'dataset-{0}'.format(sha256_path(manifest_path)[-6:])
 
 
+def test_dataset_authority_api_treats_router_as_hash_hint_not_authority(tmp_path: Path) -> None:
+    project_root, anchor = _make_temp_project(tmp_path)
+    alpha_manifest = _write_dataset_manifest(project_root, 'authority_alpha', total_records=2, has_labels=False, source='real', mode='live')
+    beta_manifest = _write_dataset_manifest(project_root, 'authority_beta', total_records=4, has_labels=False, source='real', mode='canary')
+
+    alpha_packet = register_librarian_dataset_packet(
+        anchor,
+        alpha_manifest,
+        access_class='local',
+        display_name='Authority Alpha',
+        run_id='authority-alpha',
+    )
+    beta_packet = register_librarian_dataset_packet(
+        anchor,
+        beta_manifest,
+        access_class='local',
+        display_name='Authority Beta',
+        run_id='authority-beta',
+    )
+
+    router_path = project_root / 'local_untracked' / 'analysis' / 'vaults' / 'librarian' / 'authority' / 'librarian_dataset_routing_map.json'
+    router = json.loads(router_path.read_text(encoding='utf-8'))
+    beta_terminal = 'sha256:{0}'.format(beta_packet['dataset']['dataset_manifest_sha256'])
+    router['token_index']['selector_run_id:{0}'.format(alpha_packet['dataset']['run_id'])] = [beta_terminal]
+    router['token_index']['manifest_sha256:{0}'.format(alpha_packet['dataset']['dataset_manifest_sha256'])] = [beta_terminal]
+    router_path.write_text(json.dumps(router, indent=2, sort_keys=True), encoding='utf-8')
+
+    selector_entry = dataset_authority_entry_for_selector(anchor, alpha_packet['dataset']['run_id'])
+    manifest_entry = dataset_authority_entry_for_manifest(anchor, alpha_manifest)
+
+    assert selector_entry['entry_id'] == alpha_packet['dataset']['entry_id']
+    assert manifest_entry['entry_id'] == alpha_packet['dataset']['entry_id']
+    assert dataset_display_alias_for_manifest(anchor, alpha_manifest) == alpha_packet['dataset']['display_alias']
+
+
 def test_register_dataset_links_latest_baseline_context_for_inferred_scope(tmp_path: Path) -> None:
     project_root, anchor = _make_temp_project(tmp_path)
     dataset_dir = project_root / 'datasets' / 'baseline_link_alpha'
@@ -381,4 +462,120 @@ def test_register_dataset_links_latest_baseline_context_for_inferred_scope(tmp_p
     assert packet['dataset']['baseline_analysis_packet'].endswith('observerctl_baseline-analysis_dataset_link.json')
     assert packet['dataset']['baseline_sample_counts'] == {'resource_normal': 5, 'resource_baseline': 7}
     assert packet['artifacts']['baseline_analysis_packet'].endswith('observerctl_baseline-analysis_dataset_link.json')
+
+
+def test_register_dataset_emits_librarian_router_with_shipped_v1_contract(tmp_path: Path) -> None:
+    project_root, anchor = _make_temp_project(tmp_path)
+    manifest_path = _write_dataset_manifest(project_root, 'router_contract_alpha', total_records=4, has_labels=False)
+
+    packet = register_librarian_dataset_packet(
+        anchor,
+        manifest_path,
+        access_class='local',
+        display_name='Router Contract Alpha',
+        run_id='router-contract-alpha',
+    )
+
+    router_path = project_root / 'local_untracked' / 'analysis' / 'vaults' / 'librarian' / 'authority' / 'librarian_dataset_routing_map.json'
+    router = json.loads(router_path.read_text(encoding='utf-8'))
+    terminal = 'sha256:{0}'.format(packet['dataset']['dataset_manifest_sha256'])
+    collections_id = '{0}:{1}'.format(packet['dataset']['source'], packet['dataset']['mode'])
+    authority_manifest_ref = normalize_repo_or_absolute_path(
+        project_root / 'local_untracked' / 'analysis' / 'vaults' / 'librarian' / 'authority' / 'librarian_dataset_manifest.json',
+        project_root,
+    )
+
+    assert router_path.exists()
+    assert router['schema_version'] == '1.0'
+    assert router['authoritative'] is False
+    assert router['router_kind'] == 'librarian_dataset_router_v1'
+    assert router['authority_refs'] == {'manifest': authority_manifest_ref}
+    assert set(router['action_classes'].keys()) == {'scope_actions', 'selector_actions', 'alias_actions'}
+    assert 'packet_actions' not in router['action_classes']
+    assert 'packet_join' not in router['authority_refs']
+    assert router['token_index']['selector_index:1'] == [terminal]
+    assert router['token_index']['entry_id:{0}'.format(packet['dataset']['entry_id'])] == [terminal]
+    assert router['token_index']['selector_run_id:{0}'.format(packet['dataset']['run_id'])] == [terminal]
+    assert router['token_index']['display_name:{0}'.format(packet['dataset']['display_name'])] == [terminal]
+    assert router['token_index']['manifest_sha256:{0}'.format(packet['dataset']['dataset_manifest_sha256'])] == [terminal]
+    assert router['token_index']['alias_id:{0}'.format(packet['dataset']['display_alias'])] == [terminal]
+    assert router['token_index']['collections_id:{0}'.format(collections_id)] == [terminal]
+    assert router['deref'][terminal] == 'manifest:#/entries/0'
+
+
+def test_router_emission_tracks_manifest_parity_for_scope_tokens_and_deref(tmp_path: Path) -> None:
+    project_root, anchor = _make_temp_project(tmp_path)
+    live_alpha_manifest = _write_dataset_manifest(project_root, 'router_live_alpha', total_records=3, has_labels=False, source='real', mode='live')
+    live_beta_manifest = _write_dataset_manifest(project_root, 'router_live_beta', total_records=5, has_labels=True, source='real', mode='live')
+    canary_manifest = _write_dataset_manifest(project_root, 'router_canary_gamma', total_records=7, has_labels=False, source='real', mode='canary')
+
+    live_alpha_packet = register_librarian_dataset_packet(
+        anchor,
+        live_alpha_manifest,
+        access_class='local',
+        display_name='Router Live Alpha',
+        run_id='router-live-alpha',
+        )
+    live_beta_packet = register_librarian_dataset_packet(
+        anchor,
+        live_beta_manifest,
+        access_class='local',
+        display_name='Router Live Beta',
+        run_id='router-live-beta',
+    )
+    canary_packet = register_librarian_dataset_packet(
+        anchor,
+        canary_manifest,
+        access_class='local',
+        display_name='Router Canary Gamma',
+        run_id='router-canary-gamma',
+    )
+
+    snapshot_path = project_root / 'local_untracked' / 'analysis' / 'vaults' / 'librarian' / 'authority' / 'librarian_dataset_manifest.json'
+    router_path = project_root / 'local_untracked' / 'analysis' / 'vaults' / 'librarian' / 'authority' / 'librarian_dataset_routing_map.json'
+    snapshot = json.loads(snapshot_path.read_text(encoding='utf-8'))
+    router = json.loads(router_path.read_text(encoding='utf-8'))
+
+    approved_entries = [
+        entry for entry in snapshot['entries']
+        if entry.get('status') == 'approved'
+        and entry.get('readiness') == 'ready'
+        and entry.get('registration_kind') == 'manual-register'
+    ]
+    manifest_indexes = {
+        str(entry.get('entry_id', '')): index
+        for index, entry in enumerate(snapshot['entries'])
+    }
+    expected_live_terminals = [
+        'sha256:{0}'.format(entry['resolver']['dataset_manifest_sha256'])
+        for entry in approved_entries
+        if '{0}:{1}'.format(entry.get('source', ''), entry.get('mode', '')) == 'real:live'
+    ]
+    expected_live_alias_nodes = {
+        live_alpha_packet['dataset']['display_alias']: ['sha256:{0}'.format(live_alpha_packet['dataset']['dataset_manifest_sha256'])],
+        live_beta_packet['dataset']['display_alias']: ['sha256:{0}'.format(live_beta_packet['dataset']['dataset_manifest_sha256'])],
+    }
+
+    assert router['token_index']['collections_id:real:live'] == expected_live_terminals
+    assert router['action_classes']['scope_actions']['scopes']['real:live']['dataset_hashes'] == expected_live_terminals
+    assert router['action_classes']['selector_actions']['scopes']['real:live']['dataset_hashes'] == expected_live_terminals
+    assert router['action_classes']['alias_actions']['scopes']['real:live']['alias_nodes'] == expected_live_alias_nodes
+    assert router['token_index']['collections_id:real:canary'] == [
+        'sha256:{0}'.format(canary_packet['dataset']['dataset_manifest_sha256'])
+    ]
+
+    for selector_index, entry in enumerate(approved_entries, start=1):
+        dataset_hash = str(entry['resolver']['dataset_manifest_sha256'])
+        terminal = 'sha256:{0}'.format(dataset_hash)
+        entry_id = str(entry.get('entry_id', ''))
+        run_id = str(entry.get('run_id', ''))
+        display_name = str(entry.get('display_name', ''))
+        manifest_index = manifest_indexes[entry_id]
+
+        assert router['token_index']['selector_index:{0}'.format(selector_index)] == [terminal]
+        assert router['token_index']['entry_id:{0}'.format(entry_id)] == [terminal]
+        assert router['token_index']['selector_run_id:{0}'.format(run_id)] == [terminal]
+        assert router['token_index']['display_name:{0}'.format(display_name)] == [terminal]
+        assert router['token_index']['manifest_sha256:{0}'.format(dataset_hash)] == [terminal]
+        assert router['deref'][terminal] == 'manifest:#/entries/{0}'.format(manifest_index)
 

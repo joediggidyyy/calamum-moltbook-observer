@@ -43,6 +43,8 @@ The bootstrap surface is local-runtime only. It prepares or validates the requir
 
 A baseline is the retained resource reference used by later readiness and comparison checks.
 
+This runtime baseline lane supports readiness, gate, and transition work for the runtime surface. The DS lane uses its reviewed comparison-baseline selectors through [`../data-science/DS_OPERATIONS.md`](../data-science/DS_OPERATIONS.md) and [`../data-science/DS_WIZARD.md`](../data-science/DS_WIZARD.md).
+
 ### Collect the baseline window
 
 Use one baseline-focused collection window and one normal collection window for the same source and mode.

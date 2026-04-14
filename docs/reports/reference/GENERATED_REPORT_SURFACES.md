@@ -22,17 +22,27 @@ docs/reports/
 |     |  `- YYYYMMDDTHHMMSSffffffZ.collection.md
 |     `- processing/
 |        |- build/
-|        |  `- YYYYMMDDTHHMMSSffffffZ.build.md
+|        |  |- YYYYMMDDTHHMMSSffffffZ.build.md
+|        |  `- figures/
+|        |     `- <packet-stem>/...
 |        |- eval/
-|        |  `- YYYYMMDDTHHMMSSffffffZ.eval.md
+|        |  |- YYYYMMDDTHHMMSSffffffZ.eval.md
+|        |  `- figures/
+|        |     `- <packet-stem>/...
 |        |- score/
-|        |  `- YYYYMMDDTHHMMSSffffffZ.score.md
+|        |  |- YYYYMMDDTHHMMSSffffffZ.score.md
+|        |  `- figures/
+|        |     `- <packet-stem>/...
 |        `- train/
-|           `- YYYYMMDDTHHMMSSffffffZ.train.md
+|           |- YYYYMMDDTHHMMSSffffffZ.train.md
+|           `- figures/
+|              `- <packet-stem>/...
 |- reference/
 |- validations/
 `- INDEX.md
 ```
+
+The `processing/<stage>/figures/<packet-stem>/...` subtree is optional and appears only when the relevant stage emits figure artifacts.
 
 ## Aggregate report family
 
@@ -44,14 +54,14 @@ docs/reports/
 
 ## Aggregate surface roles
 
-| Surface | Reader role |
-|---|---|
-| `AGGREGATE_REPORT.md` | Flagship synthesis narrative |
-| `PUBLIC_RUN_LEDGER.md` | Runtime-safe population census |
-| `LATEST_COLLECTIONS.md` | Front-door collection routing |
-| `WORKFLOW_ROLLUP.md` | Workflow-family overview |
-| `THRESHOLD_SUMMARY.md` | Evaluation-only threshold follow-through |
-| `GENERATED_REPORT_SURFACES.md` | Contract/reference surface |
+| Surface                        | Reader role                              |
+| ------------------------------ | ---------------------------------------- |
+| `AGGREGATE_REPORT.md`          | Flagship synthesis narrative             |
+| `PUBLIC_RUN_LEDGER.md`         | Runtime-safe population census           |
+| `LATEST_COLLECTIONS.md`        | Front-door collection routing            |
+| `WORKFLOW_ROLLUP.md`           | Workflow-family overview                 |
+| `THRESHOLD_SUMMARY.md`         | Evaluation-only threshold follow-through |
+| `GENERATED_REPORT_SURFACES.md` | Contract/reference surface               |
 
 ## Tracked packet family
 
@@ -59,11 +69,24 @@ When collection packets are materialized:
 
 - `docs/reports/collections/<collection-alias>/collection/YYYYMMDDTHHMMSSffffffZ.collection.md`
 - `docs/reports/collections/<collection-alias>/processing/<stage>/YYYYMMDDTHHMMSSffffffZ.<stage>.md`
+- `docs/reports/collections/<collection-alias>/processing/<stage>/figures/<packet-stem>/...` when that stage emits figure artifacts for the dated stage packet identified by `<packet-stem>`
 - `<stage>` currently materializes as `build`, `eval`, `score`, or `train` in the tracked packet family.
 - `docs/reports/collections/<collection-alias>/processing/build/YYYYMMDDTHHMMSSffffffZ.build.md`
 - `docs/reports/collections/<collection-alias>/processing/eval/YYYYMMDDTHHMMSSffffffZ.eval.md`
 - `docs/reports/collections/<collection-alias>/processing/score/YYYYMMDDTHHMMSSffffffZ.score.md`
 - `docs/reports/collections/<collection-alias>/processing/train/YYYYMMDDTHHMMSSffffffZ.train.md`
+
+## Canonical derived report samples
+
+When active tracked publication is in zero-state, use this archived sample packet family as the canonical reader-shape example set:
+
+- Collection packet sample: [20260404.collection.md](../../../local_untracked/quarantine_legacy_archive/reports_surface_reset_20260404/collections/sample/collection/20260404.collection.md)
+- Build packet sample: [20260404.build.md](../../../local_untracked/quarantine_legacy_archive/reports_surface_reset_20260404/collections/sample/processing/build/20260404.build.md)
+- Eval packet sample: [20260404.eval.md](../../../local_untracked/quarantine_legacy_archive/reports_surface_reset_20260404/collections/sample/processing/eval/20260404.eval.md)
+- Score packet sample: [20260404.score.md](../../../local_untracked/quarantine_legacy_archive/reports_surface_reset_20260404/collections/sample/processing/score/20260404.score.md)
+- Train packet sample: [20260404.train.md](../../../local_untracked/quarantine_legacy_archive/reports_surface_reset_20260404/collections/sample/processing/train/20260404.train.md)
+
+These archived sample packets are reference examples for packet shape and routing. They do not override the live tracked publication state under `docs/reports/`.
 
 ## Reader routes
 

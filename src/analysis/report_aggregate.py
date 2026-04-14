@@ -20,6 +20,7 @@ from ._util import (
     ds_runs_dir,
     find_project_root,
     iter_jsonl,
+    librarian_vault_report_quarantine_dir,
     normalize_repo_or_absolute_path,
     sanitize_run_id,
     utc_now_iso,
@@ -306,9 +307,6 @@ def _write_tracked_ds_publication_outputs(
     aggregate_report_json_path = Path(paths['aggregate_report_json_path'])
     aggregate_report_md_path = Path(paths['aggregate_report_md_path'])
     index_md_path = Path(paths['index_md_path'])
-    generated_surfaces_md_path = Path(paths['generated_surfaces_md_path'])
-    validations_index_md_path = Path(paths['validations_index_md_path'])
-
     latest_json_path.write_text(json.dumps(latest_payload, indent=2, sort_keys=True), encoding='utf-8')
     latest_md_path.write_text(_latest_publication_markdown(project_root, latest_md_path, latest_payload), encoding='utf-8')
     by_workflow_json_path.write_text(json.dumps(by_workflow_payload, indent=2, sort_keys=True), encoding='utf-8')
@@ -352,22 +350,6 @@ def _write_tracked_ds_publication_outputs(
             thresholds_payload,
             published_runs,
         ),
-        encoding='utf-8',
-    )
-    generated_surfaces_md_path.write_text(
-        _generated_report_surfaces_markdown(
-            project_root,
-            generated_surfaces_md_path,
-            aggregate_report_md_path,
-            public_run_ledger_md_path,
-            latest_md_path,
-            by_workflow_md_path,
-            thresholds_md_path,
-        ),
-        encoding='utf-8',
-    )
-    validations_index_md_path.write_text(
-        _validations_index_markdown(project_root, validations_index_md_path),
         encoding='utf-8',
     )
 
@@ -415,6 +397,104 @@ def reset_tracked_ds_publication_state(*, project_anchor: Path) -> Dict[str, Any
         },
         'republish_required': bool(control_state.get('republish_required', False)),
         'publication_control_path': normalize_repo_or_absolute_path(Path(paths['publication_control_path']), project_root),
+        'aggregate_paths': aggregate_paths,
+    }
+
+
+def _live_publication_summary_from_report_payload(project_root: Path, payload: Mapping[str, Any]) -> Optional[Dict[str, Any]]:
+    report_paths = dict(payload.get('report_paths', {}) or {}) if isinstance(payload.get('report_paths', {}), dict) else {}
+    collection_history_ref = str(
+        report_paths.get('collection_history_markdown', '')
+        or report_paths.get('collection_markdown', '')
+        or report_paths.get('markdown', '')
+        or ''
+    ).strip()
+    processing_ref = str(report_paths.get('processing_markdown', '') or '').strip()
+    collection_history_path = _resolve_repo_path(project_root, collection_history_ref)
+    processing_path = _resolve_repo_path(project_root, processing_ref)
+    if collection_history_path is None or processing_path is None:
+        return None
+    if not collection_history_path.exists() or not processing_path.exists():
+        return None
+
+    workflow = canonical_ds_workflow_name(str(payload.get('workflow', '') or '').strip())
+    run_id = str(payload.get('run_id', '') or '').strip()
+    timestamp_utc = str(payload.get('timestamp_utc', '') or '').strip()
+    collection_alias = str(payload.get('collection_alias', '') or '').strip()
+    if not workflow or not run_id or not timestamp_utc or not collection_alias:
+        return None
+
+    figures_dir = processing_path.parent / 'figures' / processing_path.stem
+    published_figures: List[str] = []
+    if figures_dir.exists():
+        for candidate in sorted(figures_dir.rglob('*')):
+            if candidate.is_file():
+                published_figures.append(normalize_repo_or_absolute_path(candidate, project_root))
+
+    source_report_paths = dict(payload.get('source_report_paths', {}) or {}) if isinstance(payload.get('source_report_paths', {}), dict) else {}
+    context = dict(payload.get('context', {}) or {}) if isinstance(payload.get('context', {}), dict) else {}
+    result = dict(payload.get('result', {}) or {}) if isinstance(payload.get('result', {}), dict) else {}
+    return {
+        'collection_alias': collection_alias,
+        'workflow': workflow,
+        'run_id': run_id,
+        'timestamp_utc': timestamp_utc,
+        'decision': str(payload.get('decision', '') or '').strip(),
+        'summary': str(payload.get('summary', '') or '').strip(),
+        'source_run_root': str(payload.get('source_run_root', '') or '').strip(),
+        'source_manifest_path': str(source_report_paths.get('manifest', '') or '').strip(),
+        'source_report_paths': source_report_paths,
+        'published_run_dir': str(payload.get('published_run_dir', '') or '').strip(),
+        'published_report_paths': report_paths,
+        'published_figures': published_figures,
+        'figure_count': int(len(published_figures)),
+        'context': context,
+        'result': result,
+    }
+
+
+def _load_live_publication_summaries(*, project_anchor: Path) -> List[Dict[str, Any]]:
+    project_root = find_project_root(project_anchor)
+    paths = _tracked_ds_publication_paths(project_anchor)
+    internal_collections_root = Path(paths['internal_collections_root'])
+    rows: List[Dict[str, Any]] = []
+    if not internal_collections_root.exists():
+        return rows
+
+    for candidate in sorted(path for path in internal_collections_root.iterdir() if path.is_dir()):
+        report_payload = _read_json_dict(candidate / 'publication_report.json')
+        if not report_payload:
+            continue
+        summary = _live_publication_summary_from_report_payload(project_root, report_payload)
+        if summary is not None:
+            rows.append(summary)
+
+    rows.sort(
+        key=lambda row: (
+            _publication_sort_key(str(row.get('timestamp_utc', ''))),
+            str(row.get('run_id', '')),
+        )
+    )
+    return rows
+
+
+def resync_tracked_ds_publication_views_from_live_packets(*, project_anchor: Path) -> Dict[str, Any]:
+    project_root = find_project_root(project_anchor)
+    paths = _tracked_ds_publication_paths(project_anchor)
+    _ensure_tracked_ds_publication_dirs(paths)
+
+    published_runs = _load_live_publication_summaries(project_anchor=project_anchor)
+    threshold_rows = _threshold_summary_rows(published_runs)
+    aggregate_paths = _write_tracked_ds_publication_outputs(
+        project_root=project_root,
+        paths=paths,
+        published_runs=published_runs,
+        threshold_rows=threshold_rows,
+    )
+    return {
+        'decision': 'go',
+        'reason_codes': [],
+        'published_run_count': int(len(published_runs)),
         'aggregate_paths': aggregate_paths,
     }
 
@@ -483,6 +563,109 @@ def load_ds_run_manifest_records(*, project_anchor: Path) -> List[Dict[str, Any]
     return rows
 
 
+def _current_manifest_publication_candidate(
+    *,
+    current_manifest_payload: Optional[Mapping[str, Any]],
+    project_root: Path,
+    project_anchor: Path,
+) -> Optional[Dict[str, Any]]:
+    manifest_payload = dict(current_manifest_payload or {}) if isinstance(current_manifest_payload, Mapping) else {}
+    if not manifest_payload:
+        return None
+    return _build_publication_candidate(
+        {
+            'entry': {},
+            'manifest_payload': manifest_payload,
+        },
+        project_root,
+        project_anchor,
+        explicit_republish=False,
+    )
+
+
+def _refresh_tracked_ds_publication_current_only(
+    *,
+    project_root: Path,
+    project_anchor: Path,
+    paths: Mapping[str, Path],
+    current_manifest_payload: Optional[Mapping[str, Any]],
+) -> Optional[Dict[str, Any]]:
+    current_candidate = _current_manifest_publication_candidate(
+        current_manifest_payload=current_manifest_payload,
+        project_root=project_root,
+        project_anchor=project_anchor,
+    )
+    if current_candidate is None:
+        return None
+
+    _ensure_tracked_ds_publication_dirs(paths)
+    _assign_collection_packet_paths([current_candidate])
+    _publish_candidate(current_candidate)
+
+    current_summary = _published_run_summary(current_candidate, project_root)
+    published_runs = []
+    current_identity = _publication_identity_key(
+        workflow=str(current_summary.get('workflow', '')),
+        run_id=str(current_summary.get('run_id', '')),
+        timestamp_utc=str(current_summary.get('timestamp_utc', '')),
+    )
+    for summary in _load_live_publication_summaries(project_anchor=project_anchor):
+        summary_identity = _publication_identity_key(
+            workflow=str(summary.get('workflow', '')),
+            run_id=str(summary.get('run_id', '')),
+            timestamp_utc=str(summary.get('timestamp_utc', '')),
+        )
+        if summary_identity == current_identity:
+            continue
+        published_runs.append(dict(summary))
+    published_runs.append(current_summary)
+    published_runs.sort(
+        key=lambda summary: (
+            _publication_sort_key(str(summary.get('timestamp_utc', ''))),
+            str(summary.get('run_id', '')),
+        )
+    )
+    _write_collection_reports_from_published_runs(published_runs, project_root)
+    published_runs = _load_live_publication_summaries(project_anchor=project_anchor)
+
+    threshold_rows = _threshold_summary_rows(published_runs)
+    aggregate_paths = _write_tracked_ds_publication_outputs(
+        project_root=project_root,
+        paths=paths,
+        published_runs=published_runs,
+        threshold_rows=threshold_rows,
+    )
+
+    manifest_payload = dict(current_manifest_payload or {}) if isinstance(current_manifest_payload, Mapping) else {}
+    current_run: Dict[str, Any] = {}
+    current_key = _publication_identity_key(
+        workflow=str(manifest_payload.get('workflow', '')),
+        run_id=str(manifest_payload.get('run_id', '')),
+        timestamp_utc=str(manifest_payload.get('timestamp_utc', '')),
+    )
+    for summary in published_runs:
+        if _publication_identity_key(
+            workflow=str(summary.get('workflow', '')),
+            run_id=str(summary.get('run_id', '')),
+            timestamp_utc=str(summary.get('timestamp_utc', '')),
+        ) == current_key:
+            current_run = dict(summary)
+            break
+
+    control_state = _load_publication_control_state(Path(paths['publication_control_path']))
+    return {
+        'decision': 'go',
+        'reason_codes': [],
+        'publish_root': normalize_repo_or_absolute_path(Path(paths['publication_root']), project_root),
+        'published_run_count': int(len(published_runs)),
+        'excluded_entry_count': 0,
+        'current_run': current_run,
+        'republish_required': bool(control_state.get('republish_required', False)),
+        'publication_control_path': normalize_repo_or_absolute_path(Path(paths['publication_control_path']), project_root),
+        'aggregate_paths': aggregate_paths,
+    }
+
+
 def refresh_tracked_ds_publication(
     *,
     project_anchor: Path,
@@ -494,6 +677,14 @@ def refresh_tracked_ds_publication(
     publication_root = Path(paths['publication_root'])
     control_state = _load_publication_control_state(Path(paths['publication_control_path']))
     if bool(control_state.get('republish_required', False)) and not bool(explicit_republish):
+        current_only_state = _refresh_tracked_ds_publication_current_only(
+            project_root=project_root,
+            project_anchor=project_anchor,
+            paths=paths,
+            current_manifest_payload=current_manifest_payload,
+        )
+        if current_only_state is not None:
+            return current_only_state
         _ensure_tracked_ds_publication_dirs(paths)
         return {
             'decision': 'skipped',
@@ -507,7 +698,7 @@ def refresh_tracked_ds_publication(
             'aggregate_paths': _tracked_ds_aggregate_output_refs(project_root=project_root, paths=paths),
         }
 
-    _reset_publication_root(publication_root, preserve_children=['validations'])
+    _reset_publication_root(publication_root, preserve_children=['reference', 'validations'])
     _reset_publication_root(Path(paths['internal_collections_root']))
     _ensure_tracked_ds_publication_dirs(paths)
 
@@ -1354,6 +1545,7 @@ def _public_run_ledger_payload(
         source_mode_rows.append({'source': source, 'mode': mode, 'count': int(source_mode_counts[key])})
 
     workflows = _by_workflow_publication_payload(project_root, published_runs, publication_root).get('workflows', {})
+    vault_inventory_rows = _tracked_report_vault_inventory_rows(project_root)
     return {
         'schema_version': '1.0',
         'family_id': 'ds_publication',
@@ -1373,7 +1565,52 @@ def _public_run_ledger_payload(
         ],
         'collection_rows': collection_rows,
         'source_mode_rows': source_mode_rows,
+        'vault_inventory_count': int(len(vault_inventory_rows)),
+        'vault_inventory_root': normalize_repo_or_absolute_path(_tracked_report_quarantine_project_root(project_root), project_root),
+        'vault_inventory_rows': vault_inventory_rows,
     }
+
+
+def _tracked_report_quarantine_project_root(project_root: Path) -> Path:
+    return librarian_vault_report_quarantine_dir(project_root) / (sanitize_run_id(project_root.name) or project_root.name)
+
+
+def _tracked_report_vault_inventory_rows(project_root: Path) -> List[Dict[str, Any]]:
+    inventory_root = _tracked_report_quarantine_project_root(project_root)
+    rows: List[Dict[str, Any]] = []
+    if not inventory_root.exists():
+        return rows
+
+    for candidate in sorted(path for path in inventory_root.iterdir() if path.is_dir()):
+        manifest_path = candidate / 'archive_manifest.json'
+        payload = _read_json_dict(manifest_path)
+        archived_aliases = [
+            str(alias).strip()
+            for alias in list(payload.get('archived_aliases', []) or [])
+            if str(alias).strip()
+        ]
+        rows.append(
+            {
+                'archive_name': candidate.name,
+                'action': str(payload.get('action', '') or '').strip(),
+                'reason': str(payload.get('reason', '') or '').strip(),
+                'archived_at_utc': str(payload.get('archived_at_utc', '') or '').strip(),
+                'archived_alias_count': int(payload.get('archived_alias_count', len(archived_aliases)) or 0),
+                'archived_aliases': archived_aliases,
+                'archive_root': normalize_repo_or_absolute_path(candidate, project_root),
+                'archive_manifest_json': normalize_repo_or_absolute_path(manifest_path, project_root),
+                'live_target': str(payload.get('live_target', '') or '').strip(),
+            }
+        )
+
+    rows.sort(
+        key=lambda row: (
+            _publication_sort_key(str(row.get('archived_at_utc', '') or utc_now_iso())),
+            str(row.get('archive_name', '')),
+        ),
+        reverse=True,
+    )
+    return rows
 
 
 def _aggregate_report_payload(
@@ -1624,6 +1861,7 @@ def _public_run_ledger_markdown(
     workflow_rows = list(payload.get('workflow_rows', []) or []) if isinstance(payload.get('workflow_rows', []), list) else []
     collection_rows = list(payload.get('collection_rows', []) or []) if isinstance(payload.get('collection_rows', []), list) else []
     source_mode_rows = list(payload.get('source_mode_rows', []) or []) if isinstance(payload.get('source_mode_rows', []), list) else []
+    vault_inventory_rows = list(payload.get('vault_inventory_rows', []) or []) if isinstance(payload.get('vault_inventory_rows', []), list) else []
     lines = ['# Public Run Ledger', '']
     lines.append('This ledger defines the current public reporting population and provides a runtime-safe census of the tracked report family.')
     lines.append('')
@@ -1707,6 +1945,28 @@ def _public_run_ledger_markdown(
     lines.append('- Latest collections: {0}'.format(_markdown_link(target_path, project_root, normalize_repo_or_absolute_path(latest_md_path, project_root), 'LATEST_COLLECTIONS.md')))
     lines.append('- Workflow rollup: {0}'.format(_markdown_link(target_path, project_root, normalize_repo_or_absolute_path(by_workflow_md_path, project_root), 'WORKFLOW_ROLLUP.md')))
     lines.append('- Threshold summary: {0}'.format(_markdown_link(target_path, project_root, normalize_repo_or_absolute_path(thresholds_md_path, project_root), 'THRESHOLD_SUMMARY.md')))
+    lines.append('')
+    lines.append('## Librarian vault inventory')
+    lines.append('')
+    lines.append('This bottom section is human-facing and summarizes tracked report archive inventories currently held in the Librarian quarantine lane.')
+    lines.append('Machine-readable authority remains in the underlying archive manifests and audit surfaces; this table is only a routing view over those retained artifacts.')
+    lines.append('')
+    lines.append('- Vault inventory root: `{0}`'.format(str(payload.get('vault_inventory_root', '') or '')))
+    lines.append('- Archive inventories currently visible: {0}'.format(int(payload.get('vault_inventory_count', 0) or 0)))
+    lines.append('')
+    if vault_inventory_rows:
+        lines.append('| Archived at (UTC) | Action | Archived aliases | Archive manifest |')
+        lines.append('|---|---|---|---|')
+        for row in vault_inventory_rows:
+            alias_label = ', '.join('`{0}`'.format(alias) for alias in list(row.get('archived_aliases', []) or [])) or str(int(row.get('archived_alias_count', 0) or 0))
+            lines.append('| {0} | {1} | {2} | {3} |'.format(
+                str(row.get('archived_at_utc', '')),
+                str(row.get('action', '')),
+                alias_label,
+                _markdown_link(target_path, project_root, str(row.get('archive_manifest_json', '') or ''), 'archive_manifest.json'),
+            ))
+    else:
+        lines.append('No tracked report archive inventories are currently present in the Librarian quarantine lane.')
     return '\n'.join(lines).rstrip() + '\n'
 
 
@@ -2353,25 +2613,33 @@ def _resolve_collection_alias(
 
 
 def _write_collection_reports(candidates: List[Dict[str, Any]], project_root: Path) -> None:
+    summaries = [_published_run_summary(row, project_root) for row in candidates if isinstance(row, dict)]
+    _write_collection_reports_from_published_runs(summaries, project_root)
+
+
+def _write_collection_reports_from_published_runs(published_runs: List[Dict[str, Any]], project_root: Path) -> None:
     grouped: Dict[str, List[Dict[str, Any]]] = {}
-    for candidate in candidates:
-        alias = str(candidate.get('collection_alias', '') or '').strip()
+    for summary in published_runs:
+        alias = str(summary.get('collection_alias', '') or '').strip()
         if not alias:
             continue
-        grouped.setdefault(alias, []).append(candidate)
+        grouped.setdefault(alias, []).append(dict(summary))
     for alias, rows in grouped.items():
         ordered_rows = sorted(
             [dict(row) for row in rows if isinstance(row, dict)],
             key=lambda row: (_publication_sort_key(str(row.get('timestamp_utc', ''))), str(row.get('run_id', ''))),
         )
-        summaries = [_published_run_summary(row, project_root) for row in ordered_rows]
-        latest_summary = dict(summaries[-1]) if summaries else {}
+        latest_summary = dict(ordered_rows[-1]) if ordered_rows else {}
         snapshot_path = _resolve_repo_path(project_root, _published_collection_history_path(latest_summary))
         if snapshot_path is None:
             continue
         snapshot_path.parent.mkdir(parents=True, exist_ok=True)
+        for existing_snapshot in snapshot_path.parent.glob('*.collection.md'):
+            if existing_snapshot == snapshot_path:
+                continue
+            existing_snapshot.unlink()
         snapshot_path.write_text(
-            _collection_report_markdown(alias, summaries, project_root, snapshot_path),
+            _collection_report_markdown(alias, ordered_rows, project_root, snapshot_path),
             encoding='utf-8',
         )
 

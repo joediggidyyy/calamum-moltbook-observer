@@ -16,6 +16,7 @@ except ImportError:
 
 from apexlab.evaluation.thresholds import binary_metrics, confusion_counts, select_lower_tail_threshold
 
+from ._label_semantics import infer_positive_label_tokens, label_token_to_binary
 from ._util import default_analysis_dir, sha256_path, try_get_git_sha, utc_now_iso
 
 
@@ -178,6 +179,7 @@ def evaluate(
     labels: Dict[str, str] = {}
     if labels_csv is not None and labels_csv.exists():
         labels = _read_labels(labels_csv)
+    positive_tokens = infer_positive_label_tokens(labels.values())
 
     scores: List[float] = []
     y_true: List[int] = []
@@ -189,7 +191,7 @@ def evaluate(
         if has_labels:
             rid = (row.get('record_id') or '').strip()
             tv = labels.get(rid)
-            y_true.append(1 if tv == 'TV-3' else 0)
+            y_true.append(label_token_to_binary(tv, positive_tokens=positive_tokens))
 
     # Select threshold
     resolved_score_direction = 'lower' if str(score_direction).strip().lower() == 'lower' else 'higher'

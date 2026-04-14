@@ -32,13 +32,13 @@ observerctl librarian datasets
 
 ### Dataset inputs by workflow
 
-| Workflow       | `in` page dataset surface                          | Notes                                                 |
-| -------------- | -------------------------------------------------- | ----------------------------------------------------- |
-| `train`        | approved dataset picker (Librarian)                | selector resolved via `librarian dataset release`     |
-| `evaluate`     | approved dataset picker (Librarian)                | features/labels/manifest hydrated from approved entry |
-| `score`        | approved dataset picker (Librarian)                | selector resolved via `librarian dataset release`     |
-| `build`        | raw `--input` telemetry paths (CLI-seeded)         | pre-Librarian; raw JSONL telemetry is the input       |
-| `run-pipeline` | raw `--input` telemetry paths (CLI-seeded)         | pre-Librarian; same as `build`                        |
+| Workflow       | `in` page dataset surface                  | Notes                                                 |
+| -------------- | ------------------------------------------ | ----------------------------------------------------- |
+| `train`        | approved dataset picker (Librarian)        | selector resolved via `librarian dataset release`     |
+| `evaluate`     | approved dataset picker (Librarian)        | features/labels/manifest hydrated from approved entry |
+| `score`        | approved dataset picker (Librarian)        | selector resolved via `librarian dataset release`     |
+| `build`        | raw `--input` telemetry paths (CLI-seeded) | pre-Librarian; raw JSONL telemetry is the input       |
+| `run-pipeline` | raw `--input` telemetry paths (CLI-seeded) | pre-Librarian; same as `build`                        |
 
 The wizard `in` section for `train`/`evaluate`/`score` opens an approved dataset picker that resolves the entry through the Librarian before hydrating wizard fields. The `source` and `mode` advanced-route fields do not appear in the default `in` menu for `build` and `run-pipeline`.
 
@@ -100,16 +100,18 @@ You can also seed it on launch with any of the supported helper switches below.
 
 ## Hydration and seeding options
 
-| Switch                               | What it seeds from                                                                           |
-| ------------------------------------ | -------------------------------------------------------------------------------------------- |
-| `--hydrate-dataset <selector>`       | an approved dataset selector (index, run_id, display name, or entry_id)                      |
-| `--hydrate-train <path>`             | `train_manifest.json`                                                                        |
-| `--hydrate-model <path>`             | a saved model artifact path                                                                  |
-| `--hydrate-baseline-analysis <path>` | a baseline analysis packet                                                                   |
-| `--hydrate-run <path>`               | an existing evaluation `run.json` ledger                                                     |
-| `--hydrate-latest-context`           | the latest SSOT source/mode context and latest saved baseline-analysis packet when available |
+| Switch                               | What it seeds from                                                                                |
+| ------------------------------------ | ------------------------------------------------------------------------------------------------- |
+| `--hydrate-dataset <selector>`       | an approved dataset selector (index, run_id, display name, or entry_id)                           |
+| `--hydrate-train <path>`             | `train_manifest.json`                                                                             |
+| `--hydrate-model <path>`             | a saved model artifact path                                                                       |
+| `--hydrate-baseline-analysis <path>` | a DS comparison-baseline packet carried through the preserved baseline compatibility surface      |
+| `--hydrate-run <path>`               | an existing evaluation `run.json` ledger                                                          |
+| `--hydrate-latest-context`           | the latest SSOT source/mode context and latest saved DS comparison-baseline packet when available |
 
 These options are especially useful when you want the wizard to open with a partially completed run context instead of starting from zero.
+
+In the DS lane, saved baselines resolve reviewed, selector-backed comparison-baseline authority for the active source/mode scope. Runtime baseline collection and analysis remain documented in [`../runtime/RUNTIME_WORKFLOWS.md`](../runtime/RUNTIME_WORKFLOWS.md).
 
 ## Draft save and load
 
@@ -162,12 +164,12 @@ If you only need the publication view, go to [`../../reports/INDEX.md`](../../re
 
 ## Practical tips
 
-| Tip                                                                            | Why it helps                                                                                  |
-| ------------------------------------------------------------------------------ | --------------------------------------------------------------------------------------------- |
-| start with `--hydrate-latest-context` when working from a current runtime lane | it saves you from re-entering source/mode context                                             |
-| use `saved baselines` before evaluation-heavy runs                             | the wizard can cite the right baseline packet more cleanly when you already know the selector |
-| review the `cmd` and `check` sections before execute                           | this catches missing context before the run is launched                                       |
-| save drafts for longer workflows                                               | it keeps iterative configuration work reproducible                                            |
+| Tip                                                                            | Why it helps                                                                                                          |
+| ------------------------------------------------------------------------------ | --------------------------------------------------------------------------------------------------------------------- |
+| start with `--hydrate-latest-context` when working from a current runtime lane | it saves you from re-entering source/mode context                                                                     |
+| use saved baselines before evaluation-heavy runs                               | the wizard can attach the current reviewed comparison-baseline packet more cleanly when you already know the selector |
+| review the `cmd` and `check` sections before execute                           | this catches missing context before the run is launched                                                               |
+| save drafts for longer workflows                                               | it keeps iterative configuration work reproducible                                                                    |
 
 ## Related documents
 

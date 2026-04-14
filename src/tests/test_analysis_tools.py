@@ -16,6 +16,7 @@ from obfuscator_lib import Obfuscator
 
 from analysis.dataset_builder import build_dataset
 from analysis.evaluation_harness import EvalResult, evaluate, write_run_artifacts
+from analysis.train_model import train_model
 from analysis.tv_review import apply_suggested_labels_to_dataset_manifest, run_tv_review
 from analysis.validate_jsonl import validate_jsonl_file
 
@@ -375,6 +376,79 @@ def test_evaluate_accepts_label_column_for_labeled_mode(tmp_path: Path) -> None:
     assert result.has_labels is True
     assert result.counts == {'tp': 1, 'fp': 0, 'tn': 1, 'fn': 0}
     assert result.metrics['precision'] == pytest.approx(1.0)
+
+
+def test_evaluate_accepts_binary_zero_one_label_column_for_labeled_mode(tmp_path: Path) -> None:
+    features_csv = tmp_path / 'features.csv'
+    labels_csv = tmp_path / 'labels.csv'
+    features_csv.write_text(
+        'record_id,feature\nr1,0.0\nr2,1.0\n',
+        encoding='utf-8',
+    )
+    labels_csv.write_text(
+        'record_id,label\nr1,0\nr2,1\n',
+        encoding='utf-8',
+    )
+    score_map = {
+        'r1': 0.1,
+        'r2': 0.9,
+    }
+
+    result = evaluate(
+        features_csv,
+        labels_csv=labels_csv,
+        max_fpr=1.0,
+        scorer=lambda row: score_map[str(row.get('record_id', ''))],
+    )
+
+    assert result.has_labels is True
+    assert result.counts == {'tp': 1, 'fp': 0, 'tn': 1, 'fn': 0}
+    assert result.metrics['f1'] == pytest.approx(1.0)
+
+
+def test_train_model_accepts_binary_zero_one_label_column(tmp_path: Path) -> None:
+    dataset_dir = tmp_path / 'dataset'
+    model_dir = tmp_path / 'model'
+    dataset_dir.mkdir(parents=True, exist_ok=True)
+    model_dir.mkdir(parents=True, exist_ok=True)
+
+    features_csv = dataset_dir / 'features.csv'
+    labels_csv = dataset_dir / 'labels.csv'
+    splits_csv = dataset_dir / 'splits.csv'
+    dataset_manifest = dataset_dir / 'dataset_manifest.json'
+
+    features_csv.write_text(
+        'record_id,feature\nr1,0.0\nr2,0.1\nr3,0.9\nr4,1.0\n',
+        encoding='utf-8',
+    )
+    labels_csv.write_text(
+        'record_id,label\nr1,0\nr2,0\nr3,1\nr4,1\n',
+        encoding='utf-8',
+    )
+    splits_csv.write_text(
+        'record_id,split\nr1,train\nr2,train\nr3,val\nr4,val\n',
+        encoding='utf-8',
+    )
+    dataset_manifest.write_text(json.dumps({
+        'features_csv': str(features_csv),
+        'labels_csv': str(labels_csv),
+        'splits_csv': str(splits_csv),
+        'feature_columns': ['record_id', 'feature'],
+        'total_records': 4,
+        'has_labels': True,
+    }), encoding='utf-8')
+
+    manifest = train_model(
+        dataset_manifest,
+        out_dir=model_dir,
+        model_type='supervised',
+        seed=42,
+    )
+
+    metrics = json.loads(Path(manifest.metrics_path).read_text(encoding='utf-8'))
+    assert manifest.model_type == 'supervised'
+    assert Path(manifest.model_path).exists()
+    assert 'accuracy' in metrics
 
 
 def test_report_visuals_emit_threshold_report_and_score_figures(tmp_path: Path) -> None:
@@ -873,6 +947,94 @@ def test_report_pack_stage_markdown_keeps_visual_links_and_compact_related_surfa
     assert '[Manifest JSON](manifest.json)' in report_md
     assert '[Score surface CSV](../scoring/scores.csv)' in report_md
     assert '![Score distribution](../figures/score_distribution.png)' in report_md
+
+
+def test_report_pack_evaluate_markdown_keeps_label_cues_consistent(tmp_path: Path) -> None:
+    from analysis.report_pack import prepare_report_bundle, write_report_bundle
+
+    project_root = tmp_path / 'observer_project'
+    anchor = project_root / 'src' / 'observerctl_anchor.py'
+    anchor.parent.mkdir(parents=True, exist_ok=True)
+    anchor.write_text('# anchor\n', encoding='utf-8')
+    (project_root / 'PROJECT_MANIFEST.json').write_text('{}\n', encoding='utf-8')
+
+    bundle = prepare_report_bundle(anchor, 'evaluate', run_id='evaluate-style-001')
+    evaluation_dir = bundle.artifact_dirs['evaluation']
+    figures_dir = bundle.run_root / 'figures'
+    model_dir = bundle.run_root / 'model'
+    dataset_dir = bundle.run_root / 'dataset'
+    evaluation_dir.mkdir(parents=True, exist_ok=True)
+    figures_dir.mkdir(parents=True, exist_ok=True)
+    model_dir.mkdir(parents=True, exist_ok=True)
+    dataset_dir.mkdir(parents=True, exist_ok=True)
+
+    run_json = evaluation_dir / 'run.json'
+    run_md = evaluation_dir / 'run.md'
+    model_path = model_dir / 'model.pkl'
+    dataset_manifest = dataset_dir / 'dataset_manifest.json'
+    confusion_matrix = figures_dir / 'confusion_matrix.png'
+
+    run_json.write_text('{"decision":"go"}\n', encoding='utf-8')
+    run_md.write_text('# evaluation\n', encoding='utf-8')
+    model_path.write_bytes(b'model')
+    dataset_manifest.write_text('{}\n', encoding='utf-8')
+    confusion_matrix.write_bytes(b'fake-png')
+
+    bundle_result = write_report_bundle(
+        project_anchor=anchor,
+        bundle=bundle,
+        packet={
+            'timestamp_utc': '2026-04-13T17:00:00Z',
+            'runtime_cli_surface': 'observerctl',
+            'decision': 'go',
+            'action': 'ds-evaluate',
+            'collection_alias': 'liv-labelcheck',
+            'command_family': 'ds',
+            'command_path': 'observerctl ds evaluate',
+            'implementation_state': 'command-available',
+            'underlying_surface': 'analysis.evaluation_harness',
+            'summary': 'Evaluation completed through observerctl ds.',
+            'run_id': bundle.run_id,
+            'has_labels': True,
+            'counts': {'tp': 4, 'fp': 1, 'tn': 12, 'fn': 2},
+            'metrics': {'precision': 0.8, 'recall': 0.6667, 'f1': 0.7273, 'fpr': 0.0769},
+            'thresholding': {
+                'threshold': 0.42,
+                'target_fpr': 0.01,
+                'actual_fpr': 0.0769,
+                'records_evaluated': 19,
+                'flagged_records': 5,
+            },
+            'reason_codes': [],
+            'visuals': {
+                'figure_count': 1,
+                'figures': [
+                    {
+                        'id': 'confusion_matrix',
+                        'title': 'Confusion matrix',
+                        'caption': 'Confusion matrix rendered from evaluation counts.',
+                        'path': confusion_matrix,
+                    }
+                ],
+            },
+            'artifacts': {},
+        },
+        artifact_paths={
+            'dataset_manifest': dataset_manifest,
+            'run_json': run_json,
+            'run_md': run_md,
+            'model_path': model_path,
+        },
+        context={'max_fpr': 0.01},
+        lineage={'model_path': model_path},
+    )
+
+    report_md = (project_root / bundle_result['paths']['report_md']).read_text(encoding='utf-8')
+
+    assert 'labels present     : yes' in report_md
+    assert 'This run publishes threshold posture together with labeled evaluation evidence and review-volume context.' in report_md
+    assert 'reader caution        : read the max-FPR setting together with the recorded labeled metrics and confusion counts' in report_md
+    assert 'reader caution        : do not read the max-FPR setting as labeled certainty when labels are absent' not in report_md
 
 
 def test_report_pack_prefers_canonical_dataset_alias_over_stale_explicit_alias(tmp_path: Path) -> None:

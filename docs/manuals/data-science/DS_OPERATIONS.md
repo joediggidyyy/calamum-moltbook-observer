@@ -22,15 +22,15 @@ If you also want the Ghost Console UI, add the dashboard extra separately:
 
 The DS lane turns names-only runtime telemetry into reproducible local analysis runs.
 
-| Stage    | Result                                                                               |
-| -------- | ------------------------------------------------------------------------------------ |
-| build    | dataset artifacts are created from approved telemetry inputs                         |
-| train    | a supervised or unsupervised model artifact is produced from a dataset manifest      |
-| evaluate | heuristics or trained artifacts are measured against feature and label data          |
-| score    | an unsupervised model produces a scores CSV                                          |
-| run      | opinionated end-to-end workflows execute the common happy paths                      |
-| saved    | existing train, run, baseline, and draft selectors are listed for reuse              |
-| wizard   | the interactive guided interface builds and optionally executes the same DS commands |
+| Stage    | Result                                                                                      |
+| -------- | ------------------------------------------------------------------------------------------- |
+| build    | dataset artifacts are created from approved telemetry inputs                                |
+| train    | a supervised or unsupervised model artifact is produced from a dataset manifest             |
+| evaluate | heuristics or trained artifacts are measured against feature and label data                 |
+| score    | an unsupervised model produces a scores CSV                                                 |
+| run      | opinionated end-to-end workflows execute the common happy paths                             |
+| saved    | existing train, run, reviewed comparison-baseline, and draft selectors are listed for reuse |
+| wizard   | the interactive guided interface builds and optionally executes the same DS commands        |
 
 ## Inputs and outputs
 
@@ -62,8 +62,10 @@ The saved namespace makes it easier to reuse approved artifacts without rebuildi
 | --------------------------------------------- | ------------------------------ |
 | `observerctl ds saved trained`                | saved train/model selectors    |
 | `observerctl ds saved runs`                   | saved evaluation run selectors |
-| `observerctl ds saved baselines --source <sim | real> --mode <mode>`           | baseline-analysis selectors for a specific source/mode scope |
+| `observerctl ds saved baselines --source <sim | real> --mode <mode>`           | reviewed comparison-baseline selectors for a specific source/mode scope |
 | `observerctl ds saved drafts`                 | canonical wizard draft slots   |
+
+In the DS lane, `observerctl ds saved baselines` surfaces selector-backed comparison-baseline packets that match the current reviewed stage for the requested source/mode scope. Runtime baseline collection and analysis remain documented in [`../runtime/RUNTIME_WORKFLOWS.md`](../runtime/RUNTIME_WORKFLOWS.md).
 
 ## Recommended operating sequences
 
@@ -105,6 +107,8 @@ Use the wizard when any of the following are true:
 - you want draft save/load support while iterating on a DS workflow
 
 The wizard is documented separately in [`DS_WIZARD.md`](DS_WIZARD.md), but it targets the same underlying DS command surface.
+
+The wizard baseline hydration helpers and the direct saved-baseline selectors use the same DS comparison-baseline authority described above, while preserving the current baseline-facing command and wizard surface names.
 
 ## Practical guardrails
 

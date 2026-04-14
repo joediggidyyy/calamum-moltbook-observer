@@ -10,22 +10,22 @@ The system treats upstream inputs as hostile by default and keeps runtime work i
 
 ## Security model in one table
 
-| Control | What it does |
-| --- | --- |
-| names-only persistence | keeps raw content out of normal retained artifacts |
-| posture control | raises or lowers the allowed runtime envelope based on the target mode |
-| baseline monitoring | proves current operating conditions instead of assuming they are healthy |
-| watchdog enforcement | stops the system from quietly drifting away from guarded operation |
-| evidence-linked transitions | ties state changes to retained decision packets |
+| Control                     | What it does                                                             |
+| --------------------------- | ------------------------------------------------------------------------ |
+| names-only persistence      | keeps raw content out of normal retained artifacts                       |
+| posture control             | raises or lowers the allowed runtime envelope based on the target mode   |
+| baseline monitoring         | proves current operating conditions instead of assuming they are healthy |
+| watchdog enforcement        | stops the system from quietly drifting away from guarded operation       |
+| evidence-linked transitions | ties state changes to retained decision packets                          |
 
 ## Canonical posture mapping
 
-| Mode | Trigger posture |
-| --- | --- |
-| `watch` | `isolation` |
-| `canary` | `isolation` |
-| `live` | `lockdown` |
-| `honeypot` | `lockdown` |
+| Mode       | Trigger posture |
+| ---------- | --------------- |
+| `watch`    | `isolation`     |
+| `canary`   | `isolation`     |
+| `live`     | `lockdown`      |
+| `honeypot` | `lockdown`      |
 
 This mapping is part of the operating contract. It is not a cosmetic label system.
 
@@ -63,8 +63,8 @@ Typical denial drivers include:
 
 The public documentation set explains the contract. Runtime evidence stays local.
 
-| Public tracked surfaces | Local runtime surfaces |
-| --- | --- |
+| Public tracked surfaces            | Local runtime surfaces                                       |
+| ---------------------------------- | ------------------------------------------------------------ |
 | stable docs, code, curated reports | evidence packets, logs, control state, and execution residue |
 
 This separation helps preserve both auditability and containment.
@@ -73,23 +73,23 @@ This separation helps preserve both auditability and containment.
 
 Security-adjacent signed transaction proof follows a sandbox-first contract.
 
-| Rule | Meaning in practice |
-| --- | --- |
-| sandbox-contained mint surface | security-adjacent non-dry-run mint executes in the approved sandbox lane |
-| same-version proof | the sandbox artifact set uses the same project version and build identity as the live candidate under review |
-| attested build identity | reviewers can see the relevant version/build identity in the emitted sandbox packet or artifact set |
-| promotion review posture | promotion review consumes the already-proven sandbox result through the normal release lane |
+| Rule                           | Meaning in practice                                                                                          |
+| ------------------------------ | ------------------------------------------------------------------------------------------------------------ |
+| sandbox-contained mint surface | security-adjacent non-dry-run mint executes in the approved sandbox lane                                     |
+| same-version proof             | the sandbox artifact set uses the same project version and build identity as the live candidate under review |
+| attested build identity        | reviewers can see the relevant version/build identity in the emitted sandbox packet or artifact set          |
+| promotion review posture       | promotion review consumes the already-proven sandbox result through the normal release lane                  |
 
 For KEYSMITH-class transaction work, sandbox proof becomes promotable evidence only when the artifact set clearly shows the same project version and build identity as the live candidate it is proving.
 
 ## Operator expectations
 
-| Expectation | Meaning in practice |
-| --- | --- |
-| do not bypass a denied gate casually | fix the blocking condition or obtain explicit approval |
-| keep evidence local and linked | use public docs for routing and local surfaces for execution proof |
-| treat lockdown as stricter by design | `live` and `honeypot` require more than the simulation lanes |
-| keep the runtime authority clear | the CLI, watchdog, and retained packets outrank the presentation layer |
+| Expectation                          | Meaning in practice                                                    |
+| ------------------------------------ | ---------------------------------------------------------------------- |
+| do not bypass a denied gate casually | fix the blocking condition or obtain explicit approval                 |
+| keep evidence local and linked       | use public docs for routing and local surfaces for execution proof     |
+| treat lockdown as stricter by design | `live` and `honeypot` require more than the simulation lanes           |
+| keep the runtime authority clear     | the CLI, watchdog, and retained packets outrank the presentation layer |
 
 ## Related documents
 

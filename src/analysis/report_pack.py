@@ -185,8 +185,13 @@ def write_report_bundle(
     manifest_path = bundle.report_dir / 'manifest.json'
 
     normalized_artifacts = _normalize_json_value(dict(artifact_paths or {}), project_root)
-    normalized_context = _normalize_json_value(dict(context or {}), project_root)
     normalized_lineage = _normalize_json_value(dict(lineage or {}), project_root)
+    normalized_context = _normalized_report_context(
+        project_anchor=project_anchor,
+        project_root=project_root,
+        context=context,
+        lineage=normalized_lineage,
+    )
     normalized_artifact_dirs = _normalize_json_value(dict(bundle.artifact_dirs), project_root)
     result_payload = _packet_result_payload(packet, project_root)
     collection_alias = resolve_collection_alias(
@@ -507,6 +512,285 @@ def resolve_collection_alias(
     )
 
 
+def _normalized_report_context(
+    *,
+    project_anchor: Path,
+    project_root: Path,
+    context: Optional[Mapping[str, Any]],
+    lineage: Mapping[str, Any],
+) -> Dict[str, Any]:
+    normalized_context = _normalize_json_value(dict(context or {}), project_root)
+    dataset_manifest_ref = str(normalized_context.get('dataset_manifest', '') or lineage.get('dataset_manifest', '') or '').strip()
+    comparison_baseline_path = _comparison_baseline_packet_for_context(
+        project_anchor=project_anchor,
+        project_root=project_root,
+        context=normalized_context,
+        lineage=lineage,
+    )
+    if comparison_baseline_path is None:
+        if dataset_manifest_ref:
+            normalized_context.pop('baseline_analysis_packet', None)
+            normalized_context.pop('baseline_window_id', None)
+        return normalized_context
+
+    normalized_context['baseline_analysis_packet'] = normalize_repo_or_absolute_path(comparison_baseline_path, project_root)
+    comparison_payload = _load_json_dict_file(comparison_baseline_path)
+    comparison_window_id = str(comparison_payload.get('baseline_window_id', '') or '').strip()
+    if comparison_window_id:
+        normalized_context['baseline_window_id'] = comparison_window_id
+    return normalized_context
+
+
+def _lineage_target_baseline_stages(mode: str) -> tuple[str, ...]:
+    normalized_mode = str(mode or '').strip().lower()
+    if normalized_mode == 'live':
+        return ('canary_reviewed',)
+    if normalized_mode == 'honeypot':
+        return ('live_reviewed', 'honeypot_reviewed')
+    return ()
+
+
+def _comparison_baseline_packet_match_info(
+    *,
+    project_root: Path,
+    packet_ref: str,
+    source: str = '',
+    mode: str = '',
+    baseline_window_id: str = '',
+) -> Dict[str, Any]:
+    packet_path = _resolve_project_ref(project_root, packet_ref)
+    if packet_path is None or not packet_path.exists():
+        return {}
+
+    payload = _load_json_dict_file(packet_path)
+    if str(payload.get('artifact_family', '') or '').strip() != 'ds_comparison_baseline':
+        return {}
+
+    expected_source = str(source or '').strip().lower()
+    packet_source = str(payload.get('source', '') or '').strip().lower()
+    if expected_source and packet_source and packet_source != expected_source:
+        return {}
+
+    expected_window_id = str(baseline_window_id or '').strip()
+    packet_window_id = str(payload.get('baseline_window_id', '') or '').strip()
+    if expected_window_id and packet_window_id and packet_window_id != expected_window_id:
+        return {}
+
+    mode_token = str(mode or '').strip().lower()
+    if mode_token:
+        target_stages = _lineage_target_baseline_stages(mode_token)
+        packet_stage = str(payload.get('baseline_stage', '') or '').strip()
+        if not target_stages or packet_stage not in target_stages:
+            return {}
+
+    return {
+        'path': packet_path,
+        'payload': payload,
+    }
+
+
+def _comparison_baseline_candidates_for_target(
+    *,
+    project_anchor: Path,
+    project_root: Path,
+    source: str,
+    mode: str,
+    baseline_window_id: str = '',
+) -> list[dict[str, Any]]:
+    try:
+        from calamum_librarian import _dataset_catalog_paths, _load_dataset_snapshot
+    except Exception:
+        return []
+
+    source_token = str(source or '').strip().lower()
+    mode_token = str(mode or '').strip().lower()
+    target_stages = _lineage_target_baseline_stages(mode_token)
+    if not source_token or not mode_token or not target_stages:
+        return []
+
+    stage_rank = {stage: index for index, stage in enumerate(target_stages)}
+    candidates: list[dict[str, Any]] = []
+    seen: set[tuple[str, str]] = set()
+    for entry in _load_dataset_snapshot(_dataset_catalog_paths(project_anchor)):
+        if not isinstance(entry, dict):
+            continue
+        if str(entry.get('source', '') or '').strip().lower() != source_token:
+            continue
+        if not _dataset_entry_supports_comparison_baseline(entry, project_root):
+            continue
+
+        baseline_stage = _dataset_comparison_baseline_stage(entry)
+        if baseline_stage not in stage_rank:
+            continue
+
+        entry_id = sanitize_run_id(str(entry.get('entry_id', '') or '').strip())
+        if not entry_id:
+            continue
+
+        packet_path = default_analysis_dir(project_anchor) / 'baselines' / entry_id / 'comparison_baseline_packet.json'
+        match = _comparison_baseline_packet_match_info(
+            project_root=project_root,
+            packet_ref=str(packet_path),
+            source=source_token,
+            mode=mode_token,
+            baseline_window_id=baseline_window_id,
+        )
+        if not match:
+            continue
+
+        key = (str(entry.get('entry_id', '') or '').strip(), str(match['path']))
+        if key in seen:
+            continue
+        seen.add(key)
+        candidates.append(
+            {
+                'entry': dict(entry),
+                'path': Path(match['path']),
+                'payload': dict(match.get('payload', {}) or {}),
+                'stage_rank': int(stage_rank.get(baseline_stage, 99)),
+                'recorded_at_utc': str(entry.get('recorded_at_utc', '') or '').strip(),
+            }
+        )
+
+    candidates.sort(key=lambda row: str(row.get('recorded_at_utc', '') or '').strip(), reverse=True)
+    candidates.sort(key=lambda row: int(row.get('stage_rank', 99) or 99))
+    return candidates
+
+
+def _comparison_baseline_packet_for_context(
+    *,
+    project_anchor: Path,
+    project_root: Path,
+    context: Mapping[str, Any],
+    lineage: Mapping[str, Any],
+) -> Optional[Path]:
+    dataset_manifest_ref = str(context.get('dataset_manifest', '') or lineage.get('dataset_manifest', '') or '').strip()
+    if not dataset_manifest_ref:
+        return None
+
+    dataset_entry = _librarian_dataset_entry_for_manifest(
+        project_anchor=project_anchor,
+        project_root=project_root,
+        dataset_manifest_ref=dataset_manifest_ref,
+    )
+    source = str(context.get('source', '') or dataset_entry.get('source', '') or '').strip().lower()
+    mode = str(context.get('mode', '') or dataset_entry.get('mode', '') or '').strip().lower()
+    expected_window_id = str(context.get('baseline_window_id', '') or '').strip()
+    explicit_match = _comparison_baseline_packet_match_info(
+        project_root=project_root,
+        packet_ref=str(context.get('baseline_analysis_packet', '') or '').strip(),
+        source=source,
+        mode=mode,
+        baseline_window_id=expected_window_id,
+    )
+    if explicit_match:
+        return Path(explicit_match['path'])
+
+    candidates = _comparison_baseline_candidates_for_target(
+        project_anchor=project_anchor,
+        project_root=project_root,
+        source=source,
+        mode=mode,
+        baseline_window_id=expected_window_id,
+    )
+    if len(candidates) == 1:
+        return Path(candidates[0]['path'])
+    return None
+
+
+def _librarian_dataset_entry_for_manifest(
+    *,
+    project_anchor: Path,
+    project_root: Path,
+    dataset_manifest_ref: str,
+) -> Dict[str, Any]:
+    try:
+        from calamum_librarian import _dataset_catalog_paths, _load_dataset_snapshot
+    except Exception:
+        return {}
+
+    manifest_path = _resolve_project_ref(project_root, dataset_manifest_ref)
+    if manifest_path is None or not manifest_path.exists():
+        return {}
+
+    normalized_manifest_ref = normalize_repo_or_absolute_path(manifest_path, project_root)
+    paths = _dataset_catalog_paths(project_anchor)
+    for entry in _load_dataset_snapshot(paths):
+        if not isinstance(entry, dict):
+            continue
+        resolver = dict(entry.get('resolver', {}) or {}) if isinstance(entry.get('resolver', {}), dict) else {}
+        entry_manifest_ref = str(resolver.get('dataset_manifest_path', '') or '').strip()
+        if not entry_manifest_ref:
+            continue
+        entry_manifest_path = _resolve_project_ref(project_root, entry_manifest_ref)
+        if entry_manifest_ref == normalized_manifest_ref:
+            return dict(entry)
+        if entry_manifest_path is not None and entry_manifest_path == manifest_path:
+            return dict(entry)
+    return {}
+
+
+def _dataset_entry_supports_comparison_baseline(entry: Mapping[str, Any], project_root: Path) -> bool:
+    if str(entry.get('family', '') or '').strip().lower() != 'dataset_manifest':
+        return False
+    if str(entry.get('status', '') or '').strip().lower() != 'approved':
+        return False
+    if str(entry.get('readiness', '') or '').strip().lower() != 'ready':
+        return False
+    if not bool(entry.get('has_labels', False)):
+        return False
+    if not _dataset_comparison_baseline_stage(entry):
+        return False
+
+    resolver = dict(entry.get('resolver', {}) or {}) if isinstance(entry.get('resolver', {}), dict) else {}
+    required_refs = (
+        str(resolver.get('dataset_manifest_path', '') or '').strip(),
+        str(resolver.get('features_csv_path', '') or '').strip(),
+        str(resolver.get('labels_csv_path', '') or '').strip(),
+    )
+    return all(_resolve_project_ref(project_root, ref) is not None for ref in required_refs)
+
+
+def _dataset_comparison_baseline_stage(entry: Mapping[str, Any]) -> str:
+    tokens = [
+        str(entry.get('entry_id', '') or '').strip().lower(),
+        str(entry.get('run_id', '') or '').strip().lower(),
+        str(entry.get('display_name', '') or '').strip().lower(),
+    ]
+    if not any('reviewed' in token for token in tokens if token):
+        return ''
+
+    mode = str(entry.get('mode', '') or '').strip().lower()
+    if mode == 'honeypot':
+        return 'honeypot_reviewed'
+    if mode == 'live':
+        return 'live_reviewed'
+    if mode == 'canary':
+        return 'canary_reviewed'
+    return ''
+
+
+def _resolve_project_ref(project_root: Path, ref: str) -> Optional[Path]:
+    token = str(ref or '').strip()
+    if not token:
+        return None
+    candidate = Path(token)
+    if not candidate.is_absolute():
+        candidate = project_root / candidate
+    try:
+        return candidate.resolve()
+    except Exception:
+        return candidate
+
+
+def _load_json_dict_file(path: Path) -> Dict[str, Any]:
+    try:
+        payload = json.loads(path.read_text(encoding='utf-8'))
+    except Exception:
+        return {}
+    return payload if isinstance(payload, dict) else {}
+
+
 def _packet_result_payload(packet: Mapping[str, Any], project_root: Path) -> Dict[str, Any]:
     payload: Dict[str, Any] = {}
     for key, value in packet.items():
@@ -801,6 +1085,7 @@ def _workflow_run_summary_text(
     result_payload: Mapping[str, Any],
 ) -> str:
     summary = str(report_payload.get('summary', '') or '').strip()
+    has_labels = result_payload.get('has_labels')
     if workflow == 'build':
         return 'This run reads as a materialization pass rather than a model-quality claim. {0}'.format(
             summary or 'The packet focuses on the dataset handoff that later stages will consume.'
@@ -810,8 +1095,15 @@ def _workflow_run_summary_text(
             summary or 'The packet exists to show that the approved dataset bundle was converted into a reusable model handoff.'
         )
     if workflow == 'evaluate':
-        return 'This run publishes threshold posture and review-volume evidence instead of claiming labeled certainty. {0}'.format(
-            summary or 'The packet exists to show the operating point that the paired score surface should be read through.'
+        if has_labels is False:
+            lead = 'This run publishes threshold posture and review-volume evidence instead of claiming labeled certainty.'
+        elif has_labels is True:
+            lead = 'This run publishes threshold posture together with labeled evaluation evidence and review-volume context.'
+        else:
+            lead = 'This run publishes threshold posture and review-volume context for the paired score surface.'
+        return '{0} {1}'.format(
+            lead,
+            summary or 'The packet exists to show the operating point that the paired score surface should be read through.',
         )
     if workflow == 'score':
         return 'This run publishes the full score surface for the current lineage rather than a standalone flagged-case verdict. {0}'.format(
@@ -989,6 +1281,7 @@ def _workflow_run_implication_mapping(
     result_payload: Mapping[str, Any],
 ) -> Dict[str, Any]:
     ready = 'ready' if str(report_payload.get('decision', '') or '').strip().lower() == 'go' else 'conditional'
+    has_labels = result_payload.get('has_labels')
     mapping: Dict[str, Any] = {}
     if workflow == 'build':
         mapping['train handoff posture'] = ready
@@ -1002,7 +1295,12 @@ def _workflow_run_implication_mapping(
     elif workflow == 'evaluate':
         mapping['score handoff posture'] = ready
         mapping['main value'] = 'explicit operating threshold tied to a concrete review volume'
-        mapping['reader caution'] = 'do not read the max-FPR setting as labeled certainty when labels are absent'
+        if has_labels is False:
+            mapping['reader caution'] = 'do not read the max-FPR setting as labeled certainty when labels are absent'
+        elif has_labels is True:
+            mapping['reader caution'] = 'read the max-FPR setting together with the recorded labeled metrics and confusion counts'
+        else:
+            mapping['reader caution'] = 'read the max-FPR setting together with the recorded metrics and count evidence'
     elif workflow == 'score':
         mapping['review handoff posture'] = ready
         mapping['main value'] = 'full score surface that makes the paired threshold interpretable'

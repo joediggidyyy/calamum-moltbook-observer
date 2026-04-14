@@ -5587,6 +5587,9 @@ def _render_ds_saved_metadata_rows(row: Dict[str, Any]) -> List[Tuple[str, str]]
     baseline_window_id = str(row.get('baseline_window_id', '') or '').strip()
     if baseline_window_id:
         rows.append(('Window', baseline_window_id))
+    baseline_stage = str(row.get('baseline_stage', '') or '').strip()
+    if baseline_stage:
+        rows.append(('Stage', baseline_stage))
     slot_id = int(row.get('slot_id', 0) or 0)
     if slot_id > 0:
         rows.append(('Slot', _ds_wizard_draft_slot_label(slot_id)))
@@ -5672,7 +5675,7 @@ def _render_ds_saved_selectors_human(packet: Dict[str, Any]) -> List[str]:
     entries = packet.get('selector_entries', []) if isinstance(packet.get('selector_entries', []), list) else []
     authority = 'canonical DS run/report spine'
     if action == 'ds-saved-baselines':
-        authority = 'source/mode baseline-analysis evidence index'
+        authority = 'source/mode DS comparison-baseline selector authority'
     elif action == 'ds-saved-drafts':
         authority = 'canonical wizard draft slot root'
 
@@ -5707,9 +5710,11 @@ def _render_ds_saved_selectors_human(packet: Dict[str, Any]) -> List[str]:
         'ds_run_index_jsonl': 'Run ledger',
         'ds_latest_json': 'Latest pointer',
         'evidence_index_jsonl': 'Evidence index',
+        'librarian_dataset_manifest_json': 'Librarian manifest',
+        'comparison_baseline_root': 'Baseline root',
         'draft_root': 'Draft root',
     }
-    for key in ('ds_run_index_jsonl', 'ds_latest_json', 'evidence_index_jsonl', 'draft_root'):
+    for key in ('ds_run_index_jsonl', 'ds_latest_json', 'evidence_index_jsonl', 'librarian_dataset_manifest_json', 'comparison_baseline_root', 'draft_root'):
         value = _render_human_path_tail(artifacts.get(key, ''))
         if value:
             evidence_lines.extend(
@@ -8637,11 +8642,30 @@ def _ds_saved_run_entries() -> List[Dict[str, Any]]:
         run_json_path = _resolve_existing_project_path(run_json_ref)
         run_payload = _load_json_file(run_json_path, {}) if run_json_path is not None else {}
         identity = dict(run_payload.get('identity', {}) or {}) if isinstance(run_payload.get('identity', {}), dict) else {}
-        constraints = dict(((run_payload.get('context', {}) if isinstance(run_payload.get('context', {}), dict) else {}).get('constraints', {})) or {})
+        run_context = dict(run_payload.get('context', {}) or {}) if isinstance(run_payload.get('context', {}), dict) else {}
+        constraints = dict((run_context.get('constraints', {})) or {}) if isinstance(run_context.get('constraints', {}), dict) else {}
         selector_token = str(run_id or identity.get('run_id', '') or summary).strip()
         entry_id = 'saved-run-{0}'.format(sanitize_run_id(selector_token or workflow) or 'run')
         max_fpr_value = constraints.get('max_fpr', context.get('max_fpr', ''))
-        baseline_window_id = str(context.get('baseline_window_id', '') or '').strip()
+        baseline_window_id = str(context.get('baseline_window_id', '') or run_context.get('baseline_window_id', '') or '').strip()
+        baseline_packet_ref = str(context.get('baseline_analysis_packet', '') or run_context.get('baseline_analysis_packet', '') or '').strip()
+        source = str(context.get('source', '') or run_context.get('source', '') or '').strip()
+        mode = str(context.get('mode', '') or run_context.get('mode', '') or '').strip()
+        baseline_candidate = _ds_select_lineage_comparison_baseline_candidate(
+            source=source,
+            mode=mode,
+            baseline_packet_ref=baseline_packet_ref,
+            baseline_window_id=baseline_window_id,
+        )
+        if baseline_candidate:
+            baseline_packet_ref = normalize_repo_or_absolute_path(Path(baseline_candidate['packet_path']), _project_root())
+            baseline_window_id = str(
+                (baseline_candidate.get('packet', {}) if isinstance(baseline_candidate.get('packet', {}), dict) else {}).get('baseline_window_id', '')
+                or baseline_window_id
+            ).strip()
+        else:
+            baseline_packet_ref = ''
+            baseline_window_id = ''
 
         entries.append(
             {
@@ -8658,15 +8682,423 @@ def _ds_saved_run_entries() -> List[Dict[str, Any]]:
                 'readiness': 'ready' if run_json_path is not None else 'artifact-missing',
                 'summary': summary,
                 'max_fpr': max_fpr_value,
+                'source': source,
+                'mode': mode,
+                'baseline_analysis_packet': baseline_packet_ref,
                 'baseline_window_id': baseline_window_id,
                 'resolver': {
                     'report_manifest_path': str(record.get('manifest_path', '') or '').strip(),
                     'run_json_path': run_json_ref,
+                    'baseline_analysis_packet': baseline_packet_ref,
+                    'baseline_window_id': baseline_window_id,
                 },
             }
         )
 
     return _ds_assign_selector_indexes(_ds_selector_sort_entries(entries))
+
+
+def _ds_comparison_baseline_root() -> Path:
+    root = default_analysis_dir(_project_anchor()) / 'baselines'
+    root.mkdir(parents=True, exist_ok=True)
+    return root
+
+
+def _ds_comparison_baseline_packet_path(selector_entry_id: str) -> Path:
+    token = str(selector_entry_id or '').strip()
+    if not token:
+        raise ValueError('selector entry id is required for comparison baseline emission')
+    return _ds_comparison_baseline_root() / token / 'comparison_baseline_packet.json'
+
+
+def _ds_librarian_dataset_entries() -> List[Dict[str, Any]]:
+    from calamum_librarian import _dataset_catalog_paths, _load_dataset_snapshot
+
+    try:
+        entries = _load_dataset_snapshot(_dataset_catalog_paths(_project_anchor()))
+    except Exception:
+        manifest_path = ds_indexes_dir(Path(__file__)) / 'librarian_dataset_manifest.json'
+        payload = _load_json_file(manifest_path, {})
+        entries = payload.get('entries', []) if isinstance(payload.get('entries', []), list) else []
+    return [dict(row) for row in entries if isinstance(row, dict)]
+
+
+def _ds_comparison_baseline_authority_entry(entry: Dict[str, Any]) -> Dict[str, Any]:
+    if not isinstance(entry, dict):
+        return {}
+    resolver = dict(entry.get('resolver', {}) or {}) if isinstance(entry.get('resolver', {}), dict) else {}
+    if resolver:
+        return dict(entry)
+
+    dataset_authority_entry_for_manifest = None
+    dataset_authority_entry_for_selector = None
+    try:
+        from calamum_librarian import dataset_authority_entry_for_manifest, dataset_authority_entry_for_selector
+    except Exception:
+        dataset_authority_entry_for_manifest = None
+        dataset_authority_entry_for_selector = None
+
+    entry_id = str(entry.get('entry_id', '') or '').strip().lower()
+    run_id = str(entry.get('run_id', '') or '').strip().lower()
+    display_alias = str(entry.get('display_alias', '') or '').strip().lower()
+    candidates = {token for token in (entry_id, run_id, display_alias) if token}
+
+    if dataset_authority_entry_for_selector is not None:
+        for candidate in (entry_id, run_id, display_alias):
+            if not candidate:
+                continue
+            authority_entry = dataset_authority_entry_for_selector(_project_anchor(), candidate)
+            authority_resolver = dict(authority_entry.get('resolver', {}) or {}) if isinstance(authority_entry.get('resolver', {}), dict) else {}
+            if authority_entry and authority_resolver:
+                return authority_entry
+
+    manifest_ref = str(resolver.get('dataset_manifest_path', '') or entry.get('dataset_manifest_path', '') or '').strip()
+    if manifest_ref and dataset_authority_entry_for_manifest is not None:
+        authority_entry = dataset_authority_entry_for_manifest(_project_anchor(), manifest_ref)
+        authority_resolver = dict(authority_entry.get('resolver', {}) or {}) if isinstance(authority_entry.get('resolver', {}), dict) else {}
+        if authority_entry and authority_resolver:
+            return authority_entry
+
+    if not candidates:
+        return dict(entry)
+
+    matches: List[Dict[str, Any]] = []
+    for row in _ds_librarian_dataset_entries():
+        row_tokens = {
+            str(row.get('entry_id', '') or '').strip().lower(),
+            str(row.get('run_id', '') or '').strip().lower(),
+            str(row.get('display_alias', '') or '').strip().lower(),
+        }
+        if candidates.intersection({token for token in row_tokens if token}):
+            matches.append(dict(row))
+    if len(matches) == 1:
+        return matches[0]
+    return dict(entry)
+
+
+def _ds_comparison_baseline_stage(entry: Dict[str, Any]) -> str:
+    authority_entry = _ds_comparison_baseline_authority_entry(entry)
+    if not isinstance(authority_entry, dict) or not authority_entry:
+        return ''
+
+    tokens = [
+        str(authority_entry.get('entry_id', '') or '').strip().lower(),
+        str(authority_entry.get('run_id', '') or '').strip().lower(),
+        str(authority_entry.get('display_name', '') or '').strip().lower(),
+    ]
+    if not any('reviewed' in token for token in tokens if token):
+        return ''
+
+    mode = str(authority_entry.get('mode', '') or '').strip().lower()
+    if mode == 'honeypot':
+        return 'honeypot_reviewed'
+    if mode == 'live':
+        return 'live_reviewed'
+    if mode == 'canary':
+        return 'canary_reviewed'
+    return ''
+
+
+def _ds_is_eligible_comparison_baseline(entry: Dict[str, Any]) -> bool:
+    authority_entry = _ds_comparison_baseline_authority_entry(entry)
+    if not isinstance(authority_entry, dict) or not authority_entry:
+        return False
+
+    if str(authority_entry.get('family', '') or '').strip().lower() != 'dataset_manifest':
+        return False
+    if str(authority_entry.get('status', '') or '').strip().lower() != 'approved':
+        return False
+    if str(authority_entry.get('readiness', '') or '').strip().lower() != 'ready':
+        return False
+    if not _ds_comparison_baseline_stage(authority_entry):
+        return False
+    if not bool(authority_entry.get('has_labels', False)):
+        return False
+
+    resolver = dict(authority_entry.get('resolver', {}) or {}) if isinstance(authority_entry.get('resolver', {}), dict) else {}
+    dataset_manifest_path = _resolve_existing_project_path(str(resolver.get('dataset_manifest_path', '') or '').strip())
+    features_csv_path = _resolve_existing_project_path(str(resolver.get('features_csv_path', '') or '').strip())
+    labels_csv_path = _resolve_existing_project_path(str(resolver.get('labels_csv_path', '') or '').strip())
+    return dataset_manifest_path is not None and features_csv_path is not None and labels_csv_path is not None
+
+
+def _ds_lineage_target_baseline_stages(mode: str) -> Tuple[str, ...]:
+    normalized_mode = str(mode or '').strip().lower()
+    if normalized_mode == 'live':
+        return ('canary_reviewed',)
+    if normalized_mode == 'honeypot':
+        return ('live_reviewed', 'honeypot_reviewed')
+    return ()
+
+
+def _ds_comparison_baseline_packet_match_info(
+    packet_ref: str,
+    *,
+    source: str = '',
+    mode: str = '',
+    baseline_window_id: str = '',
+) -> Dict[str, Any]:
+    packet_path = _resolve_existing_project_path(str(packet_ref or '').strip())
+    if packet_path is None:
+        return {}
+
+    payload = _load_json_file(packet_path, {})
+    if str(payload.get('artifact_family', '') or '').strip() != 'ds_comparison_baseline':
+        return {}
+
+    source_token = _normalize_source(source) if str(source or '').strip() else ''
+    packet_source = _normalize_source(str(payload.get('source', '') or '').strip() or 'unknown')
+    if source_token and source_token in SOURCES and packet_source != source_token:
+        return {}
+
+    expected_window_id = str(baseline_window_id or '').strip()
+    packet_window_id = str(payload.get('baseline_window_id', '') or '').strip()
+    if expected_window_id and packet_window_id and packet_window_id != expected_window_id:
+        return {}
+
+    mode_token = str(mode or '').strip().lower()
+    if mode_token in MODES:
+        target_stages = _ds_lineage_target_baseline_stages(mode_token)
+        packet_stage = str(payload.get('baseline_stage', '') or '').strip()
+        if not target_stages or packet_stage not in target_stages:
+            return {}
+
+    return {
+        'path': packet_path,
+        'payload': payload,
+    }
+
+
+def _ds_lineage_comparison_baseline_candidates(
+    source: str,
+    mode: str,
+    *,
+    baseline_window_id: str = '',
+) -> List[Dict[str, Any]]:
+    source_token = _normalize_source(source)
+    mode_token = str(mode or '').strip().lower()
+    target_stages = _ds_lineage_target_baseline_stages(mode_token)
+    if source_token not in SOURCES or mode_token not in MODES or not target_stages:
+        return []
+
+    stage_rank = {stage: index for index, stage in enumerate(target_stages)}
+    candidates: List[Dict[str, Any]] = []
+    seen: set = set()
+
+    for authority_entry in _ds_librarian_dataset_entries():
+        if _normalize_source(str(authority_entry.get('source', '') or '').strip() or 'unknown') != source_token:
+            continue
+        if not _ds_is_eligible_comparison_baseline(authority_entry):
+            continue
+
+        baseline_stage = _ds_comparison_baseline_stage(authority_entry)
+        if baseline_stage not in stage_rank:
+            continue
+
+        packet_path = _ds_resolve_comparison_baseline_packet(authority_entry)
+        if packet_path is None:
+            continue
+
+        match = _ds_comparison_baseline_packet_match_info(
+            str(packet_path),
+            source=source_token,
+            mode=mode_token,
+            baseline_window_id=baseline_window_id,
+        )
+        if not match:
+            continue
+
+        selector_entry_id = str(authority_entry.get('entry_id', '') or '').strip()
+        selector_run_id = str(authority_entry.get('run_id', '') or '').strip()
+        key = (selector_entry_id, selector_run_id, str(match['path']))
+        if key in seen:
+            continue
+        seen.add(key)
+
+        payload = dict(match.get('payload', {}) or {})
+        candidates.append(
+            {
+                'authority_entry': authority_entry,
+                'packet_path': Path(match['path']),
+                'packet': payload,
+                'baseline_stage': baseline_stage,
+                'stage_rank': int(stage_rank.get(baseline_stage, 99)),
+                'recorded_at_utc': str(authority_entry.get('recorded_at_utc', '') or '').strip(),
+            }
+        )
+
+    candidates.sort(key=lambda row: str(row.get('recorded_at_utc', '') or '').strip(), reverse=True)
+    candidates.sort(key=lambda row: int(row.get('stage_rank', 99) or 99))
+    return candidates
+
+
+def _ds_select_lineage_comparison_baseline_candidate(
+    *,
+    source: str,
+    mode: str,
+    baseline_packet_ref: str = '',
+    baseline_window_id: str = '',
+) -> Dict[str, Any]:
+    explicit_match = _ds_comparison_baseline_packet_match_info(
+        baseline_packet_ref,
+        source=source,
+        mode=mode,
+        baseline_window_id=baseline_window_id,
+    )
+    if explicit_match:
+        explicit_payload = dict(explicit_match.get('payload', {}) or {})
+        return {
+            'packet_path': Path(explicit_match['path']),
+            'packet': explicit_payload,
+            'baseline_stage': str(explicit_payload.get('baseline_stage', '') or '').strip(),
+            'authority_entry': {},
+        }
+
+    candidates = _ds_lineage_comparison_baseline_candidates(
+        source,
+        mode,
+        baseline_window_id=baseline_window_id,
+    )
+    if len(candidates) == 1:
+        return candidates[0]
+    return {}
+
+
+def _ds_resolve_comparison_baseline_packet(
+    entry: Dict[str, Any],
+    *,
+    emit_if_missing: bool = False,
+    companion_role: str = '',
+    review_policy_packet: str = '',
+) -> Optional[Path]:
+    authority_entry = _ds_comparison_baseline_authority_entry(entry)
+    if not _ds_is_eligible_comparison_baseline(authority_entry):
+        return None
+
+    entry_id = str(authority_entry.get('entry_id', '') or '').strip()
+    selector_run_id = str(authority_entry.get('run_id', '') or '').strip()
+    baseline_stage = _ds_comparison_baseline_stage(authority_entry)
+    if not entry_id or not selector_run_id or not baseline_stage:
+        return None
+
+    packet_path = _ds_comparison_baseline_packet_path(entry_id)
+    if packet_path.exists():
+        payload = _load_json_file(packet_path, {})
+        if isinstance(payload, dict):
+            if (
+                str(payload.get('artifact_family', '') or '').strip() == 'ds_comparison_baseline'
+                and str(payload.get('selector_entry_id', '') or '').strip() == entry_id
+                and str(payload.get('selector_run_id', '') or '').strip() == selector_run_id
+                and str(payload.get('baseline_stage', '') or '').strip() == baseline_stage
+            ):
+                return packet_path
+
+    if not bool(emit_if_missing):
+        return None
+    if not str(companion_role or '').strip() and not str(review_policy_packet or '').strip():
+        return None
+
+    emitted = _ds_emit_comparison_baseline_packet(
+        authority_entry,
+        baseline_stage=baseline_stage,
+        companion_role=companion_role,
+        review_policy_packet=review_policy_packet,
+        emitted_path=packet_path,
+    )
+    emitted_path_text = str(emitted.get('packet_path', '') or '').strip()
+    resolved_emitted_path = _resolve_existing_project_path(emitted_path_text) if emitted_path_text else None
+    return resolved_emitted_path if resolved_emitted_path is not None else packet_path
+
+
+def _ds_comparison_baseline_packet_payload(
+    entry: Dict[str, Any],
+    *,
+    baseline_stage: str,
+    companion_role: str = '',
+    review_policy_packet: str = '',
+) -> Dict[str, Any]:
+    entry = _ds_comparison_baseline_authority_entry(entry)
+    if not isinstance(entry, dict):
+        raise ValueError('comparison baseline entry must be a JSON object')
+
+    entry_id = str(entry.get('entry_id', '') or '').strip()
+    run_id = str(entry.get('run_id', '') or '').strip()
+    baseline_stage_token = str(baseline_stage or '').strip()
+    if not entry_id:
+        raise ValueError('comparison baseline entry is missing entry_id')
+    if not run_id:
+        raise ValueError('comparison baseline entry is missing run_id')
+    if not baseline_stage_token:
+        raise ValueError('baseline stage is required for comparison baseline emission')
+
+    resolver = dict(entry.get('resolver', {}) or {}) if isinstance(entry.get('resolver', {}), dict) else {}
+    dataset_manifest_path = _resolve_existing_project_path(str(resolver.get('dataset_manifest_path', '') or '').strip())
+    features_csv_path = _resolve_existing_project_path(str(resolver.get('features_csv_path', '') or '').strip())
+    labels_csv_path = _resolve_existing_project_path(str(resolver.get('labels_csv_path', '') or '').strip())
+    if dataset_manifest_path is None:
+        raise FileNotFoundError('comparison baseline entry is missing dataset manifest authority')
+    if features_csv_path is None:
+        raise FileNotFoundError('comparison baseline entry is missing features authority')
+    if labels_csv_path is None:
+        raise FileNotFoundError('comparison baseline entry is missing labels authority')
+
+    dataset_manifest = _load_json_file(dataset_manifest_path, {})
+    project_root = _project_root()
+    review_policy_path = _resolve_existing_project_path(str(review_policy_packet or '').strip()) if str(review_policy_packet or '').strip() else None
+    librarian_manifest_path = ds_indexes_dir(Path(__file__)) / 'librarian_dataset_manifest.json'
+
+    payload = {
+        'artifact_family': 'ds_comparison_baseline',
+        'schema_version': '1.0',
+        'baseline_window_id': run_id,
+        'baseline_stage': baseline_stage_token,
+        'source': str(entry.get('source', dataset_manifest.get('source', '')) or '').strip(),
+        'mode': str(entry.get('mode', dataset_manifest.get('mode', '')) or '').strip(),
+        'selector_entry_id': entry_id,
+        'selector_run_id': run_id,
+        'display_alias': str(entry.get('display_alias', '') or '').strip(),
+        'dataset_manifest_path': normalize_repo_or_absolute_path(dataset_manifest_path, project_root),
+        'features_csv_path': normalize_repo_or_absolute_path(features_csv_path, project_root),
+        'labels_csv_path': normalize_repo_or_absolute_path(labels_csv_path, project_root),
+        'companion_role': str(companion_role or '').strip(),
+        'review_policy_packet': normalize_repo_or_absolute_path(review_policy_path, project_root) if review_policy_path is not None else str(review_policy_packet or '').strip().replace('\\', '/'),
+        'record_count': int(entry.get('record_count', dataset_manifest.get('total_records', 0)) or 0),
+        'has_labels': bool(entry.get('has_labels', dataset_manifest.get('has_labels', False))),
+        'readiness': str(entry.get('readiness', dataset_manifest.get('readiness', 'ready')) or 'ready').strip() or 'ready',
+        'provenance': {
+            'emitted_at_utc': _utc_now(),
+            'emitted_by': 'observerctl._ds_emit_comparison_baseline_packet',
+            'authority_source': 'librarian_dataset_manifest',
+            'selector_family': str(entry.get('family', '') or '').strip(),
+            'selector_recorded_at_utc': str(entry.get('recorded_at_utc', '') or '').strip(),
+            'librarian_manifest_path': normalize_repo_or_absolute_path(librarian_manifest_path, project_root),
+        },
+    }
+    return payload
+
+
+def _ds_emit_comparison_baseline_packet(
+    entry: Dict[str, Any],
+    *,
+    baseline_stage: str,
+    companion_role: str = '',
+    review_policy_packet: str = '',
+    emitted_path: Optional[Path] = None,
+) -> Dict[str, Any]:
+    entry_id = str(entry.get('entry_id', '') or '').strip()
+    packet_path = Path(emitted_path) if emitted_path is not None else _ds_comparison_baseline_packet_path(entry_id)
+    payload = _ds_comparison_baseline_packet_payload(
+        entry,
+        baseline_stage=baseline_stage,
+        companion_role=companion_role,
+        review_policy_packet=review_policy_packet,
+    )
+    payload['packet_path'] = normalize_repo_or_absolute_path(packet_path, _project_root())
+    _write_json_file(packet_path, payload)
+    return {
+        'packet_path': str(payload.get('packet_path', '') or '').strip(),
+        'packet': payload,
+    }
 
 
 def _ds_saved_baseline_entries(source: str, mode: str) -> List[Dict[str, Any]]:
@@ -8677,60 +9109,60 @@ def _ds_saved_baseline_entries(source: str, mode: str) -> List[Dict[str, Any]]:
     if m not in MODES:
         m = 'watch'
 
-    index_path = _evidence_index_path(src, m)
-    if not index_path.exists():
-        return []
-
     seen: set = set()
     entries: List[Dict[str, Any]] = []
-    for line in reversed(index_path.read_text(encoding='utf-8').splitlines()):
-        text = str(line or '').strip()
-        if not text:
-            continue
-        try:
-            row = json.loads(text)
-        except Exception:
-            continue
-        if not isinstance(row, dict):
-            continue
-        if str(row.get('event', '') or '').strip().lower() != 'baseline_analysis':
-            continue
 
-        packet_ref = str(row.get('packet_path', '') or '').strip()
-        packet_path = _resolve_existing_project_path(packet_ref) if packet_ref else None
-        packet = _load_json_file(packet_path, {}) if packet_path is not None else {}
-        recorded_at_utc = str(packet.get('timestamp_utc', '') or '').strip() or str(row.get('timestamp_utc', '') or '').strip()
-        baseline_window_id = str(packet.get('baseline_window_id', '') or row.get('baseline_window_id', '') or '').strip()
-        selector_token = baseline_window_id or 'baseline-{0}'.format(_utc_compact_stamp())
-        entry_id = 'saved-baseline-{0}'.format(sanitize_run_id(selector_token or recorded_at_utc) or 'baseline')
+    for candidate in _ds_lineage_comparison_baseline_candidates(src, m):
+        authority_entry = dict(candidate.get('authority_entry', {}) or {})
+        packet_path = Path(candidate.get('packet_path'))
+        packet = dict(candidate.get('packet', {}) or {})
+
+        selector_entry_id = str(authority_entry.get('entry_id', '') or '').strip()
+        selector_run_id = str(authority_entry.get('run_id', '') or '').strip()
+        baseline_window_id = str(packet.get('baseline_window_id', '') or selector_run_id).strip()
+        token_seed = selector_entry_id or baseline_window_id or selector_run_id
+        entry_id = 'saved-baseline-{0}'.format(sanitize_run_id(token_seed) or 'baseline')
         if entry_id in seen:
             continue
         seen.add(entry_id)
 
-        decision = str(packet.get('decision', row.get('decision', 'no-go')) or 'no-go').strip().lower()
-        readiness = 'ready' if packet_path is not None and decision == 'go' else 'artifact-missing'
-        counts = dict(packet.get('sample_counts', {}) or {}) if isinstance(packet.get('sample_counts', {}), dict) else {}
+        recorded_at_utc = str(
+            ((packet.get('provenance', {}) if isinstance(packet.get('provenance', {}), dict) else {}).get('emitted_at_utc', ''))
+            or authority_entry.get('recorded_at_utc', '')
+            or ''
+        ).strip()
+        packet_ref = normalize_repo_or_absolute_path(packet_path, _project_root())
+        baseline_stage = str(packet.get('baseline_stage', '') or '').strip()
+        display_name = str(
+            authority_entry.get('display_name', '')
+            or packet.get('display_alias', '')
+            or baseline_window_id
+            or selector_entry_id
+            or 'comparison-baseline'
+        ).strip()
+        readiness = str(packet.get('readiness', '') or 'ready').strip() or 'ready'
         entries.append(
             {
                 'family': 'baseline-context',
                 'entry_id': entry_id,
-                'selector_token': selector_token,
-                'display_name': baseline_window_id or str(packet.get('summary', '') or selector_token or 'baseline-analysis').strip(),
-                'display_alias': _generate_short_alias(selector_token),
+                'selector_token': baseline_window_id or selector_entry_id,
+                'display_name': display_name,
+                'display_alias': str(packet.get('display_alias', '') or authority_entry.get('display_alias', '') or '').strip(),
                 'recorded_at_utc': recorded_at_utc,
-                'workflow': 'baseline-analysis',
-                'run_id': '',
-                'status': 'approved' if readiness == 'ready' else 'held',
+                'workflow': 'comparison-baseline',
+                'run_id': selector_run_id,
+                'status': 'approved',
                 'readiness': readiness,
-                'summary': str(packet.get('summary', '') or 'Retained baseline analysis packet.').strip(),
+                'summary': str(packet.get('summary', '') or 'Retained DS comparison baseline packet.').strip() or 'Retained DS comparison baseline packet.',
                 'source': src,
                 'mode': m,
-                'decision_state': decision,
+                'decision_state': 'go',
                 'baseline_window_id': baseline_window_id,
-                'sample_counts': counts,
+                'baseline_stage': baseline_stage,
+                'sample_counts': {},
                 'resolver': {
                     'baseline_analysis_packet': packet_ref,
-                    'evidence_index_path': str(index_path).replace('\\', '/'),
+                    'selector_entry_id': selector_entry_id,
                 },
             }
         )
@@ -8910,11 +9342,12 @@ def _ds_baseline_selectors(source: str, mode: str) -> Dict[str, Any]:
         'family': 'baseline-context',
         'source': src,
         'mode': m,
-        'summary': 'Retained baseline-context selector surface ready.' if entries else 'No saved baseline-context selectors are available for the current source/mode.',
+        'summary': 'Retained DS comparison-baseline selector surface ready.' if entries else 'No saved DS comparison-baseline selectors are available for the current source/mode.',
         'count': int(len(entries)),
         'selector_entries': [_ds_selector_entry_view(entry) for entry in entries],
         'artifacts': {
-            'evidence_index_jsonl': str(_evidence_index_path(src, m)).replace('\\', '/'),
+            'librarian_dataset_manifest_json': normalize_repo_or_absolute_path(ds_indexes_dir(Path(__file__)) / 'librarian_dataset_manifest.json', _project_root()),
+            'comparison_baseline_root': normalize_repo_or_absolute_path(_ds_comparison_baseline_root(), _project_root()),
         },
         'reason_codes': [],
     }
@@ -10939,6 +11372,52 @@ def _ds_wizard_transient_lines(state: _DSWizardState) -> List[str]:
     return [str(line).rstrip() for line in text.splitlines() if str(line).strip()]
 
 
+def _ds_wizard_clear_baseline_context(state: _DSWizardState) -> _DSWizardState:
+    state.values['baseline_analysis_packet'] = ''
+    state.values['baseline_window_id'] = ''
+    state.hydrated_from.pop('baseline_analysis_packet', None)
+    state.hydrated_from.pop('baseline_window_id', None)
+    return state
+
+
+def _ds_wizard_apply_lineage_baseline_context(
+    state: _DSWizardState,
+    *,
+    source: Any,
+    mode: Any,
+    baseline_packet_ref: str = '',
+    baseline_window_id: str = '',
+    hydrated_from: str = 'baseline_analysis',
+) -> bool:
+    candidate = _ds_select_lineage_comparison_baseline_candidate(
+        source=str(source or '').strip(),
+        mode=str(mode or '').strip(),
+        baseline_packet_ref=str(baseline_packet_ref or '').strip(),
+        baseline_window_id=str(baseline_window_id or '').strip(),
+    )
+
+    _ds_wizard_clear_baseline_context(state)
+    if not candidate:
+        return False
+
+    packet = dict(candidate.get('packet', {}) or {})
+    packet_path = Path(candidate.get('packet_path'))
+    resolved_window_id = str(packet.get('baseline_window_id', '') or baseline_window_id or '').strip()
+    if not packet_path.exists():
+        return False
+
+    _ds_wizard_hydrate_baseline_context(
+        state,
+        baseline_packet_ref=str(packet_path),
+        baseline_window_id=resolved_window_id,
+        hydrated_from=hydrated_from,
+    )
+    for key in ('baseline_analysis_packet', 'baseline_window_id'):
+        if key in state.hydrated_from:
+            state.hydrated_from[key] = hydrated_from
+    return True
+
+
 def _ds_wizard_short_path(path_text: str) -> str:
     text = str(path_text or '').strip().replace('\\', '/')
     if not text:
@@ -11262,6 +11741,30 @@ def _ds_wizard_clear_transient_view(state: _DSWizardState) -> _DSWizardState:
     return state
 
 
+def _ds_wizard_hydrate_baseline_context(
+    state: _DSWizardState,
+    *,
+    baseline_packet_ref: str = '',
+    baseline_window_id: str = '',
+    hydrated_from: str = 'baseline_analysis',
+) -> bool:
+    packet_ref = str(baseline_packet_ref or '').strip()
+    window_id = str(baseline_window_id or '').strip()
+    if packet_ref:
+        packet_path = _resolve_existing_project_path(packet_ref)
+        if packet_path is not None:
+            _ds_wizard_hydrate_baseline_analysis(state, packet_path)
+            for key in ('baseline_analysis_packet', 'baseline_window_id'):
+                if key in state.hydrated_from:
+                    state.hydrated_from[key] = hydrated_from
+            return True
+    if window_id:
+        state.values['baseline_window_id'] = window_id
+        state.hydrated_from['baseline_window_id'] = hydrated_from
+        return True
+    return False
+
+
 def _ds_wizard_hydrate_dataset_reference(state: _DSWizardState, dataset_ref: str) -> _DSWizardState:
     token = str(dataset_ref or '').strip()
     if not token:
@@ -11296,19 +11799,14 @@ def _ds_wizard_hydrate_dataset_reference(state: _DSWizardState, dataset_ref: str
     artifacts = packet.get('artifacts', {}) if isinstance(packet.get('artifacts', {}), dict) else {}
     baseline_window_id = str(dataset_meta.get('baseline_window_id', '') or '').strip()
     baseline_packet_ref = str(dataset_meta.get('baseline_analysis_packet', '') or artifacts.get('baseline_analysis_packet', '') or '').strip()
-    baseline_context_loaded = False
-    if baseline_packet_ref:
-        baseline_path = _resolve_existing_project_path(baseline_packet_ref)
-        if baseline_path is not None:
-            state = _ds_wizard_hydrate_baseline_analysis(state, baseline_path)
-            for key in ('baseline_analysis_packet', 'baseline_window_id'):
-                if key in state.hydrated_from:
-                    state.hydrated_from[key] = 'librarian_dataset'
-            baseline_context_loaded = True
-    if not baseline_context_loaded and baseline_window_id:
-        state.values['baseline_window_id'] = baseline_window_id
-        state.hydrated_from['baseline_window_id'] = 'librarian_dataset'
-        baseline_context_loaded = True
+    baseline_context_loaded = _ds_wizard_apply_lineage_baseline_context(
+        state,
+        source=dataset_meta.get('source', packet.get('source', '')),
+        mode=dataset_meta.get('mode', packet.get('mode', '')),
+        baseline_packet_ref=baseline_packet_ref,
+        baseline_window_id=baseline_window_id,
+        hydrated_from='librarian_dataset',
+    )
     _ds_wizard_apply_context_metadata(
         state,
         dataset_meta.get('source', packet.get('source', '')),
@@ -11379,6 +11877,13 @@ def _ds_wizard_hydrate_train_manifest(state: _DSWizardState, manifest_path: Path
     dataset_alias = str(payload.get('collection_alias', '') or payload.get('dataset_alias', '') or '').strip()
     if not dataset_alias and dataset_manifest_value:
         try:
+            from calamum_librarian import dataset_display_alias_for_manifest as _librarian_dataset_display_alias_for_manifest
+
+            dataset_alias = _librarian_dataset_display_alias_for_manifest(_project_anchor(), dataset_manifest_value)
+        except Exception:
+            dataset_alias = ''
+    if not dataset_alias and dataset_manifest_value:
+        try:
             from analysis.report_pack import resolve_collection_alias as _resolve_report_collection_alias
 
             dataset_alias = _resolve_report_collection_alias(
@@ -11444,6 +11949,8 @@ def _ds_wizard_hydrate_run_ledger(state: _DSWizardState, ledger_path: Path) -> _
     constraints = context.get('constraints', {}) if isinstance(context.get('constraints', {}), dict) else {}
     data = payload.get('data', {}) if isinstance(payload.get('data', {}), dict) else {}
     model = payload.get('model', {}) if isinstance(payload.get('model', {}), dict) else {}
+    source = str(context.get('source', '') or '').strip()
+    mode = str(context.get('mode', '') or '').strip()
 
     state.run_ledger_path = str(ledger_path)
 
@@ -11486,12 +11993,25 @@ def _ds_wizard_hydrate_run_ledger(state: _DSWizardState, ledger_path: Path) -> _
         state.values['model_path'] = str(model_source_path or model_source_text)
         state.hydrated_from['model_path'] = 'run_ledger'
 
+    baseline_context_loaded = _ds_wizard_apply_lineage_baseline_context(
+        state,
+        source=source,
+        mode=mode,
+        baseline_packet_ref=str(context.get('baseline_analysis_packet', '') or '').strip(),
+        baseline_window_id=str(context.get('baseline_window_id', '') or '').strip(),
+        hydrated_from='run_ledger',
+    )
+
+    loaded_fields = ['run_id', 'max_fpr', 'dataset_manifest', 'features_csv', 'labels_csv', 'model_path']
+    if baseline_context_loaded:
+        loaded_fields.extend(['baseline_analysis_packet', 'baseline_window_id'])
+
     state.last_action = 'hydrate:run_ledger'
     _ds_wizard_set_transient_lines(
         state,
         [
             'historical evaluation context loaded: {0}'.format(_ds_wizard_short_path(str(ledger_path))),
-            'loaded fields: run_id, max_fpr, dataset_manifest, features_csv, labels_csv, model_path',
+            'loaded fields: {0}'.format(', '.join(loaded_fields)),
         ],
     )
     return state
@@ -11663,7 +12183,15 @@ def _ds_wizard_hydrate_run_reference(state: _DSWizardState, run_ref: str) -> _DS
         raise FileNotFoundError('resolved run ledger path is missing')
 
     state = _ds_wizard_hydrate_run_ledger(state, run_json_path)
-    for key in ('run_id', 'max_fpr', 'dataset_manifest', 'features_csv', 'labels_csv', 'model_path'):
+    _ds_wizard_apply_lineage_baseline_context(
+        state,
+        source=entry.get('source', state.source),
+        mode=entry.get('mode', state.mode),
+        baseline_packet_ref=str(resolver.get('baseline_analysis_packet', '') or state.values.get('baseline_analysis_packet', '') or '').strip(),
+        baseline_window_id=str(resolver.get('baseline_window_id', '') or state.values.get('baseline_window_id', '') or '').strip(),
+        hydrated_from='saved_run',
+    )
+    for key in ('run_id', 'max_fpr', 'dataset_manifest', 'features_csv', 'labels_csv', 'model_path', 'baseline_analysis_packet', 'baseline_window_id'):
         if key in state.hydrated_from:
             state.hydrated_from[key] = 'saved_run'
     _ds_wizard_apply_context_metadata(
@@ -11676,7 +12204,11 @@ def _ds_wizard_hydrate_run_reference(state: _DSWizardState, run_ref: str) -> _DS
         'saved run ready: {0}'.format(str(entry.get('display_name', '') or entry.get('selector_token', '') or token).strip()),
         '- selector: {0}'.format(str(entry.get('selector_token', '') or entry.get('run_id', '') or token).strip()),
         '- run ledger: {0}'.format(_ds_wizard_short_path(str(run_json_path))),
-        '- fields: run_id, max_fpr, dataset_manifest, features_csv, labels_csv, model_path',
+        '- fields: run_id, max_fpr, dataset_manifest, features_csv, labels_csv, model_path{0}'.format(
+            ', baseline_analysis_packet, baseline_window_id'
+            if str(state.values.get('baseline_analysis_packet', '') or '').strip() or str(state.values.get('baseline_window_id', '') or '').strip()
+            else ''
+        ),
         'next: validate now or continue filling the remaining wizard fields.',
     ]
     state.last_action = 'hydrate:saved_run'

@@ -11,6 +11,7 @@ from typing import Any, Dict, List, Optional, Tuple
 from apexlab.evaluation.metrics import classification_metrics
 from apexlab.models import IsolationForest, RandomForestClassifier
 
+from ._label_semantics import infer_positive_label_tokens, label_token_to_binary
 from ._util import utc_now_iso
 
 
@@ -121,6 +122,7 @@ def train_model(
     y_train = []
     X_val = []
     y_val = []
+    positive_tokens = infer_positive_label_tokens(label_map.values())
 
     for row in features:
         rid = row['record_id']
@@ -131,7 +133,7 @@ def train_model(
         if model_type == 'supervised' and label is None:
             continue
 
-        label_value = 1 if label == 'TV-3' else 0
+        label_value = label_token_to_binary(label, positive_tokens=positive_tokens)
 
         if split == 'train':
             X_train.append(vec)

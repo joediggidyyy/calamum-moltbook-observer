@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import json
 import os
+import shutil
 import sys
 from pathlib import Path
 
@@ -116,6 +117,21 @@ def _write_signed_jsonl(path: Path, records: list[dict]) -> None:
     with path.open('w', encoding='utf-8') as f:
         for record in records:
             f.write(json.dumps(Obfuscator.sign_record(record)) + '\n')
+
+
+def _seed_shipped_manual_report_surfaces(project_root: Path) -> None:
+    source_project_root = SRC_DIR.parent
+    source_paths = (
+        ('docs/reports/reference/GENERATED_REPORT_SURFACES.md', 'docs/reports/reference/GENERATED_REPORT_SURFACES.md'),
+        ('docs/reports/validations/INDEX.md', 'docs/reports/validations/INDEX.md'),
+        ('docs/reports/validations/APEXLAB_REFERENCE_VALIDATION_REPORT_20260324.md', 'docs/reports/validations/APEXLAB_REFERENCE_VALIDATION_REPORT_20260324.md'),
+        ('docs/reports/validations/APEXLAB_REFERENCE_VALIDATION_REPORT_20260324.html', 'docs/reports/validations/APEXLAB_REFERENCE_VALIDATION_REPORT_20260324.html'),
+    )
+    for source_rel, target_rel in source_paths:
+        source_path = source_project_root / source_rel
+        target_path = project_root / target_rel
+        target_path.parent.mkdir(parents=True, exist_ok=True)
+        shutil.copy2(source_path, target_path)
 
 
 def _make_temp_observer_project(tmp_path: Path) -> tuple[Path, Path]:
@@ -1019,6 +1035,223 @@ def test_ds_wizard_hydrates_saved_artifacts(tmp_path: Path) -> None:
     assert state.values['baseline_window_id'] == 'frame4-window'
 
 
+def test_ds_wizard_hydrate_train_manifest_prefers_librarian_alias_api(monkeypatch, tmp_path: Path) -> None:
+    from calamum_librarian import register_librarian_dataset_packet
+    import analysis.report_pack as report_pack_module
+
+    project_root, anchor = _make_temp_observer_project(tmp_path)
+    _bind_temp_observer_project(monkeypatch, project_root, anchor)
+
+    dataset_manifest = tmp_path / 'dataset_manifest.json'
+    dataset_manifest.write_text(json.dumps({
+        'features_csv': str(tmp_path / 'features.csv'),
+        'labels_csv': str(tmp_path / 'labels.csv'),
+        'inputs': [
+            {
+                'path': str(project_root / 'logs' / 'data' / 'calamum' / 'archive' / 'resource_real_canary_fixture_train_alias_seg0001.jsonl.gz'),
+                'records': 1,
+            },
+        ],
+    }), encoding='utf-8')
+    (tmp_path / 'features.csv').write_text('record_id,feature\n1,0.1\n', encoding='utf-8')
+    (tmp_path / 'labels.csv').write_text('record_id,label\n1,1\n', encoding='utf-8')
+    (tmp_path / 'model.pkl').write_bytes(b'model')
+
+    dataset_packet = register_librarian_dataset_packet(
+        anchor,
+        dataset_manifest,
+        access_class='local',
+        display_name='Train Alias Authority',
+        run_id='train-alias-authority',
+    )
+    expected_alias = str(dataset_packet['dataset']['display_alias'])
+
+    train_manifest = tmp_path / 'train_manifest.json'
+    train_manifest.write_text(json.dumps({
+        'dataset_manifest_path': str(dataset_manifest),
+        'model_path': str(tmp_path / 'model.pkl'),
+        'model_type': 'unsupervised',
+    }), encoding='utf-8')
+
+    def _unexpected_report_pack_fallback(*args, **kwargs):
+        raise AssertionError('report-pack fallback should not be required when the Librarian API can answer authoritatively')
+
+    monkeypatch.setattr(report_pack_module, 'resolve_collection_alias', _unexpected_report_pack_fallback)
+
+    state = observerctl_module._ds_wizard_new_state('evaluate')
+    state = observerctl_module._ds_wizard_hydrate_train_manifest(state, train_manifest)
+
+    assert state.values['dataset_alias'] == expected_alias
+    assert state.hydrated_from['dataset_alias'] == 'train_manifest'
+
+
+def test_ds_comparison_baseline_packet_emission_uses_selector_backed_reviewed_authority(monkeypatch, tmp_path: Path) -> None:
+    project_root, anchor = _make_temp_observer_project(tmp_path)
+    _bind_temp_observer_project(monkeypatch, project_root, anchor)
+
+    entry, manifest_path, features_csv, labels_csv = _seed_librarian_dataset_entry(
+        anchor,
+        project_root,
+        slug='reviewed_baseline_window1',
+        display_name='Reviewed Baseline Window1',
+        run_id='reviewed-baseline-window1',
+        source='real',
+        mode='honeypot',
+        recorded_at_utc='2026-04-13T00:00:00Z',
+    )
+    review_policy_packet = project_root / 'local_untracked' / 'reports' / 'review_policy_packet.md'
+    review_policy_packet.parent.mkdir(parents=True, exist_ok=True)
+    review_policy_packet.write_text('# review policy\n', encoding='utf-8')
+
+    emitted = observerctl_module._ds_emit_comparison_baseline_packet(
+        entry,
+        baseline_stage='honeypot_reviewed',
+        companion_role='bounded cursory reviewed tv_id companion',
+        review_policy_packet=str(review_policy_packet),
+    )
+
+    packet_path = _resolve_reported_path(emitted['packet_path'])
+    payload = json.loads(packet_path.read_text(encoding='utf-8'))
+
+    assert packet_path.exists()
+    assert payload['artifact_family'] == 'ds_comparison_baseline'
+    assert payload['baseline_window_id'] == 'reviewed-baseline-window1'
+    assert payload['baseline_stage'] == 'honeypot_reviewed'
+    assert payload['selector_entry_id'] == entry['entry_id']
+    assert payload['selector_run_id'] == entry['run_id']
+    assert payload['dataset_manifest_path'] == observerctl_module.normalize_repo_or_absolute_path(manifest_path, project_root)
+    assert payload['features_csv_path'] == observerctl_module.normalize_repo_or_absolute_path(features_csv, project_root)
+    assert payload['labels_csv_path'] == observerctl_module.normalize_repo_or_absolute_path(labels_csv, project_root)
+    assert payload['review_policy_packet'] == observerctl_module.normalize_repo_or_absolute_path(review_policy_packet, project_root)
+    assert payload['record_count'] == 1
+    assert payload['has_labels'] is True
+    assert payload['packet_path'].endswith('comparison_baseline_packet.json')
+
+
+def test_ds_comparison_baseline_resolver_recovers_selector_view_and_resolves_existing_packet(monkeypatch, tmp_path: Path) -> None:
+    project_root, anchor = _make_temp_observer_project(tmp_path)
+    _bind_temp_observer_project(monkeypatch, project_root, anchor)
+
+    entry, _, _, _ = _seed_librarian_dataset_entry(
+        anchor,
+        project_root,
+        slug='reviewed_resolver_window1',
+        display_name='Reviewed Resolver Window1',
+        run_id='reviewed-resolver-window1',
+        source='real',
+        mode='honeypot',
+        recorded_at_utc='2026-04-13T00:05:00Z',
+        workflow='manual-register',
+    )
+    review_policy_packet = project_root / 'local_untracked' / 'reports' / 'resolver_review_policy_packet.md'
+    review_policy_packet.parent.mkdir(parents=True, exist_ok=True)
+    review_policy_packet.write_text('# resolver review policy\n', encoding='utf-8')
+
+    emitted = observerctl_module._ds_emit_comparison_baseline_packet(
+        entry,
+        baseline_stage='honeypot_reviewed',
+        companion_role='bounded reviewed resolver companion',
+        review_policy_packet=str(review_policy_packet),
+    )
+
+    selector_view = observerctl_module._ds_selector_entry_view(entry)
+    resolved_path = observerctl_module._ds_resolve_comparison_baseline_packet(selector_view)
+
+    assert observerctl_module._ds_is_eligible_comparison_baseline(selector_view) is True
+    assert observerctl_module._ds_comparison_baseline_stage(selector_view) == 'honeypot_reviewed'
+    assert resolved_path == _resolve_reported_path(emitted['packet_path'])
+
+
+def test_ds_comparison_baseline_resolver_can_emit_missing_packet_for_explicit_reviewed_authority(monkeypatch, tmp_path: Path) -> None:
+    project_root, anchor = _make_temp_observer_project(tmp_path)
+    _bind_temp_observer_project(monkeypatch, project_root, anchor)
+
+    entry, _, _, _ = _seed_librarian_dataset_entry(
+        anchor,
+        project_root,
+        slug='reviewed_emit_window1',
+        display_name='Reviewed Emit Window1',
+        run_id='reviewed-emit-window1',
+        source='real',
+        mode='honeypot',
+        recorded_at_utc='2026-04-13T00:10:00Z',
+        workflow='manual-register',
+    )
+    review_policy_packet = project_root / 'local_untracked' / 'reports' / 'emit_review_policy_packet.md'
+    review_policy_packet.parent.mkdir(parents=True, exist_ok=True)
+    review_policy_packet.write_text('# emit review policy\n', encoding='utf-8')
+
+    selector_view = observerctl_module._ds_selector_entry_view(entry)
+    resolved_path = observerctl_module._ds_resolve_comparison_baseline_packet(
+        selector_view,
+        emit_if_missing=True,
+        companion_role='bounded reviewed emit companion',
+        review_policy_packet=str(review_policy_packet),
+    )
+
+    assert resolved_path is not None
+    assert resolved_path.exists()
+    payload = json.loads(resolved_path.read_text(encoding='utf-8'))
+    assert payload['artifact_family'] == 'ds_comparison_baseline'
+    assert payload['selector_entry_id'] == entry['entry_id']
+    assert payload['selector_run_id'] == entry['run_id']
+    assert payload['baseline_stage'] == 'honeypot_reviewed'
+
+
+def test_ds_comparison_baseline_eligibility_fails_closed_for_nonreviewed_or_unlabeled_entries(monkeypatch, tmp_path: Path) -> None:
+    from calamum_librarian import _build_dataset_entry, _dataset_catalog_paths, _load_dataset_snapshot, _save_dataset_snapshot
+
+    project_root, anchor = _make_temp_observer_project(tmp_path)
+    _bind_temp_observer_project(monkeypatch, project_root, anchor)
+
+    nonreviewed_entry, _, _, _ = _seed_librarian_dataset_entry(
+        anchor,
+        project_root,
+        slug='live_labeled_alpha',
+        display_name='Live Labeled Alpha',
+        run_id='live-labeled-alpha',
+        source='real',
+        mode='live',
+        recorded_at_utc='2026-04-13T00:15:00Z',
+        workflow='manual-register',
+    )
+
+    unlabeled_dir = project_root / 'datasets' / 'reviewed_unlabeled_alpha'
+    unlabeled_dir.mkdir(parents=True, exist_ok=True)
+    unlabeled_manifest = unlabeled_dir / 'dataset_manifest.json'
+    unlabeled_features = unlabeled_dir / 'features.csv'
+    unlabeled_features.write_text('record_id,feature\n1,0.1\n', encoding='utf-8')
+    unlabeled_manifest.write_text(json.dumps({
+        'features_csv': str(unlabeled_features),
+        'total_records': 1,
+        'has_labels': False,
+    }), encoding='utf-8')
+    unlabeled_entry = _build_dataset_entry(
+        anchor,
+        unlabeled_manifest,
+        access_class='local',
+        display_name='Reviewed Honeypot Unlabeled Alpha',
+        run_id='reviewed-honeypot-unlabeled-alpha',
+        workflow='manual-register',
+        recorded_at_utc='2026-04-13T00:20:00Z',
+        registration_kind='manual-register',
+        source='real',
+        mode='honeypot',
+        source_binding='manual-register:dataset_manifest.json',
+    )
+    paths = _dataset_catalog_paths(anchor)
+    existing = _load_dataset_snapshot(paths)
+    _save_dataset_snapshot(paths, [unlabeled_entry] + existing)
+
+    assert observerctl_module._ds_comparison_baseline_stage(nonreviewed_entry) == ''
+    assert observerctl_module._ds_is_eligible_comparison_baseline(nonreviewed_entry) is False
+    assert observerctl_module._ds_resolve_comparison_baseline_packet(nonreviewed_entry) is None
+
+    assert observerctl_module._ds_comparison_baseline_stage(unlabeled_entry) == 'honeypot_reviewed'
+    assert observerctl_module._ds_is_eligible_comparison_baseline(unlabeled_entry) is False
+    assert observerctl_module._ds_resolve_comparison_baseline_packet(unlabeled_entry) is None
+
+
 def test_ds_wizard_train_hydration_refreshes_stale_dataset_adjacent_paths(tmp_path: Path) -> None:
     stale_manifest = tmp_path / 'stale_dataset_manifest.json'
     stale_features = tmp_path / 'stale_features.csv'
@@ -1296,18 +1529,24 @@ def test_ds_wizard_hydrates_prior_run_ledger(tmp_path: Path) -> None:
     labels_csv = tmp_path / 'labels.csv'
     dataset_manifest = tmp_path / 'dataset_manifest.json'
     model_path = tmp_path / 'model.pkl'
+    baseline_packet = tmp_path / 'baseline.json'
     run_json = tmp_path / 'run.json'
 
     features_csv.write_text('record_id,feature\n', encoding='utf-8')
     labels_csv.write_text('record_id,label\n', encoding='utf-8')
     model_path.write_bytes(b'model')
+    baseline_packet.write_text(json.dumps({'baseline_window_id': 'frame6-ledger-baseline'}), encoding='utf-8')
     dataset_manifest.write_text(json.dumps({
         'features_csv': str(features_csv),
         'labels_csv': str(labels_csv),
     }), encoding='utf-8')
     run_json.write_text(json.dumps({
         'identity': {'run_id': 'frame6-ledger-import'},
-        'context': {'constraints': {'max_fpr': 0.02}},
+        'context': {
+            'constraints': {'max_fpr': 0.02},
+            'baseline_analysis_packet': str(baseline_packet),
+            'baseline_window_id': 'frame6-ledger-baseline',
+        },
         'data': {
             'features_csv': str(features_csv),
             'labels_csv': str(labels_csv),
@@ -1329,9 +1568,13 @@ def test_ds_wizard_hydrates_prior_run_ledger(tmp_path: Path) -> None:
     assert state.values['features_csv'] == str(features_csv)
     assert state.values['labels_csv'] == str(labels_csv)
     assert state.values['model_path'] == str(model_path)
+    assert state.values['baseline_analysis_packet'] == str(baseline_packet)
+    assert state.values['baseline_window_id'] == 'frame6-ledger-baseline'
     assert state.hydrated_from['run_id'] == 'run_ledger'
     assert state.hydrated_from['max_fpr'] == 'run_ledger'
     assert state.hydrated_from['model_path'] == 'run_ledger'
+    assert state.hydrated_from['baseline_analysis_packet'] == 'run_ledger'
+    assert state.hydrated_from['baseline_window_id'] == 'run_ledger'
 
 
 def test_ds_wizard_cli_draft_round_trip_preserves_run_context_and_report_preview(tmp_path: Path, capsys) -> None:
@@ -2505,55 +2748,39 @@ def test_ds_wizard_hydrate_dataset_selector_releases_protected_dataset(monkeypat
 
 
 def test_ds_wizard_hydrate_dataset_selector_attaches_baseline_context(monkeypatch, tmp_path: Path) -> None:
-    from calamum_librarian import register_librarian_dataset_packet
-
     project_root, anchor = _make_temp_observer_project(tmp_path)
-    dataset_dir = project_root / 'datasets' / 'baseline_hydrate_alpha'
-    dataset_dir.mkdir(parents=True, exist_ok=True)
-    manifest_path = dataset_dir / 'dataset_manifest.json'
-    features_csv = dataset_dir / 'features.csv'
-    labels_csv = dataset_dir / 'labels.csv'
-    features_csv.write_text('record_id,feature\n1,0.1\n', encoding='utf-8')
-    labels_csv.write_text('record_id,label\n1,1\n', encoding='utf-8')
-    manifest_path.write_text(json.dumps({
-        'features_csv': str(features_csv),
-        'labels_csv': str(labels_csv),
-        'total_records': 1,
-        'has_labels': True,
-        'inputs': [
-            {
-                'path': str(project_root / 'logs' / 'data' / 'calamum' / 'archive' / 'resource_real_canary_normal_hydrate_seg0001.jsonl.gz'),
-                'records': 1,
-            },
-        ],
-    }), encoding='utf-8')
-
-    evidence_dir = project_root / 'local_untracked' / 'analysis' / 'observer_derived' / 'real' / 'canary' / 'evidence'
-    evidence_dir.mkdir(parents=True, exist_ok=True)
-    baseline_packet = evidence_dir / 'observerctl_baseline-analysis_hydrate.json'
-    baseline_packet.write_text(json.dumps({
-        'timestamp_utc': '2026-04-06T12:30:00Z',
-        'decision': 'go',
-        'summary': 'Baseline context that should travel with dataset hydration.',
-        'baseline_window_id': 'hydrate-window-001',
-        'sample_counts': {'resource_normal': 3, 'resource_baseline': 4},
-    }), encoding='utf-8')
-    (evidence_dir / 'index.jsonl').write_text(json.dumps({
-        'timestamp_utc': '2026-04-06T12:30:00Z',
-        'event': 'baseline_analysis',
-        'packet_path': str(baseline_packet).replace('\\', '/'),
-        'baseline_window_id': 'hydrate-window-001',
-    }) + '\n', encoding='utf-8')
-
-    register_librarian_dataset_packet(
+    _bind_temp_observer_project(monkeypatch, project_root, anchor)
+    reviewed_canary_entry, _, _, _ = _seed_librarian_dataset_entry(
         anchor,
-        manifest_path,
-        access_class='protected-source',
-        display_name='Hydrate Alpha',
-        run_id='hydrate-alpha-run',
+        project_root,
+        slug='reviewed_canary_hydrate_window_001',
+        display_name='Reviewed Canary Hydrate Alpha',
+        run_id='reviewed-canary-hydrate-window-001',
+        source='real',
+        mode='canary',
+        recorded_at_utc='2026-04-13T00:30:00Z',
+        workflow='manual-register',
     )
-    monkeypatch.setattr(observerctl_module, '_project_root', lambda: project_root)
-    monkeypatch.setattr(observerctl_module, '_project_anchor', lambda: anchor)
+    live_entry, manifest_path, features_csv, labels_csv = _seed_librarian_dataset_entry(
+        anchor,
+        project_root,
+        slug='live_hydrate_target_window_001',
+        display_name='Live Hydrate Target Alpha',
+        run_id='live-hydrate-target-window-001',
+        source='real',
+        mode='live',
+        recorded_at_utc='2026-04-13T00:35:00Z',
+        workflow='manual-register',
+    )
+    review_policy_packet = project_root / 'local_untracked' / 'reports' / 'hydrate_review_policy_packet.md'
+    review_policy_packet.parent.mkdir(parents=True, exist_ok=True)
+    review_policy_packet.write_text('# hydrate review policy\n', encoding='utf-8')
+    emitted_baseline = observerctl_module._ds_emit_comparison_baseline_packet(
+        reviewed_canary_entry,
+        baseline_stage='canary_reviewed',
+        companion_role='bounded reviewed canary hydrate companion',
+        review_policy_packet=str(review_policy_packet),
+    )
     monkeypatch.setenv('CALAMUM_DATA_SIGNING_KEY', 'unit-test-signing-key')
 
     state = observerctl_module._ds_wizard_new_state('evaluate')
@@ -2564,8 +2791,9 @@ def test_ds_wizard_hydrate_dataset_selector_attaches_baseline_context(monkeypatc
     assert state.values['dataset_manifest'] == str(manifest_path)
     assert state.values['features_csv'] == str(features_csv)
     assert state.values['labels_csv'] == str(labels_csv)
-    assert state.values['baseline_window_id'] == 'hydrate-window-001'
-    assert state.values['baseline_analysis_packet'] == str(baseline_packet)
+    assert live_entry['run_id'] == 'live-hydrate-target-window-001'
+    assert state.values['baseline_window_id'] == 'reviewed-canary-hydrate-window-001'
+    assert state.values['baseline_analysis_packet'] == _resolve_reported_path(emitted_baseline['packet_path']).__str__()
     assert state.hydrated_from['dataset_manifest'] == 'librarian_dataset'
     assert state.hydrated_from['baseline_window_id'] == 'librarian_dataset'
     assert state.hydrated_from['baseline_analysis_packet'] == 'librarian_dataset'
@@ -2936,22 +3164,29 @@ def test_librarian_store_reports_show_delete_and_purge(monkeypatch, tmp_path: Pa
     assert _resolve_reported_path(payload['artifacts']['vault_quarantine_root']) == vault_quarantine_root
 
 
-def test_refresh_tracked_ds_publication_preserves_validation_reports(tmp_path: Path) -> None:
+def test_refresh_tracked_ds_publication_preserves_manual_reference_and_validation_surfaces(tmp_path: Path) -> None:
     from analysis.report_aggregate import refresh_tracked_ds_publication
 
     project_root, anchor = _make_temp_observer_project(tmp_path)
+    _seed_shipped_manual_report_surfaces(project_root)
+    reference_doc = project_root / 'docs' / 'reports' / 'reference' / 'GENERATED_REPORT_SURFACES.md'
     validations_root = project_root / 'docs' / 'reports' / 'validations'
-    validations_root.mkdir(parents=True, exist_ok=True)
+    validations_index_path = validations_root / 'INDEX.md'
     apex_md = validations_root / 'APEXLAB_REFERENCE_VALIDATION_REPORT_20260324.md'
     apex_html = validations_root / 'APEXLAB_REFERENCE_VALIDATION_REPORT_20260324.html'
 
+    reference_doc.write_text(reference_doc.read_text(encoding='utf-8') + '\n<!-- frame-c-reference-sentinel -->\n', encoding='utf-8')
+    validations_index_path.write_text(validations_index_path.read_text(encoding='utf-8') + '\n<!-- frame-c-validations-sentinel -->\n', encoding='utf-8')
     apex_md.write_text('# apex validation\n', encoding='utf-8')
     apex_html.write_text('<!DOCTYPE html><html><body>apex validation</body></html>\n', encoding='utf-8')
 
     publication = refresh_tracked_ds_publication(project_anchor=anchor)
-    validations_index = (validations_root / 'INDEX.md').read_text(encoding='utf-8')
+    validations_index = validations_index_path.read_text(encoding='utf-8')
+    reference_text = reference_doc.read_text(encoding='utf-8')
 
     assert publication['decision'] == 'go'
+    assert '<!-- frame-c-reference-sentinel -->' in reference_text
+    assert '<!-- frame-c-validations-sentinel -->' in validations_index
     assert apex_md.exists()
     assert apex_html.exists()
     assert 'APEXLAB_REFERENCE_VALIDATION_REPORT_20260324.md' in validations_index
@@ -2962,6 +3197,7 @@ def test_librarian_store_reports_purge_clears_saved_selector_authority_and_reset
     from analysis.report_aggregate import refresh_tracked_ds_publication
 
     project_root, anchor = _make_temp_observer_project(tmp_path)
+    _seed_shipped_manual_report_surfaces(project_root)
     _bind_temp_observer_project(monkeypatch, project_root, anchor)
     vault_quarantine_root = project_root / 'local_untracked' / 'analysis' / 'vaults' / 'librarian' / 'quarantine' / 'tracked_reports' / project_root.name
 
@@ -3105,6 +3341,7 @@ def test_librarian_store_reports_purge_clears_saved_selector_authority_and_reset
     assert apex_validation_html.exists()
     assert (archived_reports_root / 'aggregates' / 'AGGREGATE_REPORT.md').exists()
     assert (archived_reports_root / 'INDEX.md').exists()
+    assert not (archived_reports_root / 'reference' / generated_surfaces_md.name).exists()
     assert not (archived_reports_root / 'validations' / apex_validation_md.name).exists()
     assert not (archived_reports_root / 'validations' / apex_validation_html.name).exists()
     assert 'No published packets are available yet.' in aggregate_report_md.read_text(encoding='utf-8')
@@ -3156,10 +3393,49 @@ def test_librarian_store_reports_delete_blocks_automatic_republish_until_explici
     )
     append_ds_run_index(project_anchor=anchor, manifest_payload=report_bundle['manifest'])
 
-    publication = refresh_tracked_ds_publication(project_anchor=anchor, current_manifest_payload=report_bundle['manifest'])
+    keep_bundle = prepare_report_bundle(anchor, 'evaluate', run_id='eval-delete-keep')
+    keep_eval_dir = keep_bundle.artifact_dirs['evaluation']
+    keep_eval_dir.mkdir(parents=True, exist_ok=True)
+    keep_run_json = keep_eval_dir / 'run.json'
+    keep_run_md = keep_eval_dir / 'run.md'
+    keep_run_json.write_text('{}\n', encoding='utf-8')
+    keep_run_md.write_text('# keep eval\n', encoding='utf-8')
+    keep_report_bundle = write_report_bundle(
+        project_anchor=anchor,
+        bundle=keep_bundle,
+        packet={
+            'timestamp_utc': '2026-04-06T18:10:00Z',
+            'runtime_cli_surface': 'observerctl',
+            'decision': 'go',
+            'action': 'ds-evaluate',
+            'command_family': 'ds',
+            'command_path': 'observerctl ds evaluate',
+            'implementation_state': 'command-available',
+            'underlying_surface': 'analysis.evaluation_harness',
+            'summary': 'Evaluation kept through observerctl ds.',
+            'run_id': keep_bundle.run_id,
+            'collection_alias': 'can-keep',
+            'threshold': 0.43,
+            'artifacts': {},
+            'reason_codes': [],
+        },
+        artifact_paths={
+            'run_json': keep_run_json,
+            'run_md': keep_run_md,
+        },
+        context={'max_fpr': 0.02},
+    )
+    append_ds_run_index(project_anchor=anchor, manifest_payload=keep_report_bundle['manifest'])
+
+    publication = refresh_tracked_ds_publication(project_anchor=anchor, current_manifest_payload=keep_report_bundle['manifest'])
+    aggregates_root = project_root / 'docs' / 'reports' / 'aggregates'
+    aggregate_report_md = aggregates_root / 'AGGREGATE_REPORT.md'
+    public_run_ledger_md = aggregates_root / 'PUBLIC_RUN_LEDGER.md'
+    latest_collections_md = aggregates_root / 'LATEST_COLLECTIONS.md'
 
     assert publication['decision'] == 'go'
     assert (project_root / 'docs' / 'reports' / 'collections' / 'can-delete-blocked').exists()
+    assert (project_root / 'docs' / 'reports' / 'collections' / 'can-keep').exists()
 
     rc = main(['librarian', 'store', 'reports', '--delete', 'can-delete-blocked', '--json'])
 
@@ -3168,12 +3444,156 @@ def test_librarian_store_reports_delete_blocks_automatic_republish_until_explici
     assert payload['action'] == 'librarian-store-reports-delete'
     assert payload['republish_required'] is True
     assert not (project_root / 'docs' / 'reports' / 'collections' / 'can-delete-blocked').exists()
+    assert (project_root / 'docs' / 'reports' / 'collections' / 'can-keep').exists()
+    assert _resolve_reported_path(payload['artifacts']['aggregate_report_md']).exists()
+    assert _resolve_reported_path(payload['artifacts']['public_run_ledger_md']).exists()
+
+    aggregate_report_text = aggregate_report_md.read_text(encoding='utf-8')
+    public_run_ledger_text = public_run_ledger_md.read_text(encoding='utf-8')
+    latest_collections_text = latest_collections_md.read_text(encoding='utf-8')
+
+    assert 'can-delete-blocked' not in aggregate_report_text
+    assert 'can-delete-blocked' not in latest_collections_text
+    assert 'can-keep' in aggregate_report_text
+    assert 'can-keep' in latest_collections_text
+    assert '| `can-keep` |' in public_run_ledger_text
+    assert '## Librarian vault inventory' in public_run_ledger_text
+    assert 'archive-and-delete-report-collection' in public_run_ledger_text
+    assert 'can-delete-blocked' in public_run_ledger_text
 
     skipped_publication = refresh_tracked_ds_publication(project_anchor=anchor)
 
     assert skipped_publication['decision'] == 'skipped'
     assert skipped_publication['reason_codes'] == ['publication_skipped:republish_required']
     assert not (project_root / 'docs' / 'reports' / 'collections' / 'can-delete-blocked').exists()
+    assert (project_root / 'docs' / 'reports' / 'collections' / 'can-keep').exists()
+
+
+def test_ds_finalize_run_packet_publishes_current_build_under_republish_gate_without_reviving_deleted_history(monkeypatch, tmp_path: Path, capsys) -> None:
+    from analysis.report_aggregate import append_ds_run_index, refresh_tracked_ds_publication
+    from analysis.report_pack import prepare_report_bundle, write_report_bundle
+
+    project_root, anchor = _make_temp_observer_project(tmp_path)
+    _seed_shipped_manual_report_surfaces(project_root)
+    _bind_temp_observer_project(monkeypatch, project_root, anchor)
+
+    def _append_build_report_bundle(run_id: str, timestamp_utc: str, collection_alias: str) -> dict:
+        bundle = prepare_report_bundle(anchor, 'build', run_id=run_id)
+        dataset_dir = bundle.artifact_dirs['dataset']
+        dataset_dir.mkdir(parents=True, exist_ok=True)
+        dataset_manifest = dataset_dir / 'dataset_manifest.json'
+        features_csv = dataset_dir / 'features.csv'
+        features_csv.write_text('record_id,feature\n1,0.1\n', encoding='utf-8')
+        dataset_manifest.write_text(json.dumps({
+            'features_csv': str(features_csv),
+            'total_records': 1,
+            'has_labels': False,
+        }), encoding='utf-8')
+        report_bundle = write_report_bundle(
+            project_anchor=anchor,
+            bundle=bundle,
+            packet={
+                'timestamp_utc': timestamp_utc,
+                'runtime_cli_surface': 'observerctl',
+                'decision': 'go',
+                'action': 'ds-build',
+                'command_family': 'ds',
+                'command_path': 'observerctl ds build',
+                'implementation_state': 'command-available',
+                'underlying_surface': 'analysis.dataset_builder',
+                'summary': 'Dataset built through observerctl ds.',
+                'run_id': bundle.run_id,
+                'collection_alias': collection_alias,
+                'artifacts': {},
+                'reason_codes': [],
+            },
+            artifact_paths={
+                'dataset_manifest': dataset_manifest,
+                'features_csv': features_csv,
+            },
+            context={'output_override': False},
+        )
+        append_ds_run_index(project_anchor=anchor, manifest_payload=report_bundle['manifest'])
+        return report_bundle
+
+    deleted_report_bundle = _append_build_report_bundle(
+        'build-delete-blocked',
+        '2026-04-06T18:00:00Z',
+        'can-delete-blocked',
+    )
+    keep_report_bundle = _append_build_report_bundle(
+        'build-keep',
+        '2026-04-06T18:10:00Z',
+        'can-keep',
+    )
+
+    initial_publication = refresh_tracked_ds_publication(
+        project_anchor=anchor,
+        current_manifest_payload=keep_report_bundle['manifest'],
+    )
+
+    assert initial_publication['decision'] == 'go'
+    assert (project_root / 'docs' / 'reports' / 'collections' / 'can-delete-blocked').exists()
+    assert (project_root / 'docs' / 'reports' / 'collections' / 'can-keep').exists()
+
+    rc = main(['librarian', 'store', 'reports', '--delete', 'can-delete-blocked', '--json'])
+
+    assert rc == 0
+    delete_payload = json.loads(capsys.readouterr().out)
+    assert delete_payload['republish_required'] is True
+    assert not (project_root / 'docs' / 'reports' / 'collections' / 'can-delete-blocked').exists()
+    assert (project_root / 'docs' / 'reports' / 'collections' / 'can-keep').exists()
+
+    fresh_bundle = prepare_report_bundle(anchor, 'build', run_id='build-fresh')
+    fresh_dataset_dir = fresh_bundle.artifact_dirs['dataset']
+    fresh_dataset_dir.mkdir(parents=True, exist_ok=True)
+    fresh_dataset_manifest = fresh_dataset_dir / 'dataset_manifest.json'
+    fresh_features_csv = fresh_dataset_dir / 'features.csv'
+    fresh_features_csv.write_text('record_id,feature\n1,0.2\n', encoding='utf-8')
+    fresh_dataset_manifest.write_text(json.dumps({
+        'features_csv': str(fresh_features_csv),
+        'total_records': 1,
+        'has_labels': False,
+    }), encoding='utf-8')
+
+    final_packet = observerctl_module._ds_finalize_run_packet(
+        {
+            'timestamp_utc': '2026-04-06T18:20:00Z',
+            'runtime_cli_surface': 'observerctl',
+            'decision': 'go',
+            'action': 'ds-build',
+            'command_family': 'ds',
+            'command_path': 'observerctl ds build',
+            'implementation_state': 'command-available',
+            'underlying_surface': 'analysis.dataset_builder',
+            'summary': 'Dataset built through observerctl ds.',
+            'run_id': fresh_bundle.run_id,
+            'collection_alias': 'can-fresh',
+            'artifacts': {},
+            'reason_codes': [],
+        },
+        bundle=fresh_bundle,
+        artifact_paths={
+            'dataset_manifest': fresh_dataset_manifest,
+            'features_csv': fresh_features_csv,
+        },
+        context={'output_override': False},
+        lineage={},
+    )
+
+    latest_collections_text = (project_root / final_packet['artifacts']['tracked_ds_latest_md']).read_text(encoding='utf-8')
+
+    assert final_packet['decision'] == 'go'
+    assert final_packet['publication']['decision'] == 'go'
+    assert final_packet['publication']['republish_required'] is True
+    assert final_packet['publication']['published_run_count'] == 2
+    assert final_packet['publication']['current_run']['collection_alias'] == 'can-fresh'
+    assert (project_root / 'docs' / 'reports' / 'collections' / 'can-keep').exists()
+    assert (project_root / 'docs' / 'reports' / 'collections' / 'can-fresh').exists()
+    assert not (project_root / 'docs' / 'reports' / 'collections' / 'can-delete-blocked').exists()
+    assert _resolve_reported_path(final_packet['artifacts']['published_report_md']).exists()
+    assert '`can-fresh`' in latest_collections_text
+    assert 'can-delete-blocked' not in latest_collections_text
 
 
 def test_librarian_store_reports_republish_rebuilds_publication_after_reset_gate(monkeypatch, tmp_path: Path, capsys) -> None:
@@ -3482,6 +3902,10 @@ def test_ds_saved_selector_commands_and_wizard_hydration(monkeypatch, tmp_path: 
     evaluation_dir.mkdir(parents=True, exist_ok=True)
     run_json = evaluation_dir / 'run.json'
     run_md = evaluation_dir / 'run.md'
+    run_baseline_packet = evaluation_dir / 'baseline.json'
+    run_baseline_packet.write_text(json.dumps({
+        'baseline_window_id': 'canary-window-001',
+    }), encoding='utf-8')
     run_json.write_text(json.dumps({
         'identity': {'run_id': 'selector-eval-001'},
         'context': {'constraints': {'max_fpr': 0.02}},
@@ -3505,6 +3929,7 @@ def test_ds_saved_selector_commands_and_wizard_hydration(monkeypatch, tmp_path: 
         context={
             'source': 'real',
             'mode': 'canary',
+            'baseline_analysis_packet': str(run_baseline_packet),
             'baseline_window_id': 'canary-window-001',
             'max_fpr': 0.02,
         },
@@ -3569,6 +3994,61 @@ def test_ds_saved_selector_commands_and_wizard_hydration(monkeypatch, tmp_path: 
         'baseline_window_id': 'canary-window-001',
     }) + '\n', encoding='utf-8')
 
+    reviewed_canary_entry, _, _, _ = _seed_librarian_dataset_entry(
+        anchor,
+        project_root,
+        slug='reviewed_canary_window1',
+        display_name='Reviewed Canary Window1',
+        run_id='reviewed-canary-window1',
+        source='real',
+        mode='canary',
+        recorded_at_utc='2026-04-13T00:20:00Z',
+        workflow='manual-register',
+    )
+    reviewed_live_entry, _, _, _ = _seed_librarian_dataset_entry(
+        anchor,
+        project_root,
+        slug='reviewed_live_window1',
+        display_name='Reviewed Live Window1',
+        run_id='reviewed-live-window1',
+        source='real',
+        mode='live',
+        recorded_at_utc='2026-04-13T00:25:00Z',
+        workflow='manual-register',
+    )
+    reviewed_entry, reviewed_manifest, reviewed_features, reviewed_labels = _seed_librarian_dataset_entry(
+        anchor,
+        project_root,
+        slug='reviewed_honeypot_window1',
+        display_name='Reviewed Honeypot Window1',
+        run_id='reviewed-honeypot-window1',
+        source='real',
+        mode='honeypot',
+        recorded_at_utc='2026-04-13T00:30:00Z',
+        workflow='manual-register',
+    )
+    review_policy_packet = project_root / 'local_untracked' / 'reports' / 'reviewed_honeypot_policy_packet.md'
+    review_policy_packet.parent.mkdir(parents=True, exist_ok=True)
+    review_policy_packet.write_text('# reviewed honeypot policy\n', encoding='utf-8')
+    emitted_canary_baseline = observerctl_module._ds_emit_comparison_baseline_packet(
+        reviewed_canary_entry,
+        baseline_stage='canary_reviewed',
+        companion_role='bounded reviewed canary companion',
+        review_policy_packet=str(review_policy_packet),
+    )
+    emitted_live_baseline = observerctl_module._ds_emit_comparison_baseline_packet(
+        reviewed_live_entry,
+        baseline_stage='live_reviewed',
+        companion_role='bounded reviewed live companion',
+        review_policy_packet=str(review_policy_packet),
+    )
+    emitted_reviewed_baseline = observerctl_module._ds_emit_comparison_baseline_packet(
+        reviewed_entry,
+        baseline_stage='honeypot_reviewed',
+        companion_role='bounded reviewed honeypot companion',
+        review_policy_packet=str(review_policy_packet),
+    )
+
     rc = main(['ds', 'saved', 'trained', '--json'])
     assert rc == 0
     payload = json.loads(capsys.readouterr().out)
@@ -3592,8 +4072,25 @@ def test_ds_saved_selector_commands_and_wizard_hydration(monkeypatch, tmp_path: 
     payload = json.loads(capsys.readouterr().out)
     assert payload['action'] == 'ds-saved-baselines'
     assert payload['command_path'] == 'observerctl ds saved baselines'
+    assert payload['count'] == 0
+
+    rc = main(['ds', 'saved', 'baselines', '--source', 'real', '--mode', 'live', '--json'])
+    assert rc == 0
+    payload = json.loads(capsys.readouterr().out)
+    assert payload['action'] == 'ds-saved-baselines'
+    assert payload['command_path'] == 'observerctl ds saved baselines'
     assert payload['count'] == 1
-    assert payload['selector_entries'][0]['baseline_window_id'] == 'canary-window-001'
+    assert payload['selector_entries'][0]['baseline_window_id'] == 'reviewed-canary-window1'
+    assert payload['selector_entries'][0]['baseline_stage'] == 'canary_reviewed'
+
+    rc = main(['ds', 'saved', 'baselines', '--source', 'real', '--mode', 'honeypot', '--json'])
+    assert rc == 0
+    payload = json.loads(capsys.readouterr().out)
+    assert payload['action'] == 'ds-saved-baselines'
+    assert payload['command_path'] == 'observerctl ds saved baselines'
+    assert payload['count'] == 2
+    assert {str(entry.get('baseline_stage', '') or '') for entry in payload['selector_entries']} == {'live_reviewed', 'honeypot_reviewed'}
+    assert {str(entry.get('baseline_window_id', '') or '') for entry in payload['selector_entries']} == {'reviewed-live-window1', 'reviewed-honeypot-window1'}
 
     train_state = observerctl_module._ds_wizard_new_state('score')
     train_state, packet, should_exit = observerctl_module._ds_wizard_handle_command(train_state, 'trained')
@@ -3634,8 +4131,13 @@ def test_ds_saved_selector_commands_and_wizard_hydration(monkeypatch, tmp_path: 
     assert should_exit is False
     assert run_state.values['run_id'] == 'selector-eval-001'
     assert run_state.values['max_fpr'] == 0.02
+    assert run_state.values['baseline_analysis_packet'] == ''
+    assert run_state.values['baseline_window_id'] == ''
     assert run_state.hydrated_from['run_id'] == 'saved_run'
+    assert 'baseline_analysis_packet' not in run_state.hydrated_from
+    assert 'baseline_window_id' not in run_state.hydrated_from
 
+    observerctl_module._ds_wizard_set_value(run_state, 'mode', 'live')
     run_state, packet, should_exit = observerctl_module._ds_wizard_handle_command(run_state, 'baselines')
     assert packet is None
     assert should_exit is False
@@ -3644,12 +4146,26 @@ def test_ds_saved_selector_commands_and_wizard_hydration(monkeypatch, tmp_path: 
     run_state, packet, should_exit = observerctl_module._ds_wizard_handle_command(run_state, 'hydrate baseline 1')
     assert packet is None
     assert should_exit is False
-    assert run_state.values['baseline_window_id'] == 'canary-window-001'
+    assert run_state.values['baseline_window_id'] == 'reviewed-canary-window1'
+    assert run_state.values['baseline_analysis_packet'] == _resolve_reported_path(emitted_canary_baseline['packet_path']).__str__()
+    assert run_state.hydrated_from['baseline_window_id'] == 'saved_baseline'
+
+    observerctl_module._ds_wizard_set_value(run_state, 'mode', 'honeypot')
+    run_state, packet, should_exit = observerctl_module._ds_wizard_handle_command(run_state, 'baselines')
+    assert packet is None
+    assert should_exit is False
+    assert 'saved baselines:' in observerctl_module._ds_wizard_render(run_state)
+
+    run_state, packet, should_exit = observerctl_module._ds_wizard_handle_command(run_state, 'hydrate baseline reviewed-live-window1')
+    assert packet is None
+    assert should_exit is False
+    assert run_state.values['baseline_window_id'] == 'reviewed-live-window1'
+    assert run_state.values['baseline_analysis_packet'] == _resolve_reported_path(emitted_live_baseline['packet_path']).__str__()
     assert run_state.hydrated_from['baseline_window_id'] == 'saved_baseline'
 
     report_picker_state = observerctl_module._ds_wizard_new_state('evaluate')
     observerctl_module._ds_wizard_set_value(report_picker_state, 'source', 'real')
-    observerctl_module._ds_wizard_set_value(report_picker_state, 'mode', 'canary')
+    observerctl_module._ds_wizard_set_value(report_picker_state, 'mode', 'honeypot')
     observerctl_module._ds_wizard_open_section(report_picker_state, 'model')
     report_picker_state, packet, should_exit = observerctl_module._ds_wizard_handle_command(report_picker_state, '1')
     assert packet is None
@@ -3658,7 +4174,7 @@ def test_ds_saved_selector_commands_and_wizard_hydration(monkeypatch, tmp_path: 
     report_picker_state, packet, should_exit = observerctl_module._ds_wizard_handle_command(report_picker_state, '1')
     assert packet is None
     assert should_exit is False
-    assert report_picker_state.values['baseline_window_id'] == 'canary-window-001'
+    assert report_picker_state.values['baseline_window_id'] == 'reviewed-live-window1'
     assert report_picker_state.hydrated_from['baseline_window_id'] == 'saved_baseline'
 
 
@@ -5994,11 +6510,8 @@ def test_ds_report_publication_groups_multiple_stage_runs_under_one_collection_a
     from analysis.report_aggregate import append_ds_run_index, refresh_tracked_ds_publication
     from analysis.report_pack import prepare_report_bundle, write_report_bundle
 
-    project_root = tmp_path / 'observer_project'
-    anchor = project_root / 'src' / 'observerctl_anchor.py'
-    anchor.parent.mkdir(parents=True, exist_ok=True)
-    anchor.write_text('# anchor\n', encoding='utf-8')
-    (project_root / 'PROJECT_MANIFEST.json').write_text('{}\n', encoding='utf-8')
+    project_root, anchor = _make_temp_observer_project(tmp_path)
+    _seed_shipped_manual_report_surfaces(project_root)
 
     first_bundle = prepare_report_bundle(anchor, 'evaluate', run_id='eval-alpha')
     first_eval_dir = first_bundle.artifact_dirs['evaluation']
@@ -6126,6 +6639,8 @@ def test_ds_report_publication_groups_multiple_stage_runs_under_one_collection_a
     assert '20260331T120500000000Z.collection.md' not in reports_index_text
     assert '# Aggregate Report' in aggregate_report_text
     assert '# Public Run Ledger' in public_run_ledger_text
+    assert '## Librarian vault inventory' in public_run_ledger_text
+    assert 'No tracked report archive inventories are currently present in the Librarian quarantine lane.' in public_run_ledger_text
     assert '## What to open first' in aggregate_report_text
     assert '## Current packet family at a glance' in aggregate_report_text
     assert 'Collection packets now act as reader-first entry surfaces rather than history-only routing stubs.' in aggregate_report_text
@@ -6154,11 +6669,8 @@ def test_ds_report_publication_uses_registered_dataset_alias_when_manifest_colle
     from analysis.report_pack import prepare_report_bundle, write_report_bundle
     from calamum_librarian import register_librarian_dataset_packet
 
-    project_root = tmp_path / 'observer_project'
-    anchor = project_root / 'src' / 'observerctl_anchor.py'
-    anchor.parent.mkdir(parents=True, exist_ok=True)
-    anchor.write_text('# anchor\n', encoding='utf-8')
-    (project_root / 'PROJECT_MANIFEST.json').write_text('{}\n', encoding='utf-8')
+    project_root, anchor = _make_temp_observer_project(tmp_path)
+    _seed_shipped_manual_report_surfaces(project_root)
 
     dataset_dir = project_root / 'datasets' / 'presentation_demo'
     dataset_dir.mkdir(parents=True, exist_ok=True)
@@ -6252,6 +6764,106 @@ def test_ds_report_publication_uses_registered_dataset_alias_when_manifest_colle
     assert '|        |- eval/' in generated_surfaces_text
     assert '|        |- score/' in generated_surfaces_text
     assert '|        `- train/' in generated_surfaces_text
+
+
+def test_ds_report_bundle_prefers_existing_comparison_baseline_context_for_publication(monkeypatch, tmp_path: Path) -> None:
+    from analysis.report_aggregate import append_ds_run_index, refresh_tracked_ds_publication
+    from analysis.report_pack import prepare_report_bundle, write_report_bundle
+
+    project_root, anchor = _make_temp_observer_project(tmp_path)
+    _bind_temp_observer_project(monkeypatch, project_root, anchor)
+
+    reviewed_canary_entry, _, _, _ = _seed_librarian_dataset_entry(
+        anchor,
+        project_root,
+        slug='reviewed_canary_report_window1',
+        display_name='Reviewed Canary Report Window1',
+        run_id='reviewed-canary-report-window1',
+        source='real',
+        mode='canary',
+        recorded_at_utc='2026-04-13T00:10:00Z',
+        workflow='manual-register',
+    )
+    live_target_entry, manifest_path, _, _ = _seed_librarian_dataset_entry(
+        anchor,
+        project_root,
+        slug='live_report_target_window1',
+        display_name='Live Report Target Window1',
+        run_id='live-report-target-window1',
+        source='real',
+        mode='live',
+        recorded_at_utc='2026-04-13T00:12:00Z',
+        workflow='manual-register',
+    )
+    review_policy_packet = project_root / 'local_untracked' / 'reports' / 'report_review_policy_packet.md'
+    review_policy_packet.parent.mkdir(parents=True, exist_ok=True)
+    review_policy_packet.write_text('# report review policy\n', encoding='utf-8')
+    emitted = observerctl_module._ds_emit_comparison_baseline_packet(
+        reviewed_canary_entry,
+        baseline_stage='canary_reviewed',
+        companion_role='bounded reviewed canary report companion',
+        review_policy_packet=str(review_policy_packet),
+    )
+    legacy_baseline_packet = project_root / 'local_untracked' / 'analysis' / 'evidence' / 'observerctl_baseline-analysis_legacy.json'
+    legacy_baseline_packet.parent.mkdir(parents=True, exist_ok=True)
+    legacy_baseline_packet.write_text(json.dumps({'baseline_window_id': 'reviewed-canary-report-window1'}), encoding='utf-8')
+
+    bundle = prepare_report_bundle(anchor, 'evaluate', run_id='eval-reviewed-report')
+    evaluation_dir = bundle.artifact_dirs['evaluation']
+    evaluation_dir.mkdir(parents=True, exist_ok=True)
+    run_json = evaluation_dir / 'run.json'
+    run_md = evaluation_dir / 'run.md'
+    run_json.write_text('{}\n', encoding='utf-8')
+    run_md.write_text('# eval reviewed report\n', encoding='utf-8')
+
+    report_bundle = write_report_bundle(
+        project_anchor=anchor,
+        bundle=bundle,
+        packet={
+            'timestamp_utc': '2026-04-13T00:20:00Z',
+            'runtime_cli_surface': 'observerctl',
+            'decision': 'go',
+            'action': 'ds-evaluate',
+            'command_family': 'ds',
+            'command_path': 'observerctl ds evaluate',
+            'implementation_state': 'command-available',
+            'underlying_surface': 'analysis.evaluation_harness',
+            'summary': 'Reviewed evaluation completed through observerctl ds.',
+            'run_id': bundle.run_id,
+            'collection_alias': 'hp-rpt1',
+            'threshold': 0.37,
+            'artifacts': {},
+            'reason_codes': [],
+        },
+        artifact_paths={
+            'run_json': run_json,
+            'run_md': run_md,
+        },
+        context={
+            'source': 'real',
+            'mode': 'live',
+            'baseline_analysis_packet': str(legacy_baseline_packet),
+            'baseline_window_id': 'reviewed-canary-report-window1',
+        },
+        lineage={'dataset_manifest': manifest_path},
+    )
+    append_ds_run_index(project_anchor=anchor, manifest_payload=report_bundle['manifest'])
+
+    publication = refresh_tracked_ds_publication(project_anchor=anchor, current_manifest_payload=report_bundle['manifest'])
+
+    comparison_baseline_path = _resolve_reported_path(emitted['packet_path'])
+    manifest_context = report_bundle['manifest']['context']
+    publication_context = publication['current_run']['context']
+    collection_report_text = (project_root / publication['current_run']['published_report_paths']['markdown']).read_text(encoding='utf-8')
+
+    assert publication['decision'] == 'go'
+    assert _resolve_reported_path(str(manifest_context.get('baseline_analysis_packet', '') or '')) == comparison_baseline_path
+    assert str(manifest_context.get('baseline_window_id', '') or '') == 'reviewed-canary-report-window1'
+    assert _resolve_reported_path(str(publication_context.get('baseline_analysis_packet', '') or '')) == comparison_baseline_path
+    assert str(publication_context.get('baseline_window_id', '') or '') == 'reviewed-canary-report-window1'
+    assert 'baseline packet ref' in collection_report_text
+    assert 'comparison_baseline_packet.json' in collection_report_text
+    assert legacy_baseline_packet.name not in collection_report_text
 
 
 def test_ds_report_publication_repairs_stale_eval_alias_from_materialized_build_dataset(tmp_path: Path) -> None:
@@ -6483,11 +7095,8 @@ def test_ds_report_publication_threshold_summary_only_uses_evaluate_packets_and_
 def test_ds_report_publication_zero_state_generated_surfaces_remains_truthful(tmp_path: Path) -> None:
     from analysis.report_aggregate import refresh_tracked_ds_publication
 
-    project_root = tmp_path / 'observer_project'
-    anchor = project_root / 'src' / 'observerctl_anchor.py'
-    anchor.parent.mkdir(parents=True, exist_ok=True)
-    anchor.write_text('# anchor\n', encoding='utf-8')
-    (project_root / 'PROJECT_MANIFEST.json').write_text('{}\n', encoding='utf-8')
+    project_root, anchor = _make_temp_observer_project(tmp_path)
+    _seed_shipped_manual_report_surfaces(project_root)
 
     publication = refresh_tracked_ds_publication(project_anchor=anchor)
     generated_surfaces_text = (project_root / publication['aggregate_paths']['generated_surfaces_md']).read_text(encoding='utf-8')

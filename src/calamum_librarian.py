@@ -70,6 +70,24 @@ VAULT_SCHEMA_VERSION = '1.0'
 VAULT_BASELINE_KIND = 'librarian_vault_checksum'
 VAULT_CONTROL_KIND = 'librarian_vault_control_state'
 VAULT_AUDIT_KIND = 'librarian_vault_audit'
+LIBRARIAN_DATASET_ROUTER_SCHEMA_VERSION = '1.0'
+LIBRARIAN_DATASET_ROUTER_KIND = 'librarian_dataset_router_v1'
+LIBRARIAN_DATASET_ROUTER_FILENAME = 'librarian_dataset_routing_map.json'
+
+_LIBRARIAN_ROUTER_ACTION_CLASSES = {
+    'scope_actions': {
+        'accepted_tiers': ('collections_id',),
+        'verbs': ('list_aliases', 'list_scope_members', 'report_scope_status'),
+    },
+    'selector_actions': {
+        'accepted_tiers': ('selector_index', 'entry_id', 'selector_run_id', 'display_name', 'manifest_sha256'),
+        'verbs': ('resolve_selector', 'release_dataset', 'hydrate_dataset', 'resolve_alias'),
+    },
+    'alias_actions': {
+        'accepted_tiers': ('alias_id',),
+        'verbs': ('open_collection', 'publish_collection', 'archive_collection', 'list_collection_packets'),
+    },
+}
 
 _DATASET_SCOPE_SOURCE_PATTERNS = {
     'real': (
@@ -1051,6 +1069,188 @@ def _dataset_manifest_fallback_alias(manifest_path: Path, payload: Dict[str, Any
     return sanitize_run_id(manifest_path.stem) or 'dataset'
 
 
+def _approved_dataset_selector_index(entries: List[Dict[str, Any]], target_entry: Dict[str, Any]) -> int:
+    target_entry_id = str(target_entry.get('entry_id', '') or '').strip()
+    target_sha = str(((target_entry.get('resolver', {}) if isinstance(target_entry.get('resolver', {}), dict) else {}).get('dataset_manifest_sha256', '') or '')).strip().lower()
+    for index, entry in enumerate(entries, start=1):
+        entry_id = str(entry.get('entry_id', '') or '').strip()
+        if target_entry_id and entry_id == target_entry_id:
+            return int(index)
+        resolver = dict(entry.get('resolver', {}) or {}) if isinstance(entry.get('resolver', {}), dict) else {}
+        entry_sha = str(resolver.get('dataset_manifest_sha256', '') or '').strip().lower()
+        if target_sha and entry_sha and entry_sha == target_sha:
+            return int(index)
+    return 0
+
+
+def _dataset_entry_matches_selector(entries: List[Dict[str, Any]], entry: Dict[str, Any], selector: str) -> bool:
+    token = str(selector or '').strip()
+    if not token:
+        return False
+    if token.isdigit():
+        return _approved_dataset_selector_index(entries, entry) == int(token)
+
+    resolver = dict(entry.get('resolver', {}) or {}) if isinstance(entry.get('resolver', {}), dict) else {}
+    lowered = token.lower()
+    candidates = {
+        str(entry.get('entry_id', '') or '').strip().lower(),
+        str(entry.get('run_id', '') or '').strip().lower(),
+        str(entry.get('display_name', '') or '').strip().lower(),
+        str(_dataset_entry_display_alias(entry, resolver) or '').strip().lower(),
+        str(resolver.get('dataset_manifest_sha256', '') or '').strip().lower(),
+        str(_librarian_dataset_router_terminal(resolver.get('dataset_manifest_sha256', '')) or '').strip().lower(),
+    }
+    return lowered in {candidate for candidate in candidates if candidate}
+
+
+def _router_terminal_authority_entry(
+    paths: Dict[str, Path],
+    terminal: str,
+    *,
+    entries: Optional[List[Dict[str, Any]]] = None,
+    router: Optional[Dict[str, Any]] = None,
+) -> Dict[str, Any]:
+    terminal_token = str(terminal or '').strip().lower()
+    if not terminal_token:
+        return {}
+
+    router_payload = dict(router or _resolve_librarian_dataset_router(paths, emit_if_missing=False) or {})
+    deref = dict(router_payload.get('deref', {}) or {}) if isinstance(router_payload.get('deref', {}), dict) else {}
+    authority_ref = str(deref.get(terminal_token, '') or '').strip()
+    prefix = 'manifest:#/entries/'
+    if not authority_ref.startswith(prefix):
+        return {}
+
+    try:
+        entry_index = int(authority_ref[len(prefix):])
+    except Exception:
+        return {}
+
+    authority_entries = list(entries if entries is not None else _load_dataset_snapshot(paths))
+    if entry_index < 0 or entry_index >= len(authority_entries):
+        return {}
+
+    entry = dict(authority_entries[entry_index])
+    resolver = dict(entry.get('resolver', {}) or {}) if isinstance(entry.get('resolver', {}), dict) else {}
+    entry_terminal = _librarian_dataset_router_terminal(resolver.get('dataset_manifest_sha256', ''))
+    if not entry_terminal or entry_terminal.lower() != terminal_token:
+        return {}
+    return entry
+
+
+def _router_selector_terminals(router: Dict[str, Any], selector: str) -> List[str]:
+    token = str(selector or '').strip()
+    if not token:
+        return []
+
+    token_index = dict(router.get('token_index', {}) or {}) if isinstance(router.get('token_index', {}), dict) else {}
+    token_keys: List[str] = []
+    if token.isdigit():
+        token_keys.append(_librarian_dataset_router_token_key('selector_index', int(token)))
+    token_keys.extend(
+        [
+            _librarian_dataset_router_token_key('entry_id', token),
+            _librarian_dataset_router_token_key('selector_run_id', token),
+            _librarian_dataset_router_token_key('display_name', token),
+            _librarian_dataset_router_token_key('alias_id', token),
+            _librarian_dataset_router_token_key('manifest_sha256', token),
+        ]
+    )
+
+    terminals: List[str] = []
+    if token.lower().startswith('sha256:'):
+        terminals.append(token.lower())
+    for token_key in token_keys:
+        for row in list(token_index.get(token_key, []) or []):
+            terminal = str(row or '').strip().lower()
+            if terminal and terminal not in terminals:
+                terminals.append(terminal)
+    return terminals
+
+
+def _authoritative_dataset_entry_for_manifest(paths: Dict[str, Path], dataset_manifest_ref: Any) -> Dict[str, Any]:
+    project_root = paths['project_root']
+    token = str(dataset_manifest_ref or '').strip()
+    if not token:
+        return {}
+    try:
+        manifest_path = _resolve_catalog_ref(project_root, token)
+    except Exception:
+        return {}
+    if not manifest_path.exists():
+        return {}
+
+    manifest_key = normalize_repo_or_absolute_path(manifest_path, project_root)
+    manifest_sha = sha256_path(manifest_path).lower()
+    router = _resolve_librarian_dataset_router(paths, emit_if_missing=False)
+    router_key = _librarian_dataset_router_token_key('manifest_sha256', manifest_sha)
+    router_terminals = list((dict(router.get('token_index', {}) or {}) if isinstance(router.get('token_index', {}), dict) else {}).get(router_key, []) or [])
+    if len(router_terminals) == 1:
+        entry = _router_terminal_authority_entry(paths, str(router_terminals[0]), router=router)
+        resolver = dict(entry.get('resolver', {}) or {}) if isinstance(entry.get('resolver', {}), dict) else {}
+        entry_manifest_key = str(resolver.get('dataset_manifest_path', '') or '').strip()
+        entry_manifest_sha = str(resolver.get('dataset_manifest_sha256', '') or '').strip().lower()
+        if entry_manifest_key == manifest_key or (entry_manifest_sha and entry_manifest_sha == manifest_sha):
+            return entry
+
+    for entry in _load_dataset_snapshot(paths):
+        if not isinstance(entry, dict):
+            continue
+        resolver = dict(entry.get('resolver', {}) or {}) if isinstance(entry.get('resolver', {}), dict) else {}
+        entry_manifest_key = str(resolver.get('dataset_manifest_path', '') or '').strip()
+        entry_manifest_sha = str(resolver.get('dataset_manifest_sha256', '') or '').strip().lower()
+        if entry_manifest_key == manifest_key or (entry_manifest_sha and entry_manifest_sha == manifest_sha):
+            return dict(entry)
+    return {}
+
+
+def _authoritative_dataset_entry_for_selector(paths: Dict[str, Path], selector: Any) -> Dict[str, Any]:
+    token = str(selector or '').strip()
+    if not token:
+        return {}
+
+    approved_entries = _approved_dataset_entries(paths)
+    if not approved_entries:
+        return {}
+
+    router = _resolve_librarian_dataset_router(paths, emit_if_missing=False)
+    router_matches: List[Dict[str, Any]] = []
+    seen_entry_ids: List[str] = []
+    for terminal in _router_selector_terminals(router, token):
+        entry = _router_terminal_authority_entry(paths, terminal, router=router)
+        if not entry or not _dataset_entry_matches_selector(approved_entries, entry, token):
+            continue
+        entry_id = str(entry.get('entry_id', '') or '').strip()
+        if entry_id and entry_id not in seen_entry_ids:
+            seen_entry_ids.append(entry_id)
+            router_matches.append(entry)
+    if len(router_matches) == 1:
+        return dict(router_matches[0])
+    if len(router_matches) > 1:
+        return {}
+
+    manifest_matches = [
+        dict(entry)
+        for entry in approved_entries
+        if _dataset_entry_matches_selector(approved_entries, entry, token)
+    ]
+    if len(manifest_matches) == 1:
+        return manifest_matches[0]
+    return {}
+
+
+def dataset_authority_entry_for_manifest(project_anchor: Path, dataset_manifest_ref: Any) -> Dict[str, Any]:
+    paths = _dataset_catalog_paths(project_anchor)
+    _bootstrap_librarian_vault(paths)
+    return _authoritative_dataset_entry_for_manifest(paths, dataset_manifest_ref)
+
+
+def dataset_authority_entry_for_selector(project_anchor: Path, selector: Any) -> Dict[str, Any]:
+    paths = _dataset_catalog_paths(project_anchor)
+    _bootstrap_librarian_vault(paths)
+    return _authoritative_dataset_entry_for_selector(paths, selector)
+
+
 def dataset_display_alias_for_manifest(project_anchor: Path, dataset_manifest_ref: Any) -> str:
     paths = _dataset_catalog_paths(project_anchor)
     _bootstrap_librarian_vault(paths)
@@ -1065,20 +1265,14 @@ def dataset_display_alias_for_manifest(project_anchor: Path, dataset_manifest_re
     if not manifest_path.exists():
         return ''
 
-    manifest_sha = sha256_path(manifest_path)
-    manifest_key = normalize_repo_or_absolute_path(manifest_path, project_root)
-
-    for entry in _load_dataset_snapshot(paths):
-        if not isinstance(entry, dict):
-            continue
+    entry = _authoritative_dataset_entry_for_manifest(paths, manifest_path)
+    if entry:
         resolver = dict(entry.get('resolver', {}) or {}) if isinstance(entry.get('resolver', {}), dict) else {}
-        entry_manifest_key = str(resolver.get('dataset_manifest_path', '') or '').strip()
-        entry_manifest_sha = str(resolver.get('dataset_manifest_sha256', '') or '').strip().lower()
-        if entry_manifest_key == manifest_key or (entry_manifest_sha and entry_manifest_sha == manifest_sha.lower()):
-            alias = _dataset_entry_display_alias(entry, resolver)
-            if alias:
-                return alias
+        alias = _dataset_entry_display_alias(entry, resolver)
+        if alias:
+            return alias
 
+    manifest_sha = sha256_path(manifest_path)
     payload = _read_json_dict(manifest_path, default={})
     if not payload:
         return 'dataset-{0}'.format(manifest_sha[-6:]) if len(manifest_sha) >= 6 else ''
@@ -1130,6 +1324,7 @@ def _save_dataset_snapshot(paths: Dict[str, Path], entries: List[Dict[str, Any]]
         paths['snapshot_path'],
         _build_dataset_snapshot_payload(paths['catalog_path'], paths['project_root'], ordered_entries),
     )
+    _emit_librarian_dataset_router(paths, entries=ordered_entries)
 
 
 def _entry_is_admitted_dataset_selector(entry: Dict[str, Any]) -> bool:
@@ -1143,26 +1338,187 @@ def _approved_dataset_entries(paths: Dict[str, Path]) -> List[Dict[str, Any]]:
     return [entry for entry in _load_dataset_snapshot(paths) if _entry_is_admitted_dataset_selector(entry)]
 
 
-def _resolve_dataset_entry(paths: Dict[str, Path], selector: str) -> Optional[Dict[str, Any]]:
-    token = str(selector or '').strip()
+def _librarian_dataset_router_path(paths: Dict[str, Path]) -> Path:
+    return paths['authority_snapshot_path'].parent / LIBRARIAN_DATASET_ROUTER_FILENAME
+
+
+def _librarian_dataset_router_terminal(dataset_manifest_sha256: Any) -> str:
+    token = str(dataset_manifest_sha256 or '').strip().lower()
     if not token:
-        return None
+        return ''
+    return 'sha256:{0}'.format(token)
+
+
+def _librarian_dataset_router_token_key(family: str, value: Any) -> str:
+    token = str(value or '').strip()
+    if not token:
+        return ''
+    return '{0}:{1}'.format(str(family or '').strip(), token)
+
+
+def _librarian_collections_id(entry: Dict[str, Any]) -> str:
+    source = str(entry.get('source', 'unknown') or 'unknown').strip().lower() or 'unknown'
+    mode = str(entry.get('mode', 'unknown') or 'unknown').strip().lower() or 'unknown'
+    return '{0}:{1}'.format(source, mode)
+
+
+def _librarian_dataset_scope_buckets(entries: List[Dict[str, Any]]) -> Dict[str, List[str]]:
+    buckets: Dict[str, List[str]] = {}
+    for entry in entries:
+        resolver = dict(entry.get('resolver', {}) or {}) if isinstance(entry.get('resolver', {}), dict) else {}
+        terminal = _librarian_dataset_router_terminal(resolver.get('dataset_manifest_sha256', ''))
+        if not terminal:
+            continue
+        collections_id = _librarian_collections_id(entry)
+        rows = buckets.setdefault(collections_id, [])
+        if terminal not in rows:
+            rows.append(terminal)
+    return buckets
+
+
+def _librarian_dataset_router_selector_tokens(entry: Dict[str, Any], index: int) -> List[str]:
+    selector_entry = _dataset_selector_entry(entry, index)
+    keys: List[str] = []
+    for family, value in (
+        ('selector_index', index),
+        ('entry_id', selector_entry.get('entry_id', '')),
+        ('selector_run_id', selector_entry.get('run_id', '')),
+        ('display_name', selector_entry.get('display_name', '')),
+        ('manifest_sha256', selector_entry.get('dataset_manifest_sha256', '')),
+    ):
+        key = _librarian_dataset_router_token_key(family, value)
+        if key:
+            keys.append(key)
+    return keys
+
+
+def _librarian_dataset_router_alias_tokens(entry: Dict[str, Any], resolver: Dict[str, Any]) -> List[str]:
+    alias = _dataset_entry_display_alias(entry, resolver)
+    return [alias] if alias else []
+
+
+def _librarian_dataset_router_action_classes(entries: List[Dict[str, Any]]) -> Dict[str, Any]:
+    scope_buckets = _librarian_dataset_scope_buckets(entries)
+    scope_payload = {
+        collections_id: {'dataset_hashes': list(terminals)}
+        for collections_id, terminals in scope_buckets.items()
+    }
+    alias_scopes: Dict[str, Dict[str, List[str]]] = {}
+    for entry in entries:
+        resolver = dict(entry.get('resolver', {}) or {}) if isinstance(entry.get('resolver', {}), dict) else {}
+        terminal = _librarian_dataset_router_terminal(resolver.get('dataset_manifest_sha256', ''))
+        if not terminal:
+            continue
+        collections_id = _librarian_collections_id(entry)
+        alias_nodes = alias_scopes.setdefault(collections_id, {})
+        for alias in _librarian_dataset_router_alias_tokens(entry, resolver):
+            alias_nodes.setdefault(alias, [terminal])
+    return {
+        'scope_actions': {
+            'accepted_tiers': list(_LIBRARIAN_ROUTER_ACTION_CLASSES['scope_actions']['accepted_tiers']),
+            'verbs': list(_LIBRARIAN_ROUTER_ACTION_CLASSES['scope_actions']['verbs']),
+            'scopes': {
+                collections_id: {'dataset_hashes': list(terminals)}
+                for collections_id, terminals in scope_buckets.items()
+            },
+        },
+        'selector_actions': {
+            'accepted_tiers': list(_LIBRARIAN_ROUTER_ACTION_CLASSES['selector_actions']['accepted_tiers']),
+            'verbs': list(_LIBRARIAN_ROUTER_ACTION_CLASSES['selector_actions']['verbs']),
+            'scopes': {
+                collections_id: {'dataset_hashes': list(terminals)}
+                for collections_id, terminals in scope_buckets.items()
+            },
+        },
+        'alias_actions': {
+            'accepted_tiers': list(_LIBRARIAN_ROUTER_ACTION_CLASSES['alias_actions']['accepted_tiers']),
+            'verbs': list(_LIBRARIAN_ROUTER_ACTION_CLASSES['alias_actions']['verbs']),
+            'scopes': {
+                collections_id: {'alias_nodes': dict(alias_scopes.get(collections_id, {}))}
+                for collections_id in scope_buckets.keys()
+            },
+        },
+    }
+
+
+def _librarian_dataset_router_token_index(entries: List[Dict[str, Any]]) -> Dict[str, List[str]]:
+    token_index: Dict[str, List[str]] = {}
+    for index, entry in enumerate(entries, start=1):
+        resolver = dict(entry.get('resolver', {}) or {}) if isinstance(entry.get('resolver', {}), dict) else {}
+        terminal = _librarian_dataset_router_terminal(resolver.get('dataset_manifest_sha256', ''))
+        if not terminal:
+            continue
+        for key in _librarian_dataset_router_selector_tokens(entry, index):
+            token_index.setdefault(key, [terminal])
+        for alias in _librarian_dataset_router_alias_tokens(entry, resolver):
+            key = _librarian_dataset_router_token_key('alias_id', alias)
+            if key:
+                token_index.setdefault(key, [terminal])
+    for collections_id, terminals in _librarian_dataset_scope_buckets(entries).items():
+        key = _librarian_dataset_router_token_key('collections_id', collections_id)
+        if key:
+            token_index[key] = list(terminals)
+    return token_index
+
+
+def _librarian_dataset_router_deref(entries: List[Dict[str, Any]]) -> Dict[str, str]:
+    deref: Dict[str, str] = {}
+    for index, entry in enumerate(entries):
+        if not _entry_is_admitted_dataset_selector(entry):
+            continue
+        resolver = dict(entry.get('resolver', {}) or {}) if isinstance(entry.get('resolver', {}), dict) else {}
+        terminal = _librarian_dataset_router_terminal(resolver.get('dataset_manifest_sha256', ''))
+        if terminal and terminal not in deref:
+            deref[terminal] = 'manifest:#/entries/{0}'.format(index)
+    return deref
+
+
+def _librarian_dataset_router_payload(paths: Dict[str, Path], entries: Optional[List[Dict[str, Any]]] = None) -> Dict[str, Any]:
+    all_entries = _sorted_dataset_entries(entries if entries is not None else _load_dataset_snapshot(paths))
+    approved_entries = [entry for entry in all_entries if _entry_is_admitted_dataset_selector(entry)]
+    return {
+        'schema_version': LIBRARIAN_DATASET_ROUTER_SCHEMA_VERSION,
+        'authoritative': False,
+        'router_kind': LIBRARIAN_DATASET_ROUTER_KIND,
+        'generated_at_utc': _utc_now_iso(),
+        'authority_refs': {
+            'manifest': normalize_repo_or_absolute_path(paths['authority_snapshot_path'], paths['project_root']),
+        },
+        'action_classes': _librarian_dataset_router_action_classes(approved_entries),
+        'token_index': _librarian_dataset_router_token_index(approved_entries),
+        'deref': _librarian_dataset_router_deref(all_entries),
+    }
+
+
+def _emit_librarian_dataset_router(paths: Dict[str, Path], entries: Optional[List[Dict[str, Any]]] = None) -> Dict[str, Any]:
+    payload = _librarian_dataset_router_payload(paths, entries=entries)
+    router_path = _librarian_dataset_router_path(paths)
+    _write_json_atomic(router_path, payload)
+    return {
+        'router_path': normalize_repo_or_absolute_path(router_path, paths['project_root']),
+        'router': payload,
+    }
+
+
+def _resolve_librarian_dataset_router(paths: Dict[str, Path], emit_if_missing: bool = False) -> Dict[str, Any]:
+    router_path = _librarian_dataset_router_path(paths)
+    payload = _read_json_dict(router_path, default={}) if router_path.exists() else {}
+    if payload:
+        return payload
+    if emit_if_missing:
+        return _emit_librarian_dataset_router(paths).get('router', {})
+    return {}
+
+
+def _resolve_dataset_entry(paths: Dict[str, Path], selector: str) -> Optional[Dict[str, Any]]:
     entries = _approved_dataset_entries(paths)
-    if token.isdigit():
-        idx = int(token)
-        if 1 <= idx <= len(entries):
-            entry = entries[idx - 1]
-            return {'entry': entry, 'selector_entry': _dataset_selector_entry(entry, idx)}
+    entry = _authoritative_dataset_entry_for_selector(paths, selector)
+    if not entry:
         return None
-    lowered = token.lower()
-    for idx, entry in enumerate(entries, start=1):
-        if lowered in {
-            str(entry.get('entry_id', '')).strip().lower(),
-            str(entry.get('run_id', '')).strip().lower(),
-            str(entry.get('display_name', '')).strip().lower(),
-        }:
-            return {'entry': entry, 'selector_entry': _dataset_selector_entry(entry, idx)}
-    return None
+    selector_index = _approved_dataset_selector_index(entries, entry)
+    if selector_index <= 0:
+        return None
+    return {'entry': entry, 'selector_entry': _dataset_selector_entry(entry, selector_index)}
 
 
 def _analysis_evidence_index_path(project_anchor: Path, source: str, mode: str) -> Path:
@@ -1585,7 +1941,11 @@ def librarian_report_store_packet(
     republish: bool = False,
     delete_alias: str = '',
 ) -> Dict[str, Any]:
-    from analysis.report_aggregate import set_tracked_ds_publication_republish_state, tracked_ds_publication_republish_state
+    from analysis.report_aggregate import (
+        resync_tracked_ds_publication_views_from_live_packets,
+        set_tracked_ds_publication_republish_state,
+        tracked_ds_publication_republish_state,
+    )
 
     paths = _report_store_paths(project_anchor)
     vault_paths = _dataset_catalog_paths(project_anchor)
@@ -1686,7 +2046,6 @@ def librarian_report_store_packet(
         report_archive_targets = {
             reports_root / 'INDEX.md': archive_root / 'docs' / 'reports' / 'INDEX.md',
             reports_root / 'aggregates': archive_root / 'docs' / 'reports' / 'aggregates',
-            reports_root / 'reference': archive_root / 'docs' / 'reports' / 'reference',
             collections_root: archive_root / 'docs' / 'reports' / 'collections',
         }
         for source, destination in report_archive_targets.items():
@@ -1791,6 +2150,7 @@ def librarian_report_store_packet(
         archived_aliases=[alias_dir.name],
         live_target=collections_root,
     )
+    aggregate_sync = resync_tracked_ds_publication_views_from_live_packets(project_anchor=project_anchor)
     baseline = _write_vault_baseline(vault_paths, reason='librarian-store-reports-delete')
     _append_vault_audit_record(
         vault_paths,
@@ -1827,6 +2187,10 @@ def librarian_report_store_packet(
             'archive_manifest_json': normalize_repo_or_absolute_path(archive_root / 'archive_manifest.json', project_root),
             'librarian_vault_baseline_checksum': str(baseline.get('checksum_sha256', '') or '').strip(),
             'publication_control_json': str(control_state.get('control_path', '') or ''),
+            'aggregate_report_md': str(((aggregate_sync.get('aggregate_paths', {}) if isinstance(aggregate_sync.get('aggregate_paths', {}), dict) else {}).get('aggregate_report_md', '') or '').strip()),
+            'public_run_ledger_md': str(((aggregate_sync.get('aggregate_paths', {}) if isinstance(aggregate_sync.get('aggregate_paths', {}), dict) else {}).get('public_run_ledger_md', '') or '').strip()),
+            'latest_md': str(((aggregate_sync.get('aggregate_paths', {}) if isinstance(aggregate_sync.get('aggregate_paths', {}), dict) else {}).get('latest_md', '') or '').strip()),
+            'index_md': str(((aggregate_sync.get('aggregate_paths', {}) if isinstance(aggregate_sync.get('aggregate_paths', {}), dict) else {}).get('index_md', '') or '').strip()),
         },
     }
 
