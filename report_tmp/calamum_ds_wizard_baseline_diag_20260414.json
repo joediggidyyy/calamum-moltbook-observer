@@ -1,0 +1,397 @@
+{
+  "active_baseline_packets": {
+    "canary_reviewed_packets": [],
+    "count": 2,
+    "counts_by_stage": {
+      "honeypot_reviewed": 2
+    },
+    "packets": [
+      {
+        "artifact_family": "ds_comparison_baseline",
+        "baseline_stage": "honeypot_reviewed",
+        "dataset_entry_id": "",
+        "has_labels": true,
+        "mode": "honeypot",
+        "path": "projects/calamum-moltbook-observer/local_untracked/analysis/baselines/dataset-honeypot-entry-reviewed-20260412-window1/comparison_baseline_packet.json",
+        "source": "real",
+        "window_id": "honeypot-entry-reviewed-20260412-window1"
+      },
+      {
+        "artifact_family": "ds_comparison_baseline",
+        "baseline_stage": "honeypot_reviewed",
+        "dataset_entry_id": "",
+        "has_labels": true,
+        "mode": "honeypot",
+        "path": "projects/calamum-moltbook-observer/local_untracked/analysis/baselines/dataset-hydrate-window-001/comparison_baseline_packet.json",
+        "source": "real",
+        "window_id": "hydrate-window-001"
+      }
+    ]
+  },
+  "active_librarian_authority": {
+    "active_canary_entries": [
+      {
+        "dataset_manifest_path": "projects/calamum-moltbook-observer/local_untracked/analysis/datasets/library_canary_corpus_v1/dataset_manifest.json",
+        "display_name": "Canary Corpus Full",
+        "entry_id": "dataset-canary-corpus-v1",
+        "has_labels": false,
+        "mode": "canary",
+        "recorded_at_utc": "2026-04-02T01:14:22.532880Z",
+        "registration_kind": "manual-register",
+        "source": "real"
+      }
+    ],
+    "active_labeled_canary_entries": [],
+    "approved_entry_count": 5,
+    "counts_by_mode": {
+      "canary": 1,
+      "honeypot": 1,
+      "live": 2,
+      "unknown": 1
+    },
+    "counts_by_source": {
+      "real": 4,
+      "sim": 1
+    },
+    "entries": [
+      {
+        "dataset_manifest_path": "projects/calamum-moltbook-observer/local_untracked/analysis/datasets/p5_honeypot_review_20260412/dataset/dataset_manifest.json",
+        "display_name": "Honeypot Entry Reviewed 2026-04-12 Window1 (real)",
+        "entry_id": "dataset-honeypot-entry-reviewed-20260412-window1",
+        "has_labels": true,
+        "mode": "honeypot",
+        "recorded_at_utc": "2026-04-12T09:19:32.747098Z",
+        "registration_kind": "manual-register",
+        "source": "real"
+      },
+      {
+        "dataset_manifest_path": "projects/calamum-moltbook-observer/local_untracked/analysis/datasets/p3_demo_current_collection_20260410_provenance_labeled/dataset_manifest.json",
+        "display_name": "P3 Current Collection Provenance Labeled 2026-04-10",
+        "entry_id": "dataset-p3-provenance-labeled-20260410",
+        "has_labels": true,
+        "mode": "live",
+        "recorded_at_utc": "2026-04-10T19:01:31.064587Z",
+        "registration_kind": "manual-register",
+        "source": "real"
+      },
+      {
+        "dataset_manifest_path": "projects/calamum-moltbook-observer/local_untracked/analysis/datasets/p3_demo_current_collection_20260406/dataset/dataset_manifest.json",
+        "display_name": "P3 Demo Current Collection 2026-04-06",
+        "entry_id": "dataset-p3-demo-current-20260406",
+        "has_labels": false,
+        "mode": "live",
+        "recorded_at_utc": "2026-04-06T16:04:33.109086Z",
+        "registration_kind": "manual-register",
+        "source": "real"
+      },
+      {
+        "dataset_manifest_path": "projects/calamum-moltbook-observer/local_untracked/analysis/datasets/library_sim_sample_corpus_v1/dataset_manifest.json",
+        "display_name": "Sim Sample Corpus",
+        "entry_id": "dataset-sim-sample-corpus-v1",
+        "has_labels": false,
+        "mode": "unknown",
+        "recorded_at_utc": "2026-04-02T01:14:22.604835Z",
+        "registration_kind": "manual-register",
+        "source": "sim"
+      },
+      {
+        "dataset_manifest_path": "projects/calamum-moltbook-observer/local_untracked/analysis/datasets/library_canary_corpus_v1/dataset_manifest.json",
+        "display_name": "Canary Corpus Full",
+        "entry_id": "dataset-canary-corpus-v1",
+        "has_labels": false,
+        "mode": "canary",
+        "recorded_at_utc": "2026-04-02T01:14:22.532880Z",
+        "registration_kind": "manual-register",
+        "source": "real"
+      }
+    ],
+    "manifest_path": "projects/calamum-moltbook-observer/local_untracked/analysis/indexes/librarian_dataset_manifest.json",
+    "updated_at_utc": "2026-04-12T09:19:32.804826Z"
+  },
+  "active_run_evidence": {
+    "build": {
+      "build_output_dataset_manifest": {
+        "exists": true,
+        "has_labels": true,
+        "input_paths": [
+          "projects/calamum-moltbook-observer/local_untracked/analysis/datasets/p3_demo_current_collection_20260406/source_slices/real_live_recent_20260405T000000Z.jsonl",
+          "projects/calamum-moltbook-observer/local_untracked/analysis/datasets/p3_demo_current_collection_20260406/source_slices/sim_canary_recent_20260406T155800Z.jsonl"
+        ],
+        "labels_csv": "projects/calamum-moltbook-observer/local_untracked/analysis/runs/build/build_20260414T224415465342Z/dataset/labels.csv",
+        "path": "projects/calamum-moltbook-observer/local_untracked/analysis/runs/build/build_20260414T224415465342Z/dataset/dataset_manifest.json",
+        "source_dataset_manifest": "projects/calamum-moltbook-observer/local_untracked/analysis/datasets/p3_demo_current_collection_20260406/dataset/dataset_manifest.json",
+        "total_records": 13842
+      },
+      "category": "dataset-build",
+      "collection_alias": "liv-rd3bb",
+      "lineage_dataset_manifest": {
+        "exists": true,
+        "has_labels": true,
+        "input_paths": [
+          "projects/calamum-moltbook-observer/local_untracked/analysis/datasets/p3_demo_current_collection_20260406/source_slices/real_live_recent_20260405T000000Z.jsonl",
+          "projects/calamum-moltbook-observer/local_untracked/analysis/datasets/p3_demo_current_collection_20260406/source_slices/sim_canary_recent_20260406T155800Z.jsonl"
+        ],
+        "labels_csv": "projects/calamum-moltbook-observer/local_untracked/analysis/datasets/p3_demo_current_collection_20260410_provenance_labeled/labels.csv",
+        "path": "projects/calamum-moltbook-observer/local_untracked/analysis/datasets/p3_demo_current_collection_20260410_provenance_labeled/dataset_manifest.json",
+        "source_dataset_manifest": "projects/calamum-moltbook-observer/local_untracked/analysis/datasets/p3_demo_current_collection_20260406/dataset/dataset_manifest.json",
+        "total_records": 13842
+      },
+      "report_manifest": "projects/calamum-moltbook-observer/local_untracked/analysis/runs/build/build_20260414T224415465342Z/report/manifest.json",
+      "result_has_labels": true,
+      "run_id": "build_20260414T224415465342Z",
+      "timestamp_utc": "2026-04-14T22:44:16.095918Z",
+      "workflow": "build"
+    },
+    "evaluate": {
+      "build_output_dataset_manifest": {
+        "exists": false,
+        "path": "C:/Users/joedi/Documents/CodeSentinel-1/projects/calamum-moltbook-observer/local_untracked/analysis/runs/evaluate/evaluate_20260414T222952398938Z/dataset/dataset_manifest.json"
+      },
+      "category": "model-eval",
+      "collection_alias": "can-r0b70",
+      "lineage_dataset_manifest": {
+        "exists": true,
+        "has_labels": false,
+        "input_paths": [
+          "projects/calamum-moltbook-observer/logs/data/calamum/archive/import_snapshot_20260210T0842Z_moltbook_canary_metrics.heartbeats.20260205T091812Z.jsonl.gz",
+          "projects/calamum-moltbook-observer/logs/data/calamum/archive/import_snapshot_20260210T0842Z_moltbook_canary_metrics.with_heartbeats.20260205T091812Z.jsonl.gz",
+          "projects/calamum-moltbook-observer/logs/data/calamum/archive/import_workspace_root_moltbook_canary_metrics_20260210T093643Z.jsonl.gz"
+        ],
+        "labels_csv": "",
+        "path": "projects/calamum-moltbook-observer/local_untracked/analysis/runs/build/build_20260414T222310579680Z/dataset/dataset_manifest.json",
+        "source_dataset_manifest": "",
+        "total_records": 412340
+      },
+      "report_manifest": "projects/calamum-moltbook-observer/local_untracked/analysis/runs/evaluate/evaluate_20260414T222952398938Z/report/manifest.json",
+      "result_has_labels": false,
+      "run_id": "evaluate_20260414T222952398938Z",
+      "timestamp_utc": "2026-04-14T22:38:14.161074Z",
+      "workflow": "evaluate"
+    },
+    "score": {
+      "build_output_dataset_manifest": {
+        "exists": false,
+        "path": "C:/Users/joedi/Documents/CodeSentinel-1/projects/calamum-moltbook-observer/local_untracked/analysis/runs/score/score_20260414T223907190841Z/dataset/dataset_manifest.json"
+      },
+      "category": "model-eval",
+      "collection_alias": "can-r0b70",
+      "lineage_dataset_manifest": {
+        "exists": true,
+        "has_labels": false,
+        "input_paths": [
+          "projects/calamum-moltbook-observer/logs/data/calamum/archive/import_snapshot_20260210T0842Z_moltbook_canary_metrics.heartbeats.20260205T091812Z.jsonl.gz",
+          "projects/calamum-moltbook-observer/logs/data/calamum/archive/import_snapshot_20260210T0842Z_moltbook_canary_metrics.with_heartbeats.20260205T091812Z.jsonl.gz",
+          "projects/calamum-moltbook-observer/logs/data/calamum/archive/import_workspace_root_moltbook_canary_metrics_20260210T093643Z.jsonl.gz"
+        ],
+        "labels_csv": "",
+        "path": "projects/calamum-moltbook-observer/local_untracked/analysis/runs/build/build_20260414T222310579680Z/dataset/dataset_manifest.json",
+        "source_dataset_manifest": "",
+        "total_records": 412340
+      },
+      "report_manifest": "projects/calamum-moltbook-observer/local_untracked/analysis/runs/score/score_20260414T223907190841Z/report/manifest.json",
+      "result_has_labels": null,
+      "run_id": "score_20260414T223907190841Z",
+      "timestamp_utc": "2026-04-14T22:42:37.589123Z",
+      "workflow": "score"
+    },
+    "train": {
+      "build_output_dataset_manifest": {
+        "exists": false,
+        "path": "C:/Users/joedi/Documents/CodeSentinel-1/projects/calamum-moltbook-observer/local_untracked/analysis/runs/train/train_20260414T224436434535Z/dataset/dataset_manifest.json"
+      },
+      "category": "model-train",
+      "collection_alias": "liv-rd3bb",
+      "lineage_dataset_manifest": {
+        "exists": true,
+        "has_labels": true,
+        "input_paths": [
+          "projects/calamum-moltbook-observer/local_untracked/analysis/datasets/p3_demo_current_collection_20260406/source_slices/real_live_recent_20260405T000000Z.jsonl",
+          "projects/calamum-moltbook-observer/local_untracked/analysis/datasets/p3_demo_current_collection_20260406/source_slices/sim_canary_recent_20260406T155800Z.jsonl"
+        ],
+        "labels_csv": "projects/calamum-moltbook-observer/local_untracked/analysis/runs/build/build_20260414T224415465342Z/dataset/labels.csv",
+        "path": "projects/calamum-moltbook-observer/local_untracked/analysis/runs/build/build_20260414T224415465342Z/dataset/dataset_manifest.json",
+        "source_dataset_manifest": "projects/calamum-moltbook-observer/local_untracked/analysis/datasets/p3_demo_current_collection_20260406/dataset/dataset_manifest.json",
+        "total_records": 13842
+      },
+      "report_manifest": "projects/calamum-moltbook-observer/local_untracked/analysis/runs/train/train_20260414T224436434535Z/report/manifest.json",
+      "result_has_labels": null,
+      "run_id": "train_20260414T224436434535Z",
+      "timestamp_utc": "2026-04-14T22:44:53.376527Z",
+      "workflow": "train"
+    }
+  },
+  "conclusion": "it is complicated, we will need a frame stack",
+  "conclusion_basis": [
+    "Active baseline packets contain no canary_reviewed DS comparison-baseline artifact.",
+    "Active Librarian authority contains no labeled real/canary dataset entry.",
+    "Current canary alias build chain is unlabeled, while the live alias build chain is labeled and remains separate from Librarian selector authority."
+  ],
+  "ds_latest": {
+    "by_workflow": {
+      "build": {
+        "collection_alias": "liv-rd3bb",
+        "context": {
+          "output_override": false,
+          "source_materialization": true
+        },
+        "decision": "go",
+        "report_paths": {
+          "json": "local_untracked/analysis/runs/build/build_20260414T224415465342Z/report/report.json",
+          "manifest": "local_untracked/analysis/runs/build/build_20260414T224415465342Z/report/manifest.json",
+          "markdown": "local_untracked/analysis/runs/build/build_20260414T224415465342Z/report/report.md"
+        },
+        "run_id": "build_20260414T224415465342Z",
+        "run_root": "local_untracked/analysis/runs/build/build_20260414T224415465342Z",
+        "summary": "Approved dataset materialized through observerctl ds.",
+        "timestamp_utc": "2026-04-14T22:44:16.095918Z",
+        "workflow": "build"
+      },
+      "evaluate": {
+        "collection_alias": "can-r0b70",
+        "context": {
+          "collection_alias": "can-r0b70",
+          "max_fpr": 0.01,
+          "output_override": false
+        },
+        "decision": "go",
+        "report_paths": {
+          "json": "local_untracked/analysis/runs/evaluate/evaluate_20260414T222952398938Z/report/report.json",
+          "manifest": "local_untracked/analysis/runs/evaluate/evaluate_20260414T222952398938Z/report/manifest.json",
+          "markdown": "local_untracked/analysis/runs/evaluate/evaluate_20260414T222952398938Z/report/report.md"
+        },
+        "run_id": "evaluate_20260414T222952398938Z",
+        "run_root": "local_untracked/analysis/runs/evaluate/evaluate_20260414T222952398938Z",
+        "summary": "Evaluation completed through observerctl ds.",
+        "timestamp_utc": "2026-04-14T22:38:14.161074Z",
+        "workflow": "evaluate"
+      },
+      "score": {
+        "collection_alias": "can-r0b70",
+        "context": {
+          "collection_alias": "can-r0b70",
+          "output_override": false
+        },
+        "decision": "go",
+        "report_paths": {
+          "json": "local_untracked/analysis/runs/score/score_20260414T223907190841Z/report/report.json",
+          "manifest": "local_untracked/analysis/runs/score/score_20260414T223907190841Z/report/manifest.json",
+          "markdown": "local_untracked/analysis/runs/score/score_20260414T223907190841Z/report/report.md"
+        },
+        "run_id": "score_20260414T223907190841Z",
+        "run_root": "local_untracked/analysis/runs/score/score_20260414T223907190841Z",
+        "summary": "Unsupervised scoring completed through observerctl ds.",
+        "timestamp_utc": "2026-04-14T22:42:37.589123Z",
+        "workflow": "score"
+      },
+      "train": {
+        "collection_alias": "liv-rd3bb",
+        "context": {
+          "collection_alias": "liv-rd3bb",
+          "output_override": false,
+          "seed": 42
+        },
+        "decision": "go",
+        "report_paths": {
+          "json": "local_untracked/analysis/runs/train/train_20260414T224436434535Z/report/report.json",
+          "manifest": "local_untracked/analysis/runs/train/train_20260414T224436434535Z/report/manifest.json",
+          "markdown": "local_untracked/analysis/runs/train/train_20260414T224436434535Z/report/report.md"
+        },
+        "run_id": "train_20260414T224436434535Z",
+        "run_root": "local_untracked/analysis/runs/train/train_20260414T224436434535Z",
+        "summary": "Model training completed through observerctl ds.",
+        "timestamp_utc": "2026-04-14T22:44:53.376527Z",
+        "workflow": "train"
+      }
+    },
+    "family_id": "ds_run",
+    "latest_run": {
+      "collection_alias": "liv-rd3bb",
+      "context": {
+        "collection_alias": "liv-rd3bb",
+        "output_override": false,
+        "seed": 42
+      },
+      "decision": "go",
+      "report_paths": {
+        "json": "local_untracked/analysis/runs/train/train_20260414T224436434535Z/report/report.json",
+        "manifest": "local_untracked/analysis/runs/train/train_20260414T224436434535Z/report/manifest.json",
+        "markdown": "local_untracked/analysis/runs/train/train_20260414T224436434535Z/report/report.md"
+      },
+      "run_id": "train_20260414T224436434535Z",
+      "run_root": "local_untracked/analysis/runs/train/train_20260414T224436434535Z",
+      "summary": "Model training completed through observerctl ds.",
+      "timestamp_utc": "2026-04-14T22:44:53.376527Z",
+      "workflow": "train"
+    },
+    "ledger_path": "local_untracked/analysis/indexes/ds_run_index.jsonl",
+    "schema_version": "1.0",
+    "updated_at_utc": "2026-04-14T22:44:53.376527Z"
+  },
+  "generated_at_utc": "2026-04-14T23:04:30Z",
+  "ops_awareness": {
+    "active_frame": {
+      "frame_id": null,
+      "next_action": null,
+      "source": null,
+      "status": null,
+      "title": null
+    },
+    "active_project": {
+      "project_id": "calamum-moltbook-observer",
+      "status": "degraded",
+      "status_basis": {
+        "observer_agent": {
+          "age_seconds": 122388.49,
+          "exists": true,
+          "max_age_seconds": 60.0,
+          "path": "projects/calamum-moltbook-observer/logs/health/calamum_observer.heartbeat",
+          "status": "stale"
+        },
+        "watchdog": {
+          "age_seconds": 0.07,
+          "exists": true,
+          "max_age_seconds": 120.0,
+          "path": "projects/calamum-moltbook-observer/logs/health/calamum_ops_watchdog.heartbeat",
+          "status": "active"
+        }
+      }
+    },
+    "snapshot_at": "2026-04-14T03:40:35.836409Z",
+    "up_next": {
+      "frame_id": "qf2_mirror_v2_perf",
+      "line": "up next: qf2_mirror_v2_perf - Mirror v2 performance surface :: Adopt mirror-backed queries in a first runtime surface (CLI query surface and/or ORACall fast-path) and extend query semantics (negation/exclude) while keeping names-only discipline.",
+      "next_action": "Adopt mirror-backed queries in a first runtime surface (CLI query surface and/or ORACall fast-path) and extend query semantics (negation/exclude) while keeping names-only discipline.",
+      "source": "docs/planning/questframes/ops_oracode_storage_evolution_stack_queststack_20251230.json",
+      "task_id": null,
+      "title": "Mirror v2 performance surface",
+      "type": "frame"
+    }
+  },
+  "policy_snapshot": {
+    "policies_count": 37,
+    "snapshot_at": "2026-04-14T03:40:36.304046Z",
+    "top_directive_ids": [
+      "PP_GOV_PROTOCOL_POL_AGENT_ACTION_WORKFLOW_20251122",
+      "PP_GOV_PROTOCOL_POL_CHAT_PRINT_LONG_MESSAGES_20251127",
+      "PP_GOV_PROTOCOL_POL_CORE_POLICY_20251122",
+      "PP_GOV_PROTOCOL_POL_DETERMINISTIC_WORKFLOW_20251127",
+      "PP_GOV_PROTOCOL_POL_DOC_PATH_REFERENCING_20251226",
+      "PP_GOV_PROTOCOL_POL_DOC_REVIEW_OPTIMIZATION_20251107",
+      "PP_GOV_PROTOCOL_POL_JOB_COMPLEXITY_REQUIREMENT_20251126",
+      "PP_GOV_PROTOCOL_POL_NAMING_SCHEMA_MAP_20251128",
+      "PP_GOV_PROTOCOL_POL_ORACL_ADVICE_DECISION_PIPELINE_20251215",
+      "PP_GOV_PROTOCOL_POL_ORACORE_DEPLOYMENT_20251123"
+    ]
+  },
+  "target_project_id": "calamum-moltbook-observer",
+  "task_stack": {
+    "count": 0,
+    "items": []
+  },
+  "wizard_real_live_readiness": {
+    "active_labeled_real_canary_librarian_entry_count": 0,
+    "assessment": "current no-baseline state is truthful against active retained authority",
+    "has_active_canary_reviewed_packet": false,
+    "librarian_alias_matches_for_latest_live_alias": []
+  }
+}

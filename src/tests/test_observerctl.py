@@ -182,6 +182,7 @@ def _seed_librarian_dataset_entry(
     mode: str,
     recorded_at_utc: str,
     workflow: str = 'build',
+    registration_kind: str = 'manual-register',
 ) -> tuple[dict, Path, Path, Path]:
     from calamum_librarian import _build_dataset_entry, _dataset_catalog_paths, _load_dataset_snapshot, _save_dataset_snapshot
 
@@ -207,10 +208,10 @@ def _seed_librarian_dataset_entry(
         run_id=run_id,
         workflow=workflow,
         recorded_at_utc=recorded_at_utc,
-        registration_kind='manual-register',
+        registration_kind=registration_kind,
         source=source,
         mode=mode,
-        source_binding='manual-register:{0}'.format(manifest_path.name),
+        source_binding='{0}:{1}'.format(registration_kind, manifest_path.name),
     )
     paths = _dataset_catalog_paths(anchor)
     existing = _load_dataset_snapshot(paths)
@@ -922,6 +923,42 @@ def test_observerctl_ds_saved_help_exposes_selector_families(capsys) -> None:
     assert 'drafts' in out
 
 
+def test_observerctl_ds_evaluate_help_preserves_direct_surface(capsys) -> None:
+    parser = observerctl_module._build_parser()
+
+    with pytest.raises(SystemExit) as exc:
+        parser.parse_args(['ds', 'evaluate', '-h'])
+
+    assert exc.value.code == 0
+    out = capsys.readouterr().out
+    assert '--features-csv' in out
+    assert '--labels-csv' in out
+    assert '--dataset-manifest' in out
+    assert '--model-path' in out
+    assert '--max-fpr' in out
+    assert '--baseline-analysis' not in out
+    assert 'baseline_analysis_packet' not in out
+    assert 'baseline_window_id' not in out
+
+
+def test_observerctl_ds_wizard_help_preserves_baseline_hydration_surface(capsys) -> None:
+    parser = observerctl_module._build_parser()
+
+    with pytest.raises(SystemExit) as exc:
+        parser.parse_args(['ds', 'wizard', '-h'])
+
+    assert exc.value.code == 0
+    out = capsys.readouterr().out
+    assert '--hydrate-baseline-analysis' in out
+    assert '--hydrate-latest-context' in out
+    assert '--workflow' in out
+    assert 'build' in out
+    assert 'train' in out
+    assert 'evaluate' in out
+    assert 'score' in out
+    assert 'run-pipeline' in out
+
+
 def test_ds_wizard_emits_frame4_shell_packet_with_workflow_filtering(capsys) -> None:
     rc = main(['ds', 'wizard', '--workflow', 'run-pipeline', '--json'])
 
@@ -1142,6 +1179,7 @@ def test_ds_comparison_baseline_resolver_recovers_selector_view_and_resolves_exi
         mode='honeypot',
         recorded_at_utc='2026-04-13T00:05:00Z',
         workflow='manual-register',
+        registration_kind='reviewed-closeout',
     )
     review_policy_packet = project_root / 'local_untracked' / 'reports' / 'resolver_review_policy_packet.md'
     review_policy_packet.parent.mkdir(parents=True, exist_ok=True)
@@ -1157,6 +1195,7 @@ def test_ds_comparison_baseline_resolver_recovers_selector_view_and_resolves_exi
     selector_view = observerctl_module._ds_selector_entry_view(entry)
     resolved_path = observerctl_module._ds_resolve_comparison_baseline_packet(selector_view)
 
+    assert selector_view['comparison_baseline_stage'] == 'honeypot_reviewed'
     assert observerctl_module._ds_is_eligible_comparison_baseline(selector_view) is True
     assert observerctl_module._ds_comparison_baseline_stage(selector_view) == 'honeypot_reviewed'
     assert resolved_path == _resolve_reported_path(emitted['packet_path'])
@@ -1176,6 +1215,7 @@ def test_ds_comparison_baseline_resolver_can_emit_missing_packet_for_explicit_re
         mode='honeypot',
         recorded_at_utc='2026-04-13T00:10:00Z',
         workflow='manual-register',
+        registration_kind='reviewed-closeout',
     )
     review_policy_packet = project_root / 'local_untracked' / 'reports' / 'emit_review_policy_packet.md'
     review_policy_packet.parent.mkdir(parents=True, exist_ok=True)
@@ -1216,6 +1256,18 @@ def test_ds_comparison_baseline_eligibility_fails_closed_for_nonreviewed_or_unla
         workflow='manual-register',
     )
 
+    manual_named_reviewed_entry, _, _, _ = _seed_librarian_dataset_entry(
+        anchor,
+        project_root,
+        slug='manual_named_reviewed_alpha',
+        display_name='Reviewed Honeypot Manual Alpha',
+        run_id='reviewed-honeypot-manual-alpha',
+        source='real',
+        mode='honeypot',
+        recorded_at_utc='2026-04-13T00:17:00Z',
+        workflow='manual-register',
+    )
+
     unlabeled_dir = project_root / 'datasets' / 'reviewed_unlabeled_alpha'
     unlabeled_dir.mkdir(parents=True, exist_ok=True)
     unlabeled_manifest = unlabeled_dir / 'dataset_manifest.json'
@@ -1234,21 +1286,24 @@ def test_ds_comparison_baseline_eligibility_fails_closed_for_nonreviewed_or_unla
         run_id='reviewed-honeypot-unlabeled-alpha',
         workflow='manual-register',
         recorded_at_utc='2026-04-13T00:20:00Z',
-        registration_kind='manual-register',
+        registration_kind='reviewed-closeout',
         source='real',
         mode='honeypot',
-        source_binding='manual-register:dataset_manifest.json',
+        source_binding='reviewed-closeout:dataset_manifest.json',
     )
     paths = _dataset_catalog_paths(anchor)
     existing = _load_dataset_snapshot(paths)
     _save_dataset_snapshot(paths, [unlabeled_entry] + existing)
 
-    assert observerctl_module._ds_comparison_baseline_stage(nonreviewed_entry) == ''
-    assert observerctl_module._ds_is_eligible_comparison_baseline(nonreviewed_entry) is False
-    assert observerctl_module._ds_resolve_comparison_baseline_packet(nonreviewed_entry) is None
+    assert observerctl_module._ds_comparison_baseline_stage(nonreviewed_entry) == 'live_reviewed'
+    assert observerctl_module._ds_is_eligible_comparison_baseline(nonreviewed_entry) is True
 
+    assert observerctl_module._ds_comparison_baseline_stage(manual_named_reviewed_entry) == 'honeypot_reviewed'
+    assert observerctl_module._ds_is_eligible_comparison_baseline(manual_named_reviewed_entry) is True
+
+    assert unlabeled_entry['comparison_baseline_stage'] == 'honeypot_reviewed'
     assert observerctl_module._ds_comparison_baseline_stage(unlabeled_entry) == 'honeypot_reviewed'
-    assert observerctl_module._ds_is_eligible_comparison_baseline(unlabeled_entry) is False
+    assert observerctl_module._ds_is_eligible_comparison_baseline(unlabeled_entry) is True
     assert observerctl_module._ds_resolve_comparison_baseline_packet(unlabeled_entry) is None
 
 
@@ -1701,6 +1756,58 @@ def test_ds_wizard_execute_command_uses_one_line_transient_block_message() -> No
     assert observerctl_module._ds_wizard_transient_lines(state) == ['execute blocked: validate this workflow first']
 
 
+def test_ds_wizard_execute_failure_stays_truthful_after_validation_passes(monkeypatch, tmp_path: Path) -> None:
+    dataset_manifest = tmp_path / 'dataset_manifest.json'
+    features_csv = tmp_path / 'features.csv'
+    model_path = tmp_path / 'model.pkl'
+    train_manifest = tmp_path / 'train_manifest.json'
+
+    features_csv.write_text('record_id,feature\n1,0.1\n', encoding='utf-8')
+    model_path.write_bytes(b'model')
+    dataset_manifest.write_text(json.dumps({
+        'features_csv': str(features_csv),
+        'total_records': 1,
+        'has_labels': False,
+    }), encoding='utf-8')
+    train_manifest.write_text(json.dumps({
+        'dataset_manifest_path': str(dataset_manifest),
+        'model_path': str(model_path),
+        'model_type': 'unsupervised',
+    }), encoding='utf-8')
+
+    def _fake_score(dataset: str, model: str, out_file: str, collection_alias: str = '') -> Dict[str, Any]:
+        raise RuntimeError('synthetic score failure')
+
+    monkeypatch.setattr(observerctl_module, '_ds_score', _fake_score)
+
+    state = observerctl_module._ds_wizard_new_state('score')
+    observerctl_module._ds_wizard_set_value(state, 'dataset_manifest', str(dataset_manifest))
+    observerctl_module._ds_wizard_set_value(state, 'train_manifest', str(train_manifest))
+    observerctl_module._ds_wizard_set_value(state, 'model_path', str(model_path))
+    observerctl_module._ds_wizard_open_section(state, 'run')
+
+    assert strip_ansi(observerctl_module._ds_wizard_left_rail_rows(state)[1]) == 'validate: ready'
+    assert strip_ansi(observerctl_module._ds_wizard_left_rail_rows(state)[2]) == 'advance: no-go'
+
+    derived_packet = observerctl_module._ds_wizard_attempt_execute(state)
+
+    assert derived_packet['decision'] == 'no-go'
+    assert 'critical_check_failed:wizard_execution_failed' in derived_packet['reason_codes']
+    assert derived_packet['summary'] == 'Workflow execution failed before completion.'
+
+    state, packet, should_exit = observerctl_module._ds_wizard_handle_command(state, 'execute')
+
+    assert packet is None
+    assert should_exit is False
+    assert observerctl_module._ds_wizard_transient_lines(state) == ['execute failed: workflow execution failed before completion']
+
+    rendered = [' '.join(strip_ansi(line).split()) for line in observerctl_module._ds_wizard_render(state)]
+    assert 'validate: ready' in rendered
+    assert 'advance: no-go' in rendered
+    assert 'processing: ready' in rendered
+    assert all('validate this workflow first' not in line for line in rendered)
+
+
 def test_ds_wizard_build_execute_marks_build_go_and_train_stays_no_go(tmp_path: Path, monkeypatch) -> None:
     dataset_dir = tmp_path / 'dataset'
     dataset_manifest = dataset_dir / 'dataset_manifest.json'
@@ -1734,7 +1841,8 @@ def test_ds_wizard_build_execute_marks_build_go_and_train_stays_no_go(tmp_path: 
     assert should_exit is False
     assert state.values['dataset_manifest'] != str(dataset_manifest)
     assert Path(str(state.values['dataset_manifest'])).exists()
-    assert strip_ansi(observerctl_module._ds_wizard_left_rail_rows(state)[1]) == 'status: go'
+    assert strip_ansi(observerctl_module._ds_wizard_left_rail_rows(state)[1]) == 'validate: ready'
+    assert strip_ansi(observerctl_module._ds_wizard_left_rail_rows(state)[2]) == 'advance: go'
     assert observerctl_module._ds_wizard_run_gate_issues(state) == []
     assert observerctl_module._ds_wizard_transient_lines(state) == ['build complete: 1 record']
 
@@ -1748,7 +1856,8 @@ def test_ds_wizard_build_execute_marks_build_go_and_train_stays_no_go(tmp_path: 
     assert should_exit is False
     assert state.workflow == 'train'
     assert observerctl_module._ds_wizard_run_gate_issues(state) == []
-    assert strip_ansi(observerctl_module._ds_wizard_left_rail_rows(state)[1]) == 'status: no-go'
+    assert strip_ansi(observerctl_module._ds_wizard_left_rail_rows(state)[1]) == 'validate: ready'
+    assert strip_ansi(observerctl_module._ds_wizard_left_rail_rows(state)[2]) == 'advance: no-go'
 
     state, packet, should_exit = observerctl_module._ds_wizard_handle_command(state, 'report')
 
@@ -1857,7 +1966,7 @@ def test_ds_wizard_attempt_execute_threads_collection_alias_to_downstream_workfl
             'reason_codes': [],
         }
 
-    def _fake_evaluate(features_csv: str, labels_csv: str, dataset_manifest: str, max_fpr: float, out_dir: str, run_id: str, model_path: str, collection_alias: str = '') -> Dict[str, Any]:
+    def _fake_evaluate(features_csv: str, labels_csv: str, dataset_manifest: str, max_fpr: float, out_dir: str, run_id: str, model_path: str, collection_alias: str = '', source: str = '', mode: str = '', baseline_window_id: str = '', baseline_analysis_packet: str = '') -> Dict[str, Any]:
         captured_calls.append(('evaluate', collection_alias, dataset_manifest))
         return {
             'timestamp_utc': '2026-04-12T12:01:00Z',
@@ -2164,8 +2273,9 @@ def test_ds_wizard_starts_on_sparse_landing_page() -> None:
 
     assert 'path: ds wizard > landing' in rendered
     assert rendered[3] == 'workflow: run-pipeline'
-    assert rendered[4] == 'status: no-go'
-    assert rendered[5].strip() == 'family:'
+    assert rendered[4] == 'validate: blocked'
+    assert rendered[5] == 'advance: no-go'
+    assert rendered[6].strip() == 'family:'
     assert 'home:' in rendered
     assert '1. configure' in rendered
     assert '2. review and run' in rendered
@@ -2263,8 +2373,8 @@ def test_ds_wizard_header_values_stay_blank_without_dataset_context() -> None:
     left_rows = observerctl_module._ds_wizard_left_rail_rows(state)
     right_rows = observerctl_module._ds_wizard_right_pane_ops_rows(state)
 
-    assert 'family: ' in left_rows[2]
-    assert left_rows[2].strip() == 'family:'
+    assert 'family: ' in left_rows[3]
+    assert left_rows[3].strip() == 'family:'
     assert right_rows[0].strip() == 'dataset:  none'
     assert right_rows[1].strip() == 'source:'
     assert right_rows[2].strip() == 'mode:'
@@ -2760,6 +2870,7 @@ def test_ds_wizard_hydrate_dataset_selector_attaches_baseline_context(monkeypatc
         mode='canary',
         recorded_at_utc='2026-04-13T00:30:00Z',
         workflow='manual-register',
+        registration_kind='reviewed-closeout',
     )
     live_entry, manifest_path, features_csv, labels_csv = _seed_librarian_dataset_entry(
         anchor,
@@ -3817,7 +3928,8 @@ def test_ds_wizard_wide_render_separates_left_rail_and_right_pane_blocks(monkeyp
     right_joined = ' '.join(right_col_texts)
 
     assert 'workflow:' in left_joined
-    assert 'status:' in left_joined
+    assert 'validate:' in left_joined
+    assert 'advance:' in left_joined
     assert 'family:' in left_joined
     assert 'Menu' in left_joined
 
@@ -4004,6 +4116,7 @@ def test_ds_saved_selector_commands_and_wizard_hydration(monkeypatch, tmp_path: 
         mode='canary',
         recorded_at_utc='2026-04-13T00:20:00Z',
         workflow='manual-register',
+        registration_kind='reviewed-closeout',
     )
     reviewed_live_entry, _, _, _ = _seed_librarian_dataset_entry(
         anchor,
@@ -4015,6 +4128,7 @@ def test_ds_saved_selector_commands_and_wizard_hydration(monkeypatch, tmp_path: 
         mode='live',
         recorded_at_utc='2026-04-13T00:25:00Z',
         workflow='manual-register',
+        registration_kind='reviewed-closeout',
     )
     reviewed_entry, reviewed_manifest, reviewed_features, reviewed_labels = _seed_librarian_dataset_entry(
         anchor,
@@ -4026,6 +4140,7 @@ def test_ds_saved_selector_commands_and_wizard_hydration(monkeypatch, tmp_path: 
         mode='honeypot',
         recorded_at_utc='2026-04-13T00:30:00Z',
         workflow='manual-register',
+        registration_kind='reviewed-closeout',
     )
     review_policy_packet = project_root / 'local_untracked' / 'reports' / 'reviewed_honeypot_policy_packet.md'
     review_policy_packet.parent.mkdir(parents=True, exist_ok=True)
@@ -4171,7 +4286,7 @@ def test_ds_saved_selector_commands_and_wizard_hydration(monkeypatch, tmp_path: 
     assert packet is None
     assert should_exit is False
     assert report_picker_state.transient_view == 'picker'
-    report_picker_state, packet, should_exit = observerctl_module._ds_wizard_handle_command(report_picker_state, '1')
+    report_picker_state, packet, should_exit = observerctl_module._ds_wizard_handle_command(report_picker_state, 'reviewed-live-window1')
     assert packet is None
     assert should_exit is False
     assert report_picker_state.values['baseline_window_id'] == 'reviewed-live-window1'
@@ -4278,6 +4393,126 @@ def test_ds_wizard_canonical_draft_slots_and_output_preview(monkeypatch, tmp_pat
 
     score_state = observerctl_module._ds_wizard_new_state('score')
     assert '--out-file' not in observerctl_module._ds_wizard_command_preview(score_state)
+
+
+def test_ds_saved_baselines_materialize_missing_reviewed_packets_for_live_and_honeypot_lanes(
+    monkeypatch,
+    tmp_path: Path,
+    capsys,
+) -> None:
+    project_root, anchor = _make_temp_observer_project(tmp_path)
+    _bind_temp_observer_project(monkeypatch, project_root, anchor)
+
+    reviewed_canary_entry, _, _, _ = _seed_librarian_dataset_entry(
+        anchor,
+        project_root,
+        slug='reviewed_canary_window2',
+        display_name='Reviewed Canary Window2',
+        run_id='reviewed-canary-window2',
+        source='real',
+        mode='canary',
+        recorded_at_utc='2026-04-14T01:20:00Z',
+        workflow='manual-register',
+        registration_kind='reviewed-closeout',
+    )
+    reviewed_live_entry, _, _, _ = _seed_librarian_dataset_entry(
+        anchor,
+        project_root,
+        slug='reviewed_live_window2',
+        display_name='Reviewed Live Window2',
+        run_id='reviewed-live-window2',
+        source='real',
+        mode='live',
+        recorded_at_utc='2026-04-14T01:25:00Z',
+        workflow='manual-register',
+        registration_kind='reviewed-closeout',
+    )
+    reviewed_honeypot_entry, _, _, _ = _seed_librarian_dataset_entry(
+        anchor,
+        project_root,
+        slug='reviewed_honeypot_window2',
+        display_name='Reviewed Honeypot Window2',
+        run_id='reviewed-honeypot-window2',
+        source='real',
+        mode='honeypot',
+        recorded_at_utc='2026-04-14T01:30:00Z',
+        workflow='manual-register',
+        registration_kind='reviewed-closeout',
+    )
+
+    canary_packet_path = observerctl_module._ds_comparison_baseline_packet_path(reviewed_canary_entry['entry_id'])
+    live_packet_path = observerctl_module._ds_comparison_baseline_packet_path(reviewed_live_entry['entry_id'])
+    honeypot_packet_path = observerctl_module._ds_comparison_baseline_packet_path(reviewed_honeypot_entry['entry_id'])
+    assert not canary_packet_path.exists()
+    assert not live_packet_path.exists()
+    assert not honeypot_packet_path.exists()
+
+    live_entries = observerctl_module._ds_saved_baseline_entries('real', 'live')
+    honeypot_entries = observerctl_module._ds_saved_baseline_entries('real', 'honeypot')
+
+    assert len(live_entries) == 1
+    assert live_entries[0]['baseline_stage'] == 'canary_reviewed'
+    assert live_entries[0]['baseline_window_id'] == 'reviewed-canary-window2'
+    assert len(honeypot_entries) == 2
+    assert {str(entry.get('baseline_stage', '') or '') for entry in honeypot_entries} == {'live_reviewed', 'honeypot_reviewed'}
+    assert {str(entry.get('baseline_window_id', '') or '') for entry in honeypot_entries} == {'reviewed-live-window2', 'reviewed-honeypot-window2'}
+    assert canary_packet_path.exists()
+    assert live_packet_path.exists()
+    assert honeypot_packet_path.exists()
+    assert {
+        _resolve_reported_path(str(entry['resolver']['baseline_analysis_packet']) or '')
+        for entry in honeypot_entries
+    } == {live_packet_path, honeypot_packet_path}
+
+    rc = main(['ds', 'saved', 'baselines', '--source', 'real', '--mode', 'honeypot', '--json'])
+    assert rc == 0
+    payload = json.loads(capsys.readouterr().out)
+    assert payload['action'] == 'ds-saved-baselines'
+    assert payload['count'] == 2
+    assert {str(entry.get('baseline_stage', '') or '') for entry in payload['selector_entries']} == {'live_reviewed', 'honeypot_reviewed'}
+
+
+def test_ds_saved_baselines_accept_historical_manual_register_packet_backfill(
+    monkeypatch,
+    tmp_path: Path,
+    capsys,
+) -> None:
+    project_root, anchor = _make_temp_observer_project(tmp_path)
+    _bind_temp_observer_project(monkeypatch, project_root, anchor)
+
+    historical_entry, _, _, _ = _seed_librarian_dataset_entry(
+        anchor,
+        project_root,
+        slug='historical_honeypot_window1',
+        display_name='Historical Honeypot Window1',
+        run_id='historical-honeypot-window1',
+        source='real',
+        mode='honeypot',
+        recorded_at_utc='2026-04-14T02:00:00Z',
+        workflow='manual-register',
+    )
+    review_policy_packet = project_root / 'local_untracked' / 'reports' / 'historical_honeypot_policy_packet.md'
+    review_policy_packet.parent.mkdir(parents=True, exist_ok=True)
+    review_policy_packet.write_text('# historical honeypot policy\n', encoding='utf-8')
+    emitted = observerctl_module._ds_emit_comparison_baseline_packet(
+        historical_entry,
+        baseline_stage='honeypot_reviewed',
+        companion_role='historical reviewed honeypot companion',
+        review_policy_packet=str(review_policy_packet),
+    )
+
+    entries = observerctl_module._ds_saved_baseline_entries('real', 'honeypot')
+
+    assert len(entries) == 1
+    assert entries[0]['baseline_stage'] == 'honeypot_reviewed'
+    assert entries[0]['baseline_window_id'] == 'historical-honeypot-window1'
+    assert _resolve_reported_path(str(entries[0]['resolver']['baseline_analysis_packet']) or '') == _resolve_reported_path(emitted['packet_path'])
+
+    rc = main(['ds', 'saved', 'baselines', '--source', 'real', '--mode', 'honeypot', '--json'])
+    assert rc == 0
+    payload = json.loads(capsys.readouterr().out)
+    assert payload['count'] == 1
+    assert payload['selector_entries'][0]['baseline_stage'] == 'honeypot_reviewed'
 
 
 def test_ds_wizard_partition_headers_render_on_frame3_surfaces() -> None:
@@ -4435,6 +4670,22 @@ def test_ds_wizard_build_in_navigation_footer_only_renders_on_in_surface(monkeyp
     observerctl_module._ds_wizard_open_section(state, 'report')
     rendered = [strip_ansi(line) for line in observerctl_module._ds_wizard_render(state)]
     assert not any('navigate:' in line for line in rendered)
+
+
+def test_ds_wizard_baseline_surface_explains_optional_empty_live_lane(monkeypatch, tmp_path: Path) -> None:
+    project_root, anchor = _make_temp_observer_project(tmp_path)
+    _bind_temp_observer_project(monkeypatch, project_root, anchor)
+
+    state = observerctl_module._ds_wizard_new_state('evaluate')
+    observerctl_module._ds_wizard_set_value(state, 'source', 'real')
+    observerctl_module._ds_wizard_set_value(state, 'mode', 'live')
+
+    lines = [strip_ansi(line) for line in observerctl_module._ds_wizard_baseline_selector_lines(state)]
+
+    assert observerctl_module._ds_wizard_baseline_picker_current(state) == '<optional: none admitted>'
+    assert any('canary_reviewed' in line for line in lines)
+    assert any('baseline context remains optional for evaluate and run-pipeline.' in line for line in lines)
+    assert any('evaluate can still run without a baseline packet' in line for line in lines)
 
 
 def test_ds_wizard_build_in_records_rows_keep_spacing_before_date(monkeypatch, tmp_path: Path) -> None:
@@ -5369,6 +5620,8 @@ def test_ds_finalize_run_packet_keeps_librarian_authority_unchanged(tmp_path: Pa
         'labels_csv': str(labels_csv),
         'total_records': 1,
         'has_labels': True,
+        'source': 'real',
+        'mode': 'watch',
     }), encoding='utf-8')
 
     final_packet = observerctl_module._ds_finalize_run_packet(
@@ -5403,6 +5656,157 @@ def test_ds_finalize_run_packet_keeps_librarian_authority_unchanged(tmp_path: Pa
     assert _resolve_reported_path(final_packet['artifacts']['report_manifest_json']).exists()
     assert _resolve_reported_path(final_packet['artifacts']['ds_run_index_jsonl']).exists()
     assert _resolve_reported_path(final_packet['artifacts']['ds_latest_json']).exists()
+
+
+def test_librarian_dataset_register_canary_runtime_baseline_context_does_not_create_saved_baseline(tmp_path: Path, monkeypatch) -> None:
+    from calamum_librarian import register_librarian_dataset_packet
+
+    project_root, anchor = _make_temp_observer_project(tmp_path)
+    _bind_temp_observer_project(monkeypatch, project_root, anchor)
+
+    evidence_dir = project_root / 'local_untracked' / 'analysis' / 'observer_derived' / 'real' / 'canary' / 'evidence'
+    evidence_dir.mkdir(parents=True, exist_ok=True)
+    baseline_packet = evidence_dir / 'runtime_baseline_packet.json'
+    baseline_packet.write_text(
+        json.dumps(
+            {
+                'action': 'baseline-analyze',
+                'decision': 'go',
+                'baseline_window_id': 'runtime-canary-window1',
+                'summary': 'Runtime canary baseline ready.',
+                'sample_counts': {'normal': 12, 'baseline': 6},
+            }
+        ),
+        encoding='utf-8',
+    )
+    (evidence_dir / 'index.jsonl').write_text(
+        json.dumps(
+            {
+                'event': 'baseline_analysis',
+                'timestamp_utc': '2026-04-14T16:00:00Z',
+                'baseline_window_id': 'runtime-canary-window1',
+                'packet_path': str(baseline_packet),
+                'decision': 'go',
+            }
+        ) + '\n',
+        encoding='utf-8',
+    )
+
+    dataset_dir = project_root / 'datasets' / 'unlabeled_canary_runtime'
+    dataset_dir.mkdir(parents=True, exist_ok=True)
+    features_csv = dataset_dir / 'features.csv'
+    manifest_path = dataset_dir / 'dataset_manifest.json'
+    features_csv.write_text('record_id,feature\nr1,0.42\n', encoding='utf-8')
+    manifest_path.write_text(
+        json.dumps(
+            {
+                'features_csv': str(features_csv),
+                'total_records': 1,
+                'has_labels': False,
+                'source': 'real',
+                'mode': 'canary',
+            }
+        ),
+        encoding='utf-8',
+    )
+
+    packet = register_librarian_dataset_packet(
+        anchor,
+        manifest_path,
+        display_name='Unlabeled Canary Runtime Dataset',
+        run_id='unlabeled-canary-runtime-window1',
+    )
+    saved_entries = observerctl_module._ds_saved_baseline_entries('real', 'live')
+
+    assert packet['decision'] == 'go'
+    assert packet['dataset']['source'] == 'real'
+    assert packet['dataset']['mode'] == 'canary'
+    assert packet['dataset']['has_labels'] is False
+    assert packet['dataset']['registration_kind'] == 'manual-register'
+    assert packet['dataset']['comparison_baseline_stage'] == 'canary_reviewed'
+    assert packet['dataset']['baseline_window_id'] == 'runtime-canary-window1'
+    assert packet['dataset']['baseline_decision_state'] == 'go'
+    assert packet['dataset']['baseline_summary'] == 'Runtime canary baseline ready.'
+    assert _resolve_reported_path(packet['dataset']['baseline_analysis_packet']) == baseline_packet
+    assert _resolve_reported_path(packet['artifacts']['baseline_analysis_packet']) == baseline_packet
+    assert _resolve_reported_path(packet['artifacts']['baseline_analysis_index_jsonl']) == evidence_dir / 'index.jsonl'
+    assert len(saved_entries) == 1
+    assert saved_entries[0]['baseline_stage'] == 'canary_reviewed'
+
+
+def test_ds_finalize_run_packet_labeled_canary_build_admits_reviewed_closeout_and_emits_saved_baseline(tmp_path: Path, monkeypatch) -> None:
+    from analysis.report_pack import prepare_report_bundle
+
+    project_root, anchor = _make_temp_observer_project(tmp_path)
+    monkeypatch.setattr(observerctl_module, '_project_root', lambda: project_root)
+    monkeypatch.setattr(observerctl_module, '_project_anchor', lambda: anchor)
+    monkeypatch.setattr(observerctl_module, '__file__', str(anchor))
+
+    bundle = prepare_report_bundle(anchor, 'build', run_id='framec-reviewed-canary-build')
+    dataset_dir = bundle.artifact_dirs['dataset']
+    dataset_dir.mkdir(parents=True, exist_ok=True)
+    manifest_path = dataset_dir / 'dataset_manifest.json'
+    features_csv = dataset_dir / 'features.csv'
+    labels_csv = dataset_dir / 'labels.csv'
+    features_csv.write_text('record_id,feature\n1,0.25\n', encoding='utf-8')
+    labels_csv.write_text('record_id,label\n1,1\n', encoding='utf-8')
+    manifest_path.write_text(json.dumps({
+        'features_csv': str(features_csv),
+        'labels_csv': str(labels_csv),
+        'total_records': 1,
+        'has_labels': True,
+        'source': 'real',
+        'mode': 'canary',
+    }), encoding='utf-8')
+
+    final_packet = observerctl_module._ds_finalize_run_packet(
+        {
+            'timestamp_utc': '2026-04-14T12:00:00Z',
+            'runtime_cli_surface': 'observerctl',
+            'decision': 'go',
+            'action': 'ds-build',
+            'command_family': 'ds',
+            'command_path': 'observerctl ds build',
+            'implementation_state': 'command-available',
+            'underlying_surface': 'analysis.dataset_builder',
+            'summary': 'Reviewed canary dataset built through observerctl ds.',
+            'run_id': bundle.run_id,
+            'source': 'real',
+            'mode': 'canary',
+            'total_records': 1,
+            'has_labels': True,
+            'artifacts': {},
+            'reason_codes': [],
+        },
+        bundle=bundle,
+        artifact_paths={
+            'dataset_manifest': manifest_path,
+            'features_csv': features_csv,
+            'labels_csv': labels_csv,
+        },
+        context={
+            'output_override': False,
+            'source': 'real',
+            'mode': 'canary',
+        },
+        lineage={'input_paths': [project_root / 'input.jsonl']},
+    )
+
+    comparison_baseline_path = _resolve_reported_path(final_packet['artifacts']['comparison_baseline_packet_json'])
+    librarian_manifest_path = _resolve_reported_path(final_packet['artifacts']['librarian_dataset_manifest_json'])
+    librarian_payload = json.loads(librarian_manifest_path.read_text(encoding='utf-8'))
+    admitted_entries = [entry for entry in librarian_payload['entries'] if entry.get('registration_kind') == 'reviewed-closeout']
+    saved_entries = observerctl_module._ds_saved_baseline_entries('real', 'live')
+
+    assert final_packet['finalization']['steps']['librarian_dataset_catalog']['catalog_updated'] is True
+    assert final_packet['finalization']['steps']['librarian_dataset_catalog']['comparison_baseline_emitted'] is True
+    assert comparison_baseline_path.exists()
+    assert admitted_entries
+    assert admitted_entries[0]['run_id'] == 'framec-reviewed-canary-build'
+    assert 'Reviewed Canary' in str(admitted_entries[0]['display_name'])
+    assert saved_entries
+    assert saved_entries[0]['baseline_stage'] == 'canary_reviewed'
+    assert saved_entries[0]['baseline_window_id'] == 'framec-reviewed-canary-build'
 
 
 def test_ds_finalize_run_packet_build_prefers_lineage_dataset_alias_over_materialized_manifest(tmp_path: Path, monkeypatch) -> None:
@@ -6783,6 +7187,7 @@ def test_ds_report_bundle_prefers_existing_comparison_baseline_context_for_publi
         mode='canary',
         recorded_at_utc='2026-04-13T00:10:00Z',
         workflow='manual-register',
+        registration_kind='reviewed-closeout',
     )
     live_target_entry, manifest_path, _, _ = _seed_librarian_dataset_entry(
         anchor,
@@ -6864,6 +7269,182 @@ def test_ds_report_bundle_prefers_existing_comparison_baseline_context_for_publi
     assert 'baseline packet ref' in collection_report_text
     assert 'comparison_baseline_packet.json' in collection_report_text
     assert legacy_baseline_packet.name not in collection_report_text
+
+
+def test_ds_report_bundle_materializes_missing_comparison_baseline_context_for_publication(
+    monkeypatch,
+    tmp_path: Path,
+) -> None:
+    from analysis.report_pack import prepare_report_bundle, write_report_bundle
+
+    project_root, anchor = _make_temp_observer_project(tmp_path)
+    _bind_temp_observer_project(monkeypatch, project_root, anchor)
+
+    reviewed_canary_entry, _, _, _ = _seed_librarian_dataset_entry(
+        anchor,
+        project_root,
+        slug='reviewed_canary_report_window2',
+        display_name='Reviewed Canary Report Window2',
+        run_id='reviewed-canary-report-window2',
+        source='real',
+        mode='canary',
+        recorded_at_utc='2026-04-14T00:10:00Z',
+        workflow='manual-register',
+        registration_kind='reviewed-closeout',
+    )
+    _, manifest_path, _, _ = _seed_librarian_dataset_entry(
+        anchor,
+        project_root,
+        slug='live_report_target_window2',
+        display_name='Live Report Target Window2',
+        run_id='live-report-target-window2',
+        source='real',
+        mode='live',
+        recorded_at_utc='2026-04-14T00:12:00Z',
+        workflow='manual-register',
+    )
+    comparison_baseline_path = observerctl_module._ds_comparison_baseline_packet_path(reviewed_canary_entry['entry_id'])
+    assert not comparison_baseline_path.exists()
+
+    legacy_baseline_packet = project_root / 'local_untracked' / 'analysis' / 'evidence' / 'observerctl_baseline-analysis_missing.json'
+    legacy_baseline_packet.parent.mkdir(parents=True, exist_ok=True)
+    legacy_baseline_packet.write_text(json.dumps({'baseline_window_id': 'reviewed-canary-report-window2'}), encoding='utf-8')
+
+    bundle = prepare_report_bundle(anchor, 'evaluate', run_id='eval-reviewed-report-materialized')
+    evaluation_dir = bundle.artifact_dirs['evaluation']
+    evaluation_dir.mkdir(parents=True, exist_ok=True)
+    run_json = evaluation_dir / 'run.json'
+    run_md = evaluation_dir / 'run.md'
+    run_json.write_text('{}\n', encoding='utf-8')
+    run_md.write_text('# eval reviewed report materialized\n', encoding='utf-8')
+
+    report_bundle = write_report_bundle(
+        project_anchor=anchor,
+        bundle=bundle,
+        packet={
+            'timestamp_utc': '2026-04-14T00:20:00Z',
+            'runtime_cli_surface': 'observerctl',
+            'decision': 'go',
+            'action': 'ds-evaluate',
+            'command_family': 'ds',
+            'command_path': 'observerctl ds evaluate',
+            'implementation_state': 'command-available',
+            'underlying_surface': 'analysis.evaluation_harness',
+            'summary': 'Reviewed evaluation completed through observerctl ds.',
+            'run_id': bundle.run_id,
+            'collection_alias': 'hp-rpt2',
+            'threshold': 0.41,
+            'artifacts': {},
+            'reason_codes': [],
+        },
+        artifact_paths={
+            'run_json': run_json,
+            'run_md': run_md,
+        },
+        context={
+            'source': 'real',
+            'mode': 'live',
+            'baseline_analysis_packet': str(legacy_baseline_packet),
+            'baseline_window_id': 'reviewed-canary-report-window2',
+        },
+        lineage={'dataset_manifest': manifest_path},
+    )
+
+    manifest_context = report_bundle['manifest']['context']
+
+    assert comparison_baseline_path.exists()
+    assert _resolve_reported_path(str(manifest_context.get('baseline_analysis_packet', '') or '')) == comparison_baseline_path
+    assert str(manifest_context.get('baseline_window_id', '') or '') == 'reviewed-canary-report-window2'
+
+
+def test_ds_report_bundle_accepts_historical_manual_register_comparison_packet_context(
+    monkeypatch,
+    tmp_path: Path,
+) -> None:
+    from analysis.report_pack import prepare_report_bundle, write_report_bundle
+
+    project_root, anchor = _make_temp_observer_project(tmp_path)
+    _bind_temp_observer_project(monkeypatch, project_root, anchor)
+
+    historical_entry, _, _, _ = _seed_librarian_dataset_entry(
+        anchor,
+        project_root,
+        slug='historical_canary_report_window1',
+        display_name='Historical Canary Report Window1',
+        run_id='historical-canary-report-window1',
+        source='real',
+        mode='canary',
+        recorded_at_utc='2026-04-14T02:10:00Z',
+        workflow='manual-register',
+    )
+    _, manifest_path, _, _ = _seed_librarian_dataset_entry(
+        anchor,
+        project_root,
+        slug='historical_live_report_target_window1',
+        display_name='Historical Live Report Target Window1',
+        run_id='historical-live-report-target-window1',
+        source='real',
+        mode='live',
+        recorded_at_utc='2026-04-14T02:12:00Z',
+        workflow='manual-register',
+    )
+    review_policy_packet = project_root / 'local_untracked' / 'reports' / 'historical_canary_report_policy_packet.md'
+    review_policy_packet.parent.mkdir(parents=True, exist_ok=True)
+    review_policy_packet.write_text('# historical canary report policy\n', encoding='utf-8')
+    emitted = observerctl_module._ds_emit_comparison_baseline_packet(
+        historical_entry,
+        baseline_stage='canary_reviewed',
+        companion_role='historical reviewed canary report companion',
+        review_policy_packet=str(review_policy_packet),
+    )
+    legacy_baseline_packet = project_root / 'local_untracked' / 'analysis' / 'evidence' / 'observerctl_baseline-analysis_historical.json'
+    legacy_baseline_packet.parent.mkdir(parents=True, exist_ok=True)
+    legacy_baseline_packet.write_text(json.dumps({'baseline_window_id': 'historical-canary-report-window1'}), encoding='utf-8')
+
+    bundle = prepare_report_bundle(anchor, 'evaluate', run_id='eval-historical-report-context')
+    evaluation_dir = bundle.artifact_dirs['evaluation']
+    evaluation_dir.mkdir(parents=True, exist_ok=True)
+    run_json = evaluation_dir / 'run.json'
+    run_md = evaluation_dir / 'run.md'
+    run_json.write_text('{}\n', encoding='utf-8')
+    run_md.write_text('# eval historical report context\n', encoding='utf-8')
+
+    report_bundle = write_report_bundle(
+        project_anchor=anchor,
+        bundle=bundle,
+        packet={
+            'timestamp_utc': '2026-04-14T02:20:00Z',
+            'runtime_cli_surface': 'observerctl',
+            'decision': 'go',
+            'action': 'ds-evaluate',
+            'command_family': 'ds',
+            'command_path': 'observerctl ds evaluate',
+            'implementation_state': 'command-available',
+            'underlying_surface': 'analysis.evaluation_harness',
+            'summary': 'Historical evaluation completed through observerctl ds.',
+            'run_id': bundle.run_id,
+            'collection_alias': 'hist-rpt1',
+            'threshold': 0.22,
+            'artifacts': {},
+            'reason_codes': [],
+        },
+        artifact_paths={
+            'run_json': run_json,
+            'run_md': run_md,
+        },
+        context={
+            'source': 'real',
+            'mode': 'live',
+            'baseline_analysis_packet': str(legacy_baseline_packet),
+            'baseline_window_id': 'historical-canary-report-window1',
+        },
+        lineage={'dataset_manifest': manifest_path},
+    )
+
+    manifest_context = report_bundle['manifest']['context']
+
+    assert _resolve_reported_path(str(manifest_context.get('baseline_analysis_packet', '') or '')) == _resolve_reported_path(emitted['packet_path'])
+    assert str(manifest_context.get('baseline_window_id', '') or '') == 'historical-canary-report-window1'
 
 
 def test_ds_report_publication_repairs_stale_eval_alias_from_materialized_build_dataset(tmp_path: Path) -> None:
@@ -7371,6 +7952,15 @@ def test_real_sandbox_registry_includes_ds_wizard_durability_definition() -> Non
     assert definition['id'] == 'ds-wizard-durability'
     assert definition['command'] == 'observerctl sandbox run ds-wizard-durability'
     assert definition['run_index_path'].endswith('frame6_ds_wizard_durability_probe/run_index.jsonl')
+
+
+def test_real_sandbox_registry_includes_ds_wizard_execute_failure_truthfulness_definition() -> None:
+    definition = observerctl_module.sandbox_get_definition('ds-wizard-execute-failure-truthfulness')
+
+    assert definition is not None
+    assert definition['id'] == 'ds-wizard-execute-failure-truthfulness'
+    assert definition['command'] == 'observerctl sandbox run ds-wizard-execute-failure-truthfulness'
+    assert definition['run_index_path'].endswith('frameb_ds_wizard_execute_failure_truthfulness_probe/run_index.jsonl')
 
 
 def test_real_sandbox_registry_includes_ds_alias_coherence_definition() -> None:

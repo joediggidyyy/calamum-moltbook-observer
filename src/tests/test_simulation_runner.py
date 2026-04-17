@@ -26,6 +26,7 @@ def test_simulation_runner_lists_available_definitions(capsys) -> None:
     assert 'ds-wizard-durability' in out
     assert 'ds-wizard-labeled-eval-contract-coherence' in out
     assert 'ds-wizard-blocked-execute-truthfulness' in out
+    assert 'ds-wizard-execute-failure-truthfulness' in out
     assert 'ds-alias-coherence' in out
     assert 'baseline-monitor-runtime' in out
     assert 'validation-cycle-lineage' in out
@@ -149,6 +150,21 @@ def test_simulation_runner_dispatches_ds_wizard_blocked_execute_truthfulness_def
     assert called['ds_wizard_blocked_execute_truthfulness'] is True
 
 
+def test_simulation_runner_dispatches_ds_wizard_execute_failure_truthfulness_definition(monkeypatch) -> None:
+    called = {'ds_wizard_execute_failure_truthfulness': False}
+
+    def fake_runner() -> int:
+        called['ds_wizard_execute_failure_truthfulness'] = True
+        return 0
+
+    monkeypatch.setattr(simulation_runner, 'run_ds_wizard_execute_failure_truthfulness_probe', fake_runner)
+
+    rc = simulation_runner.main(['ds-wizard-execute-failure-truthfulness'])
+
+    assert rc == 0
+    assert called['ds_wizard_execute_failure_truthfulness'] is True
+
+
 def test_simulation_runner_dispatches_ds_alias_coherence_definition(monkeypatch) -> None:
     called = {'ds_alias_coherence': False}
 
@@ -266,6 +282,7 @@ def _configure_probe_roots(monkeypatch, tmp_path: Path) -> None:
     monkeypatch.setattr(simulation_runner, 'FRAME6_DS_WIZARD_DURABILITY_PROBE_DIR', tmp_path / 'report_tmp' / 'frame6_ds_wizard_durability_probe')
     monkeypatch.setattr(simulation_runner, 'FRAMEB_DS_WIZARD_LABELED_EVAL_CONTRACT_COHERENCE_PROBE_DIR', tmp_path / 'report_tmp' / 'frameb_ds_wizard_labeled_eval_contract_coherence_probe')
     monkeypatch.setattr(simulation_runner, 'FRAMEB_DS_WIZARD_BLOCKED_EXECUTE_TRUTHFULNESS_PROBE_DIR', tmp_path / 'report_tmp' / 'frameb_ds_wizard_blocked_execute_truthfulness_probe')
+    monkeypatch.setattr(simulation_runner, 'FRAMEB_DS_WIZARD_EXECUTE_FAILURE_TRUTHFULNESS_PROBE_DIR', tmp_path / 'report_tmp' / 'frameb_ds_wizard_execute_failure_truthfulness_probe')
     monkeypatch.setattr(simulation_runner, 'FRAME6_RESTART_PROBE_DIR', tmp_path / 'report_tmp' / 'frame6_restart_continuity_probe')
     monkeypatch.setattr(simulation_runner, 'FRAME6_RECOVERY_PROBE_DIR', tmp_path / 'report_tmp' / 'frame6_state_recovery_probe')
     monkeypatch.setattr(simulation_runner, 'LIBRARIAN_ACCESS_EXCHANGE_PROBE_DIR', tmp_path / 'report_tmp' / 'librarian_access_exchange_probe')
@@ -308,6 +325,11 @@ def test_new_probe_definitions_emit_retained_reports(tmp_path: Path, monkeypatch
             'execute_reason_code_is_validation_block',
             'execute_packet_claims_no_success_artifacts',
         ],
+        'frameb_ds_wizard_execute_failure_truthfulness_probe.json': [
+            'derived_reason_code_is_execution_failure',
+            'terminal_transient_mentions_execute_failed',
+            'render_keeps_processing_ready',
+        ],
         'framed_ds_alias_coherence_probe.json': [
             'build_preview_ready',
             'score_preview_ready',
@@ -345,6 +367,11 @@ def test_new_probe_definitions_emit_retained_reports(tmp_path: Path, monkeypatch
             simulation_runner.run_ds_wizard_blocked_execute_truthfulness_probe,
             tmp_path / 'report_tmp' / 'frameb_ds_wizard_blocked_execute_truthfulness_probe' / 'run_index.jsonl',
             'frameb_ds_wizard_blocked_execute_truthfulness_probe.json',
+        ),
+        (
+            simulation_runner.run_ds_wizard_execute_failure_truthfulness_probe,
+            tmp_path / 'report_tmp' / 'frameb_ds_wizard_execute_failure_truthfulness_probe' / 'run_index.jsonl',
+            'frameb_ds_wizard_execute_failure_truthfulness_probe.json',
         ),
         (
             simulation_runner.run_ds_alias_coherence_probe,

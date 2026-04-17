@@ -34,6 +34,7 @@ from calamum_librarian import Librarian
 from calamum_observer_agent import append_record
 from obfuscator_lib import Obfuscator, verify_detached_payload
 import observerctl as observerctl_module
+from observerctl_terminal import strip_ansi
 
 
 FRAME4_PROBE_DIR = REPO_ROOT / 'report_tmp' / 'frame4_metadata_contract_probe'
@@ -45,6 +46,7 @@ FRAME5_LINEAGE_PROBE_DIR = REPO_ROOT / 'report_tmp' / 'frame5_validation_cycle_l
 FRAME6_DS_WIZARD_DURABILITY_PROBE_DIR = REPO_ROOT / 'report_tmp' / 'frame6_ds_wizard_durability_probe'
 FRAMEB_DS_WIZARD_LABELED_EVAL_CONTRACT_COHERENCE_PROBE_DIR = REPO_ROOT / 'report_tmp' / 'frameb_ds_wizard_labeled_eval_contract_coherence_probe'
 FRAMEB_DS_WIZARD_BLOCKED_EXECUTE_TRUTHFULNESS_PROBE_DIR = REPO_ROOT / 'report_tmp' / 'frameb_ds_wizard_blocked_execute_truthfulness_probe'
+FRAMEB_DS_WIZARD_EXECUTE_FAILURE_TRUTHFULNESS_PROBE_DIR = REPO_ROOT / 'report_tmp' / 'frameb_ds_wizard_execute_failure_truthfulness_probe'
 FRAMED_DS_ALIAS_COHERENCE_PROBE_DIR = REPO_ROOT / 'report_tmp' / 'framed_ds_alias_coherence_probe'
 FRAME6_RESTART_PROBE_DIR = REPO_ROOT / 'report_tmp' / 'frame6_restart_continuity_probe'
 FRAME6_RECOVERY_PROBE_DIR = REPO_ROOT / 'report_tmp' / 'frame6_state_recovery_probe'
@@ -1601,6 +1603,164 @@ def run_ds_wizard_blocked_execute_truthfulness_probe() -> int:
             _restore_probe_environment(original_env, original_project_root)
 
 
+def run_ds_wizard_execute_failure_truthfulness_probe() -> int:
+    run_id = 'frameb-ds-wizard-execute-failure-truthfulness-{0}'.format(_utc_stamp())
+    run_dir = FRAMEB_DS_WIZARD_EXECUTE_FAILURE_TRUTHFULNESS_PROBE_DIR / 'runs' / run_id
+    run_index_jsonl = FRAMEB_DS_WIZARD_EXECUTE_FAILURE_TRUTHFULNESS_PROBE_DIR / 'run_index.jsonl'
+    run_dir.mkdir(parents=True, exist_ok=True)
+
+    original_env: Dict[str, Optional[str]] = {}
+    original_project_root = None
+    original_project_anchor = None
+    original_file = ''
+    original_ds_score = None
+    try:
+        sandbox_root, _sandbox_log_dir, original_env, original_project_root = _seed_probe_environment(
+            run_dir=run_dir,
+            signing_key='frameb-ds-wizard-execute-failure-truthfulness-signing-key',
+            security_report_title='# Frame B DS wizard execute failure truthfulness probe security report\n',
+        )
+        _anchor, original_project_anchor, original_file = _bind_probe_observer_project(sandbox_root)
+
+        artifacts_dir = run_dir / 'artifacts'
+        artifacts_dir.mkdir(parents=True, exist_ok=True)
+
+        dataset_manifest = artifacts_dir / 'dataset_manifest.json'
+        features_csv = artifacts_dir / 'features.csv'
+        model_path = artifacts_dir / 'model.pkl'
+        train_manifest = artifacts_dir / 'train_manifest.json'
+
+        features_csv.write_text('record_id,feature\n1,0.1\n', encoding='utf-8')
+        model_path.write_bytes(b'model')
+        _write_json(
+            dataset_manifest,
+            {
+                'features_csv': str(features_csv),
+                'total_records': 1,
+                'has_labels': False,
+            },
+        )
+        _write_json(
+            train_manifest,
+            {
+                'dataset_manifest_path': str(dataset_manifest),
+                'model_path': str(model_path),
+                'model_type': 'unsupervised',
+            },
+        )
+
+        def _failing_score(dataset: str, model: str, out_file: str, collection_alias: str = '') -> Dict[str, Any]:
+            raise RuntimeError('synthetic score failure for truthfulness probe')
+
+        original_ds_score = observerctl_module._ds_score
+        observerctl_module._ds_score = _failing_score
+
+        state = observerctl_module._ds_wizard_new_state('score')
+        state.values['dataset_manifest'] = str(dataset_manifest)
+        state.values['train_manifest'] = str(train_manifest)
+        state.values['model_path'] = str(model_path)
+        state.values['dataset_alias'] = 'synthetic-score-failure'
+        observerctl_module._ds_wizard_open_section(state, 'run')
+
+        pre_execute_validate = strip_ansi(observerctl_module._ds_wizard_left_rail_rows(state)[1])
+        pre_execute_advance = strip_ansi(observerctl_module._ds_wizard_left_rail_rows(state)[2])
+        derived_packet = observerctl_module._ds_wizard_attempt_execute(state)
+        state, packet, should_exit = observerctl_module._ds_wizard_handle_command(state, 'execute')
+        rendered_lines = [strip_ansi(line) for line in observerctl_module._ds_wizard_render(state)]
+        transient_lines = observerctl_module._ds_wizard_transient_lines(state)
+
+        result_matrix = {
+            'pre_execute_validate_ready': pre_execute_validate == 'validate: ready',
+            'pre_execute_advance_no_go': pre_execute_advance == 'advance: no-go',
+            'derived_packet_no_go': str(derived_packet.get('decision', '')).strip().lower() == 'no-go',
+            'derived_reason_code_is_execution_failure': 'critical_check_failed:wizard_execution_failed' in list(derived_packet.get('reason_codes', []) or []),
+            'terminal_transient_mentions_execute_failed': transient_lines == ['execute failed: workflow execution failed before completion'],
+            'terminal_transient_avoids_validation_blame': all('validate this workflow first' not in line for line in transient_lines),
+            'render_keeps_validate_ready': any(line == 'validate: ready' for line in rendered_lines),
+            'render_keeps_processing_ready': any('processing: ready' == ' '.join(line.split()) for line in rendered_lines),
+            'command_handler_keeps_wizard_open': packet is None and should_exit is False,
+        }
+
+        report = {
+            'run_id': run_id,
+            'run_dir': _rel_to_repo(run_dir),
+            'probe_dir': _rel_to_repo(FRAMEB_DS_WIZARD_EXECUTE_FAILURE_TRUTHFULNESS_PROBE_DIR),
+            'script': _rel_to_repo(Path(__file__)),
+            'next_bite_result': _probe_result(result_matrix),
+            'command_runs': {
+                'wizard_execute_failure_packet': {
+                    'args': ['ds', 'wizard', 'score', 'attempt-execute'],
+                    'returncode': 2 if str(derived_packet.get('decision', '')).strip().lower() != 'go' else 0,
+                    'stderr_text': '',
+                    'stdout_text': '',
+                    'stdout_json': derived_packet,
+                },
+                'wizard_execute_failure_render': {
+                    'args': ['ds', 'wizard', 'score', 'render-run-pane'],
+                    'returncode': 0,
+                    'stderr_text': '',
+                    'stdout_text': '',
+                    'stdout_json': {
+                        'wizard_view': rendered_lines,
+                        'transient_lines': transient_lines,
+                    },
+                },
+            },
+            'artifact_paths': _report_path_map(
+                {
+                    'dataset_manifest': dataset_manifest,
+                    'features_csv': features_csv,
+                    'train_manifest': train_manifest,
+                    'model_path': model_path,
+                }
+            ),
+            'artifact_snapshots': {
+                'derived_packet': derived_packet,
+                'rendered_lines': rendered_lines,
+                'transient_lines': transient_lines,
+            },
+            'result_matrix': result_matrix,
+            'findings': {
+                'derived_summary': str(derived_packet.get('summary', '') or ''),
+                'derived_reason_codes': list(derived_packet.get('reason_codes', []) or []),
+                'rendered_run_lines': rendered_lines,
+                'transient_lines': transient_lines,
+            },
+        }
+
+        report_json = run_dir / 'frameb_ds_wizard_execute_failure_truthfulness_probe.json'
+        report_md = run_dir / 'frameb_ds_wizard_execute_failure_truthfulness_probe.md'
+        _write_json(report_json, report)
+        report_md.write_text(_render_result_matrix_markdown('Frame B DS Wizard Execute Failure Truthfulness Probe', report), encoding='utf-8')
+
+        _append_jsonl(
+            run_index_jsonl,
+            {
+                'run_id': run_id,
+                'timestamp_utc': _utc_stamp(),
+                'run_dir': _rel_to_repo(run_dir),
+                'report_json': _rel_to_repo(report_json),
+                'report_md': _rel_to_repo(report_md),
+                'next_bite_result': report['next_bite_result'],
+                'derived_decision': str(derived_packet.get('decision', '') or ''),
+            },
+        )
+
+        print('run_id={0}'.format(run_id))
+        print('report_json={0}'.format(_rel_to_repo(report_json)))
+        print('report_md={0}'.format(_rel_to_repo(report_md)))
+        print('run_index={0}'.format(_rel_to_repo(run_index_jsonl)))
+        print('next_bite_result={0}'.format(report['next_bite_result']))
+        return 0
+    finally:
+        if original_ds_score is not None:
+            observerctl_module._ds_score = original_ds_score
+        if original_project_anchor is not None:
+            _restore_probe_observer_project(original_project_anchor, original_file)
+        if original_project_root is not None:
+            _restore_probe_environment(original_env, original_project_root)
+
+
 def run_metadata_contract_probe() -> int:
     run_id = 'frame4-metadata-contract-{0}'.format(_utc_stamp())
     run_dir = FRAME4_PROBE_DIR / 'runs' / run_id
@@ -2902,6 +3062,7 @@ def _definition_registry() -> Dict[str, Callable[[], int]]:
         'ds-wizard-durability': run_ds_wizard_durability_probe,
         'ds-wizard-labeled-eval-contract-coherence': run_ds_wizard_labeled_eval_contract_coherence_probe,
         'ds-wizard-blocked-execute-truthfulness': run_ds_wizard_blocked_execute_truthfulness_probe,
+        'ds-wizard-execute-failure-truthfulness': run_ds_wizard_execute_failure_truthfulness_probe,
         'ds-alias-coherence': run_ds_alias_coherence_probe,
         'baseline-monitor-runtime': run_baseline_monitor_runtime_probe,
         'validation-cycle-lineage': run_validation_cycle_lineage_probe,
@@ -2918,7 +3079,7 @@ def build_parser() -> argparse.ArgumentParser:
         'definition',
         nargs='?',
         default='feedback-loop',
-        help='Definition to run: feedback-loop, metadata-contract, metadata-contract-regression, ds-wizard-hydration, ds-wizard-stale-state-continuity, ds-wizard-durability, ds-wizard-labeled-eval-contract-coherence, ds-wizard-blocked-execute-truthfulness, ds-alias-coherence, baseline-monitor-runtime, validation-cycle-lineage, baseline-monitor-restart-continuity, baseline-monitor-state-recovery, librarian-access-exchange, librarian-vault-controls',
+        help='Definition to run: feedback-loop, metadata-contract, metadata-contract-regression, ds-wizard-hydration, ds-wizard-stale-state-continuity, ds-wizard-durability, ds-wizard-labeled-eval-contract-coherence, ds-wizard-blocked-execute-truthfulness, ds-wizard-execute-failure-truthfulness, ds-alias-coherence, baseline-monitor-runtime, validation-cycle-lineage, baseline-monitor-restart-continuity, baseline-monitor-state-recovery, librarian-access-exchange, librarian-vault-controls',
     )
     parser.add_argument(
         '--list-definitions',
@@ -2943,6 +3104,7 @@ def main(argv: Optional[List[str]] = None) -> int:
             'ds-wizard-durability',
             'ds-wizard-labeled-eval-contract-coherence',
             'ds-wizard-blocked-execute-truthfulness',
+            'ds-wizard-execute-failure-truthfulness',
             'ds-alias-coherence',
             'baseline-monitor-runtime',
             'validation-cycle-lineage',

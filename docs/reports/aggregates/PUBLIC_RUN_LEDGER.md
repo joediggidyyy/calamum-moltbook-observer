@@ -17,35 +17,25 @@ This ledger defines the current public reporting population and provides a runti
 ## Current runtime-safe headline
 
 - Publish root: `docs/reports`
-- Published runs: 2
-- Collection aliases represented: 2
-- Workflow families represented: 2
+- Published collection runs: 0
+- Published validation packets: 1
+- Collection aliases represented: 0
+- Workflow families represented: 0
 - Threshold-bearing packets: 0
-- Latest packet: [liv-rd3bb](../collections/liv-rd3bb/collection/20260414T094516753389Z.collection.md)
 
 ## Current lane census
 
-| Workflow | Published packets | Latest collection | Latest packet |
-|---|---:|---|---|
-| score | 1 | `can-r0b70` | [20260414T094015247284Z.score.md](../collections/can-r0b70/processing/score/20260414T094015247284Z.score.md) |
-| train | 1 | `liv-rd3bb` | [20260414T094516753389Z.train.md](../collections/liv-rd3bb/processing/train/20260414T094516753389Z.train.md) |
+No workflow families are published yet in the tracked collection lane.
+The tracked validation lane currently contains the ApexLab reference validation packet.
 
 ## Publication-family census
 
-| Collection alias | Source / mode | Published packets | Latest packet date | Latest stages | Collection packet |
-|---|---|---:|---|---|---|
-| `liv-rd3bb` | runtime-unspecified | 1 | 2026-04-14T09:45:16.753389Z | train | [collection packet](../collections/liv-rd3bb/collection/20260414T094516753389Z.collection.md) |
-| `can-r0b70` | runtime-unspecified | 1 | 2026-04-14T09:40:15.247284Z | score | [collection packet](../collections/can-r0b70/collection/20260414T094015247284Z.collection.md) |
-
-## Publication-source census
-
-| Source | Mode | Published packets |
-|---|---|---:|
-| unspecified | unspecified | 2 |
+No collection packets are published yet.
 
 ## Interpretive notes
 
 - This ledger is deliberately derived and runtime-safe; it summarizes the tracked publication family without replacing the canonical machine-readable run records.
+- Published validation packets are counted separately from collection runs.
 - Absence here means the packet did not enter the tracked publication family; it does not imply the underlying machine artifacts do not exist.
 
 ## Provenance
@@ -66,15 +56,29 @@ This bottom section is human-facing and summarizes tracked report archive invent
 Machine-readable authority remains in the underlying archive manifests and audit surfaces; this table is only a routing view over those retained artifacts.
 
 - Vault inventory root: `local_untracked/analysis/vaults/librarian/quarantine/tracked_reports/calamum-moltbook-observer`
-- Archive inventories currently visible: 8
+- Archive inventories currently visible: 22
 
-| Archived at (UTC) | Action | Archived aliases | Archive manifest |
-|---|---|---|---|
-| 2026-04-13T21:18:25.652639Z | archive-and-reset-report-collections | `can-r0b70` | [archive_manifest.json](../../../local_untracked/analysis/vaults/librarian/quarantine/tracked_reports/calamum-moltbook-observer/report_collections_reset_20260413T211825Z/archive_manifest.json) |
-| 2026-04-13T21:17:28.353226Z | archive-and-delete-report-collection | `liv-rd3bb` | [archive_manifest.json](../../../local_untracked/analysis/vaults/librarian/quarantine/tracked_reports/calamum-moltbook-observer/report_collection_delete_liv-rd3bb_20260413T211728Z/archive_manifest.json) |
-| 2026-04-13T21:16:41.968582Z | archive-and-delete-report-collection | `liv-r8bc9` | [archive_manifest.json](../../../local_untracked/analysis/vaults/librarian/quarantine/tracked_reports/calamum-moltbook-observer/report_collection_delete_liv-r8bc9_20260413T211641Z/archive_manifest.json) |
-| 2026-04-13T17:17:40.782891Z | archive-and-delete-report-collection | `liv-rd3bb` | [archive_manifest.json](../../../local_untracked/analysis/vaults/librarian/quarantine/tracked_reports/calamum-moltbook-observer/report_collection_delete_liv-rd3bb_20260413T171740Z/archive_manifest.json) |
-| 2026-04-11T03:45:58.236289Z | archive-and-reset-report-collections | `INDEX.md`, `aggregates`, `reference`, `collections` | [archive_manifest.json](../../../local_untracked/analysis/vaults/librarian/quarantine/tracked_reports/calamum-moltbook-observer/report_collections_reset_20260411T034558Z/archive_manifest.json) |
-| 2026-04-11T03:44:50.481570Z | archive-and-delete-report-collection | `p3-demo-current-20260406` | [archive_manifest.json](../../../local_untracked/analysis/vaults/librarian/quarantine/tracked_reports/calamum-moltbook-observer/report_collection_delete_p3-demo-current-20260406_20260411T034450Z/archive_manifest.json) |
-| 2026-04-11T03:44:40.491440Z | archive-and-delete-report-collection | `dataset-d7c0eb` | [archive_manifest.json](../../../local_untracked/analysis/vaults/librarian/quarantine/tracked_reports/calamum-moltbook-observer/report_collection_delete_dataset-d7c0eb_20260411T034440Z/archive_manifest.json) |
-| 2026-04-10T15:30:44.549261Z | archive-and-reset-report-collections | `p3-demo-current-20260406` | [archive_manifest.json](../../../local_untracked/analysis/vaults/librarian/quarantine/tracked_reports/calamum-moltbook-observer/report_collections_reset_20260410T153044Z/archive_manifest.json) |
+| Archived at (UTC)           | Action                               | Archived aliases                                     | Archive manifest                                                                                                                                                                                                          |
+| --------------------------- | ------------------------------------ | ---------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+|                             |                                      | 0                                                    | [archive_manifest.json](../../../local_untracked/analysis/vaults/librarian/quarantine/tracked_reports/calamum-moltbook-observer/report_collections_reset_20260415T205823Z/archive_manifest.json)                          |
+| 2026-04-15T20:06:39.433459Z | archive-and-reset-report-collections | `can-r0b70`, `liv-rd3bb`                             | [archive_manifest.json](../../../local_untracked/analysis/vaults/librarian/quarantine/tracked_reports/calamum-moltbook-observer/report_collections_reset_20260415T200639Z/archive_manifest.json)                          |
+| 2026-04-15T18:49:45.362463Z | archive-and-reset-report-collections | `can-r0b70`, `liv-rd3bb`                             | [archive_manifest.json](../../../local_untracked/analysis/vaults/librarian/quarantine/tracked_reports/calamum-moltbook-observer/report_collections_reset_20260415T184945Z/archive_manifest.json)                          |
+| 2026-04-15T17:59:57.386794Z | archive-and-reset-report-collections | `can-r0b70`                                          | [archive_manifest.json](../../../local_untracked/analysis/vaults/librarian/quarantine/tracked_reports/calamum-moltbook-observer/report_collections_reset_20260415T175957Z/archive_manifest.json)                          |
+| 2026-04-15T17:13:34.753632Z | archive-and-reset-report-collections | `can-r0b70`, `liv-rd3bb`                             | [archive_manifest.json](../../../local_untracked/analysis/vaults/librarian/quarantine/tracked_reports/calamum-moltbook-observer/report_collections_reset_20260415T171334Z/archive_manifest.json)                          |
+| 2026-04-15T04:58:40.332772Z | archive-and-reset-report-collections | `can-r0b70`, `liv-rd3bb`                             | [archive_manifest.json](../../../local_untracked/analysis/vaults/librarian/quarantine/tracked_reports/calamum-moltbook-observer/report_collections_reset_20260415T045840Z/archive_manifest.json)                          |
+| 2026-04-14T22:22:27.846171Z | archive-and-reset-report-collections | `can-r0b70`                                          | [archive_manifest.json](../../../local_untracked/analysis/vaults/librarian/quarantine/tracked_reports/calamum-moltbook-observer/report_collections_reset_20260414T222227Z/archive_manifest.json)                          |
+| 2026-04-14T21:09:43.427428Z | archive-and-reset-report-collections | `can-r0b70`, `liv-rd3bb`                             | [archive_manifest.json](../../../local_untracked/analysis/vaults/librarian/quarantine/tracked_reports/calamum-moltbook-observer/report_collections_reset_20260414T210943Z/archive_manifest.json)                          |
+| 2026-04-14T20:18:30.406059Z | archive-and-reset-report-collections | `can-r0b70`, `liv-rd3bb`                             | [archive_manifest.json](../../../local_untracked/analysis/vaults/librarian/quarantine/tracked_reports/calamum-moltbook-observer/report_collections_reset_20260414T201830Z/archive_manifest.json)                          |
+| 2026-04-14T17:26:14.836625Z | archive-and-reset-report-collections | `can-r0b70`, `liv-rd3bb`                             | [archive_manifest.json](../../../local_untracked/analysis/vaults/librarian/quarantine/tracked_reports/calamum-moltbook-observer/report_collections_reset_20260414T172614Z/archive_manifest.json)                          |
+| 2026-04-14T17:22:05.153843Z | archive-and-delete-report-collection | `liv-rd3bb`                                          | [archive_manifest.json](../../../local_untracked/analysis/vaults/librarian/quarantine/tracked_reports/calamum-moltbook-observer/report_collection_delete_liv-rd3bb_20260414T172205Z/archive_manifest.json)                |
+| 2026-04-14T15:36:28.350779Z | archive-and-reset-report-collections | `can-r0b70`, `can-r659b`                             | [archive_manifest.json](../../../local_untracked/analysis/vaults/librarian/quarantine/tracked_reports/calamum-moltbook-observer/report_collections_reset_20260414T153628Z/archive_manifest.json)                          |
+| 2026-04-14T15:33:44.076951Z | archive-and-reset-report-collections | `can-r0b70`                                          | [archive_manifest.json](../../../local_untracked/analysis/vaults/librarian/quarantine/tracked_reports/calamum-moltbook-observer/report_collections_reset_20260414T153343Z/archive_manifest.json)                          |
+| 2026-04-14T15:31:35.919255Z | archive-and-delete-report-collection | `liv-rd3bb`                                          | [archive_manifest.json](../../../local_untracked/analysis/vaults/librarian/quarantine/tracked_reports/calamum-moltbook-observer/report_collection_delete_liv-rd3bb_20260414T153135Z/archive_manifest.json)                |
+| 2026-04-13T21:18:25.652639Z | archive-and-reset-report-collections | `can-r0b70`                                          | [archive_manifest.json](../../../local_untracked/analysis/vaults/librarian/quarantine/tracked_reports/calamum-moltbook-observer/report_collections_reset_20260413T211825Z/archive_manifest.json)                          |
+| 2026-04-13T21:17:28.353226Z | archive-and-delete-report-collection | `liv-rd3bb`                                          | [archive_manifest.json](../../../local_untracked/analysis/vaults/librarian/quarantine/tracked_reports/calamum-moltbook-observer/report_collection_delete_liv-rd3bb_20260413T211728Z/archive_manifest.json)                |
+| 2026-04-13T21:16:41.968582Z | archive-and-delete-report-collection | `liv-r8bc9`                                          | [archive_manifest.json](../../../local_untracked/analysis/vaults/librarian/quarantine/tracked_reports/calamum-moltbook-observer/report_collection_delete_liv-r8bc9_20260413T211641Z/archive_manifest.json)                |
+| 2026-04-13T17:17:40.782891Z | archive-and-delete-report-collection | `liv-rd3bb`                                          | [archive_manifest.json](../../../local_untracked/analysis/vaults/librarian/quarantine/tracked_reports/calamum-moltbook-observer/report_collection_delete_liv-rd3bb_20260413T171740Z/archive_manifest.json)                |
+| 2026-04-11T03:45:58.236289Z | archive-and-reset-report-collections | `INDEX.md`, `aggregates`, `reference`, `collections` | [archive_manifest.json](../../../local_untracked/analysis/vaults/librarian/quarantine/tracked_reports/calamum-moltbook-observer/report_collections_reset_20260411T034558Z/archive_manifest.json)                          |
+| 2026-04-11T03:44:50.481570Z | archive-and-delete-report-collection | `p3-demo-current-20260406`                           | [archive_manifest.json](../../../local_untracked/analysis/vaults/librarian/quarantine/tracked_reports/calamum-moltbook-observer/report_collection_delete_p3-demo-current-20260406_20260411T034450Z/archive_manifest.json) |
+| 2026-04-11T03:44:40.491440Z | archive-and-delete-report-collection | `dataset-d7c0eb`                                     | [archive_manifest.json](../../../local_untracked/analysis/vaults/librarian/quarantine/tracked_reports/calamum-moltbook-observer/report_collection_delete_dataset-d7c0eb_20260411T034440Z/archive_manifest.json)           |
+| 2026-04-10T15:30:44.549261Z | archive-and-reset-report-collections | `p3-demo-current-20260406`                           | [archive_manifest.json](../../../local_untracked/analysis/vaults/librarian/quarantine/tracked_reports/calamum-moltbook-observer/report_collections_reset_20260410T153044Z/archive_manifest.json)                          |

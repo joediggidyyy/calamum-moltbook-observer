@@ -116,7 +116,7 @@ def train_model(
     features, split_map, label_map, feature_cols = load_dataset(dataset_manifest_path)
     if model_type == 'supervised' and not label_map:
         raise ValueError('supervised training requires labels_csv in the dataset manifest')
-    train_cols = [c for c in feature_cols if c != 'record_id']
+    train_cols = [c for c in feature_cols if c not in ('record_id', 'is_canary')]
 
     X_train = []
     y_train = []

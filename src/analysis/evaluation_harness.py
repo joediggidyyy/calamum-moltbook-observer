@@ -57,13 +57,19 @@ def infer_model_score_direction(model: Any) -> str:
     return 'higher'
 
 
-def make_model_scorer(model: Any) -> ScorerFunc:
-    train_cols = [c for c in FEATURE_COLUMNS if c != 'record_id']
+_METADATA_COLUMNS = frozenset({'record_id', 'is_canary'})
+
+
+def make_model_scorer(model: Any, feature_columns: Optional[List[str]] = None) -> ScorerFunc:
+    train_cols: Optional[List[str]] = None
+    if feature_columns is not None:
+        train_cols = [c for c in feature_columns if c not in _METADATA_COLUMNS]
 
     def scorer(row: Dict[str, Any]) -> float:
         try:
             vec = []
-            for c in train_cols:
+            cols = train_cols if train_cols is not None else [c for c in row if c not in _METADATA_COLUMNS]
+            for c in cols:
                 val = row.get(c, 0)
                 try:
                     vec.append(float(val))
@@ -357,7 +363,14 @@ def main(argv: Optional[List[str]] = None) -> int:
                 print(f"Error loading model: {exc}")
                 return 1
         try:
-            scorer = make_model_scorer(model)
+            manifest_feature_columns = None
+            if args.dataset_manifest and args.dataset_manifest.exists():
+                try:
+                    with args.dataset_manifest.open('r', encoding='utf-8') as _mf:
+                        manifest_feature_columns = json.load(_mf).get('feature_columns')
+                except Exception:
+                    pass
+            scorer = make_model_scorer(model, feature_columns=manifest_feature_columns)
             score_direction = infer_model_score_direction(model)
             model_meta = {
                 'family': 'trained_apexlab',

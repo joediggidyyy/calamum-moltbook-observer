@@ -45,6 +45,10 @@ def _ds_wizard_blocked_execute_truthfulness_run_index() -> Path:
     return _REPORT_TMP / 'frameb_ds_wizard_blocked_execute_truthfulness_probe' / 'run_index.jsonl'
 
 
+def _ds_wizard_execute_failure_truthfulness_run_index() -> Path:
+    return _REPORT_TMP / 'frameb_ds_wizard_execute_failure_truthfulness_probe' / 'run_index.jsonl'
+
+
 def _ds_alias_coherence_run_index() -> Path:
     return _REPORT_TMP / 'framed_ds_alias_coherence_probe' / 'run_index.jsonl'
 
@@ -107,6 +111,10 @@ def _run_ds_wizard_labeled_eval_contract_coherence() -> int:
 
 def _run_ds_wizard_blocked_execute_truthfulness() -> int:
     return int(_load_simulation_runner().run_ds_wizard_blocked_execute_truthfulness_probe())
+
+
+def _run_ds_wizard_execute_failure_truthfulness() -> int:
+    return int(_load_simulation_runner().run_ds_wizard_execute_failure_truthfulness_probe())
 
 
 def _run_ds_alias_coherence() -> int:
@@ -250,6 +258,20 @@ def get_definitions() -> List[DefinitionRecord]:
             'command': 'observerctl sandbox run ds-wizard-blocked-execute-truthfulness',
             'run_index_path': str(_ds_wizard_blocked_execute_truthfulness_run_index()).replace('\\', '/'),
             'runner': _run_ds_wizard_blocked_execute_truthfulness,
+        },
+        {
+            'id': 'ds-wizard-execute-failure-truthfulness',
+            'title': 'DS wizard execute failure truthfulness probe',
+            'summary': 'Validate post-validation execute failures render truthful terminal guidance instead of blaming validation.',
+            'status': 'stable',
+            'category': 'ds-probe',
+            'aliases': [],
+            'selector_policy': 'exact-name-only',
+            'writes_to': 'report_tmp/frameb_ds_wizard_execute_failure_truthfulness_probe',
+            'purpose': 'Prove rendered wizard run-pane output agrees with the derived no-go packet when execution fails after validation has already passed.',
+            'command': 'observerctl sandbox run ds-wizard-execute-failure-truthfulness',
+            'run_index_path': str(_ds_wizard_execute_failure_truthfulness_run_index()).replace('\\', '/'),
+            'runner': _run_ds_wizard_execute_failure_truthfulness,
         },
         {
             'id': 'ds-alias-coherence',

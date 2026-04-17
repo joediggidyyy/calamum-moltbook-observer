@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import json
 import textwrap
 
 from typing import Any, Dict, List, Optional
@@ -39,6 +40,46 @@ def _section_lines(label: str, value: Any, width: int = 60) -> List[str]:
     for part in wrapped[1:]:
         lines.append(continuation + part)
     return lines
+
+
+def _text_value(value: Any) -> str:
+    return '' if value is None else str(value)
+
+
+def _compact_value(value: Any) -> str:
+    if value is None:
+        return ''
+    if isinstance(value, bool):
+        return 'True' if value else 'False'
+    if isinstance(value, (int, float)):
+        return str(value)
+    if isinstance(value, str):
+        return value
+    if isinstance(value, list):
+        if len(value) <= 4 and all(not isinstance(item, (dict, list)) for item in value):
+            serialized = json.dumps(value)
+            if len(serialized) <= 120:
+                return serialized
+        return '{0} items'.format(len(value))
+    if isinstance(value, dict):
+        scalar_values = list(value.values())
+        if scalar_values and all(isinstance(item, str) for item in scalar_values):
+            if any(('\\' in str(item)) or ('/' in str(item)) for item in scalar_values):
+                return '{0} keys'.format(len(value))
+        if len(value) <= 4 and all(
+            not isinstance(item, dict)
+            and not (isinstance(item, list) and len(item) > 4)
+            for item in value.values()
+        ):
+            serialized = json.dumps(value, sort_keys=True)
+            if len(serialized) <= 160:
+                return serialized
+        return '{0} keys'.format(len(value))
+    return str(value)
+
+
+def _nonempty_mapping_count(mapping: Dict[str, Any]) -> int:
+    return sum(1 for value in mapping.values() if value not in (None, '', [], {}))
 
 
 def _header(packet: Packet, outcome: str, detail: str) -> List[str]:
@@ -176,7 +217,8 @@ def _render_run(packet: Packet) -> List[str]:
     ])
     lines.extend(_section_lines('Definition', str(packet.get('definition_id', '') or '')))
     lines.extend(_section_lines('Result', result))
-    lines.extend(_section_lines('Return Code', str(packet.get('returncode', '') or '')))
+    return_code = packet.get('returncode') if 'returncode' in packet else ''
+    lines.extend(_section_lines('Return Code', _text_value(return_code)))
     run_id = str(packet.get('run_id', '') or '').strip()
     if run_id:
         lines.extend(_section_lines('Run ID', run_id))
@@ -252,9 +294,47 @@ def _render_runs_show(packet: Packet) -> List[str]:
     lines.extend(_section_lines('Report Path', str(run.get('report_path', '') or '')))
     if str(run.get('index_path', '') or '').strip():
         lines.extend(_section_lines('Index Path', str(run.get('index_path', '') or '')))
+    if str(run.get('run_dir', '') or '').strip():
+        lines.extend(_section_lines('Run Dir', str(run.get('run_dir', '') or '')))
     lines.append('')
+
+    report_result = str(report.get('next_bite_result', '') or '').strip()
+    result_matrix = report.get('result_matrix', {}) if isinstance(report.get('result_matrix', {}), dict) else {}
+    command_runs = report.get('command_runs', {}) if isinstance(report.get('command_runs', {}), dict) else {}
+    artifact_paths = report.get('artifact_paths', {}) if isinstance(report.get('artifact_paths', {}), dict) else {}
+    findings = report.get('findings', {}) if isinstance(report.get('findings', {}), dict) else {}
+    passed_checks = sum(1 for value in result_matrix.values() if bool(value))
+    failed_checks = [key for key, value in result_matrix.items() if not bool(value)]
+
     lines.append(style_heading('Review'))
-    for key in ('next_bite_result', 'all_sample_fields_present', 'all_index_fields_present'):
-        if key in report:
-            lines.extend(_section_lines(key, report.get(key)))
+    if report_result:
+        lines.extend(_section_lines('Next Bite Result', report_result))
+    if result_matrix:
+        lines.extend(_section_lines('Checks Passed', '{0}/{1}'.format(passed_checks, len(result_matrix))))
+        if failed_checks:
+            for key in failed_checks[:5]:
+                lines.extend(_section_lines('Failed Check', key))
+            if len(failed_checks) > 5:
+                lines.extend(_section_lines('Failed Check', '{0} more'.format(len(failed_checks) - 5)))
+        else:
+            lines.extend(_section_lines('Review Signal', 'all retained checks passed'))
+    if command_runs:
+        lines.extend(_section_lines('Command Runs', len(command_runs)))
+    if artifact_paths:
+        lines.extend(_section_lines('Artifact Paths', _nonempty_mapping_count(artifact_paths)))
+
+    surfaced_findings = 0
+    for key, value in findings.items():
+        compact = _compact_value(value)
+        if not compact:
+            continue
+        if surfaced_findings == 0:
+            lines.append('')
+            lines.append(style_heading('Findings'))
+        lines.extend(_section_lines(key, compact))
+        surfaced_findings += 1
+        if surfaced_findings >= 5:
+            break
+    if len(findings) > surfaced_findings:
+        lines.extend(_section_lines('More Findings', '{0}'.format(len(findings) - surfaced_findings)))
     return lines

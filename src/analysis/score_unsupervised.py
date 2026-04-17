@@ -65,7 +65,7 @@ def score_dataset(dataset_manifest_path: Path, model_reference: Path, out_file: 
         model = joblib.load(model_path)
 
     features, all_cols = load_dataset_features(dataset_manifest_path)
-    train_cols = [c for c in all_cols if c != 'record_id']
+    train_cols = [c for c in all_cols if c not in ('record_id', 'is_canary')]
 
     X = []
     record_ids = []

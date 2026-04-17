@@ -1,6 +1,6 @@
 ﻿# Calamum DS Wizard
 
-Updated: 2026-04-13
+Updated: 2026-04-14
 
 This document explains how to use the guided data-science wizard for `observerctl ds`.
 
@@ -111,7 +111,13 @@ You can also seed it on launch with any of the supported helper switches below.
 
 These options are especially useful when you want the wizard to open with a partially completed run context instead of starting from zero.
 
-In the DS lane, saved baselines resolve reviewed, selector-backed comparison-baseline authority for the active source/mode scope. Runtime baseline collection and analysis remain documented in [`../runtime/RUNTIME_WORKFLOWS.md`](../runtime/RUNTIME_WORKFLOWS.md).
+In the DS lane, saved baselines resolve reviewed, selector-backed comparison-baseline authority through the preserved wizard surface.
+
+- `live` work hydrates admitted `canary_reviewed` comparison authority when that reviewed handoff is available.
+- `honeypot` work hydrates every admitted `live_reviewed` and `honeypot_reviewed` comparison packet already visible to the lane.
+- reviewed closeout keeps the next-stage comparison packet available through the same saved-baseline and hydration surfaces, so the wizard keeps one stable baseline-facing route while the lineage meaning stays stage-aware underneath.
+
+Runtime baseline collection and analysis remain documented in [`../runtime/RUNTIME_WORKFLOWS.md`](../runtime/RUNTIME_WORKFLOWS.md).
 
 ## Draft save and load
 
@@ -164,12 +170,12 @@ If you only need the publication view, go to [`../../reports/INDEX.md`](../../re
 
 ## Practical tips
 
-| Tip                                                                            | Why it helps                                                                                                          |
-| ------------------------------------------------------------------------------ | --------------------------------------------------------------------------------------------------------------------- |
-| start with `--hydrate-latest-context` when working from a current runtime lane | it saves you from re-entering source/mode context                                                                     |
-| use saved baselines before evaluation-heavy runs                               | the wizard can attach the current reviewed comparison-baseline packet more cleanly when you already know the selector |
-| review the `cmd` and `check` sections before execute                           | this catches missing context before the run is launched                                                               |
-| save drafts for longer workflows                                               | it keeps iterative configuration work reproducible                                                                    |
+| Tip                                                                            | Why it helps                                                                                                                              |
+| ------------------------------------------------------------------------------ | ----------------------------------------------------------------------------------------------------------------------------------------- |
+| start with `--hydrate-latest-context` when working from a current runtime lane | it saves you from re-entering source/mode context                                                                                         |
+| use saved baselines before evaluation-heavy runs                               | the wizard can attach the current lineage-appropriate reviewed comparison-baseline packet more cleanly when you already know the selector |
+| review the `cmd` and `check` sections before execute                           | this catches missing context before the run is launched                                                                                   |
+| save drafts for longer workflows                                               | it keeps iterative configuration work reproducible                                                                                        |
 
 ## Related documents
 

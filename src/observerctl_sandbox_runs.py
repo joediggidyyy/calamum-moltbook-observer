@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import json
+import os
 from pathlib import Path
 from typing import Any, Dict, List, Optional, Tuple
 
@@ -8,6 +9,11 @@ from observerctl_sandbox_registry import get_definitions
 
 
 RunRow = Dict[str, Any]
+
+
+_CURRENT_DIR = Path(__file__).resolve().parent
+_PROJECT_ROOT = _CURRENT_DIR.parent
+_REPO_ROOT = _PROJECT_ROOT.parents[1]
 
 
 def _read_json(path: Path) -> Dict[str, Any]:
@@ -43,6 +49,16 @@ def _report_path_from_row(row: Dict[str, Any]) -> str:
     return ''
 
 
+def _resolve_repo_path(path_text: str) -> Path:
+    raw = str(path_text or '').strip()
+    if not raw:
+        return Path()
+    path = Path(raw.replace('/', os.sep))
+    if path.is_absolute():
+        return path
+    return _REPO_ROOT / path
+
+
 def list_runs() -> List[RunRow]:
     rows: List[RunRow] = []
     for definition in get_definitions():
@@ -70,7 +86,7 @@ def get_run(run_id: str) -> Optional[Tuple[RunRow, Dict[str, Any]]]:
     for row in list_runs():
         if str(row.get('run_id', '')).strip() != wanted:
             continue
-        report_path = Path(str(row.get('report_path', '') or '').replace('/', '\\')) if str(row.get('report_path', '')).strip() else None
+        report_path = _resolve_repo_path(str(row.get('report_path', '') or '')) if str(row.get('report_path', '')).strip() else None
         report_payload = _read_json(report_path) if report_path and report_path.exists() and report_path.suffix.lower() == '.json' else {}
         return row, report_payload
     return None

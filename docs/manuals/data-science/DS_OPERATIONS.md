@@ -1,6 +1,6 @@
 # Calamum DS Operations
 
-Updated: 2026-04-12
+Updated: 2026-04-14
 
 This document is the main operating reference for the `observerctl ds` command family.
 
@@ -62,10 +62,16 @@ The saved namespace makes it easier to reuse approved artifacts without rebuildi
 | --------------------------------------------- | ------------------------------ |
 | `observerctl ds saved trained`                | saved train/model selectors    |
 | `observerctl ds saved runs`                   | saved evaluation run selectors |
-| `observerctl ds saved baselines --source <sim | real> --mode <mode>`           | reviewed comparison-baseline selectors for a specific source/mode scope |
+| `observerctl ds saved baselines --source <sim | real> --mode <mode>`           | reviewed comparison-baseline selectors admitted for the requested source/mode handoff |
 | `observerctl ds saved drafts`                 | canonical wizard draft slots   |
 
-In the DS lane, `observerctl ds saved baselines` surfaces selector-backed comparison-baseline packets that match the current reviewed stage for the requested source/mode scope. Runtime baseline collection and analysis remain documented in [`../runtime/RUNTIME_WORKFLOWS.md`](../runtime/RUNTIME_WORKFLOWS.md).
+In the DS lane, `observerctl ds saved baselines` keeps the same command path while resolving reviewed comparison-baseline selectors through the lineage-aware handoff.
+
+- reviewed canary closeout makes `canary_reviewed` selectors available for later `live` work through the preserved DS baseline surface.
+- reviewed live closeout makes `live_reviewed` selectors available for later `honeypot` work through that same surface.
+- `honeypot` work loads every admitted `live_reviewed` and `honeypot_reviewed` selector already visible to the lane without adding a separate precedence subsystem.
+
+Runtime baseline collection and analysis remain documented in [`../runtime/RUNTIME_WORKFLOWS.md`](../runtime/RUNTIME_WORKFLOWS.md).
 
 ## Recommended operating sequences
 
@@ -108,7 +114,7 @@ Use the wizard when any of the following are true:
 
 The wizard is documented separately in [`DS_WIZARD.md`](DS_WIZARD.md), but it targets the same underlying DS command surface.
 
-The wizard baseline hydration helpers and the direct saved-baseline selectors use the same DS comparison-baseline authority described above, while preserving the current baseline-facing command and wizard surface names.
+The wizard baseline hydration helpers and the direct saved-baseline selectors use the same lineage-aware DS comparison-baseline authority described above, while preserving the current baseline-facing command and wizard surface names.
 
 ## Practical guardrails
 

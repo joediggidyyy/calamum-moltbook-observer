@@ -608,6 +608,11 @@ def _comparison_baseline_candidates_for_target(
     if not source_token or not mode_token or not target_stages:
         return []
 
+    try:
+        from observerctl import _ds_resolve_comparison_baseline_packet as _resolve_comparison_baseline_packet
+    except Exception:
+        _resolve_comparison_baseline_packet = None
+
     stage_rank = {stage: index for index, stage in enumerate(target_stages)}
     candidates: list[dict[str, Any]] = []
     seen: set[tuple[str, str]] = set()
@@ -619,7 +624,7 @@ def _comparison_baseline_candidates_for_target(
         if not _dataset_entry_supports_comparison_baseline(entry, project_root):
             continue
 
-        baseline_stage = _dataset_comparison_baseline_stage(entry)
+        baseline_stage = _dataset_comparison_baseline_stage(entry, project_root=project_root)
         if baseline_stage not in stage_rank:
             continue
 
@@ -635,6 +640,20 @@ def _comparison_baseline_candidates_for_target(
             mode=mode_token,
             baseline_window_id=baseline_window_id,
         )
+        if not match and _resolve_comparison_baseline_packet is not None:
+            materialized_path = _resolve_comparison_baseline_packet(
+                entry,
+                emit_if_missing=True,
+                companion_role='report context comparison baseline companion',
+            )
+            if materialized_path is not None:
+                match = _comparison_baseline_packet_match_info(
+                    project_root=project_root,
+                    packet_ref=str(materialized_path),
+                    source=source_token,
+                    mode=mode_token,
+                    baseline_window_id=baseline_window_id,
+                )
         if not match:
             continue
 
@@ -739,7 +758,7 @@ def _dataset_entry_supports_comparison_baseline(entry: Mapping[str, Any], projec
         return False
     if not bool(entry.get('has_labels', False)):
         return False
-    if not _dataset_comparison_baseline_stage(entry):
+    if not _dataset_comparison_baseline_stage(entry, project_root=project_root):
         return False
 
     resolver = dict(entry.get('resolver', {}) or {}) if isinstance(entry.get('resolver', {}), dict) else {}
@@ -751,22 +770,38 @@ def _dataset_entry_supports_comparison_baseline(entry: Mapping[str, Any], projec
     return all(_resolve_project_ref(project_root, ref) is not None for ref in required_refs)
 
 
-def _dataset_comparison_baseline_stage(entry: Mapping[str, Any]) -> str:
-    tokens = [
-        str(entry.get('entry_id', '') or '').strip().lower(),
-        str(entry.get('run_id', '') or '').strip().lower(),
-        str(entry.get('display_name', '') or '').strip().lower(),
-    ]
-    if not any('reviewed' in token for token in tokens if token):
-        return ''
+def _dataset_comparison_baseline_stage(entry: Mapping[str, Any], *, project_root: Optional[Path] = None) -> str:
+    explicit_stage = str(entry.get('comparison_baseline_stage', '') or '').strip()
+    if explicit_stage:
+        return explicit_stage
 
+    registration_kind = str(entry.get('registration_kind', '') or '').strip().lower()
     mode = str(entry.get('mode', '') or '').strip().lower()
-    if mode == 'honeypot':
+    if registration_kind == 'reviewed-closeout' and mode == 'honeypot':
         return 'honeypot_reviewed'
-    if mode == 'live':
+    if registration_kind == 'reviewed-closeout' and mode == 'live':
         return 'live_reviewed'
-    if mode == 'canary':
+    if registration_kind == 'reviewed-closeout' and mode == 'canary':
         return 'canary_reviewed'
+
+    entry_id = str(entry.get('entry_id', '') or '').strip()
+    selector_run_id = str(entry.get('run_id', '') or '').strip()
+    entry_source = str(entry.get('source', '') or '').strip().lower() or 'unknown'
+    if entry_id:
+        packet_root = project_root / 'local_untracked' / 'analysis' / 'baselines' if project_root is not None else default_analysis_dir(Path(__file__)) / 'baselines'
+        packet_path = packet_root / entry_id / 'comparison_baseline_packet.json'
+        packet_payload = _load_json_dict_file(packet_path)
+        packet_stage = str(packet_payload.get('baseline_stage', '') or '').strip()
+        if (
+            str(packet_payload.get('artifact_family', '') or '').strip() == 'ds_comparison_baseline'
+            and str(packet_payload.get('selector_entry_id', '') or '').strip() == entry_id
+            and str(packet_payload.get('selector_run_id', '') or '').strip() == selector_run_id
+            and packet_stage in {'canary_reviewed', 'live_reviewed', 'honeypot_reviewed'}
+        ):
+            packet_source = str(packet_payload.get('source', '') or '').strip().lower() or 'unknown'
+            packet_mode = str(packet_payload.get('mode', '') or '').strip().lower()
+            if (entry_source == 'unknown' or packet_source == entry_source) and (not mode or packet_mode == mode):
+                return packet_stage
     return ''
 
 

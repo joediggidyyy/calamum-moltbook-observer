@@ -5701,7 +5701,12 @@ def _render_ds_saved_selectors_human(packet: Dict[str, Any]) -> List[str]:
                 entry_lines.append('')
             entry_lines.extend(_render_ds_saved_block(row, include_index=True, indent='  '))
     else:
-        entry_lines.append('  No saved selectors are available yet.')
+        if action == 'ds-saved-baselines':
+            if summary:
+                entry_lines.append('  {0}'.format(summary))
+            entry_lines.append('  Baseline context remains optional for evaluate and run-pipeline.')
+        else:
+            entry_lines.append('  No saved selectors are available yet.')
     _append_human_section(lines, 'Selectors', entry_lines)
 
     artifacts = packet.get('artifacts', {}) if isinstance(packet.get('artifacts', {}), dict) else {}
@@ -8781,21 +8786,36 @@ def _ds_comparison_baseline_stage(entry: Dict[str, Any]) -> str:
     if not isinstance(authority_entry, dict) or not authority_entry:
         return ''
 
-    tokens = [
-        str(authority_entry.get('entry_id', '') or '').strip().lower(),
-        str(authority_entry.get('run_id', '') or '').strip().lower(),
-        str(authority_entry.get('display_name', '') or '').strip().lower(),
-    ]
-    if not any('reviewed' in token for token in tokens if token):
-        return ''
+    explicit_stage = str(authority_entry.get('comparison_baseline_stage', '') or '').strip()
+    if explicit_stage:
+        return explicit_stage
 
+    registration_kind = str(authority_entry.get('registration_kind', '') or '').strip().lower()
     mode = str(authority_entry.get('mode', '') or '').strip().lower()
-    if mode == 'honeypot':
+    if registration_kind in ('reviewed-closeout', 'manual-register') and mode == 'honeypot':
         return 'honeypot_reviewed'
-    if mode == 'live':
+    if registration_kind in ('reviewed-closeout', 'manual-register') and mode == 'live':
         return 'live_reviewed'
-    if mode == 'canary':
+    if registration_kind in ('reviewed-closeout', 'manual-register') and mode == 'canary':
         return 'canary_reviewed'
+
+    entry_id = str(authority_entry.get('entry_id', '') or '').strip()
+    selector_run_id = str(authority_entry.get('run_id', '') or '').strip()
+    entry_source = _normalize_source(str(authority_entry.get('source', '') or '').strip() or 'unknown')
+    packet_mode = str(mode or '').strip().lower()
+    if entry_id:
+        packet_payload = _load_json_file(_ds_comparison_baseline_packet_path(entry_id), {})
+        packet_stage = str(packet_payload.get('baseline_stage', '') or '').strip()
+        if (
+            str(packet_payload.get('artifact_family', '') or '').strip() == 'ds_comparison_baseline'
+            and str(packet_payload.get('selector_entry_id', '') or '').strip() == entry_id
+            and str(packet_payload.get('selector_run_id', '') or '').strip() == selector_run_id
+            and packet_stage in {'canary_reviewed', 'live_reviewed', 'honeypot_reviewed'}
+        ):
+            packet_source = _normalize_source(str(packet_payload.get('source', '') or '').strip() or 'unknown')
+            packet_mode_value = str(packet_payload.get('mode', '') or '').strip().lower()
+            if (entry_source == 'unknown' or packet_source == entry_source) and (not packet_mode or packet_mode_value == packet_mode):
+                return packet_stage
     return ''
 
 
@@ -8812,14 +8832,11 @@ def _ds_is_eligible_comparison_baseline(entry: Dict[str, Any]) -> bool:
         return False
     if not _ds_comparison_baseline_stage(authority_entry):
         return False
-    if not bool(authority_entry.get('has_labels', False)):
-        return False
 
     resolver = dict(authority_entry.get('resolver', {}) or {}) if isinstance(authority_entry.get('resolver', {}), dict) else {}
     dataset_manifest_path = _resolve_existing_project_path(str(resolver.get('dataset_manifest_path', '') or '').strip())
     features_csv_path = _resolve_existing_project_path(str(resolver.get('features_csv_path', '') or '').strip())
-    labels_csv_path = _resolve_existing_project_path(str(resolver.get('labels_csv_path', '') or '').strip())
-    return dataset_manifest_path is not None and features_csv_path is not None and labels_csv_path is not None
+    return dataset_manifest_path is not None and features_csv_path is not None
 
 
 def _ds_lineage_target_baseline_stages(mode: str) -> Tuple[str, ...]:
@@ -8895,7 +8912,11 @@ def _ds_lineage_comparison_baseline_candidates(
         if baseline_stage not in stage_rank:
             continue
 
-        packet_path = _ds_resolve_comparison_baseline_packet(authority_entry)
+        packet_path = _ds_resolve_comparison_baseline_packet(
+            authority_entry,
+            emit_if_missing=True,
+            companion_role='saved baseline lineage selector companion',
+        )
         if packet_path is None:
             continue
 
@@ -8961,6 +8982,18 @@ def _ds_select_lineage_comparison_baseline_candidate(
     )
     if len(candidates) == 1:
         return candidates[0]
+
+    mode_token = str(mode or '').strip().lower()
+    if mode_token not in MODES:
+        fallback_packet_path = _resolve_existing_project_path(str(baseline_packet_ref or '').strip())
+        if fallback_packet_path is not None:
+            fallback_payload = _load_json_file(fallback_packet_path, {})
+            return {
+                'packet_path': fallback_packet_path,
+                'packet': fallback_payload if isinstance(fallback_payload, dict) else {},
+                'baseline_stage': str((fallback_payload if isinstance(fallback_payload, dict) else {}).get('baseline_stage', '') or '').strip(),
+                'authority_entry': {},
+            }
     return {}
 
 
@@ -9039,8 +9072,6 @@ def _ds_comparison_baseline_packet_payload(
         raise FileNotFoundError('comparison baseline entry is missing dataset manifest authority')
     if features_csv_path is None:
         raise FileNotFoundError('comparison baseline entry is missing features authority')
-    if labels_csv_path is None:
-        raise FileNotFoundError('comparison baseline entry is missing labels authority')
 
     dataset_manifest = _load_json_file(dataset_manifest_path, {})
     project_root = _project_root()
@@ -9059,7 +9090,7 @@ def _ds_comparison_baseline_packet_payload(
         'display_alias': str(entry.get('display_alias', '') or '').strip(),
         'dataset_manifest_path': normalize_repo_or_absolute_path(dataset_manifest_path, project_root),
         'features_csv_path': normalize_repo_or_absolute_path(features_csv_path, project_root),
-        'labels_csv_path': normalize_repo_or_absolute_path(labels_csv_path, project_root),
+        'labels_csv_path': normalize_repo_or_absolute_path(labels_csv_path, project_root) if labels_csv_path is not None else '',
         'companion_role': str(companion_role or '').strip(),
         'review_policy_packet': normalize_repo_or_absolute_path(review_policy_path, project_root) if review_policy_path is not None else str(review_policy_packet or '').strip().replace('\\', '/'),
         'record_count': int(entry.get('record_count', dataset_manifest.get('total_records', 0)) or 0),
@@ -9332,6 +9363,16 @@ def _ds_baseline_selectors(source: str, mode: str) -> Dict[str, Any]:
     m = str(mode or 'watch').strip().lower()
     if m not in MODES:
         m = 'watch'
+    target_stages = _ds_lineage_target_baseline_stages(m)
+    if entries:
+        summary = 'Retained DS comparison-baseline selector surface ready.'
+    elif target_stages:
+        stage_text = ', '.join(str(stage).strip() for stage in target_stages if str(stage).strip())
+        if len(target_stages) == 2:
+            stage_text = '{0} or {1}'.format(target_stages[0], target_stages[1])
+        summary = 'No admitted {0} DS comparison-baseline selectors are available for the current source/mode.'.format(stage_text)
+    else:
+        summary = 'No saved DS comparison-baseline selectors are available for the current source/mode.'
     return {
         'timestamp_utc': _utc_now(),
         'runtime_cli_surface': 'observerctl',
@@ -9342,7 +9383,7 @@ def _ds_baseline_selectors(source: str, mode: str) -> Dict[str, Any]:
         'family': 'baseline-context',
         'source': src,
         'mode': m,
-        'summary': 'Retained DS comparison-baseline selector surface ready.' if entries else 'No saved DS comparison-baseline selectors are available for the current source/mode.',
+        'summary': summary,
         'count': int(len(entries)),
         'selector_entries': [_ds_selector_entry_view(entry) for entry in entries],
         'artifacts': {
@@ -10551,7 +10592,7 @@ def _ds_wizard_baseline_picker_current(state: _DSWizardState) -> str:
     baseline_packet = str(state.values.get('baseline_analysis_packet', '') or '').strip()
     if baseline_window_id or baseline_packet:
         return _ds_wizard_loaded_marker()
-    return '<no saved baseline>'
+    return '<optional: none admitted>'
 
 
 def _ds_wizard_run_picker_current(state: _DSWizardState) -> str:
@@ -11506,7 +11547,13 @@ def _ds_wizard_saved_selector_lines(packet: Dict[str, Any], limit: int = 6) -> L
         lines.extend(_render_human_kv_rows([('Scope', ', '.join(scope_bits))], indent='  ', min_label_width=8, max_label_width=8))
 
     if not entries:
-        lines.append('  none available yet')
+        if action == 'ds-saved-baselines':
+            summary = str(packet.get('summary', '') or '').strip()
+            if summary:
+                lines.append('  {0}'.format(summary))
+            lines.append('  baseline context remains optional for evaluate and run-pipeline.')
+        else:
+            lines.append('  none available yet')
     else:
         for row in entries[: max(1, int(limit or 6))]:
             if not isinstance(row, dict):
@@ -11521,7 +11568,7 @@ def _ds_wizard_saved_selector_lines(packet: Dict[str, Any], limit: int = 6) -> L
     guidance = {
         'ds-saved-trained': ['choose a number to load saved model/train context into the wizard'],
         'ds-saved-runs': ['choose a number to hydrate prior evaluation context into the wizard'],
-        'ds-saved-baselines': ['choose a number to attach saved baseline context to the model/evaluation lane'],
+        'ds-saved-baselines': ['choose a number to attach saved baseline context to the model/evaluation lane'] if entries else ['evaluate can still run without a baseline packet; this surface only adds admitted lineage context when available.'],
         'ds-saved-drafts': ['choose a number to restore a saved draft slot'],
     }.get(action, [])
     if guidance:
@@ -11927,12 +11974,36 @@ def _ds_wizard_hydrate_baseline_analysis(state: _DSWizardState, packet_path: Pat
     if str(payload.get('baseline_window_id', '')).strip():
         state.values['baseline_window_id'] = str(payload.get('baseline_window_id')).strip()
         state.hydrated_from['baseline_window_id'] = 'baseline_analysis'
+    loaded_fields = ['baseline_analysis_packet', 'baseline_window_id']
+    if str(payload.get('artifact_family', '')).strip() == 'ds_comparison_baseline':
+        base_dir = packet_path.parent
+        manifest_ref = str(payload.get('dataset_manifest_path', '') or '').strip()
+        if manifest_ref and not _ds_wizard_has_value(state.values.get('dataset_manifest')):
+            manifest_resolved = _resolve_existing_reference_path(manifest_ref, base_dir)
+            state.values['dataset_manifest'] = str(manifest_resolved or manifest_ref).strip()
+            state.hydrated_from['dataset_manifest'] = 'baseline_analysis'
+            loaded_fields.append('dataset_manifest')
+        features_ref = str(payload.get('features_csv_path', '') or '').strip()
+        if features_ref and not _ds_wizard_has_value(state.values.get('features_csv')):
+            features_resolved = _resolve_existing_reference_path(features_ref, base_dir)
+            state.values['features_csv'] = str(features_resolved or features_ref).strip()
+            state.hydrated_from['features_csv'] = 'baseline_analysis'
+            loaded_fields.append('features_csv')
+        labels_ref = str(payload.get('labels_csv_path', '') or '').strip()
+        if labels_ref and not _ds_wizard_has_value(state.values.get('labels_csv')):
+            labels_resolved = _resolve_existing_reference_path(labels_ref, base_dir)
+            state.values['labels_csv'] = str(labels_resolved or labels_ref).strip()
+            state.hydrated_from['labels_csv'] = 'baseline_analysis'
+            loaded_fields.append('labels_csv')
+        elif not labels_ref and not _ds_wizard_has_value(state.values.get('labels_csv')):
+            state.values['labels_csv'] = ''
+            state.hydrated_from.pop('labels_csv', None)
     state.last_action = 'hydrate:baseline_analysis'
     _ds_wizard_set_transient_lines(
         state,
         [
             'baseline context attached: {0}'.format(_ds_wizard_short_path(str(packet_path))),
-            'loaded fields: baseline_analysis_packet, baseline_window_id',
+            'loaded fields: {0}'.format(', '.join(loaded_fields)),
         ],
     )
     return state
@@ -13156,6 +13227,22 @@ def _ds_wizard_packet_completion_line(packet: Dict[str, Any]) -> str:
     return 'execute complete'
 
 
+def _ds_wizard_execute_failure_line(packet: Dict[str, Any]) -> str:
+    reason_codes = list(packet.get('reason_codes', []) or []) if isinstance(packet.get('reason_codes', []), list) else []
+    if 'critical_check_failed:wizard_validation_blocked' in reason_codes:
+        return 'execute blocked: validate this workflow first'
+
+    summary = str(packet.get('summary', '') or '').strip().rstrip('.')
+    if summary:
+        return 'execute failed: {0}'.format(summary[:1].lower() + summary[1:])
+
+    error_detail = str(packet.get('error_detail', '') or '').strip()
+    if error_detail:
+        return 'execute failed: {0}'.format(error_detail)
+
+    return 'execute failed: review the latest packet and logs'
+
+
 def _ds_wizard_completion_result_rows(state: _DSWizardState) -> List[Tuple[str, str]]:
     workflow = str(state.workflow or '').strip()
     if workflow not in _DS_WIZARD_WORKFLOWS:
@@ -13336,9 +13423,11 @@ def _ds_wizard_left_rail_rows(state: _DSWizardState) -> List[str]:
     has_dataset = _ds_wizard_has_value(state.values.get('dataset_manifest'))
     model_type = str(state.values.get('model_type', '') or '').strip() if has_dataset else ''
     family_label = model_type
+    validate_state = 'blocked' if len(_ds_wizard_run_gate_issues(state)) > 0 else 'ready'
     return [
         'workflow: {0}'.format(_ds_wizard_workflow_label(state.workflow)),
-        'status: {0}'.format(_style_readiness_value(_ds_wizard_advance_status(state))),
+        'validate: {0}'.format(_style_readiness_value(validate_state)),
+        'advance: {0}'.format(_style_readiness_value(_ds_wizard_advance_status(state))),
         'family: {0}'.format(family_label),
     ]
 
@@ -13704,6 +13793,10 @@ def _ds_wizard_attempt_execute(state: _DSWizardState) -> Dict[str, Any]:
                 run_id=str(state.values.get('run_id', '')) if _ds_wizard_run_id_override_active(state) else '',
                 model_path=str(state.values.get('model_path', '')),
                 collection_alias=collection_alias,
+                source=str(state.values.get('source', state.source or '')),
+                mode=str(state.values.get('mode', state.mode or '')),
+                baseline_window_id=str(state.values.get('baseline_window_id', '')),
+                baseline_analysis_packet=str(state.values.get('baseline_analysis_packet', '')),
             )
         elif workflow == 'score':
                 score_kwargs = {
@@ -13966,7 +14059,7 @@ def _ds_wizard_handle_command(state: _DSWizardState, command: str) -> Tuple[_DSW
     if lowered == 'execute':
         packet = _ds_wizard_attempt_execute(state)
         if str(packet.get('decision', 'no-go')).strip().lower() != 'go':
-            _ds_wizard_set_transient_lines(state, ['execute blocked: validate this workflow first'])
+            _ds_wizard_set_transient_lines(state, [_ds_wizard_execute_failure_line(packet)])
             return state, None, False
         state = _ds_wizard_sync_execution_artifacts(state, packet)
         command_preview = _ds_wizard_command_preview(state)
@@ -14429,6 +14522,8 @@ def _ds_finalize_run_packet(
             catalog_updated=bool((dataset_refresh or {}).get('catalog_updated', False)) if isinstance(dataset_refresh, dict) else False,
             snapshot_path=str((dataset_refresh or {}).get('snapshot_path', '') or '') if isinstance(dataset_refresh, dict) else '',
             catalog_path=str((dataset_refresh or {}).get('catalog_path', '') or '') if isinstance(dataset_refresh, dict) else '',
+            comparison_baseline_packet=str((dataset_refresh or {}).get('comparison_baseline_packet', '') or '') if isinstance(dataset_refresh, dict) else '',
+            comparison_baseline_emitted=bool((dataset_refresh or {}).get('comparison_baseline_emitted', False)) if isinstance(dataset_refresh, dict) else False,
         )
         publication_reason_codes = publication_eligibility_reasons(
             project_anchor=Path(__file__),
@@ -14475,6 +14570,8 @@ def _ds_finalize_run_packet(
                 'librarian_dataset_manifest_json': str(dataset_refresh.get('snapshot_path', '') or ''),
                 'librarian_dataset_catalog_jsonl': str(dataset_refresh.get('catalog_path', '') or ''),
             })
+        if isinstance(dataset_refresh, dict) and str(dataset_refresh.get('comparison_baseline_packet', '') or '').strip():
+            final_packet['artifacts']['comparison_baseline_packet_json'] = str(dataset_refresh.get('comparison_baseline_packet', '') or '').strip()
         if str(publication_state.get('decision', '') or '').strip().lower() == 'go':
             aggregate_paths = publication_state.get('aggregate_paths', {}) if isinstance(publication_state.get('aggregate_paths', {}), dict) else {}
             current_publication = publication_state.get('current_run', {}) if isinstance(publication_state.get('current_run', {}), dict) else {}
@@ -14769,7 +14866,7 @@ def _ds_train(dataset: str, out_dir: str, model_type: str, seed: int, collection
     )
 
 
-def _ds_evaluate(features_csv: str, labels_csv: str, dataset_manifest: str, max_fpr: float, out_dir: str, run_id: str, model_path: str, collection_alias: str = '') -> Dict[str, Any]:
+def _ds_evaluate(features_csv: str, labels_csv: str, dataset_manifest: str, max_fpr: float, out_dir: str, run_id: str, model_path: str, collection_alias: str = '', source: str = '', mode: str = '', baseline_window_id: str = '', baseline_analysis_packet: str = '') -> Dict[str, Any]:
     from dataclasses import asdict
     import pickle
 
@@ -14800,7 +14897,16 @@ def _ds_evaluate(features_csv: str, labels_csv: str, dataset_manifest: str, max_
             if joblib is None:
                 raise RuntimeError('could not load model via pickle and joblib is unavailable ({0})'.format(pickle_error))
             loaded_model = joblib.load(resolved_model_path)
-        scorer = make_model_scorer(loaded_model)
+        manifest_feature_columns = None
+        if str(dataset_manifest).strip():
+            _manifest_path = Path(dataset_manifest)
+            if _manifest_path.exists():
+                try:
+                    with _manifest_path.open('r', encoding='utf-8') as _mf:
+                        manifest_feature_columns = json.load(_mf).get('feature_columns')
+                except Exception:
+                    pass
+        scorer = make_model_scorer(loaded_model, feature_columns=manifest_feature_columns)
         score_direction = infer_model_score_direction(loaded_model)
     evaluate_kwargs = {
         'labels_csv': Path(labels_csv) if str(labels_csv).strip() else None,
@@ -14884,15 +14990,28 @@ def _ds_evaluate(features_csv: str, labels_csv: str, dataset_manifest: str, max_
     explicit_collection_alias = str(collection_alias or '').strip()
     if explicit_collection_alias:
         packet['collection_alias'] = explicit_collection_alias
+    resolved_source = str(source or '').strip()
+    resolved_mode = str(mode or '').strip()
+    resolved_baseline_window_id = str(baseline_window_id or '').strip()
+    resolved_baseline_analysis_packet = str(baseline_analysis_packet or '').strip()
+    finalize_context: Dict[str, Any] = {
+        'max_fpr': float(max_fpr),
+        'output_override': bool(str(out_dir).strip()),
+        'collection_alias': explicit_collection_alias,
+    }
+    if resolved_source:
+        finalize_context['source'] = resolved_source
+    if resolved_mode:
+        finalize_context['mode'] = resolved_mode
+    if resolved_baseline_window_id:
+        finalize_context['baseline_window_id'] = resolved_baseline_window_id
+    if resolved_baseline_analysis_packet:
+        finalize_context['baseline_analysis_packet'] = resolved_baseline_analysis_packet
     return _ds_finalize_run_packet(
         packet,
         bundle=bundle,
         artifact_paths=artifact_paths,
-        context={
-            'max_fpr': float(max_fpr),
-            'output_override': bool(str(out_dir).strip()),
-            'collection_alias': explicit_collection_alias,
-        },
+        context=finalize_context,
         lineage={
             'features_csv': Path(features_csv),
             'labels_csv': Path(labels_csv) if str(labels_csv).strip() else None,
@@ -15165,7 +15284,7 @@ def _ds_run_pipeline(
 
     features_csv = Path(manifest.features_csv)
     labels_csv = Path(manifest.labels_csv) if manifest.labels_csv else None
-    scorer = make_model_scorer(model)
+    scorer = make_model_scorer(model, feature_columns=manifest.feature_columns)
     score_direction = infer_model_score_direction(model)
     evaluation = evaluate(
         features_csv,

@@ -73,6 +73,10 @@ VAULT_AUDIT_KIND = 'librarian_vault_audit'
 LIBRARIAN_DATASET_ROUTER_SCHEMA_VERSION = '1.0'
 LIBRARIAN_DATASET_ROUTER_KIND = 'librarian_dataset_router_v1'
 LIBRARIAN_DATASET_ROUTER_FILENAME = 'librarian_dataset_routing_map.json'
+_ADMITTED_DATASET_REGISTRATION_KINDS = {
+    'manual-register',
+    'reviewed-closeout',
+}
 
 _LIBRARIAN_ROUTER_ACTION_CLASSES = {
     'scope_actions': {
@@ -895,6 +899,15 @@ def _infer_dataset_scope(
 ) -> Tuple[str, str]:
     resolved_source = _dataset_scope_token(source, ('sim', 'real'))
     resolved_mode = _dataset_scope_token(mode, ('watch', 'canary', 'live', 'honeypot'))
+
+    if resolved_source == 'unknown':
+        resolved_source = _dataset_scope_token(str(payload.get('source', '') or '').strip(), ('sim', 'real'))
+    if resolved_mode == 'unknown':
+        resolved_mode = _dataset_scope_token(
+            str(payload.get('mode', '') or '').strip(),
+            ('watch', 'canary', 'live', 'honeypot'),
+        )
+
     if resolved_source != 'unknown' and resolved_mode != 'unknown':
         return resolved_source, resolved_mode
 
@@ -925,6 +938,10 @@ def _normalize_dataset_scope_entry(paths: Dict[str, Path], entry: Dict[str, Any]
     if source != 'unknown' and mode != 'unknown':
         row['source'] = source
         row['mode'] = mode
+        row['comparison_baseline_stage'] = _dataset_comparison_baseline_stage_token(
+            str(row.get('registration_kind', '') or '').strip(),
+            mode,
+        )
         return row
 
     resolver = dict(row.get('resolver', {}) or {}) if isinstance(row.get('resolver', {}), dict) else {}
@@ -932,6 +949,10 @@ def _normalize_dataset_scope_entry(paths: Dict[str, Path], entry: Dict[str, Any]
     if not manifest_ref:
         row['source'] = source
         row['mode'] = mode
+        row['comparison_baseline_stage'] = _dataset_comparison_baseline_stage_token(
+            str(row.get('registration_kind', '') or '').strip(),
+            mode,
+        )
         return row
 
     try:
@@ -939,16 +960,28 @@ def _normalize_dataset_scope_entry(paths: Dict[str, Path], entry: Dict[str, Any]
     except Exception:
         row['source'] = source
         row['mode'] = mode
+        row['comparison_baseline_stage'] = _dataset_comparison_baseline_stage_token(
+            str(row.get('registration_kind', '') or '').strip(),
+            mode,
+        )
         return row
     if not manifest_path.exists():
         row['source'] = source
         row['mode'] = mode
+        row['comparison_baseline_stage'] = _dataset_comparison_baseline_stage_token(
+            str(row.get('registration_kind', '') or '').strip(),
+            mode,
+        )
         return row
 
     payload = _read_json_dict(manifest_path, default={})
     if not payload:
         row['source'] = source
         row['mode'] = mode
+        row['comparison_baseline_stage'] = _dataset_comparison_baseline_stage_token(
+            str(row.get('registration_kind', '') or '').strip(),
+            mode,
+        )
         return row
 
     inferred_source, inferred_mode = _infer_dataset_scope(
@@ -962,7 +995,25 @@ def _normalize_dataset_scope_entry(paths: Dict[str, Path], entry: Dict[str, Any]
     )
     row['source'] = inferred_source
     row['mode'] = inferred_mode
+    row['comparison_baseline_stage'] = _dataset_comparison_baseline_stage_token(
+        str(row.get('registration_kind', '') or '').strip(),
+        inferred_mode,
+    )
     return row
+
+
+def _dataset_comparison_baseline_stage_token(registration_kind: str, mode: str) -> str:
+    registration_kind_token = str(registration_kind or '').strip().lower()
+    mode_token = str(mode or '').strip().lower()
+    if registration_kind_token not in ('reviewed-closeout', 'manual-register'):
+        return ''
+    if mode_token == 'honeypot':
+        return 'honeypot_reviewed'
+    if mode_token == 'live':
+        return 'live_reviewed'
+    if mode_token == 'canary':
+        return 'canary_reviewed'
+    return ''
 
 
 def _utc_after_seconds(seconds: int) -> str:
@@ -1010,6 +1061,7 @@ def _dataset_selector_entry(entry: Dict[str, Any], index: int) -> Dict[str, Any]
         'source': str(entry.get('source', 'unknown') or 'unknown'),
         'mode': str(entry.get('mode', 'unknown') or 'unknown'),
         'registration_kind': str(entry.get('registration_kind', '') or '').strip(),
+        'comparison_baseline_stage': str(entry.get('comparison_baseline_stage', '') or '').strip(),
         'baseline_window_id': str(entry.get('baseline_window_id', '') or '').strip(),
         'baseline_analysis_packet': str(resolver.get('baseline_analysis_packet', '') or '').strip(),
         'baseline_analysis_index_path': str(resolver.get('baseline_analysis_index_path', '') or '').strip(),
@@ -1331,7 +1383,112 @@ def _entry_is_admitted_dataset_selector(entry: Dict[str, Any]) -> bool:
     status = str(entry.get('status', '') or '').strip().lower()
     readiness = str(entry.get('readiness', '') or '').strip().lower()
     registration_kind = str(entry.get('registration_kind', '') or '').strip().lower()
-    return status == 'approved' and readiness == 'ready' and registration_kind == 'manual-register'
+    return (
+        status == 'approved'
+        and readiness == 'ready'
+        and registration_kind in _ADMITTED_DATASET_REGISTRATION_KINDS
+    )
+
+
+def _run_manifest_dataset_ref(manifest_payload: Dict[str, Any]) -> str:
+    artifacts = dict(manifest_payload.get('artifacts', {}) or {}) if isinstance(manifest_payload, dict) else {}
+    return str(artifacts.get('dataset_manifest', '') or '').strip()
+
+
+def _run_manifest_scope(manifest_payload: Dict[str, Any]) -> Tuple[str, str]:
+    context = dict(manifest_payload.get('context', {}) or {}) if isinstance(manifest_payload, dict) else {}
+    source = _dataset_scope_token(str(context.get('source', '') or manifest_payload.get('source', '') or '').strip(), ('sim', 'real'))
+    mode = _dataset_scope_token(
+        str(context.get('mode', '') or manifest_payload.get('mode', '') or '').strip(),
+        ('watch', 'canary', 'live', 'honeypot'),
+    )
+    return source, mode
+
+
+def _reviewed_closeout_display_name(*, mode: str, collection_alias: str, run_id: str) -> str:
+    identity = str(collection_alias or run_id or 'dataset').strip() or 'dataset'
+    if 'reviewed' in identity.lower():
+        return identity
+    mode_token = str(mode or '').strip().lower()
+    mode_label = mode_token.title() if mode_token else 'Dataset'
+    return 'Reviewed {0} {1}'.format(mode_label, identity)
+
+
+def _maybe_auto_admit_reviewed_closeout(
+    paths: Dict[str, Path],
+    project_anchor: Path,
+    manifest_payload: Dict[str, Any],
+    manifest_path: Path,
+) -> Dict[str, Any]:
+    workflow = str(manifest_payload.get('workflow', '') or '').strip().lower()
+    if workflow != 'build':
+        return {}
+
+    source, mode = _run_manifest_scope(manifest_payload)
+    if mode not in {'canary', 'live', 'honeypot'}:
+        return {}
+
+    payload = _read_json_dict(manifest_path, default={})
+    if not bool(payload.get('has_labels', False)):
+        return {}
+
+    run_id = str(manifest_payload.get('run_id', '') or '').strip()
+    if not run_id:
+        return {}
+
+    report_paths = dict(manifest_payload.get('report_paths', {}) or {}) if isinstance(manifest_payload, dict) else {}
+    report_manifest_ref = str(report_paths.get('manifest', '') or '').strip()
+    collection_alias = str(manifest_payload.get('collection_alias', '') or '').strip()
+    display_name = _reviewed_closeout_display_name(
+        mode=mode,
+        collection_alias=collection_alias,
+        run_id=run_id,
+    )
+
+    existing = _authoritative_dataset_entry_for_manifest(paths, manifest_path)
+    entry = _build_dataset_entry(
+        project_anchor,
+        manifest_path,
+        access_class=DATASET_ACCESS_CLASS_LOCAL,
+        display_name=display_name,
+        run_id=run_id,
+        workflow=workflow,
+        recorded_at_utc=str(manifest_payload.get('timestamp_utc', '') or '').strip() or utc_now_iso(),
+        registration_kind='reviewed-closeout',
+        report_manifest_ref=report_manifest_ref,
+        source=source,
+        mode=mode,
+        source_binding='run-manifest:{0}'.format(run_id),
+    )
+    existing_entry_id = str(existing.get('entry_id', '') or '').strip() if isinstance(existing, dict) else ''
+    if existing_entry_id and not _entry_is_admitted_dataset_selector(existing):
+        entry['entry_id'] = existing_entry_id
+
+    update = _upsert_dataset_entry(paths, entry)
+    baseline = _write_vault_baseline(paths, reason='librarian-dataset-refresh-reviewed-closeout')
+    _append_vault_audit_record(
+        paths,
+        action='librarian-dataset-refresh',
+        status='ok',
+        ordinary_mutation=True,
+        reason='reviewed-closeout-auto-admit',
+        details={
+            'entry_id': str(entry.get('entry_id', '') or '').strip(),
+            'run_id': run_id,
+            'workflow': workflow,
+            'baseline_checksum': str(baseline.get('checksum_sha256', '') or '').strip(),
+        },
+    )
+    resolved = _resolve_dataset_entry(paths, str(entry.get('entry_id', '') or '').strip())
+    selector_entry = resolved.get('selector_entry', {}) if isinstance(resolved, dict) else {}
+    return {
+        'entry': dict(resolved.get('entry', {}) or entry) if isinstance(resolved, dict) else entry,
+        'selector_entry': selector_entry,
+        'catalog_updated': True,
+        'snapshot_path': update['snapshot_path'],
+        'catalog_path': update['catalog_path'],
+        'baseline_checksum_sha256': str(baseline.get('checksum_sha256', '') or '').strip(),
+    }
 
 
 def _approved_dataset_entries(paths: Dict[str, Path]) -> List[Dict[str, Any]]:
@@ -1684,6 +1841,7 @@ def _build_dataset_entry(
         'source_binding': resolved_binding,
         'report_manifest_ref': str(report_manifest_ref or '').strip(),
         'registration_kind': str(registration_kind or 'manual').strip() or 'manual',
+        'comparison_baseline_stage': _dataset_comparison_baseline_stage_token(registration_kind, resolved_mode),
         'baseline_window_id': str(baseline_context.get('baseline_window_id', '') or '').strip(),
         'baseline_decision_state': str(baseline_context.get('baseline_decision_state', '') or '').strip(),
         'baseline_summary': str(baseline_context.get('baseline_summary', '') or '').strip(),
@@ -1712,8 +1870,10 @@ def _upsert_dataset_entry(paths: Dict[str, Path], entry: Dict[str, Any]) -> Dict
 
 
 def refresh_librarian_dataset_catalog_from_run_manifest(project_anchor: Path, manifest_payload: Dict[str, Any]) -> Dict[str, Any]:
-    artifacts = dict(manifest_payload.get('artifacts', {}) or {}) if isinstance(manifest_payload, dict) else {}
-    dataset_ref = str(artifacts.get('dataset_manifest', '') or '').strip()
+    paths = _dataset_catalog_paths(project_anchor)
+    _bootstrap_librarian_vault(paths)
+    project_root = paths['project_root']
+    dataset_ref = _run_manifest_dataset_ref(manifest_payload)
     if not dataset_ref:
         return {
             'timestamp_utc': utc_now_iso(),
@@ -1725,15 +1885,110 @@ def refresh_librarian_dataset_catalog_from_run_manifest(project_anchor: Path, ma
             'reason_codes': [],
         }
 
+    try:
+        manifest_path = _resolve_catalog_ref(project_root, dataset_ref)
+    except Exception:
+        manifest_path = Path(dataset_ref)
+    if not manifest_path.exists():
+        return {
+            'timestamp_utc': utc_now_iso(),
+            'runtime_cli_surface': 'observerctl',
+            'decision': 'go',
+            'action': 'librarian-dataset-refresh',
+            'catalog_updated': False,
+            'summary': 'No dataset authority change was needed because the DS dataset manifest could not be resolved from closeout artifacts.',
+            'reason_codes': ['critical_check_failed:librarian_dataset_manifest_missing'],
+            'dataset_manifest_ref': dataset_ref,
+        }
+
+    authority_entry = _authoritative_dataset_entry_for_manifest(paths, manifest_path)
+    refresh_state = {
+        'entry': authority_entry if isinstance(authority_entry, dict) else {},
+        'selector_entry': {},
+        'catalog_updated': False,
+        'snapshot_path': '',
+        'catalog_path': '',
+    }
+
+    if not _entry_is_admitted_dataset_selector(refresh_state['entry']):
+        refresh_state = _maybe_auto_admit_reviewed_closeout(paths, project_anchor, manifest_payload, manifest_path)
+
+    entry = dict(refresh_state.get('entry', {}) or {})
+    selector_entry = dict(refresh_state.get('selector_entry', {}) or {})
+    comparison_baseline_packet = ''
+    comparison_baseline_emitted = False
+    if entry:
+        try:
+            from observerctl import _ds_comparison_baseline_packet_path, _ds_comparison_baseline_stage, _ds_resolve_comparison_baseline_packet
+        except Exception:
+            _ds_comparison_baseline_packet_path = None
+            _ds_comparison_baseline_stage = None
+            _ds_resolve_comparison_baseline_packet = None
+
+        if (
+            _ds_comparison_baseline_packet_path is not None
+            and _ds_comparison_baseline_stage is not None
+            and _ds_resolve_comparison_baseline_packet is not None
+        ):
+            entry_id = str(entry.get('entry_id', '') or '').strip()
+            baseline_stage = str(_ds_comparison_baseline_stage(entry) or '').strip()
+            had_packet = bool(entry_id) and _ds_comparison_baseline_packet_path(entry_id).exists()
+            resolved_packet = _ds_resolve_comparison_baseline_packet(
+                entry,
+                emit_if_missing=True,
+                companion_role='reviewed closeout dataset authority companion',
+            ) if baseline_stage else None
+            if resolved_packet is not None:
+                comparison_baseline_packet = normalize_repo_or_absolute_path(resolved_packet, project_root)
+                comparison_baseline_emitted = not had_packet
+
+    if not refresh_state:
+        return {
+            'timestamp_utc': utc_now_iso(),
+            'runtime_cli_surface': 'observerctl',
+            'decision': 'go',
+            'action': 'librarian-dataset-refresh',
+            'catalog_updated': False,
+            'summary': 'No dataset authority change was needed for this DS run.',
+            'reason_codes': [],
+            'dataset_manifest_ref': dataset_ref,
+        }
+
+    if not entry:
+        return {
+            'timestamp_utc': utc_now_iso(),
+            'runtime_cli_surface': 'observerctl',
+            'decision': 'go',
+            'action': 'librarian-dataset-refresh',
+            'catalog_updated': False,
+            'summary': 'No dataset authority change was needed for this DS run.',
+            'reason_codes': [],
+            'dataset_manifest_ref': dataset_ref,
+        }
+
+    if refresh_state.get('catalog_updated'):
+        summary = 'Reviewed DS closeout admitted dataset authority and emitted the comparison-baseline packet.' if comparison_baseline_packet else 'Reviewed DS closeout admitted dataset authority for saved-selector discovery.'
+    elif comparison_baseline_packet:
+        summary = 'Reviewed DS closeout preserved admitted dataset authority and ensured the comparison-baseline packet is materialized.'
+    else:
+        summary = 'Reviewed DS closeout authority was already admitted and required no additional dataset mutation.'
+
     return {
         'timestamp_utc': utc_now_iso(),
         'runtime_cli_surface': 'observerctl',
         'decision': 'go',
         'action': 'librarian-dataset-refresh',
-        'catalog_updated': False,
-        'summary': 'DS run artifacts were recorded without changing librarian-approved dataset authority; explicit librarian registration is required for selector admission.',
+        'catalog_updated': bool(refresh_state.get('catalog_updated', False)),
+        'comparison_baseline_emitted': bool(comparison_baseline_emitted),
+        'comparison_baseline_packet': comparison_baseline_packet,
+        'summary': summary,
         'reason_codes': [],
         'dataset_manifest_ref': dataset_ref,
+        'selector_entry_id': str(selector_entry.get('entry_id', '') or entry.get('entry_id', '') or '').strip(),
+        'selector_run_id': str(selector_entry.get('run_id', '') or entry.get('run_id', '') or '').strip(),
+        'registration_kind': str(entry.get('registration_kind', '') or '').strip(),
+        'snapshot_path': str(refresh_state.get('snapshot_path', '') or ''),
+        'catalog_path': str(refresh_state.get('catalog_path', '') or ''),
     }
 
 
