@@ -183,11 +183,11 @@ These views are presentation surfaces. Runtime truth comes from `observerctl`, w
 
 ### CLI system log view
 
-<img src="assets/branding/syslog_scroll.png" alt="CLI System Log" width="600">
+<img src="assets/branding/syslog_scroll.png" alt="CLI System Log" width="400">
 
 ### GUI dashboard kill switch
 
-<img src="assets/branding/gui_kill_switch.png" alt="GUI Dashboard Kill Switch" width="600">
+<img src="assets/branding/gui_kill_switch.png" alt="GUI Dashboard Kill Switch" width="300">
 
 ## Getting started
 
