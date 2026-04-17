@@ -4,7 +4,8 @@
 **Status**: Public security policy  
 **Owner**: ORACL-Prime  
 **Project**: Calamum Moltbook Observer  
-**Last updated**: 2026-04-06
+**Version**: `1.0.1`  
+**Last updated**: 2026-04-17
 
 This document defines the public security posture for Calamum Moltbook Observer.
 
@@ -33,7 +34,18 @@ For the architectural runtime model behind those principles, see [`docs/manuals/
 
 | Version | Supported          | Notes                                 |
 | ------- | ------------------ | ------------------------------------- |
-| 1.0.x   | :white_check_mark: | Current supported public release line |
+| 1.0.1   | :white_check_mark: | Current supported public release      |
+
+## Security at a glance
+
+| Control family | Public contract | Security effect |
+| -------------- | --------------- | --------------- |
+| Names-only persistence | Normal retained workflows store structural telemetry and linkage metadata instead of raw Moltbook content | narrows retained-data exposure while preserving reproducible evidence |
+| Posture control | `watch` and `canary` stay in isolation; `live` and `honeypot` escalate into lockdown | higher-risk moves face stricter gating and stronger prerequisites |
+| Baseline monitoring | readiness depends on current baseline and dependency evidence | stale or incoherent systems deny instead of drifting forward |
+| Watchdog enforcement | an independent supervisory layer can deny or stop invalid runtime state | fail-closed behavior does not depend on presentation layers staying truthful |
+| Evidence-linked operations | gate and transition outputs remain names-only and run-linked | state changes stay reviewable without normalizing unsafe retention |
+| Public/local surface split | public docs and derived reports stay separate from local machine-readable authority | publication remains reader-facing while operational residue stays local |
 
 
 ## Security principles
@@ -92,7 +104,38 @@ Public posture model:
 | `live`     | `lockdown`      |
 | `honeypot` | `lockdown`      |
 
+Security authority is explicit:
+
+- dashboards summarize state,
+- the runtime CLI, watchdog, and retained packets enforce state.
+
+Security consequences are explicit as well:
+
+- requests targeting `live` or `honeypot` are stricter paths,
+- source escalation from `sim` to `real` is a stricter path,
+- readiness, baseline sufficiency, and required dependency presence are security preconditions rather than optional setup steps.
+
+Higher-risk moves are expected to prove the following before admission:
+
+| Precondition | Why it matters |
+| ------------ | -------------- |
+| heartbeat freshness and posture coherence | prevents stale runtime state from presenting as trustworthy |
+| baseline sufficiency | ties escalation to current operating evidence rather than hopeful assumptions |
+| required dependency presence | keeps real-source and lockdown paths bound to the surfaces they actually need |
+| run-linkage and gate evidence | preserves reviewable transition history after the fact |
+
 The deeper architecture for these controls is documented in [`docs/manuals/reference/SECURITY_MODEL.md`](docs/manuals/reference/SECURITY_MODEL.md), and the command-level transition contract is documented in [`docs/manuals/reference/RUNTIME_TRANSITIONS.md`](docs/manuals/reference/RUNTIME_TRANSITIONS.md).
+
+## Operator expectations
+
+When a control denies an action, treat that denial as evidence that the safety model is working.
+
+| Expectation | Meaning in practice |
+| ----------- | ------------------- |
+| Honor denied gates | resolve the blocking condition or obtain explicit approval before retrying |
+| Keep evidence local and linked | stricter-lane work should preserve names-only linkage without promoting local residue into the public surface |
+| Follow runtime authority order | when views disagree, the CLI, watchdog, and retained packets outrank presentation surfaces |
+| Treat lockdown as intentionally stricter | `live` and `honeypot` are governed escalations, not ordinary mode toggles |
 
 ## What we actively defend against
 
@@ -130,10 +173,10 @@ They should not persist raw message or body content as part of the normal contra
 
 ## Reporting a Vulnerability ("The Fail-Closed Pact")
 
-**CRITICAL**: This software contains containment measures ("Glass Box" isolation and watchdog fail-closed enforcement) designed to prevent malware escape.
+**CRITICAL**: This software contains containment measures ("Glass Box" isolation, read-only runtime containment, and watchdog fail-closed enforcement) designed to reduce containment-breach risk and stop unsafe execution when core assumptions fail.
 
 If you discover a vulnerability that allows:
-1. The container to write to the host filesystem.
+1. The container or runtime to write outside the intended mounted output boundary or otherwise bypass the read-only containment model.
 2. The agent to bypass the `obfuscator_lib` and leak raw PII.
 3. The watchdog enforcement layer to be disabled silently.
 4. Credentials or high-risk runtime data to be emitted into tracked or public-facing artifacts.
@@ -165,11 +208,17 @@ These controls define how the project maintains containment, evidence discipline
 - presence checks are acceptable; value materialization in docs/logs is not
 - public examples must use placeholders, never real secrets
 
+### Security-adjacent transaction proof
+
+- non-dry-run KEYSMITH mint is expected to remain sandbox-contained
+- sandbox proof should stay version-matched and build-attested when it is used for promotion review
+
 ### Runtime containment and posture control
 
 - isolation and lockdown postures are part of the operational model
-- watchdog enforcement surfaces, including `sentinel.py`, exist to detect invalid runtime state and force a stop when necessary
-- live-lane actions are expected to deny when prerequisites are incomplete
+- watchdog enforcement exists to detect invalid runtime state and force a stop when necessary
+- real-source escalation and lockdown-lane actions are expected to deny when prerequisites are incomplete
+- readiness, baseline sufficiency, and required dependency presence are treated as security preconditions
 
 ### Public/private surface separation
 
@@ -184,64 +233,43 @@ The current report lane is part of the public presentation surface, but it follo
 
 - collection packets are routed by collection alias under `docs/reports/collections/<collection-alias>/`
 - dated stage packets live under the `build`, `train`, `evaluate`, and `score` processing leaves
-- published figures must be packet-declared, names-only, and tied to the same packet lineage as their companion report surfaces
+- published figures must remain names-only and tied to the same packet lineage as their companion report surfaces
 - canonical machine-readable authority remains under the local analysis indexes and manifests, not inside `docs/reports/`
 
-## Evidence boundary rule
+## Security surfaces and authority
 
-Public documentation may reference canonical local runtime paths and evidence families, but those references are descriptive. They do not convert local runtime evidence into public tracked artifact.
+| Surface family | Public role | Security meaning |
+| -------------- | ----------- | ---------------- |
+| Root docs and manuals | public contract, routing, and interpretation | explain the rules without becoming runtime evidence |
+| `docs/reports/` publication views | human-facing derived publication | rebuild from canonical local artifacts and stay secondary to machine-readable authority |
+| local runtime outputs, manifests, indexes, and audit traces | operator-local execution evidence | carry the canonical machine-readable authority for execution, lineage, and review |
 
-This distinction matters because the project intentionally separates:
-
-- public contract/manual surfaces,
-- local runtime outputs,
-- local governance and audit residue.
+Public documentation may reference canonical local runtime paths and evidence families, but those references remain descriptive rather than promoting local execution residue into a tracked public artifact.
 
 ## Audit tooling safety controls
 
-The Calamum audit tools are designed to be safe to run on developer machines and in demos. We put real effort into making the tooling itself less likely to become the problem.
+The Calamum audit tools are designed to be safe to run on developer machines and in demos.
 
-### Output isolation (untracked)
+Their public security contract is:
 
-All runtime audit outputs are written under the project-local ignored subtree:
+- audit outputs remain local and untracked rather than becoming public runtime residue
+- audit modes support non-destructive evaluation when appropriate
+- network-restricted audit execution is available when active probing is not appropriate
+- audit evidence remains names-only and provenance-linked
 
-- `projects/calamum-moltbook-observer/local_untracked/`
-
-This includes rendered reports, JSON evidence bundles, and the append-only JSONL provenance logs.
-
-### Dry-run support
-
-Audit tools support `--dry-run` to compute findings and print would-be output paths without writing any files.
-
-### Network restrictions
-
-The GUI audit tool supports `--no-network` to guarantee no HTTP requests (and no TCP probes) are performed during the audit run. Evidence records the checks as skipped.
-
-### Evidence minimization
-
-Audit evidence is names-only by default and avoids storing sensitive payloads:
-
-- GUI audit evidence does not persist raw HTTP bodies. It records status, content type (when known), body length, and a SHA-256 hash.
-- Runtime artifacts audit does not embed raw service log tails. It records file stats and a SHA-256 hash over up to the last 64 KiB of each file for change detection.
-
-The project keeps enough detail to support integrity review and change detection without turning routine operation into a content archive.
-
-### Provenance and index
-
-Audit tools append a small JSONL provenance record per run and update a central untracked index:
-
-- JSONL: `projects/calamum-moltbook-observer/local_untracked/audit_log/*.jsonl`
-- Index: `projects/calamum-moltbook-observer/local_untracked/audit_log/audit_index.json`
+The goal is to preserve integrity review and change detection without turning routine operation into a content archive.
 
 ## Security expectations for contributors
 
-If you contribute to this project, please assume the following baseline:
+If you contribute to this project, please work from the following baseline:
 
-- do not add raw-content persistence to tracked workflows
-- do not print secrets, tokens, or credential values
-- do not weaken fail-closed behavior for convenience
-- do not move operator-local evidence surfaces into the public repo without a strong, reviewed reason
-- do not open public issues for containment-break vulnerabilities
+| Contributor expectation | Why it matters |
+| ---------------------- | -------------- |
+| keep tracked workflows names-only | the project’s core trust boundary depends on structural telemetry instead of retained raw content |
+| keep secrets in environment-injected or operator-local surfaces | public docs, logs, and tracked files are not credential surfaces |
+| preserve fail-closed behavior | safety controls remain meaningful only when denial and stop paths survive pressure |
+| keep operator-local evidence in operator-local lanes | public presentation should not absorb high-detail governance residue by accident |
+| route containment-break reports through private disclosure | high-risk security issues need bounded handling rather than public issue traffic |
 
 If a proposed change makes the system easier to demo but harder to trust, it is probably the wrong trade.
 
@@ -253,3 +281,5 @@ If a proposed change makes the system easier to demo but harder to trust, it is 
 - [`docs/reports/reference/GENERATED_REPORT_SURFACES.md`](docs/reports/reference/GENERATED_REPORT_SURFACES.md)
 - [`docs/manuals/reference/SECURITY_MODEL.md`](docs/manuals/reference/SECURITY_MODEL.md)
 - [`docs/manuals/reference/RUNTIME_TRANSITIONS.md`](docs/manuals/reference/RUNTIME_TRANSITIONS.md)
+- [`docs/manuals/runtime/RUNTIME_WORKFLOWS.md`](docs/manuals/runtime/RUNTIME_WORKFLOWS.md)
+- [`docs/manuals/runtime/RUNTIME_OPERATIONS.md`](docs/manuals/runtime/RUNTIME_OPERATIONS.md)

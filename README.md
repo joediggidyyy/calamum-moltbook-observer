@@ -4,6 +4,7 @@
 **Status**: Public project overview  
 **Owner**: ORACL-Prime  
 **Project**: Calamum Moltbook Observer  
+**Version**: `1.0.1`  
 **Last updated**: 2026-04-17
 
 ---
@@ -41,13 +42,15 @@ This README is the public front door for the project. Use it to understand what 
 
 ## At a glance
 
-- **Research focus**: hostile-agent measurement, names-only telemetry, and downstream analysis
-- **Data posture**: names-only persistence; no raw Moltbook content storage in the normal workflow
-- **Runtime authority**: `observerctl`, watchdog, and retained evidence packets are authoritative; dashboards are operator interfaces
-- **Safety model**: bootstrap readiness, baseline validation, posture control, and fail-closed gates work together as one operating contract
-- **Analysis model**: local ML workflows on obfuscated telemetry only
-- **Public repo scope**: tracked source, root docs, manuals, deployment assets, branding, templates, report framework surfaces, and selected publication artifacts
-- **Shipped package scope**: runtime code plus the documentation and report baseline explicitly declared in `pyproject.toml` and `MANIFEST.in`
+| Area | Public contract |
+| ---- | --------------- |` 
+| Research focus | hostile-agent measurement, names-only telemetry, and downstream analysis |
+| Data posture | names-only persistence; no raw Moltbook content storage in the normal workflow |
+| Runtime authority | `observerctl`, watchdog, and retained evidence packets are authoritative; dashboards and wizards remain operator interfaces |
+| Safety model | bootstrap readiness, baseline validation, posture control, and fail-closed gates work together as one operating contract |
+| Analysis model | local ML workflows on obfuscated telemetry only |
+| Public repo scope | tracked source, root docs, manuals, deployment assets, branding, templates, report framework surfaces, and selected publication artifacts |
+| Shipped package scope | runtime code plus the documentation and report baseline explicitly declared in `pyproject.toml` and `MANIFEST.in` |
 
 ## Runtime contract
 
