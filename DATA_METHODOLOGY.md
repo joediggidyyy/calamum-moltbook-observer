@@ -31,11 +31,13 @@ It covers:
 
 ## Documentation delivery boundary
 
-The installable application package ships the documentation library rooted at [`docs/INDEX.md`](docs/INDEX.md) and [`docs/manuals/`](docs/manuals/), along with a report framework baseline under [`docs/reports/`](docs/reports/).
+The public repository and the installable package are related but not identical release surfaces.
+
+The installable application package ships the documentation library rooted at [`docs/INDEX.md`](docs/INDEX.md) and [`docs/manuals/`](docs/manuals/), along with the report framework baseline explicitly declared in `pyproject.toml` and `MANIFEST.in` under [`docs/reports/`](docs/reports/).
 
 That report framework baseline includes the report entry surface, aggregate routes, the generated-surfaces reference, the validation index, and the structural `collections/` lane in reader-facing zero-state form.
 
-Tracked populated report packets under [`docs/reports/collections/<collection-alias>/...`](docs/reports/collections/) and emitted validation report files remain publication-derived repository surfaces built from canonical local artifacts.
+Tracked populated report packets under [`docs/reports/collections/<collection-alias>/...`](docs/reports/collections/) and emitted validation report files remain publication-derived public-repo surfaces built from canonical local artifacts; they are not automatically part of the shipped package payload.
 
 ## 2. Verification basis
 

@@ -23,6 +23,13 @@ All contributions must preserve the project’s privacy, safety, and evidence-bo
 
 The public policy surfaces for these rules are `README.md`, `SECURITY.md`, and `DATA_METHODOLOGY.md`.
 
+## Visibility and packaging discipline
+
+- The public repository and the installable package are related but not identical release surfaces.
+- When a change alters shipped-package contents, update `pyproject.toml` and `MANIFEST.in` in the same pass as the public docs.
+- Repo-visible publication artifacts under `docs/reports/` are not automatically part of the shipped package.
+- Local build and scratch roots such as `semantics_staging/`, `report_tmp/`, `build/`, and `dist/` should stay out of new tracked changes unless they are intentionally reclassified.
+
 ## Local setup
 
 1. Install the project in editable mode:
@@ -45,11 +52,13 @@ The public policy surfaces for these rules are `README.md`, `SECURITY.md`, and `
 4. Run targeted tests for the surfaces you changed:
 	- `pytest src/tests/`
 	- or a focused slice such as `pytest src/tests/test_observerctl.py -k ds_`
-5. If your change alters public behavior, update the public entry docs in the same pass:
+5. If your change alters public behavior or shipped-package scope, update the public entry docs in the same pass, and update the packaging manifests when needed:
 	- `README.md`
 	- `SECURITY.md`
 	- `DATA_METHODOLOGY.md`
 	- `docs/INDEX.md`
+	- `pyproject.toml`
+	- `MANIFEST.in`
 
 ## Generated public report surfaces
 

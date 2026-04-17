@@ -4,7 +4,7 @@
 **Status**: Public project overview  
 **Owner**: ORACL-Prime  
 **Project**: Calamum Moltbook Observer  
-**Last updated**: 2026-04-09
+**Last updated**: 2026-04-17
 
 ---
 
@@ -26,59 +26,62 @@ Security engineering is not a decorative sidebar here. Containment, minimization
 
 This README is the public front door for the project. Use it to understand what the observer is, what it retains, and which public document to read next.
 
-| If you want to understand...                        | Read next                                                                    |
-| --------------------------------------------------- | ---------------------------------------------------------------------------- |
-| the overall documentation map                       | [Docs Index](docs/INDEX.md)                                                  |
-| the public report catalog and current packet family | [Report Collections](docs/reports/INDEX.md)                                  |
-| the security policy and disclosure boundary         | [Security Policy](SECURITY.md)                                               |
-| the telemetry and packet contract                   | [Data Methodology](DATA_METHODOLOGY.md)                                      |
-| how to contribute safely                            | [Contributing Guide](CONTRIBUTING.md)                                        |
-| the manual catalog                                  | [Manual Index](docs/manuals/INDEX.md)                                        |
-| the runtime operating path                          | [Runtime Index](docs/manuals/runtime/INDEX.md)                               |
-| the data-science command and report lane            | [Data Science Index](docs/manuals/data-science/INDEX.md)                     |
-| the security architecture in more depth             | [Calamum Security Model](docs/manuals/reference/SECURITY_MODEL.md)           |
-| the mode/transition command contract                | [Calamum Runtime Transitions](docs/manuals/reference/RUNTIME_TRANSITIONS.md) |
+| If you want to understand...                                             | Read next                                                                    |
+| ------------------------------------------------------------------------ | ---------------------------------------------------------------------------- |
+| the overall documentation map                                            | [Docs Index](docs/INDEX.md)                                                  |
+| the public report framework, validation surfaces, and publication routes | [Report Collections](docs/reports/INDEX.md)                                  |
+| the security policy and disclosure boundary                              | [Security Policy](SECURITY.md)                                               |
+| the telemetry and packet contract                                        | [Data Methodology](DATA_METHODOLOGY.md)                                      |
+| how to contribute safely                                                 | [Contributing Guide](CONTRIBUTING.md)                                        |
+| the manual catalog                                                       | [Manual Index](docs/manuals/INDEX.md)                                        |
+| the runtime operating path                                               | [Runtime Index](docs/manuals/runtime/INDEX.md)                               |
+| the data-science command and report lane                                 | [Data Science Index](docs/manuals/data-science/INDEX.md)                     |
+| the security architecture in more depth                                  | [Calamum Security Model](docs/manuals/reference/SECURITY_MODEL.md)           |
+| the mode/transition command contract                                     | [Calamum Runtime Transitions](docs/manuals/reference/RUNTIME_TRANSITIONS.md) |
 
 ## At a glance
 
-- **Research focus**: hostile-agent measurement, telemetry, and downstream analysis
-- **Data posture**: names-only persistence; no raw-content storage by default
-- **Operational model**: explicit posture control, watchdog oversight, and local evidence retention
+- **Research focus**: hostile-agent measurement, names-only telemetry, and downstream analysis
+- **Data posture**: names-only persistence; no raw Moltbook content storage in the normal workflow
+- **Runtime authority**: `observerctl`, watchdog, and retained evidence packets are authoritative; dashboards are operator interfaces
+- **Safety model**: bootstrap readiness, baseline validation, posture control, and fail-closed gates work together as one operating contract
 - **Analysis model**: local ML workflows on obfuscated telemetry only
-- **Report model**: alias-first human-facing packet families under `docs/reports/collections/<collection-alias>/processing/{build,eval,score,train}/`
-- **Public repo scope**: code, docs, deployment surfaces, branding, and curated public artifacts
-- **Canonical current runtime family**: `logs/data/calamum/observer_derived/<source>/<mode>/...`
+- **Public repo scope**: tracked source, root docs, manuals, deployment assets, branding, templates, report framework surfaces, and selected publication artifacts
+- **Shipped package scope**: runtime code plus the documentation and report baseline explicitly declared in `pyproject.toml` and `MANIFEST.in`
 
-## Current release boundary
+## Runtime contract
 
-The current tracked release boundary is **canary-ready observer runtime**.
+The runtime state is the tuple `(source, mode)`.
 
-| Included now                                      | Governed separately                 |
-| ------------------------------------------------- | ----------------------------------- |
-| sim/canary observer runtime and evidence surfaces | real-source live activation         |
-| Ghost Console dashboard                           | active magnet / honeypot deployment |
-| watchdog and librarian control surfaces           | unsandboxed keysmith live minting   |
-| names-only telemetry model                        |                                     |
-| local DS/report toolchain                         |                                     |
-| guarded keysmith status and dry-run lanes         |                                     |
+| Axis     | Allowed values                        | Meaning                                                     |
+| -------- | ------------------------------------- | ----------------------------------------------------------- |
+| `source` | `sim`, `real`                         | simulation-first execution or the retained real-source lane |
+| `mode`   | `watch`, `canary`, `live`, `honeypot` | the current operating lane                                  |
 
-## Verified current runtime model
+| Mode       | Trigger posture | Role                                     |
+| ---------- | --------------- | ---------------------------------------- |
+| `watch`    | `isolation`     | low-risk observation lane                |
+| `canary`   | `isolation`     | controlled inbound measurement lane      |
+| `live`     | `lockdown`      | stricter real-source execution lane      |
+| `honeypot` | `lockdown`      | stricter attraction and measurement lane |
 
-The current public architecture centers on three primary components and two telemetry families.
+Bootstrap readiness and baseline validation are part of this safety model. Stricter lanes are expected to deny when current evidence is stale, incomplete, or incoherent rather than continuing optimistically.
+
+The current public runtime model is built around four primary components:
 
 - **Observer Agent**  
   A lightweight producer that emits obfuscated, signed names-only records under the observer-derived runtime tree.
 
+- **Watchdog**  
+  The fail-closed enforcement layer that supervises heartbeat freshness, posture continuity, and invalid runtime state.
+
 - **Librarian Daemon**  
-  A background process responsible for compression, integrity checks, and retention lifecycle management over active telemetry artifacts.
+  The retention and census layer responsible for compression, integrity checks, and lifecycle management over active telemetry artifacts.
 
-- **Blind ML Pipeline**  
-  The local analysis stack under `src/analysis/`, which consumes obfuscated telemetry to train supervised and unsupervised models without exposing raw message semantics.
+- **Local analysis and reporting lane**  
+  The analysis stack under `src/analysis/`, which consumes obfuscated telemetry to produce local DS artifacts and public report publications without exposing raw message semantics.
 
-Telemetry families:
-
-- **Direct telemetry artifacts** provide names-only local telemetry outputs.
-- **Observer-derived artifacts** provide the canonical runtime and evidence surfaces for current observer-agent and `observerctl` behavior.
+Direct telemetry artifacts still exist for local names-only outputs, but the canonical runtime and evidence family lives under `logs/data/calamum/observer_derived/<source>/<mode>/...`.
 
 ## Security posture
 
@@ -92,50 +95,34 @@ The observer treats the upstream platform and its content stream as hostile by d
 
 For the root policy surface, read [Security Policy](SECURITY.md). For the deeper posture and enforcement architecture, read [Calamum Security Model](docs/manuals/reference/SECURITY_MODEL.md).
 
-## Public repository scope
+## Public repository and shipped package boundary
 
-This repository presents the **public observer surface** only:
+This repository presents the **public observer surface**:
 
 - source code
 - deployment assets
 - branding
+- root policy and methodology documents
 - public manuals
-- curated public reports and reader-facing packet collections
+- report framework surfaces and intentionally published packet artifacts
 - reusable project templates
 
-Runtime logs and operator-local governance surfaces remain outside the tracked public presentation.
+Runtime logs, retained evidence, and operator-local governance residue remain outside the tracked public presentation.
 
-## Documentation delivery boundary
+The public repo and the installable package are related but not identical release surfaces. Packaged scope is defined explicitly in `pyproject.toml` and `MANIFEST.in`; repo visibility alone does not imply shipped-package inclusion.
 
-The tracked `docs/` tree currently serves two different readers, and the shipping boundary is now explicit.
+| Surface                                                      | Visible in public repo            | Included in shipped package                  |
+| ------------------------------------------------------------ | --------------------------------- | -------------------------------------------- |
+| operator manual library under `docs/`                        | Yes                               | Yes                                          |
+| report framework baseline under `docs/reports/`              | Yes                               | Yes                                          |
+| published collection artifacts and emitted validation leaves | Yes, when intentionally published | Only when explicitly added to package inputs |
+| local runtime evidence and operator residue                  | No                                | No                                           |
 
-| Documentation surface                                                                                                                                                                                 | Current ship state                                                       | Role                                                                                                                    |
-| ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | ------------------------------------------------------------------------ | ----------------------------------------------------------------------------------------------------------------------- |
-| `docs/INDEX.md` + `docs/manuals/**`                                                                                                                                                                   | tracked in the repo and shipped with the installable application package | operator-facing documentation library bundled with the product                                                          |
-| `docs/reports/INDEX.md`, `docs/reports/aggregates/*`, `docs/reports/reference/GENERATED_REPORT_SURFACES.md`, `docs/reports/validations/INDEX.md`, and the structural `docs/reports/collections/` lane | tracked in the repo and shipped as the report framework baseline         | reader-facing report routing, aggregate, reference, validation-index, and zero-state collection-lane framework surfaces |
-| dated packet leaves under `docs/reports/collections/<collection-alias>/...` and emitted validation packet files                                                                                       | tracked in the repo as publication-derived surfaces                      | populated report and validation packet content published from canonical local DS artifacts                              |
-| other adjacent `docs/` subtrees                                                                                                                                                                       | evaluated individually                                                   | no blanket ship claim until the surface is intentionally classified                                                     |
+## Public report publication
 
-Boundary anchors:
+Tracked public reports are rebuilt from canonical local DS run artifacts into human-facing publication surfaces under `docs/reports/`.
 
-- `docs/INDEX.md` + `docs/manuals/**` | tracked in the repo and shipped with the installable application package
-- `docs/reports/INDEX.md`, `docs/reports/aggregates/*`, `docs/reports/reference/GENERATED_REPORT_SURFACES.md`, `docs/reports/validations/INDEX.md`, and the structural `docs/reports/collections/` lane | tracked in the repo and shipped as the report framework baseline
-
-This keeps the manual library and report framework baseline available with the shipped runtime while leaving populated report packets in the tracked publication lane.
-
-## Current public report spine
-
-Tracked public reports are rebuilt from the canonical local DS run spine into a shipped report framework baseline plus human-facing packet families under `docs/reports/`.
-The public entry surface for that lane is [Report Collections](docs/reports/INDEX.md).
-
-| If you need to...                                                                           | Open                                                                                                       |
-| ------------------------------------------------------------------------------------------- | ---------------------------------------------------------------------------------------------------------- |
-| get the report framework entry surface and the fastest route into the current packet family | [docs/reports/INDEX.md](docs/reports/INDEX.md)                                                             |
-| compare the latest build / train / evaluate / score packets                                 | [docs/reports/aggregates/WORKFLOW_ROLLUP.md](docs/reports/aggregates/WORKFLOW_ROLLUP.md)                   |
-| understand the tracked packet filesystem contract                                           | [docs/reports/reference/GENERATED_REPORT_SURFACES.md](docs/reports/reference/GENERATED_REPORT_SURFACES.md) |
-| review the current dated packet leaves                                                      | `docs/reports/collections/<collection-alias>/processing/{build,eval,score,train}/`                         |
-
-The public report tree is intentionally reader-first. Its shipped baseline provides routing, aggregates, reference, validation entry, and structural collection-lane context. Machine-readable authority stays in the local analysis indexes and is referenced from these public packet surfaces rather than duplicated there.
+Use [Report Collections](docs/reports/INDEX.md) for current publication availability, aggregate rollups, validation surfaces, and the generated-report filesystem contract. Machine-readable authority remains in local analysis indexes and manifests rather than `docs/reports/`.
 
 ## Project layout
 
@@ -157,37 +144,7 @@ projects/calamum-moltbook-observer/
  launch_ghost_console.ps1
 ```
 
-## Research workstreams
-
-| Workstream                   | Current status | Public meaning                                                           |
-| ---------------------------- | -------------- | ------------------------------------------------------------------------ |
-| **Observe & Sample**         | **COMPLETE**   | Read-only sampling of the public feed with obfuscation safety validated. |
-| **Container Hardening**      | **COMPLETE**   | Deployment of the read-only “Glass Box” runtime environment.             |
-| **Passive Canary**           | **COMPLETE**   | Silent account deployment for measuring inbound background activity.     |
-| **Active Magnet (Honeypot)** | *PLANNED*      | Soft-target deployment path for higher-risk hostile-agent measurement.   |
-| **Blind ML Analysis**        | **ACTIVE**     | Local supervised and unsupervised analysis on obfuscated telemetry.      |
-
-## Reference map
-
-### Public documents
-
-| Surface                                                                      | Purpose                                                 |
-| ---------------------------------------------------------------------------- | ------------------------------------------------------- |
-| this `README.md`                                                             | Project overview                                        |
-| [Docs Index](docs/INDEX.md)                                                  | Documentation hub                                       |
-| [Report Collections](docs/reports/INDEX.md)                                  | Public report catalog and current packet-family routing |
-| [Manual Index](docs/manuals/INDEX.md)                                        | Manual catalog                                          |
-| [Runtime Index](docs/manuals/runtime/INDEX.md)                               | Runtime operating path and command reference            |
-| [Data Science Index](docs/manuals/data-science/INDEX.md)                     | DS commands, wizard use, and reporting linkage          |
-| [Reference Index](docs/manuals/reference/INDEX.md)                           | Security architecture and transition contract           |
-| [Contributing Guide](CONTRIBUTING.md)                                        | Public contribution and validation guidance             |
-| [Security Policy](SECURITY.md)                                               | Security policy                                         |
-| [Data Methodology](DATA_METHODOLOGY.md)                                      | Methodology contract                                    |
-| [Calamum Security Model](docs/manuals/reference/SECURITY_MODEL.md)           | Security architecture                                   |
-| [Calamum Runtime Transitions](docs/manuals/reference/RUNTIME_TRANSITIONS.md) | Runtime transition contract                             |
-| [Container Constraints](src/deployment/HARDENING_PROFILE.md)                 | Container hardening profile                             |
-
-### Source surfaces
+## Source surfaces
 
 | Surface                          | Path                            |
 | -------------------------------- | ------------------------------- |
@@ -196,192 +153,80 @@ projects/calamum-moltbook-observer/
 | Observer agent                   | `src/calamum_observer_agent.py` |
 | Analysis workflows               | `src/analysis/`                 |
 
-### Runtime evidence (retained locally)
+## Local evidence boundary
 
-| Evidence family                   | Canonical path                                                                                              |
-| --------------------------------- | ----------------------------------------------------------------------------------------------------------- |
-| Direct telemetry artifacts        | `logs/data/calamum/moltbook_samples_obfuscated.jsonl` and `logs/data/calamum/moltbook_canary_metrics.jsonl` |
-| Canonical observer-runtime stream | `logs/data/calamum/observer_derived/<sim                                                                    | real>/<watch                       | canary | live | honeypot>/moltbook_metrics.jsonl` |
-| Baseline/resource evidence family | `logs/data/calamum/observer_derived/<sim                                                                    | real>/<mode>/{resource,evidence}/` |
+Public documentation explains the contract. Runtime evidence stays local.
 
-These evidence streams are retained locally and sit outside the tracked public repo surface.
+| Evidence family            | Canonical local surface                                                                                     | Role                                                                  |
+| -------------------------- | ----------------------------------------------------------------------------------------------------------- | --------------------------------------------------------------------- |
+| Direct telemetry artifacts | `logs/data/calamum/moltbook_samples_obfuscated.jsonl` and `logs/data/calamum/moltbook_canary_metrics.jsonl` | names-only local telemetry outputs                                    |
+| Observer runtime family    | `logs/data/calamum/observer_derived/<source>/<mode>/...`                                                    | canonical runtime metrics, readiness, resource, and evidence surfaces |
 
-## Contract summary
+Gate and evidence packets remain names-only. Packet-level linkage and field details live in [Data Methodology](DATA_METHODOLOGY.md) rather than this overview page.
 
-The current public contract can be summarized as follows:
-
-- direct telemetry outputs and observer-derived outputs both exist,
-- the active runtime and readiness surfaces live under `observer_derived/`,
-- gate/evidence outputs are expected to be names-only and carry run-linkage fields,
-- the packet-level details live in `DATA_METHODOLOGY.md`, not in this overview page.
+When `CALAMUM_MOLTBOOK_SOURCE=live` is selected, the runtime normalizes that source onto the retained `real` axis, so live-source artifacts land under `logs/data/calamum/observer_derived/real/<mode>/...`.
 
 ## Visual surfaces
 
-### Operational radar
+These views are presentation surfaces. Runtime truth comes from `observerctl`, watchdog, and retained evidence packets.
 
-<img src="assets/branding/calamum_obs_radar.png" alt="Observer Radar" width="600">
+### Honeypot collection view
 
-### CLI dashboard reference
+<img src="assets/branding/gui_honeypot_collection.png" alt="Ghost Console view in real-source honeypot collection mode" width="560">
 
-<img src="assets/branding/syslog_scroll.png" alt="CLI Dashboard" width="600">
+### Control Deck reference
 
-## Runtime operations
+<img src="assets/branding/calamum_observer_control_deck.png" alt="Control Deck reference" width="560">
 
-### Observer runtime CLI (`observerctl`)
+### CLI system log view
 
-Observer runtime operations are exposed through `src/observerctl.py` and remain standalone from CodeSentinel runtime process surfaces.
+<img src="assets/branding/syslog_scroll.png" alt="CLI System Log" width="600">
 
-Before preflight, baseline, or mode-transition work, initialize or validate the local runtime-root family under `local_untracked/` through the shipped bootstrap surface.
+### GUI dashboard kill switch
 
-Install the native CLI entrypoint once per environment:
+<img src="assets/branding/gui_kill_switch.png" alt="GUI Dashboard Kill Switch" width="600">
+
+## Getting started
+
+### Install
 
 - `python -m pip install -e .`
-
-Add the supported extras only when you need those lanes:
-
-- `python -m pip install -e ".[ds]"` for the DS / report / visualization lane
+- `python -m pip install -e ".[ds]"` for the data-science and report lane
 - `python -m pip install -e ".[dashboard]"` for Ghost Console / NiceGUI surfaces
 
-After installation, use the observer-native command surface directly:
+### First safe run
 
-- **Runtime bootstrap (create or validate required local roots)**  
-  `observerctl ops bootstrap --json`
-- **Runtime bootstrap check (non-mutating readiness validation)**  
-  `observerctl ops bootstrap --check --json`
+The safest first end-to-end path is `sim:canary`.
 
-- **Preflight status packet**  
-  `observerctl ops preflight --source sim --json`
-- **Gate decision packet**  
-  `observerctl ops gate-check --source sim --json`
-- **Publication-grade evidence packet**  
-  `observerctl ops evidence pack --source sim --json`
-- **Atomic transition workflow**  
-  `observerctl ops mode transition --to canary --source sim --event transition-canary --output logs/data/calamum/observer_derived/sim/canary/evidence/transition_canary.json --json`
+1. `observerctl ops bootstrap --check --json`
+   - On a fresh environment, use `observerctl ops bootstrap --json` instead so the required local runtime roots are created first.
+2. `observerctl ops preflight --source sim --json`
+3. `observerctl ops mode gate --to canary --source sim --json`
+4. `observerctl ops mode transition --to canary --source sim --event first-safe-run --json`
+5. `observerctl ops evidence index --json`
 
-`ops gate-check` is fail-closed and returns non-zero when required inputs are missing or invalid.
+Detailed runtime playbooks live in:
 
-`ops bootstrap` is the canonical local-readiness entry surface for the shipped package. It prepares or validates the required local runtime roots under `local_untracked/` without republishing the tracked public report tree under `docs/reports/`.
+- [Calamum Runtime Workflows](docs/manuals/runtime/RUNTIME_WORKFLOWS.md)
+- [Calamum Runtime Operations](docs/manuals/runtime/RUNTIME_OPERATIONS.md)
+- [Calamum Runtime Transitions](docs/manuals/reference/RUNTIME_TRANSITIONS.md)
 
-### Data science and report packet lane
+### Windows GUI start
 
-The observer-native DS surface now covers dataset build, train, evaluate, score, and end-to-end demo or pipeline execution.
+Use `observerctl ops runtime start --gui` for the delegated GUI path.
 
-- **Build a dataset packet**  
-  `observerctl ds build --dataset <selector> --json`
-- **Train from an approved dataset**  
-  `observerctl ds train --dataset <selector> --model-type supervised --json`
-- **Evaluate a model or heuristic**  
-  `observerctl ds evaluate --features-csv <features.csv> --dataset-manifest <dataset_manifest.json> --json`
-- **Score an approved dataset with an unsupervised model**  
-  `observerctl ds score --dataset <selector> --model <train_manifest.json> --json`
-- **Run the packaged demo flow**  
-  `observerctl ds run demo --json`
-
-Approved local DS artifacts can be explicitly published into the tracked public report lane under `docs/reports/`, where collection packets and stage packets follow the current alias-first report family.
-
-For the lower-level transition/evidence contract, see:
-
-- `docs/manuals/reference/RUNTIME_TRANSITIONS.md`
-- `docs/manuals/runtime/RUNTIME_OPERATIONS.md`
-
-### Launching on a Windows host
-
-#### A) Ghost Console V2 (Ops Dashboard)
-
-The Ghost Console is a fixed-size NiceGUI + ECharts dashboard designed to present **names-only** telemetry.
-
-- Start UI (recommended): `projects/calamum-moltbook-observer/launch_ghost_console.ps1`
-  - starts the backend hidden
-  - opens Microsoft Edge in app-mode at **1100×720**
+`launch_ghost_console.ps1` remains available as the PowerShell launcher when that surface is preferred.
 
 Dashboard source: `src/ops_dashboard.py`
 
-#### B) Observer + Watchdog (direct)
+## Data science and reporting handoff
 
-1. Start observer: `./src/deployment/secure_run.ps1`
-2. Start watchdog runtime: `python src/sentinel.py`
+After runtime artifacts are ready, use the observer-native DS lane for build, train, evaluate, and score workflows.
 
-## Ghost Console data and control model
-
-### Telemetry inputs
-
-The dashboard reads from names-only local surfaces such as:
-
-- CPU and memory telemetry via `psutil`
-- observer heartbeat freshness or recent JSONL activity
-- watchdog heartbeat freshness
-- append-only JSONL metrics for counts and density
-
-Default locations include:
-
-- `logs/health/calamum_ops_watchdog.heartbeat`
-- `logs/health/calamum_observer.heartbeat`
-- `logs/data/calamum/*.jsonl`
-
-### Control surface
-
-Control Deck actions emit file-based JSON intents for later runtime handling:
-
-| Action family | Intent path                                |
-| ------------- | ------------------------------------------ |
-| Kill          | `logs/control/calamum/kill.signal.json`    |
-| Isolate       | `logs/control/calamum/isolate.signal.json` |
-| Refresh       | `logs/control/calamum/refresh.signal.json` |
-
-The governing doctrine is simple:
-
-- the GUI is a presentation and operator interface surface, not SSOT
-- watchdog remains the system-level governance layer
-- if watchdog is down, the node remains isolated or quarantined until safe operating conditions are explicitly re-established
-
-### Local runtime simulation agent
-
-For local simulation and controlled runtime testing, `src/calamum_observer_agent.py` can:
-
-- touch heartbeat files
-- append JSONL records
-- consume or acknowledge control signals
-
-This local demo lane is telemetry simulation only and is **not** documented here as an authorized public Moltbook-facing workflow.
-
-## Environment variables
-
-Common optional overrides include:
-
-- `CALAMUM_OPS_MODE`
-- `CALAMUM_FRESHNESS_SEC`
-- `CALAMUM_WATCHDOG_HEARTBEAT_PATH`
-- `CALAMUM_OBSERVER_HEARTBEAT_PATH`
-- `CALAMUM_DATA_DIR`
-- `CALAMUM_DENSITY_SLICE_SEC`
-- `CALAMUM_MOLTBOOK_SOURCE`
-- `MOLTBOOK_API_KEY` — required for live collection; acquire and inject it through operator-local secret handling only
-- `MOLTBOOK_HOST`
-- `CALAMUM_LIVE_BATCH_LIMIT`
-- `CALAMUM_LIVE_EMPTY_BACKOFF_SEC`
-- `CALAMUM_BRAND_THUMB_PATH`
-- `CALAMUM_BRAND_PANEL_PATH`
-
-## Reproducibility and evidence boundaries
-
-This project keeps three layers distinct:
-
-1. **Method** — tracked code and public reference documents
-2. **Mechanism** — runtime and analysis implementation in `src/`
-3. **Observation** — project-local runtime evidence produced during controlled execution
-
-That separation is both a documentation choice and a security boundary. Public surfaces remain readable and reproducible, while high-detail operational residue stays out of the tracked artifact set.
-
-## Live collection contract
-
-When `CALAMUM_MOLTBOOK_SOURCE=live` is selected, the current runtime normalizes that source onto the retained `real` axis used by the observer-derived evidence tree. The canonical observer-agent stream is therefore:
-
-- `logs/data/calamum/observer_derived/real/<watch|canary|live|honeypot>/moltbook_metrics.jsonl`
-
-Adjacent baseline and readiness evidence are retained under the matching `observer_derived/real/<mode>/resource/` and `observer_derived/real/<mode>/evidence/` directories.
-
-This runtime family is local evidence retained outside the public tracked documentation set.
+- guided workflow: `observerctl ds wizard`
+- command reference: [Data Science Index](docs/manuals/data-science/INDEX.md)
+- publication view: [Report Collections](docs/reports/INDEX.md)
 
 ## Scope note
 
-This README introduces the project, summarizes the public contract, and routes readers to the deeper policy, methodology, and manual surfaces. Use those adjacent references for implementation-level detail.
+This README introduces the project, summarizes the public contract, and routes readers to the deeper policy, methodology, runtime, and reporting surfaces. Use those adjacent references for implementation-level detail.

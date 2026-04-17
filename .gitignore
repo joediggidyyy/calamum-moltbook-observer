@@ -42,6 +42,7 @@ log/
 
 # Coursework deliverables are local-only (do not track/publish)
 deliverables/
+DATA780_FinalProject_*.pdf
 demo_output/
 jobs/
 planning/
@@ -50,6 +51,12 @@ queststacks/
 
 # Local-only (intentionally not tracked)
 local_untracked/
+
+# Local build and scratch surfaces (not part of the public repo contract)
+build/
+dist/
+report_tmp/
+semantics_staging/
 
 # Public docs/report surfaces must remain visible to git.
 # Local execution residue belongs under local_untracked/ so accidental

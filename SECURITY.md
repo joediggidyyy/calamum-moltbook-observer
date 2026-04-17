@@ -31,9 +31,9 @@ For the architectural runtime model behind those principles, see [`docs/manuals/
 
 ## Supported Versions
 
-| Version | Supported | Notes |
-| ------- | ------------------ | ------------------------------------------------ |
-| 1.2.x   | :white_check_mark: | Current supported public release line |
+| Version | Supported          | Notes                                 |
+| ------- | ------------------ | ------------------------------------- |
+| 1.0.x   | :white_check_mark: | Current supported public release line |
 
 
 ## Security principles
@@ -55,6 +55,9 @@ The project is built around a few non-negotiable principles:
 5. **Operational residue stays local when it should**  
 	The public repository is intentionally slimmer than the full local working environment. High-detail logs, local governance traces, and operator evidence remain outside the public tracked surface.
 
+6. **Public repo visibility and package inclusion are separate**  
+	Tracked repo surfaces, public documentation, and installable package payloads are related but independently governed. Shipped-package contents must be explicitly declared rather than inferred from the full repo tree.
+
 ## Public security contract
 
 For the public observer surface, the security contract is:
@@ -62,6 +65,7 @@ For the public observer surface, the security contract is:
 - tracked workflows remain names-only,
 - runtime/evidence outputs must not expose secrets or raw payloads,
 - posture changes and gate-clearing evidence must remain fail-closed,
+- public repo visibility does not by itself imply shipped-package inclusion; package payloads must be explicitly declared in the packaging manifests,
 - tracked report publication under `docs/reports/` must remain human-facing and derived from canonical local run data rather than becoming a second machine-readable authority surface,
 - public docs may describe contracts and paths, but must not treat local evidence as public artifact,
 - observer-scoped gate/evidence outputs are expected to carry run-linkage fields when the contract requires them:
@@ -81,12 +85,12 @@ The observer’s operating model combines four visible security ideas:
 
 Public posture model:
 
-| Mode | Trigger posture |
-|---|---|
-| `watch` | `isolation` |
-| `canary` | `isolation` |
-| `live` | `lockdown` |
-| `honeypot` | `lockdown` |
+| Mode       | Trigger posture |
+| ---------- | --------------- |
+| `watch`    | `isolation`     |
+| `canary`   | `isolation`     |
+| `live`     | `lockdown`      |
+| `honeypot` | `lockdown`      |
 
 The deeper architecture for these controls is documented in [`docs/manuals/reference/SECURITY_MODEL.md`](docs/manuals/reference/SECURITY_MODEL.md), and the command-level transition contract is documented in [`docs/manuals/reference/RUNTIME_TRANSITIONS.md`](docs/manuals/reference/RUNTIME_TRANSITIONS.md).
 
@@ -170,6 +174,7 @@ These controls define how the project maintains containment, evidence discipline
 ### Public/private surface separation
 
 - the public repository intentionally shows the method, implementation, and curated docs
+- the public repo surface and the installable package surface are separate release boundaries; packaged scope is defined explicitly rather than inferred from repo visibility
 - local runtime evidence, detailed audit trails, and operator-governance surfaces are retained outside the public tracked surface where appropriate
 - public report packets under `docs/reports/` are derived, reader-facing artifacts that reference local machine-readable evidence rather than replacing it
 
