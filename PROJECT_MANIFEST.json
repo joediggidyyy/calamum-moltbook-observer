@@ -24,6 +24,7 @@
       "deployment/": "Deployment packaging, container assets, and service definitions.",
       "docs/manuals/": "Public runtime, data-science, and reference manuals.",
       "docs/reports/": "Curated public reports and evaluation artifacts.",
+      "docs/Spring2026/": "Public Spring 2026 course and project writeups tracked in the repository but not included in the shipped application package.",
       "src/": "Observer runtime, analysis pipeline, and tests.",
       "template_library/": "Reusable names-only templates shipped with the project.",
       "tools/": "Project support, audit, and reporting utilities."

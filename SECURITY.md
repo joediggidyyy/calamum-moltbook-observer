@@ -5,7 +5,7 @@
 **Owner**: ORACL-Prime  
 **Project**: Calamum Moltbook Observer  
 **Version**: `1.0.1`  
-**Last updated**: 2026-04-17
+**Last updated**: 2026-04-18
 
 This document defines the public security posture for Calamum Moltbook Observer.
 
@@ -32,20 +32,20 @@ For the architectural runtime model behind those principles, see [`docs/manuals/
 
 ## Supported Versions
 
-| Version | Supported          | Notes                                 |
-| ------- | ------------------ | ------------------------------------- |
-| 1.0.1   | :white_check_mark: | Current supported public release      |
+| Version | Supported          | Notes                            |
+| ------- | ------------------ | -------------------------------- |
+| 1.0.1   | :white_check_mark: | Current supported public release |
 
 ## Security at a glance
 
-| Control family | Public contract | Security effect |
-| -------------- | --------------- | --------------- |
-| Names-only persistence | Normal retained workflows store structural telemetry and linkage metadata instead of raw Moltbook content | narrows retained-data exposure while preserving reproducible evidence |
-| Posture control | `watch` and `canary` stay in isolation; `live` and `honeypot` escalate into lockdown | higher-risk moves face stricter gating and stronger prerequisites |
-| Baseline monitoring | readiness depends on current baseline and dependency evidence | stale or incoherent systems deny instead of drifting forward |
-| Watchdog enforcement | an independent supervisory layer can deny or stop invalid runtime state | fail-closed behavior does not depend on presentation layers staying truthful |
-| Evidence-linked operations | gate and transition outputs remain names-only and run-linked | state changes stay reviewable without normalizing unsafe retention |
-| Public/local surface split | public docs and derived reports stay separate from local machine-readable authority | publication remains reader-facing while operational residue stays local |
+| Control family             | Public contract                                                                                           | Security effect                                                              |
+| -------------------------- | --------------------------------------------------------------------------------------------------------- | ---------------------------------------------------------------------------- |
+| Names-only persistence     | Normal retained workflows store structural telemetry and linkage metadata instead of raw Moltbook content | narrows retained-data exposure while preserving reproducible evidence        |
+| Posture control            | `watch` and `canary` stay in isolation; `live` and `honeypot` escalate into lockdown                      | higher-risk moves face stricter gating and stronger prerequisites            |
+| Baseline monitoring        | readiness depends on current baseline and dependency evidence                                             | stale or incoherent systems deny instead of drifting forward                 |
+| Watchdog enforcement       | an independent supervisory layer can deny or stop invalid runtime state                                   | fail-closed behavior does not depend on presentation layers staying truthful |
+| Evidence-linked operations | gate and transition outputs remain names-only and run-linked                                              | state changes stay reviewable without normalizing unsafe retention           |
+| Public/local surface split | public docs and derived reports stay separate from local machine-readable authority                       | publication remains reader-facing while operational residue stays local      |
 
 
 ## Security principles
@@ -117,12 +117,12 @@ Security consequences are explicit as well:
 
 Higher-risk moves are expected to prove the following before admission:
 
-| Precondition | Why it matters |
-| ------------ | -------------- |
-| heartbeat freshness and posture coherence | prevents stale runtime state from presenting as trustworthy |
-| baseline sufficiency | ties escalation to current operating evidence rather than hopeful assumptions |
-| required dependency presence | keeps real-source and lockdown paths bound to the surfaces they actually need |
-| run-linkage and gate evidence | preserves reviewable transition history after the fact |
+| Precondition                              | Why it matters                                                                |
+| ----------------------------------------- | ----------------------------------------------------------------------------- |
+| heartbeat freshness and posture coherence | prevents stale runtime state from presenting as trustworthy                   |
+| baseline sufficiency                      | ties escalation to current operating evidence rather than hopeful assumptions |
+| required dependency presence              | keeps real-source and lockdown paths bound to the surfaces they actually need |
+| run-linkage and gate evidence             | preserves reviewable transition history after the fact                        |
 
 The deeper architecture for these controls is documented in [`docs/manuals/reference/SECURITY_MODEL.md`](docs/manuals/reference/SECURITY_MODEL.md), and the command-level transition contract is documented in [`docs/manuals/reference/RUNTIME_TRANSITIONS.md`](docs/manuals/reference/RUNTIME_TRANSITIONS.md).
 
@@ -130,12 +130,12 @@ The deeper architecture for these controls is documented in [`docs/manuals/refer
 
 When a control denies an action, treat that denial as evidence that the safety model is working.
 
-| Expectation | Meaning in practice |
-| ----------- | ------------------- |
-| Honor denied gates | resolve the blocking condition or obtain explicit approval before retrying |
-| Keep evidence local and linked | stricter-lane work should preserve names-only linkage without promoting local residue into the public surface |
-| Follow runtime authority order | when views disagree, the CLI, watchdog, and retained packets outrank presentation surfaces |
-| Treat lockdown as intentionally stricter | `live` and `honeypot` are governed escalations, not ordinary mode toggles |
+| Expectation                              | Meaning in practice                                                                                           |
+| ---------------------------------------- | ------------------------------------------------------------------------------------------------------------- |
+| Honor denied gates                       | resolve the blocking condition or obtain explicit approval before retrying                                    |
+| Keep evidence local and linked           | stricter-lane work should preserve names-only linkage without promoting local residue into the public surface |
+| Follow runtime authority order           | when views disagree, the CLI, watchdog, and retained packets outrank presentation surfaces                    |
+| Treat lockdown as intentionally stricter | `live` and `honeypot` are governed escalations, not ordinary mode toggles                                     |
 
 ## What we actively defend against
 
@@ -238,11 +238,11 @@ The current report lane is part of the public presentation surface, but it follo
 
 ## Security surfaces and authority
 
-| Surface family | Public role | Security meaning |
-| -------------- | ----------- | ---------------- |
-| Root docs and manuals | public contract, routing, and interpretation | explain the rules without becoming runtime evidence |
-| `docs/reports/` publication views | human-facing derived publication | rebuild from canonical local artifacts and stay secondary to machine-readable authority |
-| local runtime outputs, manifests, indexes, and audit traces | operator-local execution evidence | carry the canonical machine-readable authority for execution, lineage, and review |
+| Surface family                                              | Public role                                  | Security meaning                                                                        |
+| ----------------------------------------------------------- | -------------------------------------------- | --------------------------------------------------------------------------------------- |
+| Root docs and manuals                                       | public contract, routing, and interpretation | explain the rules without becoming runtime evidence                                     |
+| `docs/reports/` publication views                           | human-facing derived publication             | rebuild from canonical local artifacts and stay secondary to machine-readable authority |
+| local runtime outputs, manifests, indexes, and audit traces | operator-local execution evidence            | carry the canonical machine-readable authority for execution, lineage, and review       |
 
 Public documentation may reference canonical local runtime paths and evidence families, but those references remain descriptive rather than promoting local execution residue into a tracked public artifact.
 
@@ -263,13 +263,13 @@ The goal is to preserve integrity review and change detection without turning ro
 
 If you contribute to this project, please work from the following baseline:
 
-| Contributor expectation | Why it matters |
-| ---------------------- | -------------- |
-| keep tracked workflows names-only | the project’s core trust boundary depends on structural telemetry instead of retained raw content |
-| keep secrets in environment-injected or operator-local surfaces | public docs, logs, and tracked files are not credential surfaces |
-| preserve fail-closed behavior | safety controls remain meaningful only when denial and stop paths survive pressure |
-| keep operator-local evidence in operator-local lanes | public presentation should not absorb high-detail governance residue by accident |
-| route containment-break reports through private disclosure | high-risk security issues need bounded handling rather than public issue traffic |
+| Contributor expectation                                         | Why it matters                                                                                    |
+| --------------------------------------------------------------- | ------------------------------------------------------------------------------------------------- |
+| keep tracked workflows names-only                               | the project’s core trust boundary depends on structural telemetry instead of retained raw content |
+| keep secrets in environment-injected or operator-local surfaces | public docs, logs, and tracked files are not credential surfaces                                  |
+| preserve fail-closed behavior                                   | safety controls remain meaningful only when denial and stop paths survive pressure                |
+| keep operator-local evidence in operator-local lanes            | public presentation should not absorb high-detail governance residue by accident                  |
+| route containment-break reports through private disclosure      | high-risk security issues need bounded handling rather than public issue traffic                  |
 
 If a proposed change makes the system easier to demo but harder to trust, it is probably the wrong trade.
 

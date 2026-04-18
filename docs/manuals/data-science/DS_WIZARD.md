@@ -1,6 +1,7 @@
 ﻿# Calamum DS Wizard
 
-Updated: 2026-04-14
+Version: `1.0.1`
+Updated: 2026-04-18
 
 This document explains how to use the guided data-science wizard for `observerctl ds`.
 

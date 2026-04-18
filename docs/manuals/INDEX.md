@@ -1,6 +1,7 @@
 # Calamum Manual Index
 
-Updated: 2026-04-12
+Version: `1.0.1`
+Updated: 2026-04-18
 
 This index routes readers through the public manual-class documents for Calamum Moltbook Observer.
 

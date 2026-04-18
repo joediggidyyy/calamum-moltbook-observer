@@ -1,6 +1,7 @@
 # Calamum DS Operations
 
-Updated: 2026-04-14
+Version: `1.0.1`
+Updated: 2026-04-18
 
 This document is the main operating reference for the `observerctl ds` command family.
 

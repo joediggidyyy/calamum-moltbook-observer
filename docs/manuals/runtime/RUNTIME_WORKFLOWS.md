@@ -1,6 +1,7 @@
 # Calamum Runtime Workflows
 
-Updated: 2026-04-12
+Version: `1.0.1`
+Updated: 2026-04-18
 
 This document is the practical operating path for the Calamum observer stack.
 

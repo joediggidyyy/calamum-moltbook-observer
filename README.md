@@ -5,7 +5,7 @@
 **Owner**: ORACL-Prime  
 **Project**: Calamum Moltbook Observer  
 **Version**: `1.0.1`  
-**Last updated**: 2026-04-17
+**Last updated**: 2026-04-18
 
 ---
 
@@ -42,15 +42,15 @@ This README is the public front door for the project. Use it to understand what 
 
 ## At a glance
 
-| Area | Public contract |
-| ---- | --------------- |` 
-| Research focus | hostile-agent measurement, names-only telemetry, and downstream analysis |
-| Data posture | names-only persistence; no raw Moltbook content storage in the normal workflow |
-| Runtime authority | `observerctl`, watchdog, and retained evidence packets are authoritative; dashboards and wizards remain operator interfaces |
-| Safety model | bootstrap readiness, baseline validation, posture control, and fail-closed gates work together as one operating contract |
-| Analysis model | local ML workflows on obfuscated telemetry only |
-| Public repo scope | tracked source, root docs, manuals, deployment assets, branding, templates, report framework surfaces, and selected publication artifacts |
-| Shipped package scope | runtime code plus the documentation and report baseline explicitly declared in `pyproject.toml` and `MANIFEST.in` |
+| Area                  | Public contract                                                                                                                                                   |
+| --------------------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| Research focus        | hostile-agent measurement, names-only telemetry, and downstream analysis                                                                                          |
+| Data posture          | names-only persistence; no raw Moltbook content storage in the normal workflow                                                                                    |
+| Runtime authority     | `observerctl`, watchdog, and retained evidence packets are authoritative; dashboards and wizards remain operator interfaces                                       |
+| Safety model          | bootstrap readiness, baseline validation, posture control, and fail-closed gates work together as one operating contract                                          |
+| Analysis model        | local ML workflows on obfuscated telemetry only                                                                                                                   |
+| Public repo scope     | tracked source, root docs, manuals, public course writeups, deployment assets, branding, templates, report framework surfaces, and selected publication artifacts |
+| Shipped package scope | runtime code plus the documentation and report baseline explicitly declared in `pyproject.toml` and `MANIFEST.in`                                                 |
 
 ## Runtime contract
 
@@ -107,6 +107,7 @@ This repository presents the **public observer surface**:
 - branding
 - root policy and methodology documents
 - public manuals
+- public course and project writeups
 - report framework surfaces and intentionally published packet artifacts
 - reusable project templates
 
@@ -118,8 +119,17 @@ The public repo and the installable package are related but not identical releas
 | ------------------------------------------------------------ | --------------------------------- | -------------------------------------------- |
 | operator manual library under `docs/`                        | Yes                               | Yes                                          |
 | report framework baseline under `docs/reports/`              | Yes                               | Yes                                          |
+| adjacent tracked writeups under `docs/Spring2026/`           | Yes                               | No                                           |
 | published collection artifacts and emitted validation leaves | Yes, when intentionally published | Only when explicitly added to package inputs |
 | local runtime evidence and operator residue                  | No                                | No                                           |
+
+## Documentation delivery boundary
+
+| Documentation surface                                                                                                                                                                                 | Current ship state                                                       |
+| ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | ------------------------------------------------------------------------ |
+| `docs/INDEX.md` + `docs/manuals/**` | tracked in the repo and shipped with the installable application package |
+| `docs/reports/INDEX.md`, `docs/reports/aggregates/*`, `docs/reports/reference/GENERATED_REPORT_SURFACES.md`, `docs/reports/validations/INDEX.md`, and the structural `docs/reports/collections/` lane | tracked in the repo and shipped as the report framework baseline |
+| adjacent tracked writeups under `docs/Spring2026/` | tracked in the repo, not part of the shipped application package |
 
 ## Public report publication
 
@@ -133,7 +143,7 @@ Use [Report Collections](docs/reports/INDEX.md) for current publication availabi
 projects/calamum-moltbook-observer/
  assets/              # Branding and static assets
  deployment/          # Deployment/support surfaces kept public
- docs/                # Public documentation (`manuals/` + `reports/`)
+ docs/                # Public documentation (`manuals/`, `reports/`, and tracked writeups)
  src/                 # Source code
     analysis/         # Local ML and analysis workflows
     deployment/       # Dockerfiles and hardening profiles

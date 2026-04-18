@@ -1,6 +1,7 @@
 # Calamum Security Model
 
-Updated: 2026-04-13
+Version: `1.0.1`
+Updated: 2026-04-18
 
 This document explains the public security architecture for the Calamum observer stack.
 

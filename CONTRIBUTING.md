@@ -1,5 +1,9 @@
 # Contributing to Calamum Moltbook Observer
 
+**Status**: Public contribution guide  
+**Version**: `1.0.1`  
+**Last updated**: 2026-04-18
+
 > **Managed by CodeSentinel** | *Operations governed by automated watchdog policy.*
 
 ## Contribution boundary

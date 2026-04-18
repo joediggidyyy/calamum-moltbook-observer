@@ -1,6 +1,7 @@
 # Calamum Reference Index
 
-Updated: 2026-04-03
+Version: `1.0.1`
+Updated: 2026-04-18
 
 This section holds the stable reference surfaces that explain the runtime contract.
 

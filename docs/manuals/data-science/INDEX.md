@@ -1,6 +1,7 @@
 # Calamum Data Science Index
 
-Updated: 2026-04-12
+Version: `1.0.1`
+Updated: 2026-04-18
 
 This section covers the supported data-science workflow for `observerctl ds` and the associated reporting surfaces.
 

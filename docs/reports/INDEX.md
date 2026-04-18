@@ -1,5 +1,8 @@
 # Report Collections
 
+Version: `1.0.1`
+Updated: 2026-04-18
+
 Tracked reports are rebuilt as human-facing collection packets derived from the canonical untracked DS run spine.
 Use this index to choose between synthesis, front-door packet routing, workflow-family rollups, threshold follow-through, and validation surfaces.
 Machine-readable authority remains outside `docs/reports/` and is referenced from these collection surfaces rather than duplicated here.

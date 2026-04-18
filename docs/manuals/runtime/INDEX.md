@@ -1,6 +1,7 @@
 # Calamum Runtime Index
 
-Updated: 2026-04-12
+Version: `1.0.1`
+Updated: 2026-04-18
 
 This section covers day-to-day runtime use of the Calamum observer stack, from local bootstrap readiness through closure and analysis handoff.
 

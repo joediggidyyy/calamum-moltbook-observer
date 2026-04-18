@@ -1,6 +1,7 @@
 # Calamum Runtime Transitions
 
-Updated: 2026-04-03
+Version: `1.0.1`
+Updated: 2026-04-18
 
 This document defines the public transition contract for the runtime CLI.
 

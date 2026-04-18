@@ -59,6 +59,7 @@ def test_manifest_authoritative_root_alignment() -> None:
     assert "src/" in content_roots, "src/ must remain a public content root"
     assert "docs/manuals/" in content_roots, "docs/manuals/ must remain a public content root"
     assert "docs/reports/" in content_roots, "docs/reports/ must remain a public content root"
+    assert "docs/Spring2026/" in content_roots, "docs/Spring2026/ must remain a public tracked writeup root"
     assert "docs/metrics/" not in content_roots, "docs/metrics/ must not appear as a public content root"
     assert "template_library/" in content_roots, "template_library/ must remain a public content root"
     assert "tools/" in content_roots, "tools/ must remain a public content root"
@@ -336,8 +337,11 @@ def test_packaged_docs_and_report_framework_boundary_is_explicit() -> None:
     assert "Collection alias: `liv-r8bc9`" not in readme, "README must not package the current populated collection state as the shipped boundary"
     assert "docs/INDEX.md` + `docs/manuals/**` | tracked in the repo and shipped with the installable application package" in readme, "README must describe the shipped manual-library boundary"
     assert "docs/reports/INDEX.md`, `docs/reports/aggregates/*`, `docs/reports/reference/GENERATED_REPORT_SURFACES.md`, `docs/reports/validations/INDEX.md`, and the structural `docs/reports/collections/` lane | tracked in the repo and shipped as the report framework baseline" in readme, "README must describe the shipped report framework baseline"
+    assert "adjacent tracked writeups under `docs/Spring2026/`" in readme, "README must classify the public Spring2026 writeups as tracked but unshipped"
     assert "tracked in the repo and shipped with the installable application package" in docs_index, "Docs index must describe the shipped docs-library boundary"
     assert "report framework baseline under [`reports/INDEX.md`](reports/INDEX.md)" in docs_index, "Docs index must describe the shipped report framework baseline"
+    assert "[`Spring2026/INDEX.md`](Spring2026/INDEX.md) and the adjacent writeups under [`Spring2026/`](Spring2026/)" in docs_index, "Docs index must classify the Spring2026 writeup subtree explicitly"
+    assert "tracked in the repo, not part of the shipped application package" in docs_index, "Docs index must keep Spring2026 writeups outside the shipped package boundary"
     assert "part of the shipped application documentation payload" in manuals_index, "Manual index must state that the manual library ships with the application package"
     assert "report framework baseline under [`docs/reports/`](docs/reports/)" in methodology, "Methodology manual must describe the shipped report framework baseline"
     assert "publication-derived repository surfaces built from canonical local artifacts" in methodology, "Methodology manual must keep populated tracked reports in the publication-derived lane"
@@ -346,9 +350,12 @@ def test_packaged_docs_and_report_framework_boundary_is_explicit() -> None:
     assert "dated collection leaves, dated processing leaves, figure-backed packet content, and emitted validation packet leaves form **derived populated publication content**" in contract_map, "Contract map must keep populated report packets in the derived publication class"
 
     for forbidden in (
+        "recursive-include docs/Spring2026",
         "recursive-include docs/reports *.md",
         "recursive-include docs/reports/collections *.md",
         "docs/reports/collections/liv-r8bc9",
+        "DATA740_FinalProject_JoeWaller.pdf",
+        "DATA780_FinalProject_JoeWaller.pdf",
         "APEXLAB_REFERENCE_VALIDATION_REPORT_20260324.md",
         "APEXLAB_REFERENCE_VALIDATION_REPORT_20260324.html",
     ):

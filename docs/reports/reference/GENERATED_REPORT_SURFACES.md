@@ -1,5 +1,8 @@
 # Generated Report Surfaces
 
+Version: `1.0.1`
+Updated: 2026-04-18
+
 This reference describes the active human-facing report schema for tracked publication under `docs/reports/`.
 
 ## Contract
