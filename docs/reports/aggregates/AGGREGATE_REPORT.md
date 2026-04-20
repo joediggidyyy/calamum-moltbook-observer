@@ -4,11 +4,10 @@ This synthesis page summarizes the strongest current reader-facing conclusions a
 
 ## Executive summary
 
-- Published collection packets: 0
-- Published validation packets: 1
+- Published packets: 0
 - Collection aliases represented: 0
 - Workflow families represented: 0
-- Threshold-bearing collection packets: 0
+- Threshold-bearing packets: 0
 
 ## Why this aggregate exists
 
@@ -16,22 +15,20 @@ The tracked report family now has multiple reader roles: packet entry, workflow 
 
 ## Runtime-safe current picture
 
-- No published collection packets are currently available, but the tracked validation lane does contain one published validation packet.
+- No published packets are available yet.
 
 ## What to open first
 
-No collection packets are published yet. If you need the currently published reader-facing packet in this tree, open the validation index.
+No collection packets are published yet.
 
 ## Current packet family at a glance
 
 - Collections with figure-backed packets: 0
 - Collections with threshold-bearing packets: 0
-- Published validation packets: 1
 
 ## Strongest findings
 
-- No threshold-bearing collection packets are currently present in the tracked collection lane.
-- The tracked validation lane currently contains the ApexLab reference validation packet.
+- No threshold-bearing packets are currently present in the tracked family.
 
 ## Workflow and threshold synthesis
 
@@ -50,7 +47,6 @@ No collection packets are published yet. If you need the currently published rea
 - Workflow rollup: [WORKFLOW_ROLLUP.md](WORKFLOW_ROLLUP.md)
 - Threshold summary: [THRESHOLD_SUMMARY.md](THRESHOLD_SUMMARY.md)
 - Generated report surfaces: [GENERATED_REPORT_SURFACES.md](../reference/GENERATED_REPORT_SURFACES.md)
-- Validation index: [../validations/INDEX.md](../validations/INDEX.md)
 
 ## Reader next steps
 
