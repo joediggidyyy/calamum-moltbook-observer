@@ -42,7 +42,6 @@ log/
 
 # Coursework deliverables are local-only (do not track/publish)
 deliverables/
-DATA780_FinalProject_*.pdf
 demo_output/
 jobs/
 planning/
