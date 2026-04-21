@@ -24,8 +24,11 @@ from calamum_librarian import (
     dataset_authority_entry_for_selector,
     dataset_display_alias_for_manifest,
     librarian_vault_lock_packet,
+    librarian_vault_unlock_packet,
     librarian_vault_verify_packet,
+    refresh_librarian_dataset_catalog_from_run_manifest,
     register_librarian_dataset_packet,
+    release_librarian_dataset_packet,
 )
 from analysis._util import normalize_repo_or_absolute_path, sha256_path
 
@@ -248,7 +251,7 @@ def test_register_dataset_bootstraps_vault_and_projection_surfaces(tmp_path: Pat
     assert verify_packet['artifacts']['librarian_vault_baseline_json'].endswith('vault_checksum.json')
 
 
-def test_vault_lock_denies_ordinary_dataset_registration(tmp_path: Path) -> None:
+def test_vault_unlocked_maintenance_window_denies_ordinary_dataset_registration(tmp_path: Path) -> None:
     project_root, anchor = _make_temp_project(tmp_path)
     dataset_dir = project_root / 'datasets' / 'locked_alpha'
     dataset_dir.mkdir(parents=True, exist_ok=True)
@@ -261,13 +264,67 @@ def test_vault_lock_denies_ordinary_dataset_registration(tmp_path: Path) -> None
         'has_labels': False,
     }), encoding='utf-8')
 
-    lock_packet = librarian_vault_lock_packet(anchor, reason='unit-test-lock')
-    assert lock_packet['decision'] == 'go'
+    unlock_packet = librarian_vault_unlock_packet(anchor, reason='unit-test-maintenance-window')
+    assert unlock_packet['decision'] == 'go'
+    assert unlock_packet['locked'] is False
 
     packet = register_librarian_dataset_packet(anchor, manifest_path)
 
     assert packet['decision'] == 'no-go'
-    assert 'critical_check_failed:librarian_vault_locked' in packet['reason_codes']
+    assert 'critical_check_failed:librarian_vault_maintenance_window_open' in packet['reason_codes']
+
+
+def test_vault_unlocked_maintenance_window_denies_dataset_release(tmp_path: Path) -> None:
+    project_root, anchor = _make_temp_project(tmp_path)
+    manifest_path = _write_dataset_manifest(project_root, 'maintenance_release_alpha', total_records=1, has_labels=False)
+
+    packet = register_librarian_dataset_packet(
+        anchor,
+        manifest_path,
+        access_class='protected-source',
+        display_name='Maintenance Release Alpha',
+        run_id='maintenance-release-alpha',
+    )
+    assert packet['decision'] == 'go'
+
+    unlock_packet = librarian_vault_unlock_packet(anchor, reason='unit-test-maintenance-window')
+    assert unlock_packet['decision'] == 'go'
+    assert unlock_packet['locked'] is False
+
+    release_packet = release_librarian_dataset_packet(anchor, 'maintenance-release-alpha')
+
+    assert release_packet['decision'] == 'no-go'
+    assert 'critical_check_failed:librarian_vault_maintenance_window_open' in release_packet['reason_codes']
+
+
+def test_vault_unlocked_maintenance_window_denies_reviewed_closeout_refresh(tmp_path: Path) -> None:
+    project_root, anchor = _make_temp_project(tmp_path)
+    manifest_path = _write_dataset_manifest(
+        project_root,
+        'maintenance_refresh_alpha',
+        total_records=1,
+        has_labels=True,
+        source='real',
+        mode='canary',
+    )
+
+    unlock_packet = librarian_vault_unlock_packet(anchor, reason='unit-test-maintenance-window')
+    assert unlock_packet['decision'] == 'go'
+    assert unlock_packet['locked'] is False
+
+    refresh_packet = refresh_librarian_dataset_catalog_from_run_manifest(
+        anchor,
+        {
+            'workflow': 'build',
+            'run_id': 'maintenance-refresh-alpha',
+            'timestamp_utc': '2026-04-21T12:00:00Z',
+            'context': {'source': 'real', 'mode': 'canary'},
+            'artifacts': {'dataset_manifest': str(manifest_path)},
+        },
+    )
+
+    assert refresh_packet['decision'] == 'no-go'
+    assert 'critical_check_failed:librarian_vault_maintenance_window_open' in refresh_packet['reason_codes']
 
 
 def test_register_dataset_infers_source_and_mode_from_manifest_inputs(tmp_path: Path) -> None:

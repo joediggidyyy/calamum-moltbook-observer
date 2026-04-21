@@ -189,3 +189,38 @@ def test_append_record_content_rows_include_packet_uplift_fields(tmp_path: Path,
     assert rec['contains_system_prompt_reference'] is True
     assert rec['prompt_injection_score'] >= 2
     assert rec['f_timestamp_epoch'] > 0
+
+
+def test_get_live_client_best_effort_reuses_client_until_host_or_key_changes(monkeypatch) -> None:
+    created: list[tuple[str, str]] = []
+
+    class _FakeClient:
+        def __init__(self, host: str, api_key: str) -> None:
+            self.host = host
+            self.api_key = api_key
+            created.append((host, api_key))
+
+    monkeypatch.setattr(calamum_observer_agent, 'MoltbookAPIClient', _FakeClient)
+    monkeypatch.setattr(calamum_observer_agent, '_LIVE_CLIENT', None)
+    monkeypatch.setattr(calamum_observer_agent, '_LIVE_CLIENT_HOST', '')
+    monkeypatch.setattr(calamum_observer_agent, '_LIVE_CLIENT_API_KEY', '')
+    monkeypatch.setenv('MOLTBOOK_API_KEY', 'alpha-key')
+    monkeypatch.setenv('MOLTBOOK_HOST', 'https://host-one.invalid/api')
+
+    first = calamum_observer_agent._get_live_client_best_effort()
+    second = calamum_observer_agent._get_live_client_best_effort()
+
+    monkeypatch.setenv('MOLTBOOK_API_KEY', 'beta-key')
+    third = calamum_observer_agent._get_live_client_best_effort()
+
+    monkeypatch.setenv('MOLTBOOK_HOST', 'https://host-two.invalid/api')
+    fourth = calamum_observer_agent._get_live_client_best_effort()
+
+    assert first is second
+    assert third is not first
+    assert fourth is not third
+    assert created == [
+        ('https://host-one.invalid/api', 'alpha-key'),
+        ('https://host-one.invalid/api', 'beta-key'),
+        ('https://host-two.invalid/api', 'beta-key'),
+    ]

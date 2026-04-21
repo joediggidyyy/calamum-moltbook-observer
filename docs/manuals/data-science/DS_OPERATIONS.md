@@ -74,6 +74,18 @@ In the DS lane, `observerctl ds saved baselines` keeps the same command path whi
 
 Runtime baseline collection and analysis remain documented in [`../runtime/RUNTIME_WORKFLOWS.md`](../runtime/RUNTIME_WORKFLOWS.md).
 
+## Reviewed closeout -> DS handoff
+
+Use the following route when a reviewed dataset should be admitted and consumed through the approved selector surface.
+
+1. complete the reviewed closeout; the DS finalization path refreshes the Librarian catalog automatically when the run carries a reviewed dataset manifest
+2. keep the Librarian vault in its normal locked posture for ordinary selector-backed register/release work; if the vault is currently unlocked for maintenance, relock before continuing ordinary DS admission or release
+3. confirm selector availability with `observerctl librarian datasets`
+4. if the reviewed selector did not materialize, use `observerctl librarian dataset register <dataset_manifest.json>` as the manual fallback
+5. consume the admitted dataset through `observerctl ds train --dataset <selector>`, `observerctl ds score --dataset <selector>`, or `observerctl ds wizard --hydrate-dataset <selector>`
+
+This keeps the DS lane selector-backed and lineage-aware instead of silently drifting back to raw filesystem handoff.
+
 ## Recommended operating sequences
 
 ### Build → train → evaluate

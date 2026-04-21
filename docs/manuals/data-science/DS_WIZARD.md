@@ -31,6 +31,12 @@ To confirm the catalog:
 observerctl librarian datasets
 ```
 
+### Reviewed closeout handoff
+
+Reviewed closeout normally refreshes Librarian admission automatically when the run finalizes a reviewed dataset manifest. Before using the manual fallback, keep the vault in its normal locked posture, confirm the selector with `observerctl librarian datasets`, and only use `observerctl librarian dataset register ...` if the reviewed selector did not materialize.
+
+Once the selector is visible, hydrate the wizard with `--hydrate-dataset <selector>` rather than re-entering raw dataset paths.
+
 ### Dataset inputs by workflow
 
 | Workflow       | `in` page dataset surface                  | Notes                                                 |

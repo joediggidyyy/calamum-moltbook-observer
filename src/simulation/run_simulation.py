@@ -2426,8 +2426,8 @@ def run_librarian_vault_controls_probe() -> int:
                 '--json',
             ]),
             'vault_status': _run_observerctl_cli(['librarian', 'vault', 'status', '--json']),
-            'vault_lock': _run_observerctl_cli(['librarian', 'vault', 'lock', '--reason', 'sandbox-maintenance', '--json']),
-            'register_while_locked': _run_observerctl_cli([
+            'vault_unlock': _run_observerctl_cli(['librarian', 'vault', 'unlock', '--reason', 'sandbox-maintenance', '--json']),
+            'register_while_unlocked': _run_observerctl_cli([
                 'librarian',
                 'dataset',
                 'register',
@@ -2438,15 +2438,15 @@ def run_librarian_vault_controls_probe() -> int:
                 'vault-secondary',
                 '--json',
             ]),
-            'vault_unlock': _run_observerctl_cli(['librarian', 'vault', 'unlock', '--reason', 'sandbox-complete', '--json']),
+            'vault_lock': _run_observerctl_cli(['librarian', 'vault', 'lock', '--reason', 'sandbox-complete', '--json']),
             'vault_rebaseline': _run_observerctl_cli(['librarian', 'vault', 'rebaseline', '--reason', 'sandbox-refresh', '--json']),
             'vault_verify': _run_observerctl_cli(['librarian', 'vault', 'verify', '--json']),
         }
 
         status_packet = command_runs['vault_status'].get('stdout_json', {}) if isinstance(command_runs['vault_status'].get('stdout_json', {}), dict) else {}
-        lock_packet = command_runs['vault_lock'].get('stdout_json', {}) if isinstance(command_runs['vault_lock'].get('stdout_json', {}), dict) else {}
-        locked_register_packet = command_runs['register_while_locked'].get('stdout_json', {}) if isinstance(command_runs['register_while_locked'].get('stdout_json', {}), dict) else {}
         unlock_packet = command_runs['vault_unlock'].get('stdout_json', {}) if isinstance(command_runs['vault_unlock'].get('stdout_json', {}), dict) else {}
+        unlocked_register_packet = command_runs['register_while_unlocked'].get('stdout_json', {}) if isinstance(command_runs['register_while_unlocked'].get('stdout_json', {}), dict) else {}
+        lock_packet = command_runs['vault_lock'].get('stdout_json', {}) if isinstance(command_runs['vault_lock'].get('stdout_json', {}), dict) else {}
         rebaseline_packet = command_runs['vault_rebaseline'].get('stdout_json', {}) if isinstance(command_runs['vault_rebaseline'].get('stdout_json', {}), dict) else {}
         verify_packet = command_runs['vault_verify'].get('stdout_json', {}) if isinstance(command_runs['vault_verify'].get('stdout_json', {}), dict) else {}
 
@@ -2461,12 +2461,12 @@ def run_librarian_vault_controls_probe() -> int:
         result_matrix = {
             'seed_dataset_registered': int(command_runs['register_seed_dataset'].get('returncode', 1)) == 0,
             'vault_status_reported': int(command_runs['vault_status'].get('returncode', 1)) == 0 and str(status_packet.get('action', '')).strip() == 'librarian-vault-status',
-            'vault_lock_succeeded': int(command_runs['vault_lock'].get('returncode', 1)) == 0 and bool(lock_packet.get('locked', False)) is True,
-            'locked_register_denied': int(command_runs['register_while_locked'].get('returncode', 0)) != 0 and 'critical_check_failed:librarian_vault_locked' in list(locked_register_packet.get('reason_codes', []) or []),
             'vault_unlock_succeeded': int(command_runs['vault_unlock'].get('returncode', 1)) == 0 and bool(unlock_packet.get('locked', True)) is False,
+            'unlocked_register_denied': int(command_runs['register_while_unlocked'].get('returncode', 0)) != 0 and 'critical_check_failed:librarian_vault_maintenance_window_open' in list(unlocked_register_packet.get('reason_codes', []) or []),
+            'vault_lock_succeeded': int(command_runs['vault_lock'].get('returncode', 1)) == 0 and bool(lock_packet.get('locked', False)) is True,
             'vault_rebaseline_succeeded': int(command_runs['vault_rebaseline'].get('returncode', 1)) == 0 and str(rebaseline_packet.get('action', '')).strip() == 'librarian-vault-rebaseline',
             'vault_verify_succeeded': int(command_runs['vault_verify'].get('returncode', 1)) == 0 and str(verify_packet.get('decision', '')).strip() == 'go',
-            'vault_control_state_written': control_state_path.exists() and bool(control_state) and bool(control_state.get('locked', True)) is False,
+            'vault_control_state_written': control_state_path.exists() and bool(control_state) and bool(control_state.get('locked', False)) is True,
             'vault_audit_records_control_actions': all(action in audit_actions for action in ['librarian-vault-lock', 'librarian-vault-unlock', 'librarian-vault-rebaseline']) and baseline_path.exists(),
         }
 
@@ -2488,9 +2488,9 @@ def run_librarian_vault_controls_probe() -> int:
             ),
             'artifact_snapshots': {
                 'vault_status_packet': status_packet,
-                'vault_lock_packet': lock_packet,
-                'locked_register_packet': locked_register_packet,
                 'vault_unlock_packet': unlock_packet,
+                'unlocked_register_packet': unlocked_register_packet,
+                'vault_lock_packet': lock_packet,
                 'vault_rebaseline_packet': rebaseline_packet,
                 'vault_verify_packet': verify_packet,
                 'vault_control_state': control_state,

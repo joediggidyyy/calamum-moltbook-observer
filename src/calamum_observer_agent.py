@@ -14,7 +14,6 @@ from __future__ import annotations
 __version__ = "1.0.1"
 
 import argparse
-import hashlib
 import json
 import os
 import sys
@@ -320,7 +319,7 @@ _BACKOFF_UNTIL_TS: Dict[str, float] = {}
 # Live client cache (never logged; used to avoid re-creating sessions).
 _LIVE_CLIENT: Any = None
 _LIVE_CLIENT_HOST: str = ""
-_LIVE_CLIENT_FP8: str = ""
+_LIVE_CLIENT_API_KEY: str = ""
 
 
 def _get_live_client_best_effort() -> Optional[Any]:
@@ -330,7 +329,7 @@ def _get_live_client_best_effort() -> Optional[Any]:
     - MoltbookAPIClient importable
     - MOLTBOOK_API_KEY present
     """
-    global _LIVE_CLIENT, _LIVE_CLIENT_HOST, _LIVE_CLIENT_FP8
+    global _LIVE_CLIENT, _LIVE_CLIENT_HOST, _LIVE_CLIENT_API_KEY
 
     if MoltbookAPIClient is None:
         return None
@@ -340,15 +339,10 @@ def _get_live_client_best_effort() -> Optional[Any]:
         return None
 
     host = (os.getenv("MOLTBOOK_HOST") or "https://www.moltbook.com/api/v1").strip()
-    try:
-        fp8 = hashlib.sha256(api_key.encode("utf-8")).hexdigest()[:8]
-    except Exception:
-        fp8 = ""
-
-    if _LIVE_CLIENT is None or host != _LIVE_CLIENT_HOST or fp8 != _LIVE_CLIENT_FP8:
+    if _LIVE_CLIENT is None or host != _LIVE_CLIENT_HOST or api_key != _LIVE_CLIENT_API_KEY:
         _LIVE_CLIENT = MoltbookAPIClient(host, api_key)
         _LIVE_CLIENT_HOST = host
-        _LIVE_CLIENT_FP8 = fp8
+        _LIVE_CLIENT_API_KEY = api_key
     return _LIVE_CLIENT
 
 

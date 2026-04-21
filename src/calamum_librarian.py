@@ -509,7 +509,7 @@ def _vault_default_control_state() -> Dict[str, Any]:
     return {
         'schema_version': VAULT_SCHEMA_VERSION,
         'kind': VAULT_CONTROL_KIND,
-        'locked': False,
+        'locked': True,
         'lock_reason': '',
         'locked_at_utc': '',
         'unlocked_at_utc': '',
@@ -755,14 +755,19 @@ def _vault_locked(paths: Dict[str, Path]) -> bool:
     return bool(_load_vault_control_state(paths).get('locked', False))
 
 
-def _vault_locked_packet(paths: Dict[str, Path], *, action: str, summary: str) -> Dict[str, Any]:
+def _vault_ordinary_ops_allowed(paths: Dict[str, Path]) -> bool:
+    return bool(_load_vault_control_state(paths).get('locked', True))
+
+
+def _vault_maintenance_window_packet(paths: Dict[str, Path], *, action: str, summary: str) -> Dict[str, Any]:
     return {
         'timestamp_utc': utc_now_iso(),
         'runtime_cli_surface': 'observerctl',
         'decision': 'no-go',
         'action': str(action or '').strip(),
         'summary': str(summary or '').strip(),
-        'reason_codes': ['critical_check_failed:librarian_vault_locked'],
+        'lock_state': 'unlocked',
+        'reason_codes': ['critical_check_failed:librarian_vault_maintenance_window_open'],
         'artifacts': _vault_artifact_refs(paths),
     }
 
@@ -1872,6 +1877,17 @@ def _upsert_dataset_entry(paths: Dict[str, Path], entry: Dict[str, Any]) -> Dict
 def refresh_librarian_dataset_catalog_from_run_manifest(project_anchor: Path, manifest_payload: Dict[str, Any]) -> Dict[str, Any]:
     paths = _dataset_catalog_paths(project_anchor)
     _bootstrap_librarian_vault(paths)
+    if not _vault_ordinary_ops_allowed(paths):
+        return {
+            'timestamp_utc': utc_now_iso(),
+            'runtime_cli_surface': 'observerctl',
+            'decision': 'no-go',
+            'action': 'librarian-dataset-refresh',
+            'catalog_updated': False,
+            'summary': 'Reviewed closeout admission refresh skipped because the protected librarian vault is unlocked for manual maintenance.',
+            'reason_codes': ['critical_check_failed:librarian_vault_maintenance_window_open'],
+            'artifacts': _vault_artifact_refs(paths),
+        }
     project_root = paths['project_root']
     dataset_ref = _run_manifest_dataset_ref(manifest_payload)
     if not dataset_ref:
@@ -2003,11 +2019,11 @@ def register_librarian_dataset_packet(
     paths = _dataset_catalog_paths(project_anchor)
     _bootstrap_librarian_vault(paths)
     project_root = paths['project_root']
-    if _vault_locked(paths):
-        return _vault_locked_packet(
+    if not _vault_ordinary_ops_allowed(paths):
+        return _vault_maintenance_window_packet(
             paths,
             action='librarian-dataset-register',
-            summary='Dataset registration denied because the protected librarian vault is locked.',
+            summary='Dataset registration denied because the protected librarian vault is unlocked for manual maintenance.',
         )
     manifest_path = dataset_manifest_path if dataset_manifest_path.is_absolute() else (project_root / dataset_manifest_path)
     manifest_path = manifest_path.resolve()
@@ -2469,6 +2485,12 @@ def release_librarian_dataset_packet(
 ) -> Dict[str, Any]:
     paths = _dataset_catalog_paths(project_anchor)
     _bootstrap_librarian_vault(paths)
+    if not _vault_ordinary_ops_allowed(paths):
+        return _vault_maintenance_window_packet(
+            paths,
+            action='librarian-dataset-release',
+            summary='Dataset release denied because the protected librarian vault is unlocked for manual maintenance.',
+        )
     resolved = _resolve_dataset_entry(paths, selector)
     if not isinstance(resolved, dict):
         return {
@@ -2685,15 +2707,16 @@ def librarian_vault_status_packet(project_anchor: Path) -> Dict[str, Any]:
     current = dict(integrity.get('current', {}) or {})
     baseline = dict(integrity.get('baseline', {}) or {})
     managed = _vault_managed_surface_counts(paths)
+    locked = bool(control_state.get('locked', False))
     return {
         'timestamp_utc': utc_now_iso(),
         'runtime_cli_surface': 'observerctl',
         'decision': 'go',
         'action': 'librarian-vault-status',
-        'summary': 'Protected librarian vault control plane ready.',
-        'lock_state': 'locked' if bool(control_state.get('locked', False)) else 'unlocked',
+        'summary': 'Protected librarian vault locked for normal signed operations.' if locked else 'Protected librarian vault unlocked for manual maintenance.',
+        'lock_state': 'locked' if locked else 'unlocked',
         'integrity_status': str(integrity.get('status', 'warn') or 'warn'),
-        'locked': bool(control_state.get('locked', False)),
+        'locked': locked,
         'reason_codes': list(integrity.get('reason_codes', []) or []),
         'integrity': {
             'current_checksum_sha256': str(current.get('checksum_sha256', '') or '').strip(),
@@ -2750,7 +2773,7 @@ def librarian_vault_lock_packet(project_anchor: Path, *, reason: str = '') -> Di
         'runtime_cli_surface': 'observerctl',
         'decision': 'go',
         'action': 'librarian-vault-lock',
-        'summary': 'Protected librarian vault locked for non-ordinary maintenance.',
+        'summary': 'Protected librarian vault locked for normal signed operations.',
         'lock_state': 'locked',
         'locked': True,
         'reason_codes': [],
@@ -2778,7 +2801,7 @@ def librarian_vault_unlock_packet(project_anchor: Path, *, reason: str = '') -> 
         'runtime_cli_surface': 'observerctl',
         'decision': 'go',
         'action': 'librarian-vault-unlock',
-        'summary': 'Protected librarian vault unlocked for ordinary signed mutations.',
+        'summary': 'Protected librarian vault unlocked for manual maintenance.',
         'lock_state': 'unlocked',
         'locked': False,
         'reason_codes': [],

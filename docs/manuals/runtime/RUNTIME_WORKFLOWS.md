@@ -111,6 +111,26 @@ When a run closes cleanly, the analysis handoff set is usually the lane-scoped r
 | baseline packets           | lane `evidence/` output from `observerctl baseline analyze`                                        | readiness and comparison framing                    |
 | reader-facing reports      | `docs/reports/`                                                                                    | tracked summaries and publication-oriented material |
 
+## Reviewed closeout to DS handoff
+
+Use this short route when a reviewed dataset needs to become available to the DS lane without falling back to raw-path handoffs.
+
+1. complete the reviewed closeout normally; the DS finalization path refreshes the Librarian catalog automatically when the run carries a reviewed dataset manifest
+2. keep the Librarian vault in its normal `locked` posture for ordinary selector-backed register/release work; if `observerctl librarian vault status` reports `lock_state = unlocked`, relock before retrying ordinary dataset admission or release
+3. confirm the approved selector surface with `observerctl librarian datasets`
+4. if the reviewed selector did not materialize, use `observerctl librarian dataset register <dataset_manifest.json>` as the manual fallback
+5. consume the dataset through the approved selector surface with `observerctl ds train --dataset <selector>`, `observerctl ds score --dataset <selector>`, or `observerctl ds wizard --hydrate-dataset <selector>`
+
+This keeps the DS lane selector-backed and lineage-aware; raw filesystem paths remain a build-only lane.
+
+## Live-key import posture
+
+When `observerctl ops keysmith mint` succeeds on a live lane, `observerctl` imports `MOLTBOOK_API_KEY` into the current process only.
+
+- the emitted helper scripts remain the explicit opt-in path for later-session or Windows-user persistence
+- `observerctl` no longer writes `MOLTBOOK_API_KEY` into the project `.env` as an automatic side effect
+- project `.env` autoload still supports deliberate local operator configuration, but that persistence is now manual rather than automatic
+
 ## Quick operating paths
 
 ### Background simulation

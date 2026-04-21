@@ -252,7 +252,7 @@ def _persist_user_env_var_windows(name: str, value: str) -> bool:
         return False
 
 
-def _hydrate_moltbook_key_from_sealed_drop(sealed_drop_path: Path, persist_project_env: bool = True) -> Dict[str, Any]:
+def _hydrate_moltbook_key_from_sealed_drop(sealed_drop_path: Path) -> Dict[str, Any]:
     path = Path(sealed_drop_path)
     try:
         secret = path.read_text(encoding='utf-8').strip() if path.exists() else ''
@@ -269,14 +269,12 @@ def _hydrate_moltbook_key_from_sealed_drop(sealed_drop_path: Path, persist_proje
         }
 
     os.environ['MOLTBOOK_API_KEY'] = secret
-    project_env_updated = bool(persist_project_env and _upsert_project_dotenv_var('MOLTBOOK_API_KEY', secret))
-    user_env_persisted = bool(_persist_user_env_var_windows('MOLTBOOK_API_KEY', secret))
     return {
         'sealed_drop_path': str(path).replace('\\', '/'),
         'present': True,
         'current_process': True,
-        'project_env_updated': project_env_updated,
-        'user_env_persisted': user_env_persisted,
+        'project_env_updated': False,
+        'user_env_persisted': False,
     }
 
 
@@ -480,13 +478,11 @@ def _ops_keysmith_mint_orchestrated(
         )
         packet['preflight'] = _keysmith_preflight_summary(preflight_packet)
         packet['execution_lane'] = 'sandbox' if sandbox_active and not bool(dry_run) else ('host-dry-run' if bool(dry_run) else 'host')
-        if str(packet.get('decision', 'no-go') or 'no-go').strip().lower() == 'go' and not bool(dry_run):
-            packet['env_import'] = _hydrate_moltbook_key_from_sealed_drop(Path(str(packet.get('sealed_drop_path', '') or '')))
         if str(packet.get('decision', 'no-go') or 'no-go').strip().lower() == 'go':
             if bool(dry_run):
                 packet['summary'] = 'KEYSMITH mint completed through the existing host dry-run path.'
             elif sandbox_active:
-                packet['summary'] = 'KEYSMITH mint completed through the existing sandbox path.'
+                packet['summary'] = 'KEYSMITH mint completed through the existing sandbox path with current-process import only.'
         return packet
 
     shell_path = _keysmith_shell_path()
@@ -597,7 +593,7 @@ def _ops_keysmith_mint_orchestrated(
         'runtime_cli_surface': 'observerctl',
         'decision': 'go',
         'action': 'ops-keysmith-mint',
-        'summary': 'KEYSMITH mint completed through the sandbox runner.',
+        'summary': 'KEYSMITH mint completed through the sandbox runner with current-process import only.',
         'reason_codes': [],
         'venue': resolved_venue,
         'dry_run': False,
@@ -757,7 +753,7 @@ def _ops_keysmith_mint(
         'runtime_cli_surface': 'observerctl',
         'decision': 'go',
         'action': 'ops-keysmith-mint',
-        'summary': 'KEYSMITH artifacts written through observerctl.',
+        'summary': 'KEYSMITH artifacts written through observerctl with current-process import only.',
         'reason_codes': [],
         'venue': resolved_venue,
         'dry_run': bool(dry_run),
@@ -4942,8 +4938,11 @@ def _render_librarian_dataset_action_guidance_lines(packet: Dict[str, Any]) -> L
         return ['Next: repair the missing dataset artifacts or choose a ready approved dataset.']
     if 'critical_check_failed:librarian_dataset_manifest_missing' in reason_codes:
         return ['Next: provide an existing dataset_manifest.json path and retry the action.']
-    if 'critical_check_failed:librarian_vault_locked' in reason_codes:
-        return ['Next: review observerctl librarian vault status or unlock the vault before retrying ordinary dataset mutations.']
+    if (
+        'critical_check_failed:librarian_vault_maintenance_window_open' in reason_codes
+        or 'critical_check_failed:librarian_vault_locked' in reason_codes
+    ):
+        return ['Next: review observerctl librarian vault status and relock the vault before retrying ordinary dataset admission or release.']
     if (
         'critical_check_failed:librarian_dataset_request_invalid' in reason_codes
         or 'critical_check_failed:librarian_dataset_attestation_invalid' in reason_codes

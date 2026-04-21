@@ -699,7 +699,7 @@ def test_project_dotenv_does_not_autoload_route_authority_env(tmp_path: Path, mo
     assert not os.environ.get('CALAMUM_OPS_MODE')
 
 
-def test_keysmith_env_import_hydrates_process_and_project_dotenv(tmp_path: Path, monkeypatch) -> None:
+def test_keysmith_env_import_defaults_to_current_process_only(tmp_path: Path, monkeypatch) -> None:
     project_root = tmp_path / 'project'
     project_root.mkdir(parents=True, exist_ok=True)
     env_path = project_root / '.env'
@@ -708,15 +708,15 @@ def test_keysmith_env_import_hydrates_process_and_project_dotenv(tmp_path: Path,
     sealed_drop.write_text('unit-test-live-key', encoding='utf-8')
     monkeypatch.setattr(observerctl_module, '_project_root', lambda: project_root)
     monkeypatch.delenv('MOLTBOOK_API_KEY', raising=False)
-    monkeypatch.setattr(observerctl_module, '_persist_user_env_var_windows', lambda name, value: False)
 
     result = observerctl_module._hydrate_moltbook_key_from_sealed_drop(sealed_drop)
 
     assert result['present'] is True
     assert result['current_process'] is True
-    assert result['project_env_updated'] is True
+    assert result['project_env_updated'] is False
+    assert result['user_env_persisted'] is False
     assert os.environ.get('MOLTBOOK_API_KEY') == 'unit-test-live-key'
-    assert 'MOLTBOOK_API_KEY=unit-test-live-key' in env_path.read_text(encoding='utf-8')
+    assert env_path.read_text(encoding='utf-8') == 'MOLTBOOK_API_KEY=\n'
 
 
 def test_ops_keysmith_mint_non_dry_run_requires_sandbox(tmp_path: Path, monkeypatch, capsys) -> None:
@@ -724,16 +724,22 @@ def test_ops_keysmith_mint_non_dry_run_requires_sandbox(tmp_path: Path, monkeypa
     monkeypatch.delenv('KEYSMITH_ALLOW_UNSANDBOXED', raising=False)
     runner_path = tmp_path / 'Invoke-KeysmithSandbox.ps1'
     runner_path.write_text('# runner\n', encoding='utf-8')
+    captured_imports: list[Path] = []
 
     monkeypatch.setattr(observerctl_module, '_keysmith_shell_path', lambda: 'powershell.exe')
     monkeypatch.setattr(observerctl_module, '_keysmith_sandbox_runner_path', lambda: runner_path)
-    monkeypatch.setattr(observerctl_module, '_hydrate_moltbook_key_from_sealed_drop', lambda path, persist_project_env=True: {
-        'sealed_drop_path': str(path),
-        'present': True,
-        'current_process': True,
-        'project_env_updated': True,
-        'user_env_persisted': False,
-    })
+
+    def _fake_hydrate(path):
+        captured_imports.append(Path(path))
+        return {
+            'sealed_drop_path': str(path),
+            'present': True,
+            'current_process': True,
+            'project_env_updated': False,
+            'user_env_persisted': False,
+        }
+
+    monkeypatch.setattr(observerctl_module, '_hydrate_moltbook_key_from_sealed_drop', _fake_hydrate)
 
     def _fake_run(*args, **kwargs):
         out_dir = tmp_path / 'live_keysmith'
@@ -769,6 +775,10 @@ def test_ops_keysmith_mint_non_dry_run_requires_sandbox(tmp_path: Path, monkeypa
     assert Path(payload['sealed_drop_path']).exists()
     assert Path(payload['import_helper_path']).exists()
     assert Path(payload['persist_user_env_helper_path']).exists()
+    assert payload['env_import']['current_process'] is True
+    assert payload['env_import']['project_env_updated'] is False
+    assert payload['env_import']['user_env_persisted'] is False
+    assert captured_imports == [Path(payload['sealed_drop_path'])]
 
 
 def test_ops_keysmith_mint_non_dry_run_reports_docker_lane_blocker(tmp_path: Path, monkeypatch, capsys) -> None:
@@ -3179,6 +3189,7 @@ def test_librarian_nested_cli_dataset_and_vault_commands(monkeypatch, tmp_path: 
     assert rc == 0
     payload = json.loads(capsys.readouterr().out)
     assert payload['action'] == 'librarian-vault-status'
+    assert payload['locked'] is True
     assert payload['artifacts']['librarian_vault_baseline_json'].endswith('vault_checksum.json')
     assert payload['integrity']['tracked_file_count'] == 2
     assert payload['managed_surfaces']['authority_file_count'] == 2
@@ -3193,22 +3204,27 @@ def test_librarian_nested_cli_dataset_and_vault_commands(monkeypatch, tmp_path: 
     assert payload['action'] == 'librarian-dataset-release'
     assert payload['release_mode'] == 'protected-source'
 
-    rc = main(['librarian', 'vault', 'lock', '--reason', 'maintenance-window', '--json'])
-    assert rc == 0
-    payload = json.loads(capsys.readouterr().out)
-    assert payload['action'] == 'librarian-vault-lock'
-    assert payload['locked'] is True
-
-    rc = main(['librarian', 'dataset', 'register', str(manifest_path), '--json'])
-    assert rc == 2
-    payload = json.loads(capsys.readouterr().out)
-    assert 'critical_check_failed:librarian_vault_locked' in payload['reason_codes']
-
-    rc = main(['librarian', 'vault', 'unlock', '--reason', 'maintenance-complete', '--json'])
+    rc = main(['librarian', 'vault', 'unlock', '--reason', 'maintenance-window', '--json'])
     assert rc == 0
     payload = json.loads(capsys.readouterr().out)
     assert payload['action'] == 'librarian-vault-unlock'
     assert payload['locked'] is False
+
+    rc = main(['librarian', 'dataset', 'register', str(manifest_path), '--json'])
+    assert rc == 2
+    payload = json.loads(capsys.readouterr().out)
+    assert 'critical_check_failed:librarian_vault_maintenance_window_open' in payload['reason_codes']
+
+    rc = main(['librarian', 'dataset', 'release', '1', '--requester-id', 'nested-suite', '--json'])
+    assert rc == 2
+    payload = json.loads(capsys.readouterr().out)
+    assert 'critical_check_failed:librarian_vault_maintenance_window_open' in payload['reason_codes']
+
+    rc = main(['librarian', 'vault', 'lock', '--reason', 'maintenance-complete', '--json'])
+    assert rc == 0
+    payload = json.loads(capsys.readouterr().out)
+    assert payload['action'] == 'librarian-vault-lock'
+    assert payload['locked'] is True
 
     rc = main(['librarian', 'vault', 'verify', '--json'])
     assert rc == 0
@@ -11341,6 +11357,8 @@ def test_health_explain_human_output_surfaces_current_security_report_ref_status
 
 
 def test_live_gate_denies_when_baseline_monitor_runtime_inactive_but_surfaces_saved_evidence(tmp_path: Path, monkeypatch) -> None:
+    project_root, anchor = _make_temp_observer_project(tmp_path)
+    _bind_temp_observer_project(monkeypatch, project_root, anchor)
     log_dir = tmp_path / 'logs'
     health = log_dir / 'health'
     data = log_dir / 'data' / 'calamum'
@@ -11416,6 +11434,8 @@ def test_live_gate_denies_when_baseline_monitor_runtime_inactive_but_surfaces_sa
 
 
 def test_live_gate_reason_codes_follow_deterministic_activation_order(tmp_path: Path, monkeypatch) -> None:
+    project_root, anchor = _make_temp_observer_project(tmp_path)
+    _bind_temp_observer_project(monkeypatch, project_root, anchor)
     log_dir = tmp_path / 'logs'
     health = log_dir / 'health'
     data = log_dir / 'data' / 'calamum'
