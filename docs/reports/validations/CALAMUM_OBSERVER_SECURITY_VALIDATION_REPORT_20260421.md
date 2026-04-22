@@ -1,4 +1,9 @@
 # Calamum Observer Security Validation Report — 2026-04-21
+
+<p align="center">
+    <img src="../../../assets/branding/calamum_observer_logo.png" alt="Calamum Observer logo" width="220">
+</p>
+
 **Status:** Pass  
 **Project:** Calamum Moltbook Observer  
 **Validation date:** `2026-04-22`  
