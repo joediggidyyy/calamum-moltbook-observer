@@ -1,0 +1,325 @@
+{
+  "artifact_class": "frame_a_result_matrix_contract",
+  "artifact_scope": "observer",
+  "template_id": "CALAMUM_OBSERVER_FRAME_A_RESULT_MATRIX_V1",
+  "runtime_cli_surface": "observerctl",
+  "validated_at_utc": "2026-04-21T03:28:56.9561330Z",
+  "task_id": "calamum-moltbook-observer-job-0001-docs_general-20260420",
+  "lane_label": "OBSERVER_JOB_0001",
+  "frame_id": "A",
+  "canonical_job_root": "projects/calamum-moltbook-observer/jobs/JOB_0001_CALAMUM-MOLTBOOK-OBSERVER_AUDIT_DOCS-GENERAL_20260420",
+  "authority_basis": [
+    "operations/tasks.json",
+    "projects/calamum-moltbook-observer/jobs/JOB_0001_CALAMUM-MOLTBOOK-OBSERVER_AUDIT_DOCS-GENERAL_20260420/JOB.json",
+    "projects/calamum-moltbook-observer/jobs/JOB_0001_CALAMUM-MOLTBOOK-OBSERVER_AUDIT_DOCS-GENERAL_20260420/QS.json",
+    "projects/calamum-moltbook-observer/jobs/JOB_0001_CALAMUM-MOLTBOOK-OBSERVER_AUDIT_DOCS-GENERAL_20260420/QF.md",
+    "projects/calamum-moltbook-observer/planning/CALAMUM_OBSERVER_AGGRESSIVE_SECURITY_AUDIT_PROPOSAL_20260419.md",
+    "projects/calamum-moltbook-observer/SECURITY.md",
+    "projects/calamum-moltbook-observer/docs/manuals/reference/SECURITY_MODEL.md"
+  ],
+  "execution_posture": {
+    "current_focus_frame": "A",
+    "frame_status": "in-progress",
+    "contract_state": "frame_a_contract_locked",
+    "scenario_execution_claimed": false,
+    "scope_boundary": "observer_security_audit_only",
+    "widening_boundary": "a_b_c_tranche_only"
+  },
+  "evidence": {
+    "threat_register_ref": "projects/calamum-moltbook-observer/local_untracked/reports/operations/frame_a_threat_register.md",
+    "result_matrix_ref": "projects/calamum-moltbook-observer/local_untracked/reports/operations/frame_a_result_matrix.json",
+    "job_json_ref": "projects/calamum-moltbook-observer/jobs/JOB_0001_CALAMUM-MOLTBOOK-OBSERVER_AUDIT_DOCS-GENERAL_20260420/JOB.json",
+    "qs_json_ref": "projects/calamum-moltbook-observer/jobs/JOB_0001_CALAMUM-MOLTBOOK-OBSERVER_AUDIT_DOCS-GENERAL_20260420/QS.json",
+    "qf_md_ref": "projects/calamum-moltbook-observer/jobs/JOB_0001_CALAMUM-MOLTBOOK-OBSERVER_AUDIT_DOCS-GENERAL_20260420/QF.md"
+  },
+  "decision": {
+    "final": "frame_a_contract_locked",
+    "frame_b_handoff": "ready_for_frame_b_preparation",
+    "denial_reason_codes": [],
+    "containment_action": "scenario_execution_remains_deferred_until_explicit_frame_advance"
+  },
+  "retained_review_packet_contract": {
+    "artifact_class": "security_review_packet",
+    "required_sections": [
+      "findings",
+      "artifact_paths",
+      "result_matrix",
+      "provenance",
+      "methodology",
+      "process"
+    ],
+    "required_fields": [
+      "schema_id",
+      "schema_version",
+      "generated_at_utc",
+      "runtime_cli_surface",
+      "task_id",
+      "frame_id",
+      "scenario_id",
+      "scenario_name",
+      "threat_class",
+      "action",
+      "decision",
+      "reason_codes",
+      "test_classes",
+      "expected_safe_outcome",
+      "observed_boundary_result",
+      "artifact_paths",
+      "findings",
+      "result_matrix",
+      "provenance",
+      "methodology",
+      "process"
+    ],
+    "conditional_required_fields": [
+      {
+        "when": "a sandbox-run test class is used",
+        "fields": [
+          "run_id"
+        ]
+      },
+      {
+        "when": "a gate or posture transition is exercised",
+        "fields": [
+          "posture_trigger_id",
+          "posture_trigger",
+          "security_report_ref"
+        ]
+      },
+      {
+        "when": "lineage review is part of the tactic set",
+        "fields": [
+          "lineage_ref",
+          "artifact_lineage_notes"
+        ]
+      }
+    ],
+    "names_only_rule": "Packets remain names-only and must not persist raw Moltbook content, secret material, or unredacted local authority residue.",
+    "agreement_rule": "No scenario may claim success from packet narration alone; packet, artifact, report, and retained lineage surfaces must agree.",
+    "minimum_proof_rule": "Every admitted scenario includes sandbox-run plus at least one additional test class; high-risk scenarios should target three proof lanes when practical."
+  },
+  "result_matrix_contract": {
+    "required_checks": [
+      "decision_truthful",
+      "packet_artifact_agree",
+      "report_artifact_agree",
+      "reason_codes_legible",
+      "lineage_coherent",
+      "names_only_boundary_preserved",
+      "fail_closed_behavior_preserved"
+    ],
+    "matrix_columns": [
+      {
+        "key": "scenario_id",
+        "description": "Stable scenario identifier from the approved audit proposal."
+      },
+      {
+        "key": "scenario_name",
+        "description": "Names-only scenario label."
+      },
+      {
+        "key": "frame_id",
+        "description": "Frame that owns execution of the scenario."
+      },
+      {
+        "key": "threat_class",
+        "description": "Locked threat-class family inherited from the Frame A register."
+      },
+      {
+        "key": "scenario_execution_status",
+        "description": "Contract status for the row before or after execution."
+      },
+      {
+        "key": "required_test_classes",
+        "description": "Minimum proof lanes that must be present before the scenario can claim success."
+      },
+      {
+        "key": "optional_test_classes",
+        "description": "Additional proof lanes recommended when pressure or ambiguity remains high."
+      },
+      {
+        "key": "expected_safe_outcome",
+        "description": "The truthful no-go or safe behavior expected if the control family holds."
+      },
+      {
+        "key": "required_agreement_checks",
+        "description": "Cross-surface agreement checks that must pass before any positive claim can graduate."
+      },
+      {
+        "key": "allowed_reason_codes",
+        "description": "Allowlisted reason-code families that may appear on the row."
+      }
+    ],
+    "row_required_fields": [
+      "scenario_id",
+      "scenario_name",
+      "frame_id",
+      "threat_class",
+      "scenario_execution_status",
+      "required_test_classes",
+      "expected_safe_outcome",
+      "required_agreement_checks",
+      "allowed_reason_codes"
+    ],
+    "status_enum": [
+      "planned_not_executed",
+      "executed_go",
+      "executed_no_go",
+      "executed_fail_closed",
+      "executed_inconclusive",
+      "blocked_for_scope"
+    ],
+    "matrix_row_note": "Frame A seeds the contract rows for S1-S4 without claiming that any scenario has already been run."
+  },
+  "scenario_seed_rows": [
+    {
+      "scenario_id": "S1",
+      "scenario_name": "posture_transition_bypass",
+      "frame_id": "B",
+      "threat_class": "TC_POSTURE_GATE",
+      "scenario_execution_status": "planned_not_executed",
+      "proposed_sandbox_definition": "posture-transition-bypass",
+      "adversarial_goal": "force a stricter mode or source transition without satisfying prerequisites",
+      "required_test_classes": [
+        "sandbox-run",
+        "pytest-regression"
+      ],
+      "optional_test_classes": [
+        "empirical-review"
+      ],
+      "expected_safe_outcome": "denied transition with truthful reason codes and retained evidence",
+      "required_agreement_checks": [
+        "decision_truthful",
+        "reason_codes_legible",
+        "lineage_coherent",
+        "fail_closed_behavior_preserved"
+      ],
+      "allowed_reason_codes": [
+        "outcome:denied_as_designed",
+        "outcome:blocked_as_designed",
+        "outcome:fail_closed_as_designed",
+        "stop:baseline_freshness_missing",
+        "stop:security_report_linkage_missing",
+        "outcome:inconclusive_review_required"
+      ]
+    },
+    {
+      "scenario_id": "S2",
+      "scenario_name": "stale_gate_replay_abuse",
+      "frame_id": "B",
+      "threat_class": "TC_POSTURE_GATE",
+      "scenario_execution_status": "planned_not_executed",
+      "proposed_sandbox_definition": "stale-gate-replay",
+      "adversarial_goal": "reuse stale gate packets, stale run context, or stale report linkage to clear a gate",
+      "required_test_classes": [
+        "sandbox-run",
+        "fault-injection"
+      ],
+      "optional_test_classes": [
+        "artifact-forensics"
+      ],
+      "expected_safe_outcome": "stale or replayed state rejected rather than silently reused",
+      "required_agreement_checks": [
+        "decision_truthful",
+        "packet_artifact_agree",
+        "reason_codes_legible",
+        "lineage_coherent",
+        "fail_closed_behavior_preserved"
+      ],
+      "allowed_reason_codes": [
+        "outcome:denied_as_designed",
+        "outcome:blocked_as_designed",
+        "outcome:fail_closed_as_designed",
+        "stop:packet_artifact_divergence",
+        "outcome:inconclusive_review_required"
+      ]
+    },
+    {
+      "scenario_id": "S3",
+      "scenario_name": "names_only_persistence_escape",
+      "frame_id": "C",
+      "threat_class": "TC_NAMES_ONLY_TRUTH",
+      "scenario_execution_status": "planned_not_executed",
+      "proposed_sandbox_definition": "names-only-persistence-escape",
+      "adversarial_goal": "coerce raw content, raw payload fragments, or secret-like values into retained outputs",
+      "required_test_classes": [
+        "sandbox-run",
+        "secret-boundary-scan"
+      ],
+      "optional_test_classes": [
+        "pytest-regression"
+      ],
+      "expected_safe_outcome": "outputs remain names-only and no secret or raw material persists",
+      "required_agreement_checks": [
+        "decision_truthful",
+        "reason_codes_legible",
+        "names_only_boundary_preserved",
+        "fail_closed_behavior_preserved"
+      ],
+      "allowed_reason_codes": [
+        "outcome:blocked_as_designed",
+        "outcome:fail_closed_as_designed",
+        "stop:raw_content_persistence_risk",
+        "stop:names_only_boundary_at_risk",
+        "outcome:inconclusive_review_required"
+      ]
+    },
+    {
+      "scenario_id": "S4",
+      "scenario_name": "packet_artifact_divergence_truthfulness",
+      "frame_id": "C",
+      "threat_class": "TC_NAMES_ONLY_TRUTH",
+      "scenario_execution_status": "planned_not_executed",
+      "proposed_sandbox_definition": "packet-artifact-divergence-truthfulness",
+      "adversarial_goal": "make packets claim artifacts or success states that artifacts and reports do not support",
+      "required_test_classes": [
+        "sandbox-run",
+        "diff-contract-review"
+      ],
+      "optional_test_classes": [
+        "artifact-forensics"
+      ],
+      "expected_safe_outcome": "no false-success narrative survives cross-surface review",
+      "required_agreement_checks": [
+        "decision_truthful",
+        "packet_artifact_agree",
+        "report_artifact_agree",
+        "reason_codes_legible",
+        "lineage_coherent"
+      ],
+      "allowed_reason_codes": [
+        "outcome:blocked_as_designed",
+        "stop:packet_artifact_divergence",
+        "outcome:inconclusive_review_required"
+      ]
+    }
+  ],
+  "frame_b_handoff": {
+    "next_frame": "B",
+    "current_decision": "ready_for_frame_b_preparation",
+    "readiness_requirements": [
+      "Frame A threat register exists and matches the active authority chain.",
+      "The machine-readable result-matrix contract remains names-only and machine-parsable.",
+      "Each S1-S4 row names at least two proof tactics before scenario execution begins.",
+      "Agreement checks remain explicit on every seeded row.",
+      "No scenario execution is claimed before retained evidence exists and is reviewed.",
+      "Any widening beyond the A/B/C tranche is routed for explicit review."
+    ],
+    "deferred_until_explicit_review": [
+      "Frames D-G scenario execution",
+      "publication, journal, conference, or reviewer-facing packaging",
+      "real-network or external-probing lanes"
+    ],
+    "next_action_seed": "Prepare the S1/S2 tactic matrix and scenario definitions using the locked Frame A vocabulary and packet contract."
+  },
+  "acceptance": {
+    "authority_chain_confirmed": true,
+    "scope_confirmed": true,
+    "threat_register_locked": true,
+    "reason_code_vocabulary_locked": true,
+    "result_matrix_contract_locked": true,
+    "s1_s4_seed_map_locked": true,
+    "scenario_execution_claimed": false,
+    "ready_for_frame_b_preparation": true
+  }
+}

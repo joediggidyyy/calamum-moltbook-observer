@@ -550,8 +550,58 @@ def _lineage_target_baseline_stages(mode: str) -> tuple[str, ...]:
     return ()
 
 
+def _comparison_baseline_packet_matches_selector_authority(
+    *,
+    project_anchor: Path,
+    project_root: Path,
+    payload: Mapping[str, Any],
+) -> bool:
+    selector_entry_id = str(payload.get('selector_entry_id', '') or '').strip()
+    selector_run_id = str(payload.get('selector_run_id', '') or '').strip()
+    if not selector_entry_id or not selector_run_id:
+        return False
+
+    try:
+        from calamum_librarian import dataset_authority_entry_for_selector
+    except Exception:
+        return False
+
+    authority_entry: Mapping[str, Any] = {}
+    for candidate in (selector_entry_id, selector_run_id):
+        if not candidate:
+            continue
+        resolved = dataset_authority_entry_for_selector(project_anchor, candidate)
+        if isinstance(resolved, dict) and resolved:
+            authority_entry = dict(resolved)
+            break
+
+    if not authority_entry:
+        return False
+    if str(authority_entry.get('entry_id', '') or '').strip() != selector_entry_id:
+        return False
+    if str(authority_entry.get('run_id', '') or '').strip() != selector_run_id:
+        return False
+    if not _dataset_entry_supports_comparison_baseline(authority_entry, project_root):
+        return False
+
+    packet_stage = str(payload.get('baseline_stage', '') or '').strip()
+    if _dataset_comparison_baseline_stage(authority_entry, project_root=project_root) != packet_stage:
+        return False
+
+    authority_source = str(authority_entry.get('source', '') or '').strip().lower() or 'unknown'
+    authority_mode = str(authority_entry.get('mode', '') or '').strip().lower()
+    packet_source = str(payload.get('source', '') or '').strip().lower() or 'unknown'
+    packet_mode = str(payload.get('mode', '') or '').strip().lower()
+    if authority_source != 'unknown' and packet_source != authority_source:
+        return False
+    if authority_mode and packet_mode != authority_mode:
+        return False
+    return True
+
+
 def _comparison_baseline_packet_match_info(
     *,
+    project_anchor: Path,
     project_root: Path,
     packet_ref: str,
     source: str = '',
@@ -582,6 +632,13 @@ def _comparison_baseline_packet_match_info(
         packet_stage = str(payload.get('baseline_stage', '') or '').strip()
         if not target_stages or packet_stage not in target_stages:
             return {}
+
+    if not _comparison_baseline_packet_matches_selector_authority(
+        project_anchor=project_anchor,
+        project_root=project_root,
+        payload=payload,
+    ):
+        return {}
 
     return {
         'path': packet_path,
@@ -634,6 +691,7 @@ def _comparison_baseline_candidates_for_target(
 
         packet_path = default_analysis_dir(project_anchor) / 'baselines' / entry_id / 'comparison_baseline_packet.json'
         match = _comparison_baseline_packet_match_info(
+            project_anchor=project_anchor,
             project_root=project_root,
             packet_ref=str(packet_path),
             source=source_token,
@@ -648,6 +706,7 @@ def _comparison_baseline_candidates_for_target(
             )
             if materialized_path is not None:
                 match = _comparison_baseline_packet_match_info(
+                    project_anchor=project_anchor,
                     project_root=project_root,
                     packet_ref=str(materialized_path),
                     source=source_token,
@@ -696,6 +755,7 @@ def _comparison_baseline_packet_for_context(
     mode = str(context.get('mode', '') or dataset_entry.get('mode', '') or '').strip().lower()
     expected_window_id = str(context.get('baseline_window_id', '') or '').strip()
     explicit_match = _comparison_baseline_packet_match_info(
+        project_anchor=project_anchor,
         project_root=project_root,
         packet_ref=str(context.get('baseline_analysis_packet', '') or '').strip(),
         source=source,

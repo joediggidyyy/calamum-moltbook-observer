@@ -1,0 +1,57 @@
+{
+  "doc_class": "frame_d_evidence",
+  "frame_id": "D",
+  "scenario_focus": [
+    "S6"
+  ],
+  "generated_from": {
+    "source_report_json": "report_tmp/framed_resource_lockdown_chaos_probe/runs/framed-resource-lockdown-chaos-20260421T194750Z/framed_resource_lockdown_chaos_probe.json",
+    "source_report_md": "report_tmp/framed_resource_lockdown_chaos_probe/runs/framed-resource-lockdown-chaos-20260421T194750Z/framed_resource_lockdown_chaos_probe.md",
+    "script": "projects/calamum-moltbook-observer/src/simulation/run_simulation.py"
+  },
+  "run_id": "framed-resource-lockdown-chaos-20260421T194750Z",
+  "overall_result": "pass",
+  "summary": {
+    "decision_basis": "Frame D S6 passes when synthetic resource spikes preserve a fail-closed lockdown gate outcome for live and honeypot targets without mode mutation.",
+    "observed_boundary_result": "resource_lockdown_chaos_fail_closed",
+    "live_gate_decision": "no-go",
+    "honeypot_gate_decision": "no-go"
+  },
+  "result_matrix": {
+    "baseline_monitor_seed_completed": true,
+    "evidence_packet_preserves_no_go_reasoning": true,
+    "honeypot_gate_denied": true,
+    "honeypot_gate_surfaces_lockdown_cpu_spike": true,
+    "live_gate_denied": true,
+    "live_gate_surfaces_lockdown_cpu_spike": true,
+    "lockdown_state_seed_written": true,
+    "state_unchanged_after_chaos_denial": true
+  },
+  "artifact_review": {
+    "posture_state": "report_tmp/framed_resource_lockdown_chaos_probe/runs/framed-resource-lockdown-chaos-20260421T194750Z/sandbox_logs/control/calamum/watchdog_posture_state.json",
+    "resource_state": "report_tmp/framed_resource_lockdown_chaos_probe/runs/framed-resource-lockdown-chaos-20260421T194750Z/sandbox_logs/control/calamum/watchdog_resource_state.json",
+    "output_packet": "report_tmp/framed_resource_lockdown_chaos_probe/runs/framed-resource-lockdown-chaos-20260421T194750Z/framed_resource_lockdown_chaos_packet.json"
+  },
+  "gate_review": {
+    "live_reason_codes": [
+      "critical_check_failed:resource_baseline_window_incomplete",
+      "critical_check_failed:cpu_spike_lockdown",
+      "critical_check_failed:ram_spike_lockdown"
+    ],
+    "honeypot_reason_codes": [
+      "critical_check_failed:resource_baseline_window_incomplete",
+      "critical_check_failed:cpu_spike_lockdown",
+      "critical_check_failed:ram_spike_lockdown"
+    ],
+    "evidence_reason_codes": [
+      "critical_check_failed:resource_baseline_window_incomplete",
+      "critical_check_failed:cpu_spike_lockdown",
+      "critical_check_failed:ram_spike_lockdown"
+    ]
+  },
+  "conclusion": {
+    "live_lockdown_denied": true,
+    "honeypot_lockdown_denied": true,
+    "state_unchanged_after_denial": true
+  }
+}

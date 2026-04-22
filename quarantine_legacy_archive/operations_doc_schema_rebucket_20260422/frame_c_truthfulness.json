@@ -1,0 +1,612 @@
+{
+  "doc_class": "frame_c_evidence",
+  "frame_id": "C",
+  "scenario_focus": [
+    "S4"
+  ],
+  "generated_from": {
+    "source_report_json": "report_tmp/framec_packet_artifact_divergence_truthfulness_probe/runs/framec-packet-artifact-divergence-truthfulness-20260421T184149Z/framec_packet_artifact_divergence_truthfulness_probe.json",
+    "source_report_md": "report_tmp/framec_packet_artifact_divergence_truthfulness_probe/runs/framec-packet-artifact-divergence-truthfulness-20260421T184149Z/framec_packet_artifact_divergence_truthfulness_probe.md",
+    "script": "projects/calamum-moltbook-observer/src/simulation/run_simulation.py"
+  },
+  "run_id": "framec-packet-artifact-divergence-truthfulness-20260421T184149Z",
+  "overall_result": "pass",
+  "summary": {
+    "decision_basis": "Frame C S4 passes when command-success plus missing-current-artifact divergence is surfaced as an explicit no-go review outcome.",
+    "observed_boundary_result": "packet_artifact_divergence_detected_fail_closed",
+    "review_decision": "no-go"
+  },
+  "result_matrix": {
+    "cross_surface_divergence_detected": true,
+    "current_artifact_created_before_tamper": true,
+    "current_artifact_missing_during_review": true,
+    "evidence_pack_command_returncode_zero": true,
+    "no_false_success_narrative_survives_review": true,
+    "stale_copy_created": true,
+    "stale_copy_not_mistaken_for_current": true
+  },
+  "command_snapshot": {
+    "gate_packet": {
+      "advisory_reason_codes": [],
+      "baseline_ready_receipt": {},
+      "critical_checks": [
+        "paths.health_dir",
+        "heartbeat.watchdog",
+        "runtime.observer_service",
+        "env.signing_key",
+        "store.pointer_consistent",
+        "store.integrity_ok"
+      ],
+      "decision": "no-go",
+      "evidence_refs": [
+        "C:\\Users\\joedi\\Documents\\CodeSentinel-1\\report_tmp\\framec_packet_artifact_divergence_truthfulness_probe\\runs\\framec-packet-artifact-divergence-truthfulness-20260421T184149Z\\sandbox_logs\\health\\calamum_ops_watchdog.heartbeat",
+        "C:\\Users\\joedi\\Documents\\CodeSentinel-1\\report_tmp\\framec_packet_artifact_divergence_truthfulness_probe\\runs\\framec-packet-artifact-divergence-truthfulness-20260421T184149Z\\sandbox_logs\\health\\calamum_observer.heartbeat",
+        "C:\\Users\\joedi\\Documents\\CodeSentinel-1\\report_tmp\\framec_packet_artifact_divergence_truthfulness_probe\\runs\\framec-packet-artifact-divergence-truthfulness-20260421T184149Z\\sandbox_logs\\health\\calamum_librarian.heartbeat",
+        "C:\\Users\\joedi\\Documents\\CodeSentinel-1\\report_tmp\\framec_packet_artifact_divergence_truthfulness_probe\\runs\\framec-packet-artifact-divergence-truthfulness-20260421T184149Z\\sandbox_logs\\control\\calamum\\watchdog_posture_state.json",
+        "C:\\Users\\joedi\\Documents\\CodeSentinel-1\\report_tmp\\framec_packet_artifact_divergence_truthfulness_probe\\runs\\framec-packet-artifact-divergence-truthfulness-20260421T184149Z\\sandbox_logs\\control\\calamum\\watchdog_resource_state.json",
+        "C:/Users/joedi/Documents/CodeSentinel-1/report_tmp/framec_packet_artifact_divergence_truthfulness_probe/runs/framec-packet-artifact-divergence-truthfulness-20260421T184149Z/sandbox_logs/data/calamum/stores/watch/active.jsonl",
+        "C:\\Users\\joedi\\Documents\\CodeSentinel-1\\report_tmp\\framec_packet_artifact_divergence_truthfulness_probe\\runs\\framec-packet-artifact-divergence-truthfulness-20260421T184149Z\\sandbox_logs\\health\\calamum_baseline_monitor.heartbeat",
+        "C:/Users/joedi/Documents/CodeSentinel-1/report_tmp/framec_packet_artifact_divergence_truthfulness_probe/runs/framec-packet-artifact-divergence-truthfulness-20260421T184149Z/sandbox_root/calamum_baseline_monitor.pid",
+        "C:/Users/joedi/Documents/CodeSentinel-1/report_tmp/framec_packet_artifact_divergence_truthfulness_probe/runs/framec-packet-artifact-divergence-truthfulness-20260421T184149Z/sandbox_logs/control/calamum/baseline_monitor_state.json",
+        "C:/Users/joedi/Documents/CodeSentinel-1/report_tmp/framec_packet_artifact_divergence_truthfulness_probe/runs/framec-packet-artifact-divergence-truthfulness-20260421T184149Z/sandbox_logs/data/calamum/observer_derived/sim/watch/resource/index.jsonl",
+        "C:/Users/joedi/Documents/CodeSentinel-1/report_tmp/framec_packet_artifact_divergence_truthfulness_probe/runs/framec-packet-artifact-divergence-truthfulness-20260421T184149Z/sandbox_logs/data/calamum/archive/manifest.json"
+      ],
+      "from_state": "sim:watch",
+      "major_checks": [
+        "runtime.collection_state"
+      ],
+      "posture_trigger": "isolation",
+      "posture_trigger_id": "pt-watch-20260421T184149Z",
+      "profile": "GP-1",
+      "readiness_surfaces": {
+        "baseline_monitor": {
+          "heartbeat_path": "C:\\Users\\joedi\\Documents\\CodeSentinel-1\\report_tmp\\framec_packet_artifact_divergence_truthfulness_probe\\runs\\framec-packet-artifact-divergence-truthfulness-20260421T184149Z\\sandbox_logs\\health\\calamum_baseline_monitor.heartbeat",
+          "monitor_state": {},
+          "monitor_state_path": "C:/Users/joedi/Documents/CodeSentinel-1/report_tmp/framec_packet_artifact_divergence_truthfulness_probe/runs/framec-packet-artifact-divergence-truthfulness-20260421T184149Z/sandbox_logs/control/calamum/baseline_monitor_state.json",
+          "pid_path": "C:/Users/joedi/Documents/CodeSentinel-1/report_tmp/framec_packet_artifact_divergence_truthfulness_probe/runs/framec-packet-artifact-divergence-truthfulness-20260421T184149Z/sandbox_root/calamum_baseline_monitor.pid",
+          "state": "active",
+          "status": "ok"
+        },
+        "baseline_window": {
+          "archive_manifest_exists": false,
+          "archive_manifest_path": "C:/Users/joedi/Documents/CodeSentinel-1/report_tmp/framec_packet_artifact_divergence_truthfulness_probe/runs/framec-packet-artifact-divergence-truthfulness-20260421T184149Z/sandbox_logs/data/calamum/archive/manifest.json",
+          "baseline_window_id": "",
+          "decision": "no-go",
+          "index_path": "C:/Users/joedi/Documents/CodeSentinel-1/report_tmp/framec_packet_artifact_divergence_truthfulness_probe/runs/framec-packet-artifact-divergence-truthfulness-20260421T184149Z/sandbox_logs/data/calamum/observer_derived/sim/watch/resource/index.jsonl",
+          "latest_segment_path": "",
+          "missing_segment_paths": [],
+          "packet_path": "",
+          "resolved_segment_count": 0,
+          "resolved_segment_paths": [],
+          "sample_counts": {},
+          "segment_count": 0,
+          "segment_paths": [],
+          "segment_resolution": "missing",
+          "status": "err"
+        },
+        "current_mode": "watch",
+        "gate_decision": "no-go",
+        "gate_reason_codes": [
+          "policy_denied:no_op_transition"
+        ],
+        "librarian_retention": {
+          "active_store_pointer": "C:/Users/joedi/Documents/CodeSentinel-1/report_tmp/framec_packet_artifact_divergence_truthfulness_probe/runs/framec-packet-artifact-divergence-truthfulness-20260421T184149Z/sandbox_logs/data/calamum/stores/watch/active.jsonl",
+          "retention_state": "normal",
+          "status": "ok"
+        },
+        "posture_receipt": {
+          "baseline_validation_interval_seconds": 120.0,
+          "heartbeat_interval_seconds": 10.0,
+          "path": "C:\\Users\\joedi\\Documents\\CodeSentinel-1\\report_tmp\\framec_packet_artifact_divergence_truthfulness_probe\\runs\\framec-packet-artifact-divergence-truthfulness-20260421T184149Z\\sandbox_logs\\control\\calamum\\watchdog_posture_state.json",
+          "posture_trigger": "isolation",
+          "status": "ok"
+        },
+        "projected_posture_receipt": {
+          "baseline_validation_interval_seconds": 120.0,
+          "heartbeat_interval_seconds": 10.0,
+          "posture_trigger": "isolation",
+          "projection_basis": "current-state",
+          "status": "not_applicable"
+        },
+        "projection_mode": "current-state",
+        "resource_metrics": {
+          "path": "C:\\Users\\joedi\\Documents\\CodeSentinel-1\\report_tmp\\framec_packet_artifact_divergence_truthfulness_probe\\runs\\framec-packet-artifact-divergence-truthfulness-20260421T184149Z\\sandbox_logs\\control\\calamum\\watchdog_resource_state.json",
+          "sample_age_seconds": 5.0,
+          "status": "ok"
+        },
+        "resource_stream_retention": {
+          "archive_manifest_path": "C:/Users/joedi/Documents/CodeSentinel-1/report_tmp/framec_packet_artifact_divergence_truthfulness_probe/runs/framec-packet-artifact-divergence-truthfulness-20260421T184149Z/sandbox_logs/data/calamum/archive/manifest.json",
+          "archived_artifact_path": "",
+          "index_path": "C:/Users/joedi/Documents/CodeSentinel-1/report_tmp/framec_packet_artifact_divergence_truthfulness_probe/runs/framec-packet-artifact-divergence-truthfulness-20260421T184149Z/sandbox_logs/data/calamum/observer_derived/sim/watch/resource/index.jsonl",
+          "latest_segment_path": "",
+          "records_indexed": 0,
+          "resolved_segment_path": "",
+          "segment_resolution": "missing",
+          "status": "err"
+        },
+        "target_mode": "watch",
+        "target_posture": "isolation",
+        "target_state": "sim:watch"
+      },
+      "reason_codes": [
+        "policy_denied:no_op_transition"
+      ],
+      "run_id": "observerctl-gate-20260421T184149Z",
+      "runtime_cli_surface": "observerctl",
+      "runtime_label": "observer",
+      "security_report_ref": "C:\\Users\\joedi\\Documents\\CodeSentinel-1\\report_tmp\\framec_packet_artifact_divergence_truthfulness_probe\\runs\\framec-packet-artifact-divergence-truthfulness-20260421T184149Z\\security_report.md",
+      "stage5_prerequisites": {
+        "C22_baseline_validation_rate_escalated": {
+          "actual_baseline_validation_interval_seconds": 120.0,
+          "actual_heartbeat_interval_seconds": 10.0,
+          "evidence_refs": [
+            "C:\\Users\\joedi\\Documents\\CodeSentinel-1\\report_tmp\\framec_packet_artifact_divergence_truthfulness_probe\\runs\\framec-packet-artifact-divergence-truthfulness-20260421T184149Z\\sandbox_logs\\control\\calamum\\watchdog_posture_state.json"
+          ],
+          "expected_baseline_validation_interval_seconds_band": [
+            30,
+            60
+          ],
+          "expected_heartbeat_interval_seconds_band": [
+            3,
+            5
+          ],
+          "projection_mode": "current-state",
+          "reason_codes": [],
+          "status": "not_applicable"
+        },
+        "C24_resource_stream_retention_ready": {
+          "evidence_refs": [
+            "C:/Users/joedi/Documents/CodeSentinel-1/report_tmp/framec_packet_artifact_divergence_truthfulness_probe/runs/framec-packet-artifact-divergence-truthfulness-20260421T184149Z/sandbox_logs/data/calamum/observer_derived/sim/watch/resource/index.jsonl",
+            "C:/Users/joedi/Documents/CodeSentinel-1/report_tmp/framec_packet_artifact_divergence_truthfulness_probe/runs/framec-packet-artifact-divergence-truthfulness-20260421T184149Z/sandbox_logs/data/calamum/archive/manifest.json"
+          ],
+          "reason_codes": [],
+          "records_indexed": 0,
+          "segment_resolution": "missing",
+          "status": "not_applicable"
+        },
+        "C25_resource_baseline_window_ready": {
+          "baseline_window_id": "",
+          "decision": "no-go",
+          "evidence_refs": [
+            "C:/Users/joedi/Documents/CodeSentinel-1/report_tmp/framec_packet_artifact_divergence_truthfulness_probe/runs/framec-packet-artifact-divergence-truthfulness-20260421T184149Z/sandbox_logs/data/calamum/observer_derived/sim/watch/resource/index.jsonl",
+            "C:/Users/joedi/Documents/CodeSentinel-1/report_tmp/framec_packet_artifact_divergence_truthfulness_probe/runs/framec-packet-artifact-divergence-truthfulness-20260421T184149Z/sandbox_logs/data/calamum/archive/manifest.json"
+          ],
+          "reason_codes": [],
+          "resolved_segment_count": 0,
+          "sample_counts": {},
+          "segment_count": 0,
+          "segment_resolution": "missing",
+          "status": "not_applicable"
+        },
+        "baseline_monitor_runtime_ready": {
+          "evidence_refs": [
+            "C:\\Users\\joedi\\Documents\\CodeSentinel-1\\report_tmp\\framec_packet_artifact_divergence_truthfulness_probe\\runs\\framec-packet-artifact-divergence-truthfulness-20260421T184149Z\\sandbox_logs\\health\\calamum_baseline_monitor.heartbeat",
+            "C:/Users/joedi/Documents/CodeSentinel-1/report_tmp/framec_packet_artifact_divergence_truthfulness_probe/runs/framec-packet-artifact-divergence-truthfulness-20260421T184149Z/sandbox_root/calamum_baseline_monitor.pid",
+            "C:/Users/joedi/Documents/CodeSentinel-1/report_tmp/framec_packet_artifact_divergence_truthfulness_probe/runs/framec-packet-artifact-divergence-truthfulness-20260421T184149Z/sandbox_logs/control/calamum/baseline_monitor_state.json"
+          ],
+          "reason_codes": [],
+          "state": "active",
+          "status": "not_applicable"
+        },
+        "overall": {
+          "evaluated_classes": [
+            "C22_baseline_validation_rate_escalated",
+            "C24_resource_stream_retention_ready",
+            "C25_resource_baseline_window_ready",
+            "baseline_monitor_runtime_ready"
+          ],
+          "status": "not_applicable",
+          "target_posture": "isolation"
+        }
+      },
+      "timestamp_utc": "2026-04-21T18:41:49.993655Z",
+      "to_state": "sim:watch"
+    },
+    "methodology": {
+      "data_handling_invariants": [
+        "no secret value output",
+        "path/presence/age-based evidence only",
+        "deterministic JSON packet schemas"
+      ],
+      "failure_modes": [
+        "watchdog_heartbeat_stale",
+        "observer_heartbeat_stale",
+        "missing_signing_key_context",
+        "missing_real_api_key_when_real_source"
+      ],
+      "repro_steps": [
+        "observerctl ops preflight --json",
+        "observerctl ops gate-check --json",
+        "observerctl ops evidence pack --to <mode> --event <event> --json",
+        "observerctl ops evidence pack --event <event> --json"
+      ],
+      "runtime_constraints": [
+        "standalone observer scope only",
+        "no CodeSentinel runtime process dependency",
+        "fail-closed gate semantics",
+        "non-activation readiness projection supported via target-mode gate evaluation"
+      ],
+      "sampling_strategy": "names-only runtime posture and saved-readiness sampling from health/data/control artifacts"
+    },
+    "posture_trigger": "isolation",
+    "posture_trigger_id": "pt-watch-20260421T184149Z",
+    "process": {
+      "approver_checkpoint": "required_for_live_transition",
+      "decision": "no-go",
+      "event": "manual",
+      "evidence_refs": [
+        "C:\\Users\\joedi\\Documents\\CodeSentinel-1\\report_tmp\\framec_packet_artifact_divergence_truthfulness_probe\\runs\\framec-packet-artifact-divergence-truthfulness-20260421T184149Z\\sandbox_logs\\health\\calamum_ops_watchdog.heartbeat",
+        "C:\\Users\\joedi\\Documents\\CodeSentinel-1\\report_tmp\\framec_packet_artifact_divergence_truthfulness_probe\\runs\\framec-packet-artifact-divergence-truthfulness-20260421T184149Z\\sandbox_logs\\health\\calamum_observer.heartbeat",
+        "C:\\Users\\joedi\\Documents\\CodeSentinel-1\\report_tmp\\framec_packet_artifact_divergence_truthfulness_probe\\runs\\framec-packet-artifact-divergence-truthfulness-20260421T184149Z\\sandbox_logs\\health\\calamum_librarian.heartbeat",
+        "C:\\Users\\joedi\\Documents\\CodeSentinel-1\\report_tmp\\framec_packet_artifact_divergence_truthfulness_probe\\runs\\framec-packet-artifact-divergence-truthfulness-20260421T184149Z\\sandbox_logs\\control\\calamum\\watchdog_posture_state.json",
+        "C:\\Users\\joedi\\Documents\\CodeSentinel-1\\report_tmp\\framec_packet_artifact_divergence_truthfulness_probe\\runs\\framec-packet-artifact-divergence-truthfulness-20260421T184149Z\\sandbox_logs\\control\\calamum\\watchdog_resource_state.json",
+        "C:/Users/joedi/Documents/CodeSentinel-1/report_tmp/framec_packet_artifact_divergence_truthfulness_probe/runs/framec-packet-artifact-divergence-truthfulness-20260421T184149Z/sandbox_logs/data/calamum/stores/watch/active.jsonl",
+        "C:\\Users\\joedi\\Documents\\CodeSentinel-1\\report_tmp\\framec_packet_artifact_divergence_truthfulness_probe\\runs\\framec-packet-artifact-divergence-truthfulness-20260421T184149Z\\sandbox_logs\\health\\calamum_baseline_monitor.heartbeat",
+        "C:/Users/joedi/Documents/CodeSentinel-1/report_tmp/framec_packet_artifact_divergence_truthfulness_probe/runs/framec-packet-artifact-divergence-truthfulness-20260421T184149Z/sandbox_root/calamum_baseline_monitor.pid",
+        "C:/Users/joedi/Documents/CodeSentinel-1/report_tmp/framec_packet_artifact_divergence_truthfulness_probe/runs/framec-packet-artifact-divergence-truthfulness-20260421T184149Z/sandbox_logs/control/calamum/baseline_monitor_state.json",
+        "C:/Users/joedi/Documents/CodeSentinel-1/report_tmp/framec_packet_artifact_divergence_truthfulness_probe/runs/framec-packet-artifact-divergence-truthfulness-20260421T184149Z/sandbox_logs/data/calamum/observer_derived/sim/watch/resource/index.jsonl",
+        "C:/Users/joedi/Documents/CodeSentinel-1/report_tmp/framec_packet_artifact_divergence_truthfulness_probe/runs/framec-packet-artifact-divergence-truthfulness-20260421T184149Z/sandbox_logs/data/calamum/archive/manifest.json"
+      ],
+      "phase": "observerctl_runtime_gate_evaluation",
+      "rationale": "critical-check policy evaluation over observer runtime posture",
+      "reason_codes": [
+        "policy_denied:no_op_transition"
+      ]
+    },
+    "provenance": {
+      "artifact_path": "C:/Users/joedi/Documents/CodeSentinel-1/report_tmp/framec_packet_artifact_divergence_truthfulness_probe/runs/framec-packet-artifact-divergence-truthfulness-20260421T184149Z/framec_truthfulness_packet.json",
+      "artifact_sha256": "a2d6ffc510f1e1ef4b36ac2b0fc961943d595071e5369465ee87814ce0f96c9c",
+      "generated_at_utc": "2026-04-21T18:41:49.996504Z",
+      "producer_process": "observerctl ops evidence pack",
+      "upstream_inputs": {
+        "env_presence_keys": [
+          "CALAMUM_REQUESTER_SIGNING_KEY",
+          "CALAMUM_LIBRARIAN_ATTESTATION_KEY",
+          "CALAMUM_SOURCE_RELEASE_KEY",
+          "CALAMUM_LIBRARIAN_VAULT_KEY",
+          "CALAMUM_DATA_SIGNING_KEY",
+          "CALAMUM_ALLOW_DEV_SIGNING_KEY",
+          "MOLTBOOK_API_KEY"
+        ],
+        "paths": [
+          "C:\\Users\\joedi\\Documents\\CodeSentinel-1\\report_tmp\\framec_packet_artifact_divergence_truthfulness_probe\\runs\\framec-packet-artifact-divergence-truthfulness-20260421T184149Z\\sandbox_logs\\health\\calamum_ops_watchdog.heartbeat",
+          "C:\\Users\\joedi\\Documents\\CodeSentinel-1\\report_tmp\\framec_packet_artifact_divergence_truthfulness_probe\\runs\\framec-packet-artifact-divergence-truthfulness-20260421T184149Z\\sandbox_logs\\health\\calamum_observer.heartbeat",
+          "C:\\Users\\joedi\\Documents\\CodeSentinel-1\\report_tmp\\framec_packet_artifact_divergence_truthfulness_probe\\runs\\framec-packet-artifact-divergence-truthfulness-20260421T184149Z\\sandbox_logs\\health\\calamum_librarian.heartbeat",
+          "C:\\Users\\joedi\\Documents\\CodeSentinel-1\\report_tmp\\framec_packet_artifact_divergence_truthfulness_probe\\runs\\framec-packet-artifact-divergence-truthfulness-20260421T184149Z\\sandbox_logs\\control\\calamum\\watchdog_posture_state.json",
+          "C:\\Users\\joedi\\Documents\\CodeSentinel-1\\report_tmp\\framec_packet_artifact_divergence_truthfulness_probe\\runs\\framec-packet-artifact-divergence-truthfulness-20260421T184149Z\\sandbox_logs\\control\\calamum\\watchdog_resource_state.json",
+          "C:/Users/joedi/Documents/CodeSentinel-1/report_tmp/framec_packet_artifact_divergence_truthfulness_probe/runs/framec-packet-artifact-divergence-truthfulness-20260421T184149Z/sandbox_logs/data/calamum/stores/watch/active.jsonl",
+          "C:\\Users\\joedi\\Documents\\CodeSentinel-1\\report_tmp\\framec_packet_artifact_divergence_truthfulness_probe\\runs\\framec-packet-artifact-divergence-truthfulness-20260421T184149Z\\sandbox_logs\\health\\calamum_baseline_monitor.heartbeat",
+          "C:/Users/joedi/Documents/CodeSentinel-1/report_tmp/framec_packet_artifact_divergence_truthfulness_probe/runs/framec-packet-artifact-divergence-truthfulness-20260421T184149Z/sandbox_root/calamum_baseline_monitor.pid",
+          "C:/Users/joedi/Documents/CodeSentinel-1/report_tmp/framec_packet_artifact_divergence_truthfulness_probe/runs/framec-packet-artifact-divergence-truthfulness-20260421T184149Z/sandbox_logs/control/calamum/baseline_monitor_state.json",
+          "C:/Users/joedi/Documents/CodeSentinel-1/report_tmp/framec_packet_artifact_divergence_truthfulness_probe/runs/framec-packet-artifact-divergence-truthfulness-20260421T184149Z/sandbox_logs/data/calamum/observer_derived/sim/watch/resource/index.jsonl",
+          "C:/Users/joedi/Documents/CodeSentinel-1/report_tmp/framec_packet_artifact_divergence_truthfulness_probe/runs/framec-packet-artifact-divergence-truthfulness-20260421T184149Z/sandbox_logs/data/calamum/archive/manifest.json"
+        ]
+      }
+    },
+    "readiness_projection": {
+      "evaluated_target_mode": "watch",
+      "evaluated_target_state": "sim:watch",
+      "projection_mode": "current-state"
+    },
+    "readiness_surfaces": {
+      "baseline_monitor": {
+        "heartbeat_path": "C:\\Users\\joedi\\Documents\\CodeSentinel-1\\report_tmp\\framec_packet_artifact_divergence_truthfulness_probe\\runs\\framec-packet-artifact-divergence-truthfulness-20260421T184149Z\\sandbox_logs\\health\\calamum_baseline_monitor.heartbeat",
+        "monitor_state": {},
+        "monitor_state_path": "C:/Users/joedi/Documents/CodeSentinel-1/report_tmp/framec_packet_artifact_divergence_truthfulness_probe/runs/framec-packet-artifact-divergence-truthfulness-20260421T184149Z/sandbox_logs/control/calamum/baseline_monitor_state.json",
+        "pid_path": "C:/Users/joedi/Documents/CodeSentinel-1/report_tmp/framec_packet_artifact_divergence_truthfulness_probe/runs/framec-packet-artifact-divergence-truthfulness-20260421T184149Z/sandbox_root/calamum_baseline_monitor.pid",
+        "state": "active",
+        "status": "ok"
+      },
+      "baseline_window": {
+        "archive_manifest_exists": false,
+        "archive_manifest_path": "C:/Users/joedi/Documents/CodeSentinel-1/report_tmp/framec_packet_artifact_divergence_truthfulness_probe/runs/framec-packet-artifact-divergence-truthfulness-20260421T184149Z/sandbox_logs/data/calamum/archive/manifest.json",
+        "baseline_window_id": "",
+        "decision": "no-go",
+        "index_path": "C:/Users/joedi/Documents/CodeSentinel-1/report_tmp/framec_packet_artifact_divergence_truthfulness_probe/runs/framec-packet-artifact-divergence-truthfulness-20260421T184149Z/sandbox_logs/data/calamum/observer_derived/sim/watch/resource/index.jsonl",
+        "latest_segment_path": "",
+        "missing_segment_paths": [],
+        "packet_path": "",
+        "resolved_segment_count": 0,
+        "resolved_segment_paths": [],
+        "sample_counts": {},
+        "segment_count": 0,
+        "segment_paths": [],
+        "segment_resolution": "missing",
+        "status": "err"
+      },
+      "current_mode": "watch",
+      "gate_decision": "no-go",
+      "gate_reason_codes": [
+        "policy_denied:no_op_transition"
+      ],
+      "librarian_retention": {
+        "active_store_pointer": "C:/Users/joedi/Documents/CodeSentinel-1/report_tmp/framec_packet_artifact_divergence_truthfulness_probe/runs/framec-packet-artifact-divergence-truthfulness-20260421T184149Z/sandbox_logs/data/calamum/stores/watch/active.jsonl",
+        "retention_state": "normal",
+        "status": "ok"
+      },
+      "posture_receipt": {
+        "baseline_validation_interval_seconds": 120.0,
+        "heartbeat_interval_seconds": 10.0,
+        "path": "C:\\Users\\joedi\\Documents\\CodeSentinel-1\\report_tmp\\framec_packet_artifact_divergence_truthfulness_probe\\runs\\framec-packet-artifact-divergence-truthfulness-20260421T184149Z\\sandbox_logs\\control\\calamum\\watchdog_posture_state.json",
+        "posture_trigger": "isolation",
+        "status": "ok"
+      },
+      "projected_posture_receipt": {
+        "baseline_validation_interval_seconds": 120.0,
+        "heartbeat_interval_seconds": 10.0,
+        "posture_trigger": "isolation",
+        "projection_basis": "current-state",
+        "status": "not_applicable"
+      },
+      "projection_mode": "current-state",
+      "resource_metrics": {
+        "path": "C:\\Users\\joedi\\Documents\\CodeSentinel-1\\report_tmp\\framec_packet_artifact_divergence_truthfulness_probe\\runs\\framec-packet-artifact-divergence-truthfulness-20260421T184149Z\\sandbox_logs\\control\\calamum\\watchdog_resource_state.json",
+        "sample_age_seconds": 5.0,
+        "status": "ok"
+      },
+      "resource_stream_retention": {
+        "archive_manifest_path": "C:/Users/joedi/Documents/CodeSentinel-1/report_tmp/framec_packet_artifact_divergence_truthfulness_probe/runs/framec-packet-artifact-divergence-truthfulness-20260421T184149Z/sandbox_logs/data/calamum/archive/manifest.json",
+        "archived_artifact_path": "",
+        "index_path": "C:/Users/joedi/Documents/CodeSentinel-1/report_tmp/framec_packet_artifact_divergence_truthfulness_probe/runs/framec-packet-artifact-divergence-truthfulness-20260421T184149Z/sandbox_logs/data/calamum/observer_derived/sim/watch/resource/index.jsonl",
+        "latest_segment_path": "",
+        "records_indexed": 0,
+        "resolved_segment_path": "",
+        "segment_resolution": "missing",
+        "status": "err"
+      },
+      "target_mode": "watch",
+      "target_posture": "isolation",
+      "target_state": "sim:watch"
+    },
+    "run_id": "observerctl-gate-20260421T184149Z",
+    "runtime_cli_surface": "observerctl",
+    "runtime_label": "observer",
+    "security_report_ref": "C:\\Users\\joedi\\Documents\\CodeSentinel-1\\report_tmp\\framec_packet_artifact_divergence_truthfulness_probe\\runs\\framec-packet-artifact-divergence-truthfulness-20260421T184149Z\\security_report.md",
+    "stage5_prerequisites": {
+      "C22_baseline_validation_rate_escalated": {
+        "actual_baseline_validation_interval_seconds": 120.0,
+        "actual_heartbeat_interval_seconds": 10.0,
+        "evidence_refs": [
+          "C:\\Users\\joedi\\Documents\\CodeSentinel-1\\report_tmp\\framec_packet_artifact_divergence_truthfulness_probe\\runs\\framec-packet-artifact-divergence-truthfulness-20260421T184149Z\\sandbox_logs\\control\\calamum\\watchdog_posture_state.json"
+        ],
+        "expected_baseline_validation_interval_seconds_band": [
+          30,
+          60
+        ],
+        "expected_heartbeat_interval_seconds_band": [
+          3,
+          5
+        ],
+        "projection_mode": "current-state",
+        "reason_codes": [],
+        "status": "not_applicable"
+      },
+      "C24_resource_stream_retention_ready": {
+        "evidence_refs": [
+          "C:/Users/joedi/Documents/CodeSentinel-1/report_tmp/framec_packet_artifact_divergence_truthfulness_probe/runs/framec-packet-artifact-divergence-truthfulness-20260421T184149Z/sandbox_logs/data/calamum/observer_derived/sim/watch/resource/index.jsonl",
+          "C:/Users/joedi/Documents/CodeSentinel-1/report_tmp/framec_packet_artifact_divergence_truthfulness_probe/runs/framec-packet-artifact-divergence-truthfulness-20260421T184149Z/sandbox_logs/data/calamum/archive/manifest.json"
+        ],
+        "reason_codes": [],
+        "records_indexed": 0,
+        "segment_resolution": "missing",
+        "status": "not_applicable"
+      },
+      "C25_resource_baseline_window_ready": {
+        "baseline_window_id": "",
+        "decision": "no-go",
+        "evidence_refs": [
+          "C:/Users/joedi/Documents/CodeSentinel-1/report_tmp/framec_packet_artifact_divergence_truthfulness_probe/runs/framec-packet-artifact-divergence-truthfulness-20260421T184149Z/sandbox_logs/data/calamum/observer_derived/sim/watch/resource/index.jsonl",
+          "C:/Users/joedi/Documents/CodeSentinel-1/report_tmp/framec_packet_artifact_divergence_truthfulness_probe/runs/framec-packet-artifact-divergence-truthfulness-20260421T184149Z/sandbox_logs/data/calamum/archive/manifest.json"
+        ],
+        "reason_codes": [],
+        "resolved_segment_count": 0,
+        "sample_counts": {},
+        "segment_count": 0,
+        "segment_resolution": "missing",
+        "status": "not_applicable"
+      },
+      "baseline_monitor_runtime_ready": {
+        "evidence_refs": [
+          "C:\\Users\\joedi\\Documents\\CodeSentinel-1\\report_tmp\\framec_packet_artifact_divergence_truthfulness_probe\\runs\\framec-packet-artifact-divergence-truthfulness-20260421T184149Z\\sandbox_logs\\health\\calamum_baseline_monitor.heartbeat",
+          "C:/Users/joedi/Documents/CodeSentinel-1/report_tmp/framec_packet_artifact_divergence_truthfulness_probe/runs/framec-packet-artifact-divergence-truthfulness-20260421T184149Z/sandbox_root/calamum_baseline_monitor.pid",
+          "C:/Users/joedi/Documents/CodeSentinel-1/report_tmp/framec_packet_artifact_divergence_truthfulness_probe/runs/framec-packet-artifact-divergence-truthfulness-20260421T184149Z/sandbox_logs/control/calamum/baseline_monitor_state.json"
+        ],
+        "reason_codes": [],
+        "state": "active",
+        "status": "not_applicable"
+      },
+      "overall": {
+        "evaluated_classes": [
+          "C22_baseline_validation_rate_escalated",
+          "C24_resource_stream_retention_ready",
+          "C25_resource_baseline_window_ready",
+          "baseline_monitor_runtime_ready"
+        ],
+        "status": "not_applicable",
+        "target_posture": "isolation"
+      }
+    },
+    "status_packet": {
+      "checks": {
+        "data.observer_metrics_current": {
+          "exists": false,
+          "path": "C:\\Users\\joedi\\Documents\\CodeSentinel-1\\report_tmp\\framec_packet_artifact_divergence_truthfulness_probe\\runs\\framec-packet-artifact-divergence-truthfulness-20260421T184149Z\\sandbox_logs\\data\\calamum\\observer_derived\\sim\\watch\\moltbook_metrics.jsonl",
+          "scope": {
+            "mode": "watch",
+            "source": "sim"
+          },
+          "status": "warn"
+        },
+        "env.signing_key": {
+          "names": [
+            "CALAMUM_REQUESTER_SIGNING_KEY",
+            "CALAMUM_LIBRARIAN_ATTESTATION_KEY",
+            "CALAMUM_SOURCE_RELEASE_KEY",
+            "CALAMUM_LIBRARIAN_VAULT_KEY",
+            "CALAMUM_DATA_SIGNING_KEY",
+            "CALAMUM_ALLOW_DEV_SIGNING_KEY"
+          ],
+          "present": true,
+          "status": "ok"
+        },
+        "heartbeat.librarian": {
+          "age_seconds": 0.309,
+          "exists": true,
+          "max_age_seconds": 120.0,
+          "path": "C:\\Users\\joedi\\Documents\\CodeSentinel-1\\report_tmp\\framec_packet_artifact_divergence_truthfulness_probe\\runs\\framec-packet-artifact-divergence-truthfulness-20260421T184149Z\\sandbox_logs\\health\\calamum_librarian.heartbeat",
+          "status": "ok"
+        },
+        "heartbeat.observer": {
+          "age_seconds": 0.31,
+          "exists": true,
+          "max_age_seconds": 60.0,
+          "path": "C:\\Users\\joedi\\Documents\\CodeSentinel-1\\report_tmp\\framec_packet_artifact_divergence_truthfulness_probe\\runs\\framec-packet-artifact-divergence-truthfulness-20260421T184149Z\\sandbox_logs\\health\\calamum_observer.heartbeat",
+          "status": "ok"
+        },
+        "heartbeat.watchdog": {
+          "age_seconds": 0.311,
+          "exists": true,
+          "max_age_seconds": 45.0,
+          "path": "C:\\Users\\joedi\\Documents\\CodeSentinel-1\\report_tmp\\framec_packet_artifact_divergence_truthfulness_probe\\runs\\framec-packet-artifact-divergence-truthfulness-20260421T184149Z\\sandbox_logs\\health\\calamum_ops_watchdog.heartbeat",
+          "status": "ok"
+        },
+        "paths.control_dir": {
+          "exists": true,
+          "path": "C:\\Users\\joedi\\Documents\\CodeSentinel-1\\report_tmp\\framec_packet_artifact_divergence_truthfulness_probe\\runs\\framec-packet-artifact-divergence-truthfulness-20260421T184149Z\\sandbox_logs\\control\\calamum",
+          "status": "ok"
+        },
+        "paths.data_dir": {
+          "exists": true,
+          "path": "C:\\Users\\joedi\\Documents\\CodeSentinel-1\\report_tmp\\framec_packet_artifact_divergence_truthfulness_probe\\runs\\framec-packet-artifact-divergence-truthfulness-20260421T184149Z\\sandbox_logs\\data\\calamum",
+          "status": "ok"
+        },
+        "paths.health_dir": {
+          "exists": true,
+          "path": "C:\\Users\\joedi\\Documents\\CodeSentinel-1\\report_tmp\\framec_packet_artifact_divergence_truthfulness_probe\\runs\\framec-packet-artifact-divergence-truthfulness-20260421T184149Z\\sandbox_logs\\health",
+          "status": "ok"
+        },
+        "runtime.baseline_monitor": {
+          "heartbeat": {
+            "age_seconds": 0.342,
+            "exists": true,
+            "max_age_seconds": 90.0,
+            "path": "C:\\Users\\joedi\\Documents\\CodeSentinel-1\\report_tmp\\framec_packet_artifact_divergence_truthfulness_probe\\runs\\framec-packet-artifact-divergence-truthfulness-20260421T184149Z\\sandbox_logs\\health\\calamum_baseline_monitor.heartbeat",
+            "status": "ok"
+          },
+          "monitor_state": {},
+          "pid": {
+            "alive": true,
+            "path": "C:/Users/joedi/Documents/CodeSentinel-1/report_tmp/framec_packet_artifact_divergence_truthfulness_probe/runs/framec-packet-artifact-divergence-truthfulness-20260421T184149Z/sandbox_root/calamum_baseline_monitor.pid",
+            "value": 43156
+          },
+          "state": "active",
+          "status": "ok"
+        },
+        "runtime.collection_state": {
+          "collecting_fresh_max_age_seconds": 40.0,
+          "metrics_age_seconds": null,
+          "metrics_exists": false,
+          "metrics_path": "C:\\Users\\joedi\\Documents\\CodeSentinel-1\\report_tmp\\framec_packet_artifact_divergence_truthfulness_probe\\runs\\framec-packet-artifact-divergence-truthfulness-20260421T184149Z\\sandbox_logs\\data\\calamum\\observer_derived\\sim\\watch\\moltbook_metrics.jsonl",
+          "observer_heartbeat_status": "ok",
+          "observer_pid_alive": true,
+          "runtime_state": "active",
+          "source_fetch_error_kind": null,
+          "source_fetch_status": "ok",
+          "state": "idle",
+          "status": "ok"
+        },
+        "runtime.observer_service": {
+          "state": "active",
+          "status": "ok"
+        },
+        "store.integrity_ok": {
+          "archive_count": 0,
+          "compacted_count": 0,
+          "issues": [],
+          "retention_state": "normal",
+          "status": "ok"
+        },
+        "store.pointer_consistent": {
+          "active_store_pointer": "C:/Users/joedi/Documents/CodeSentinel-1/report_tmp/framec_packet_artifact_divergence_truthfulness_probe/runs/framec-packet-artifact-divergence-truthfulness-20260421T184149Z/sandbox_logs/data/calamum/stores/watch/active.jsonl",
+          "status": "ok"
+        },
+        "watchdog.baseline_validation_interval_seconds": {
+          "status": "ok",
+          "value": 120.0
+        },
+        "watchdog.heartbeat_interval_seconds": {
+          "status": "ok",
+          "value": 10.0
+        },
+        "watchdog.resource_baseline_window": {
+          "age_seconds": null,
+          "archive_manifest_exists": false,
+          "archive_manifest_path": "C:/Users/joedi/Documents/CodeSentinel-1/report_tmp/framec_packet_artifact_divergence_truthfulness_probe/runs/framec-packet-artifact-divergence-truthfulness-20260421T184149Z/sandbox_logs/data/calamum/archive/manifest.json",
+          "archived_artifact_paths": [],
+          "baseline_window_id": "",
+          "decision": "no-go",
+          "index_path": "C:/Users/joedi/Documents/CodeSentinel-1/report_tmp/framec_packet_artifact_divergence_truthfulness_probe/runs/framec-packet-artifact-divergence-truthfulness-20260421T184149Z/sandbox_logs/data/calamum/observer_derived/sim/watch/resource/index.jsonl",
+          "latest_segment_path": "",
+          "max_age_seconds": 240.0,
+          "missing_segment_paths": [],
+          "packet_path": "",
+          "resolved_segment_count": 0,
+          "resolved_segment_paths": [],
+          "sample_counts": {},
+          "segment_count": 0,
+          "segment_paths": [],
+          "segment_resolution": "missing",
+          "status": "err"
+        },
+        "watchdog.resource_metrics": {
+          "cpu_p95_15m": 30.0,
+          "cpu_pct_now": 35.0,
+          "path": "C:\\Users\\joedi\\Documents\\CodeSentinel-1\\report_tmp\\framec_packet_artifact_divergence_truthfulness_probe\\runs\\framec-packet-artifact-divergence-truthfulness-20260421T184149Z\\sandbox_logs\\control\\calamum\\watchdog_resource_state.json",
+          "ram_p95_15m": 35.0,
+          "ram_pct_now": 40.0,
+          "resource_spike_score": 0.1,
+          "sample_age_seconds": 5.0,
+          "status": "ok"
+        },
+        "watchdog.resource_stream_retention": {
+          "age_seconds": null,
+          "archive_manifest_exists": false,
+          "archive_manifest_path": "C:/Users/joedi/Documents/CodeSentinel-1/report_tmp/framec_packet_artifact_divergence_truthfulness_probe/runs/framec-packet-artifact-divergence-truthfulness-20260421T184149Z/sandbox_logs/data/calamum/archive/manifest.json",
+          "archived_artifact_path": "",
+          "exists": false,
+          "expected_stream_type": "resource_normal",
+          "latest_record": {},
+          "max_age_seconds": 180.0,
+          "path": "C:/Users/joedi/Documents/CodeSentinel-1/report_tmp/framec_packet_artifact_divergence_truthfulness_probe/runs/framec-packet-artifact-divergence-truthfulness-20260421T184149Z/sandbox_logs/data/calamum/observer_derived/sim/watch/resource/index.jsonl",
+          "records_indexed": 0,
+          "resolved_segment_path": "",
+          "segment_exists": false,
+          "segment_resolution": "missing",
+          "status": "err"
+        },
+        "watchdog.trigger_posture": {
+          "path": "C:\\Users\\joedi\\Documents\\CodeSentinel-1\\report_tmp\\framec_packet_artifact_divergence_truthfulness_probe\\runs\\framec-packet-artifact-divergence-truthfulness-20260421T184149Z\\sandbox_logs\\control\\calamum\\watchdog_posture_state.json",
+          "posture_trigger": "isolation",
+          "status": "ok"
+        }
+      },
+      "mode": "watch",
+      "runtime_cli_surface": "observerctl",
+      "runtime_label": "observer",
+      "source": "sim",
+      "state_source": "sim",
+      "timestamp_utc": "2026-04-21T18:41:49.992733Z"
+    },
+    "timestamp_utc": "2026-04-21T18:41:49.996490Z"
+  },
+  "artifact_review": {
+    "claimed_current_artifact": "report_tmp/framec_packet_artifact_divergence_truthfulness_probe/runs/framec-packet-artifact-divergence-truthfulness-20260421T184149Z/framec_truthfulness_packet.json",
+    "stale_previous_artifact": "report_tmp/framec_packet_artifact_divergence_truthfulness_probe/runs/framec-packet-artifact-divergence-truthfulness-20260421T184149Z/framec_truthfulness_stale_copy.json",
+    "review_decision": "no-go"
+  },
+  "conclusion": {
+    "divergence_detected": true,
+    "stale_copy_not_reused_as_current": true,
+    "no_false_success_narrative": true
+  }
+}

@@ -131,6 +131,11 @@ The public repo and the installable package are related but not identical releas
 | `docs/reports/INDEX.md`, `docs/reports/aggregates/*`, `docs/reports/reference/GENERATED_REPORT_SURFACES.md`, `docs/reports/validations/INDEX.md`, and the structural `docs/reports/collections/` lane | tracked in the repo and shipped as the report framework baseline         |
 | adjacent tracked writeups under `docs/Spring2026/`                                                                                                                                                    | tracked in the repo, not part of the shipped application package         |
 
+Literal ship-state shorthand used across the public contract:
+
+- `docs/INDEX.md` + `docs/manuals/**` | tracked in the repo and shipped with the installable application package
+- `docs/reports/INDEX.md`, `docs/reports/aggregates/*`, `docs/reports/reference/GENERATED_REPORT_SURFACES.md`, `docs/reports/validations/INDEX.md`, and the structural `docs/reports/collections/` lane | tracked in the repo and shipped as the report framework baseline
+
 ## Public report publication
 
 Tracked public reports are rebuilt from canonical local DS run artifacts into human-facing publication surfaces under `docs/reports/`.

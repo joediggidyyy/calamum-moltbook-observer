@@ -1,3 +1,4 @@
+import json
 import subprocess
 import sys
 import tempfile
@@ -74,6 +75,12 @@ def test_keysmith_dry_run_writes_artifacts_and_never_prints_secret_placeholder()
         helper_text = import_helper.read_text(encoding="utf-8") + persist_helper.read_text(encoding="utf-8")
         assert "DRY_RUN_PLACEHOLDER_DO_NOT_USE" not in helper_text
         assert "MOLTBOOK_API_KEY" in helper_text
+
+        result_payload = json.loads(result_json.read_text(encoding="utf-8"))
+        build_proof = result_payload.get("build_proof", {}) if isinstance(result_payload.get("build_proof", {}), dict) else {}
+        assert build_proof.get("proof_schema") == keysmith.KEYSMITH_BUILD_PROOF_SCHEMA
+        assert build_proof.get("keysmith_version") == keysmith.KEYSMITH_VERSION
+        assert build_proof.get("surface_hashes", {}).get("src_keysmith_py", "")
 
 
 def test_keysmith_non_dry_run_requires_sandbox_env_flag():

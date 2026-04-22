@@ -39,7 +39,7 @@ import json
 import os
 import time
 from dataclasses import dataclass
-from datetime import datetime
+from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any, Dict, Iterable, List, Optional, Tuple
 
@@ -49,7 +49,7 @@ from calamum_sampler import simulate_moltbook_notifications
 
 
 def _utc_iso() -> str:
-    return datetime.utcnow().isoformat() + 'Z'
+    return datetime.now(timezone.utc).isoformat().replace('+00:00', 'Z')
 
 
 def _find_repo_root(start: Path) -> Path:

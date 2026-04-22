@@ -1,0 +1,146 @@
+{
+  "doc_class": "frame_g_evidence",
+  "frame_id": "G",
+  "scenario_focus": [
+    "S12",
+    "S13",
+    "S14"
+  ],
+  "generated_from": {
+    "source_reports": {
+      "S12": {
+        "run_id": "frameg-public-report-boundary-escape-20260422T015208Z",
+        "source_report_json": "report_tmp/frameg_public_report_boundary_escape_probe/runs/frameg-public-report-boundary-escape-20260422T015208Z/frameg_public_report_boundary_escape_probe.json",
+        "source_report_md": "report_tmp/frameg_public_report_boundary_escape_probe/runs/frameg-public-report-boundary-escape-20260422T015208Z/frameg_public_report_boundary_escape_probe.md"
+      },
+      "S13": {
+        "run_id": "frameg-bootstrap-root-starvation-20260422T015215Z",
+        "source_report_json": "report_tmp/frameg_bootstrap_root_starvation_probe/runs/frameg-bootstrap-root-starvation-20260422T015215Z/frameg_bootstrap_root_starvation_probe.json",
+        "source_report_md": "report_tmp/frameg_bootstrap_root_starvation_probe/runs/frameg-bootstrap-root-starvation-20260422T015215Z/frameg_bootstrap_root_starvation_probe.md"
+      },
+      "S14": {
+        "run_id": "frameg-sandbox-catalog-authority-drift-20260422T015223Z",
+        "source_report_json": "report_tmp/frameg_sandbox_catalog_authority_drift_probe/runs/frameg-sandbox-catalog-authority-drift-20260422T015223Z/frameg_sandbox_catalog_authority_drift_probe.json",
+        "source_report_md": "report_tmp/frameg_sandbox_catalog_authority_drift_probe/runs/frameg-sandbox-catalog-authority-drift-20260422T015223Z/frameg_sandbox_catalog_authority_drift_probe.md"
+      }
+    },
+    "script": "projects/calamum-moltbook-observer/src/simulation/run_simulation.py"
+  },
+  "related_artifacts": {
+    "frame_g_publication_boundary_md": "projects/calamum-moltbook-observer/local_untracked/reports/operations/frame_g_publication_boundary.md",
+    "job_surfaces": [
+      "projects/calamum-moltbook-observer/jobs/JOB_0001_CALAMUM-MOLTBOOK-OBSERVER_AUDIT_DOCS-GENERAL_20260420/JOB.json",
+      "projects/calamum-moltbook-observer/jobs/JOB_0001_CALAMUM-MOLTBOOK-OBSERVER_AUDIT_DOCS-GENERAL_20260420/JOB.md",
+      "projects/calamum-moltbook-observer/jobs/JOB_0001_CALAMUM-MOLTBOOK-OBSERVER_AUDIT_DOCS-GENERAL_20260420/QS.json",
+      "projects/calamum-moltbook-observer/jobs/JOB_0001_CALAMUM-MOLTBOOK-OBSERVER_AUDIT_DOCS-GENERAL_20260420/QF.md"
+    ]
+  },
+  "overall_result": "pass",
+  "summary": {
+    "decision_basis": "Frame G passes when tracked publication remains human-facing, bootstrap starvation degrades truthfully with explicit no-go reason codes, and sandbox catalog drift stays exact-name-only while stale retained-run review fails closed.",
+    "observed_boundary_results": {
+      "S12": "public_report_boundary_preserved",
+      "S13": "bootstrap_root_starvation_degraded_truthfully",
+      "S14": "sandbox_catalog_authority_drift_visible_fail_closed"
+    },
+    "execution_lane": "sandbox-only",
+    "next_required_review": "frame_g_closeout_readiness_review"
+  },
+  "result_matrix": {
+    "s12_publication_boundary_preserved": true,
+    "s13_bootstrap_starvation_degraded_truthfully": true,
+    "s14_catalog_authority_drift_visible_fail_closed": true,
+    "all_frame_g_probes_passed": true,
+    "declared_evidence_routes_synchronized": true
+  },
+  "scenario_findings": {
+    "S12": {
+      "generated_surfaces_md": "report_tmp/frameg_public_report_boundary_escape_probe/runs/frameg-public-report-boundary-escape-20260422T015208Z/sandbox_root/docs/reports/reference/GENERATED_REPORT_SURFACES.md",
+      "local_authority_lure": "C:/Operators/RuntimeAuthority/local_only/not-for-public.json",
+      "published_figures": [
+        "docs/reports/collections/frameg-public-boundary/processing/score/figures/20260422T001500000000Z.score/score_distribution.png"
+      ],
+      "result_matrix": {
+        "absolute_project_root_removed_from_public_json": true,
+        "absolute_project_root_removed_from_public_markdown": true,
+        "human_facing_generated_surfaces_contract_present": true,
+        "local_authority_lure_removed_from_reader_surfaces": true,
+        "publication_refresh_go": true,
+        "published_collection_markdown_written": true,
+        "published_figure_rewritten_relative": true,
+        "published_processing_markdown_written": true,
+        "published_report_json_written": true,
+        "source_report_seed_contains_absolute_path": true,
+        "stable_collection_landing_absent": true
+      }
+    },
+    "S13": {
+      "blocked_root_id": "reports_operations_root",
+      "blocked_root_path": "report_tmp/frameg_bootstrap_root_starvation_probe/runs/frameg-bootstrap-root-starvation-20260422T015215Z/sandbox_root/local_untracked/reports/operations",
+      "bootstrap_reason_codes": [
+        "critical_check_failed:runtime_bootstrap_blocked_reports_operations_root"
+      ],
+      "created_roots": 17,
+      "missing_root_id": "analysis_root",
+      "result_matrix": {
+        "blocked_root_not_converted_to_directory": true,
+        "blocked_root_reason_emitted": true,
+        "blocked_root_seed_written": true,
+        "blocked_root_status_preserved": true,
+        "check_bootstrap_marks_missing_root": true,
+        "check_bootstrap_no_go": true,
+        "missing_root_reason_emitted": true,
+        "mutating_bootstrap_no_go": true,
+        "other_roots_created_under_partial_success": true,
+        "partial_success_not_reported_as_go": true
+      }
+    },
+    "S14": {
+      "alias_candidate": "metadata-contract-reg",
+      "canonical_definition_id": "metadata-contract",
+      "catalog_count": 28,
+      "stale_report_json": "report_tmp/frame4_metadata_contract_probe/runs/metadata-contract-stale-20260422T015223Z/report.json",
+      "stale_review_reason_codes": [
+        "critical_check_failed:sandbox_run_report_missing"
+      ],
+      "stale_run_id": "metadata-contract-stale-20260422T015223Z",
+      "result_matrix": {
+        "canonical_definition_show_go": true,
+        "canonical_selector_policy_exact_name_only": true,
+        "catalog_ids_unique": true,
+        "catalog_list_go": true,
+        "prefix_alias_lookup_denied": true,
+        "stale_run_index_row_written": true,
+        "stale_run_payload_not_presented_as_reviewable": true,
+        "stale_run_reason_emitted": true,
+        "stale_run_review_no_go": true,
+        "stale_run_visible_in_catalog_list": true
+      }
+    }
+  },
+  "closeout_basis": {
+    "proven_safe_behavior": [
+      "Reader-facing tracked publication stayed human-facing and removed absolute project-root and local-authority residue from public surfaces.",
+      "Sandbox catalog selection stayed exact-name-only for definition lookup."
+    ],
+    "proven_fail_closed_behavior": [
+      "Runtime bootstrap returned no-go with explicit reason codes when a required root was blocked.",
+      "Stale retained-run review returned no-go with critical_check_failed:sandbox_run_report_missing instead of presenting missing report payload as trustworthy review material."
+    ],
+    "unresolved_bounded_risk": [
+      "No new technical defect surfaced in S12-S14; the remaining bounded step is the explicit Frame G closeout-readiness review of the synchronized job spine."
+    ]
+  },
+  "artifact_review": {
+    "s12_generated_surfaces_md": "report_tmp/frameg_public_report_boundary_escape_probe/runs/frameg-public-report-boundary-escape-20260422T015208Z/sandbox_root/docs/reports/reference/GENERATED_REPORT_SURFACES.md",
+    "s13_blocked_root_path": "report_tmp/frameg_bootstrap_root_starvation_probe/runs/frameg-bootstrap-root-starvation-20260422T015215Z/sandbox_root/local_untracked/reports/operations",
+    "s14_stale_report_json": "report_tmp/frame4_metadata_contract_probe/runs/metadata-contract-stale-20260422T015223Z/report.json"
+  },
+  "conclusion": {
+    "closeout_review_candidate": true,
+    "publication_boundary_preserved": true,
+    "bootstrap_starvation_truthful": true,
+    "catalog_drift_fail_closed": true,
+    "remaining_action": "Read back JOB.json, QS.json, QF.md, frame_g_publication_boundary.md, and frame_g_closeout_packet.json together before formal Frame G closeout-readiness review."
+  }
+}

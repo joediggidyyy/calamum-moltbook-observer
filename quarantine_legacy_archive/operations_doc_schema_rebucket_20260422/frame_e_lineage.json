@@ -1,0 +1,47 @@
+{
+  "doc_class": "frame_e_evidence",
+  "frame_id": "E",
+  "scenario_focus": [
+    "S8"
+  ],
+  "generated_from": {
+    "source_report_json": "report_tmp/framee_report_lineage_forgery_probe/runs/framee-report-lineage-forgery-20260421T215055Z/framee_report_lineage_forgery_probe.json",
+    "source_report_md": "report_tmp/framee_report_lineage_forgery_probe/runs/framee-report-lineage-forgery-20260421T215055Z/framee_report_lineage_forgery_probe.md",
+    "script": "projects/calamum-moltbook-observer/src/simulation/run_simulation.py"
+  },
+  "run_id": "framee-report-lineage-forgery-20260421T215055Z",
+  "overall_result": "pass",
+  "summary": {
+    "decision_basis": "Frame E S8 passes when persisted ephemeral lineage tamper is surfaced explicitly as publication_skipped:dataset_manifest_ephemeral and tracked publication stays empty.",
+    "observed_boundary_result": "report_lineage_forgery_blocked_before_publication",
+    "published_run_count": 0,
+    "aggregate_surfaces_rendered": true
+  },
+  "result_matrix": {
+    "aggregate_surfaces_still_rendered": true,
+    "collection_alias_not_materialized": true,
+    "dataset_authority_registered": true,
+    "manifest_tamper_persisted": true,
+    "pre_tamper_publication_eligible": true,
+    "published_run_count_zero": true,
+    "tampered_publication_reason_emitted": true,
+    "tampered_run_not_published": true
+  },
+  "artifact_review": {
+    "source_manifest_json": "report_tmp/framee_report_lineage_forgery_probe/runs/framee-report-lineage-forgery-20260421T215055Z/sandbox_root/local_untracked/analysis/runs/score/framee-lineage-forgery-score/report/manifest.json",
+    "aggregate_report_md": "report_tmp/framee_report_lineage_forgery_probe/runs/framee-report-lineage-forgery-20260421T215055Z/sandbox_root/docs/reports/aggregates/AGGREGATE_REPORT.md",
+    "public_run_ledger_md": "report_tmp/framee_report_lineage_forgery_probe/runs/framee-report-lineage-forgery-20260421T215055Z/sandbox_root/docs/reports/aggregates/PUBLIC_RUN_LEDGER.md"
+  },
+  "lineage_review": {
+    "pre_tamper_reasons": [],
+    "tampered_reasons": [
+      "publication_skipped:dataset_manifest_ephemeral"
+    ],
+    "forged_dataset_manifest": "C:/Users/tester/AppData/Local/Temp/forged_dataset_manifest.json"
+  },
+  "conclusion": {
+    "publication_blocked": true,
+    "collection_alias_not_materialized": true,
+    "published_run_count_zero": true
+  }
+}

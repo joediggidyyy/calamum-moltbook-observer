@@ -341,6 +341,135 @@ def _keysmith_surface_status() -> Dict[str, Dict[str, Any]]:
     return status
 
 
+def _keysmith_build_proof() -> Dict[str, Any]:
+    try:
+        import keysmith as keysmith_module
+    except Exception:
+        return {}
+
+    try:
+        return keysmith_module.build_proof_for_surfaces(
+            _keysmith_surface_paths(),
+            version=str(getattr(keysmith_module, 'KEYSMITH_VERSION', '') or '').strip(),
+        )
+    except Exception:
+        return {}
+
+
+def _normalize_keysmith_build_proof(proof: Any) -> Dict[str, Any]:
+    payload = dict(proof or {}) if isinstance(proof, dict) else {}
+    raw_hashes = payload.get('surface_hashes', {}) if isinstance(payload.get('surface_hashes', {}), dict) else {}
+    raw_presence = payload.get('surface_presence', {}) if isinstance(payload.get('surface_presence', {}), dict) else {}
+    return {
+        'proof_schema': str(payload.get('proof_schema', '') or '').strip(),
+        'keysmith_version': str(payload.get('keysmith_version', '') or '').strip(),
+        'surface_hashes': {
+            str(name): str(value or '').strip().lower()
+            for name, value in raw_hashes.items()
+            if str(name or '').strip()
+        },
+        'surface_presence': {
+            str(name): bool(value)
+            for name, value in raw_presence.items()
+            if str(name or '').strip()
+        },
+    }
+
+
+def _keysmith_build_proof_mismatches(observed_proof: Any, expected_proof: Any) -> Dict[str, Any]:
+    observed = _normalize_keysmith_build_proof(observed_proof)
+    expected = _normalize_keysmith_build_proof(expected_proof)
+    mismatches: Dict[str, Any] = {}
+
+    if observed.get('proof_schema', '') != expected.get('proof_schema', ''):
+        mismatches['proof_schema'] = {
+            'expected': str(expected.get('proof_schema', '') or ''),
+            'observed': str(observed.get('proof_schema', '') or ''),
+        }
+    if observed.get('keysmith_version', '') != expected.get('keysmith_version', ''):
+        mismatches['keysmith_version'] = {
+            'expected': str(expected.get('keysmith_version', '') or ''),
+            'observed': str(observed.get('keysmith_version', '') or ''),
+        }
+
+    observed_hashes = dict(observed.get('surface_hashes', {}) or {})
+    expected_hashes = dict(expected.get('surface_hashes', {}) or {})
+    observed_presence = dict(observed.get('surface_presence', {}) or {})
+    expected_presence = dict(expected.get('surface_presence', {}) or {})
+    surface_ids = sorted(set(observed_hashes) | set(expected_hashes) | set(observed_presence) | set(expected_presence))
+    surface_mismatches: Dict[str, Any] = {}
+    for surface_id in surface_ids:
+        surface_row: Dict[str, Any] = {}
+        observed_hash = str(observed_hashes.get(surface_id, '') or '').strip().lower()
+        expected_hash = str(expected_hashes.get(surface_id, '') or '').strip().lower()
+        if observed_hash != expected_hash:
+            surface_row['hash'] = {
+                'expected': expected_hash,
+                'observed': observed_hash,
+            }
+        observed_present = bool(observed_presence.get(surface_id, False))
+        expected_present = bool(expected_presence.get(surface_id, False))
+        if observed_present != expected_present:
+            surface_row['present'] = {
+                'expected': expected_present,
+                'observed': observed_present,
+            }
+        if surface_row:
+            surface_mismatches[surface_id] = surface_row
+    if surface_mismatches:
+        mismatches['surface_proof'] = surface_mismatches
+    return mismatches
+
+
+def _keysmith_result_proof_packet(result_json_path: Path) -> Dict[str, Any]:
+    path = Path(result_json_path)
+    expected_build_proof = _keysmith_build_proof()
+    if not path.exists():
+        return {
+            'timestamp_utc': _utc_now(),
+            'runtime_cli_surface': 'observerctl',
+            'decision': 'no-go',
+            'action': 'ops-keysmith-proof-review',
+            'summary': 'KEYSMITH proof review failed because the retained result artifact is missing.',
+            'reason_codes': ['critical_check_failed:keysmith_result_json_missing'],
+            'result_json_path': str(path).replace('\\', '/'),
+            'expected_build_proof': expected_build_proof,
+            'observed_build_proof': {},
+            'mismatches': {'result_json': {'expected': 'present', 'observed': 'missing'}},
+        }
+
+    result_payload = _load_json_file(path, default={})
+    observed_build_proof = result_payload.get('build_proof', {}) if isinstance(result_payload.get('build_proof', {}), dict) else {}
+    if not observed_build_proof:
+        return {
+            'timestamp_utc': _utc_now(),
+            'runtime_cli_surface': 'observerctl',
+            'decision': 'no-go',
+            'action': 'ops-keysmith-proof-review',
+            'summary': 'KEYSMITH proof review failed because the retained result artifact does not carry build proof.',
+            'reason_codes': ['critical_check_failed:keysmith_build_proof_missing'],
+            'result_json_path': str(path).replace('\\', '/'),
+            'expected_build_proof': expected_build_proof,
+            'observed_build_proof': {},
+            'mismatches': {'build_proof': {'expected': 'present', 'observed': 'missing'}},
+        }
+
+    mismatches = _keysmith_build_proof_mismatches(observed_build_proof, expected_build_proof)
+    decision = 'go' if len(mismatches) == 0 else 'no-go'
+    return {
+        'timestamp_utc': _utc_now(),
+        'runtime_cli_surface': 'observerctl',
+        'decision': decision,
+        'action': 'ops-keysmith-proof-review',
+        'summary': 'KEYSMITH retained build proof matches the current candidate build surfaces.' if decision == 'go' else 'KEYSMITH retained build proof does not match the current candidate build surfaces.',
+        'reason_codes': [] if decision == 'go' else ['critical_check_failed:keysmith_version_parity_mismatch'],
+        'result_json_path': str(path).replace('\\', '/'),
+        'expected_build_proof': expected_build_proof,
+        'observed_build_proof': _normalize_keysmith_build_proof(observed_build_proof),
+        'mismatches': mismatches,
+    }
+
+
 def _resolve_keysmith_venue(venue: str, action: str) -> Tuple[str, Optional[Dict[str, Any]]]:
     resolved = str(venue or 'moltbook').strip().lower() or 'moltbook'
     if resolved in _keysmith_supported_venues():
@@ -588,6 +717,25 @@ def _ops_keysmith_mint_orchestrated(
             execution_lane='sandbox-runner',
         )
 
+    proof_review = _keysmith_result_proof_packet(Path(str(artifacts['result_json'])))
+    if str(proof_review.get('decision', 'no-go') or 'no-go').strip().lower() != 'go':
+        failure_packet = dict(artifacts)
+        failure_packet.update(
+            _ops_keysmith_mint_failure_packet(
+                summary='KEYSMITH mint completed through the sandbox runner, but the retained build proof is not version-matched to the current candidate build.',
+                reason_codes=list(proof_review.get('reason_codes', []) or ['critical_check_failed:keysmith_version_parity_mismatch']),
+                venue=resolved_venue,
+                dry_run=False,
+                output_dir_path=output_dir_path,
+                preflight_packet=preflight_packet,
+                docker_present=docker_present,
+                runner_path=str(runner_path.as_posix()),
+                execution_lane='sandbox-runner',
+            )
+        )
+        failure_packet['build_proof_review'] = proof_review
+        return failure_packet
+
     packet = {
         'timestamp_utc': _utc_now(),
         'runtime_cli_surface': 'observerctl',
@@ -605,6 +753,8 @@ def _ops_keysmith_mint_orchestrated(
             'docker_present': docker_present,
             'path': str(runner_path.as_posix()),
         },
+        'build_proof_review': proof_review,
+        'build_proof': dict(proof_review.get('expected_build_proof', {}) or {}),
         **artifacts,
     }
     packet['env_import'] = _hydrate_moltbook_key_from_sealed_drop(Path(str(packet.get('sealed_drop_path', '') or '')))
@@ -633,6 +783,8 @@ def _ops_keysmith_status(venue: str = 'moltbook') -> Dict[str, Any]:
         artifacts['default_output_dir'] = ''
         reason_codes.append('critical_check_failed:keysmith_import_failed')
 
+    build_proof = _keysmith_build_proof()
+
     missing_surfaces = [
         name for name, info in surface_status.items()
         if not bool(info.get('exists', False))
@@ -660,6 +812,7 @@ def _ops_keysmith_status(venue: str = 'moltbook') -> Dict[str, Any]:
         'dry_run_authority': 'host-or-sandbox',
         'live_mint_ready': live_mint_ready,
         'surface_status': surface_status,
+        'build_proof': build_proof,
         'env_presence': env_presence,
         'artifacts': artifacts,
     }
@@ -707,6 +860,7 @@ def _ops_keysmith_mint(
     allowlist = tuple(str(item).strip() for item in (allow_hosts or []) if str(item).strip())
     if len(allowlist) == 0:
         allowlist = tuple(keysmith_module._default_allowed_hosts())
+    build_proof = _keysmith_build_proof()
 
     try:
         cfg = keysmith_module.KeysmithConfig(
@@ -718,7 +872,7 @@ def _ops_keysmith_mint(
             agent_metadata=keysmith_module._parse_agent_metadata_json(agent_metadata_json),
             timeout_sec=int(timeout_sec),
         )
-        artifacts = keysmith_module.run_keysmith(cfg)
+        artifacts = keysmith_module.run_keysmith(cfg, build_proof=build_proof)
     except keysmith_module.KeysmithError as exc:
         return {
             'timestamp_utc': _utc_now(),
@@ -767,6 +921,24 @@ def _ops_keysmith_mint(
         'audit_path': str(artifacts.audit_jsonl.as_posix()),
         'result_json': str(artifacts.result_json.as_posix()),
     }
+    proof_review = _keysmith_result_proof_packet(artifacts.result_json)
+    if str(proof_review.get('decision', 'no-go') or 'no-go').strip().lower() != 'go':
+        failure_packet = dict(packet)
+        failure_packet.update(
+            _ops_keysmith_mint_failure_packet(
+                summary='KEYSMITH artifacts were written, but the retained build proof is not version-matched to the current candidate build.',
+                reason_codes=list(proof_review.get('reason_codes', []) or ['critical_check_failed:keysmith_version_parity_mismatch']),
+                venue=resolved_venue,
+                dry_run=bool(dry_run),
+                output_dir_path=output_dir_path,
+                preflight_packet=_ops_keysmith_status(resolved_venue),
+                execution_lane='sandbox' if sandbox_active else ('host-dry-run' if bool(dry_run) else 'host'),
+            )
+        )
+        failure_packet['build_proof_review'] = proof_review
+        return failure_packet
+    packet['build_proof'] = build_proof
+    packet['build_proof_review'] = proof_review
     if not bool(dry_run):
         packet['env_import'] = _hydrate_moltbook_key_from_sealed_drop(artifacts.sealed_drop_bin)
     return packet
@@ -843,6 +1015,42 @@ def _posture_cadence_defaults(mode: str) -> Dict[str, Any]:
 def _is_lockdown_baseline_cadence(value: Any) -> bool:
     interval = _to_float_or_none(value)
     return bool(interval is not None and 30.0 <= float(interval) <= 60.0)
+
+
+def _resource_state_is_fresh_for_target(resource_doc: Dict[str, Any], source: str, mode: str, target_mode: str) -> bool:
+    if not isinstance(resource_doc, dict) or not resource_doc:
+        return False
+
+    source_text = str(resource_doc.get('source', '') or '').strip()
+    if source_text and _normalize_source(source_text) != _normalize_source(source):
+        return False
+
+    mode_text = str(resource_doc.get('mode', '') or '').strip().lower()
+    if mode_text:
+        if mode_text not in MODES or mode_text != str(mode or '').strip().lower():
+            return False
+
+    required_fields = (
+        'cpu_pct_now',
+        'ram_pct_now',
+        'cpu_p95_15m',
+        'ram_p95_15m',
+        'resource_spike_score',
+        'sample_age_seconds',
+    )
+    parsed_values = [_to_float_or_none(resource_doc.get(field)) for field in required_fields]
+    if any(value is None for value in parsed_values):
+        return False
+
+    sample_age = _to_float_or_none(resource_doc.get('sample_age_seconds'))
+    if sample_age is None:
+        return False
+
+    target_mode_norm = str(target_mode or mode or '').strip().lower()
+    if target_mode_norm not in MODES:
+        target_mode_norm = str(mode or '').strip().lower()
+    freshness_limit = float(_resource_thresholds_for_posture(_posture_for_mode(target_mode_norm)).get('sampling_fresh_max_age', 30.0))
+    return float(sample_age) <= freshness_limit
 
 
 def _control_file(name: str) -> Path:
@@ -1203,6 +1411,98 @@ def _save_run_context(payload: Dict[str, Any]) -> Dict[str, Any]:
     return merged
 
 
+def _persist_gate_run_context(gate_packet: Dict[str, Any]) -> Dict[str, Any]:
+    payload: Dict[str, Any] = {}
+    if isinstance(gate_packet, dict):
+        for key in ('run_id', 'posture_trigger_id', 'posture_trigger', 'security_report_ref'):
+            value = str(gate_packet.get(key, '') or '').strip()
+            if value:
+                payload[key] = value
+    if payload:
+        return _save_run_context(payload)
+    return _load_run_context()
+
+
+def _hydrate_gate_packet_lineage(gate_packet: Dict[str, Any], *sources: Dict[str, Any]) -> Dict[str, Any]:
+    hydrated = dict(gate_packet) if isinstance(gate_packet, dict) else {}
+    for source in sources:
+        if not isinstance(source, dict):
+            continue
+        for key in ('run_id', 'posture_trigger_id', 'posture_trigger', 'security_report_ref'):
+            current_value = str(hydrated.get(key, '') or '').strip()
+            if current_value:
+                continue
+            source_value = str(source.get(key, '') or '').strip()
+            if source_value:
+                hydrated[key] = source_value
+    return hydrated
+
+
+def _normalize_mode_value(mode: Any, fallback: str = 'watch') -> str:
+    candidate = str(mode or fallback).strip().lower()
+    if candidate not in MODES:
+        return str(fallback or 'watch').strip().lower() if str(fallback or 'watch').strip().lower() in MODES else 'watch'
+    return candidate
+
+
+def _validate_mode_set_gate_packet(gate: Dict[str, Any], source: str, to_mode: str) -> Dict[str, Any]:
+    expected_to_state = '{0}:{1}'.format(_normalize_source(source), to_mode)
+    prior_state = _load_state()
+    current_from_state = '{0}:{1}'.format(
+        _normalize_source(str(prior_state.get('source', 'sim'))),
+        _normalize_mode_value(prior_state.get('mode', 'watch')),
+    )
+    gate_from_state = str(gate.get('from_state', '') or '').strip()
+    gate_posture = str(gate.get('posture_trigger', '') or '').strip().lower()
+    expected_posture = _posture_for_mode(to_mode)
+    gate_security_report_ref = str(gate.get('security_report_ref', '') or '').strip()
+    run_context = _load_run_context()
+    lineage_mismatch_fields: List[str] = []
+    reason_codes: List[str] = []
+
+    if (
+        gate.get('decision') != 'go'
+        or str(gate.get('to_state', '') or '').strip() != expected_to_state
+        or (not _is_gate_packet_fresh(gate, max_age_sec=GATE_PACKET_MAX_AGE_SEC))
+    ):
+        reason_codes.append('critical_check_failed:gate_packet_missing_or_stale')
+    else:
+        if gate_from_state and gate_from_state != current_from_state:
+            reason_codes.append('critical_check_failed:gate_packet_state_mismatch')
+        if gate_posture and gate_posture != expected_posture:
+            reason_codes.append('critical_check_failed:gate_packet_posture_mismatch')
+        if gate_security_report_ref and not _is_resolvable_report_ref(gate_security_report_ref):
+            reason_codes.append('critical_check_failed:gate_packet_security_report_missing')
+        if isinstance(run_context, dict):
+            for key in ('run_id', 'posture_trigger_id', 'security_report_ref'):
+                context_value = str(run_context.get(key, '') or '').strip()
+                if not context_value:
+                    continue
+                gate_value = str(gate.get(key, '') or '').strip()
+                if gate_value != context_value:
+                    lineage_mismatch_fields.append(key)
+        if lineage_mismatch_fields:
+            reason_codes.append('critical_check_failed:gate_packet_lineage_mismatch')
+
+    deduped_reasons: List[str] = []
+    for code in reason_codes:
+        text = str(code or '').strip()
+        if text and text not in deduped_reasons:
+            deduped_reasons.append(text)
+
+    return {
+        'ok': len(deduped_reasons) == 0,
+        'reason_codes': deduped_reasons,
+        'expected_to_state': expected_to_state,
+        'current_from_state': current_from_state,
+        'gate_from_state': gate_from_state,
+        'expected_posture': expected_posture,
+        'gate_posture': gate_posture,
+        'lineage_mismatch_fields': lineage_mismatch_fields,
+        'run_context_path': str(_control_file(RUN_CONTEXT_FILE)).replace('\\', '/'),
+    }
+
+
 def _transition_security_report_output_path(source: str, mode: str, target_mode: str) -> Path:
     ts = _utc_compact_stamp()
     src = _normalize_source(source)
@@ -1374,6 +1674,13 @@ def _attempt_transition_self_actuation(
 
     status_after = collect_runtime_status(source=src)
     gate_after = evaluate_gate_decision(status_after, target_mode=target)
+    if str(gate_after.get('decision', 'no-go') or 'no-go').strip().lower() == 'go':
+        gate_after = _hydrate_gate_packet_lineage(
+            gate_after,
+            security_report_packet.get('run_context', {}) if isinstance(security_report_packet, dict) else {},
+            baseline_ready_packet.get('gate_packet', {}) if isinstance(baseline_ready_packet, dict) else {},
+            gate_packet,
+        )
     remediation_packet['decision'] = str(gate_after.get('decision', 'no-go') or 'no-go').strip().lower()
     remediation_packet['reason_codes'] = list(gate_after.get('reason_codes', reasons)) if isinstance(gate_after.get('reason_codes', reasons), list) else list(reasons)
     remediation_packet['security_report_packet'] = security_report_packet
@@ -2551,6 +2858,9 @@ def _baseline_ready(
     _save_state(src, current_mode)
     current_posture_packet = _apply_watchdog_posture(src, current_mode, event='baseline-ready-current-posture')
     posture_defaults = _posture_cadence_defaults(current_mode)
+    resource_state_path = _control_file(WATCHDOG_RESOURCE_FILE)
+    existing_resource_state = _load_json_file(resource_state_path, {}) if resource_state_path.exists() else {}
+    preserve_resource_state = _resource_state_is_fresh_for_target(existing_resource_state, source=src, mode=current_mode, target_mode=target)
 
     monitor_start_packet = _baseline_monitor_start(
         source=src,
@@ -2586,6 +2896,7 @@ def _baseline_ready(
         segment_records=1000,
         window_id='baseline_ready_normal_{0}'.format(readiness_stamp),
         output='',
+        persist_watchdog_state=not preserve_resource_state,
     )
 
     baseline_packet: Dict[str, Any] = {}
@@ -2600,6 +2911,7 @@ def _baseline_ready(
             segment_records=1000,
             window_id='baseline_ready_window_{0}'.format(readiness_stamp),
             output='',
+            persist_watchdog_state=not preserve_resource_state,
         )
         analysis_packet = _baseline_analyze(
             source=src,
@@ -2609,6 +2921,7 @@ def _baseline_ready(
             min_normal_samples=int(normal_samples_required),
             min_rapid_samples=int(baseline_samples_required),
             output='',
+            persist_watchdog_state=not preserve_resource_state,
         )
 
     state_path = _baseline_monitor_state_path()
@@ -6480,6 +6793,20 @@ def _sandbox_runs_show(run_id: str) -> Dict[str, Any]:
             'run_id': str(run_id or ''),
         }
     run_row, report_payload = found
+    report_path = str(run_row.get('report_path', '') or '').strip()
+    if not report_path or not bool(report_payload):
+        return {
+            'timestamp_utc': _utc_now(),
+            'runtime_cli_surface': 'observerctl',
+            'action': 'sandbox-runs-show',
+            'template_class': 'validation',
+            'template_variant': 'run_review',
+            'decision': 'no-go',
+            'reason_codes': ['critical_check_failed:sandbox_run_report_missing'],
+            'run_id': str(run_id or ''),
+            'run': run_row,
+            'report': report_payload,
+        }
     return {
         'timestamp_utc': _utc_now(),
         'runtime_cli_surface': 'observerctl',
@@ -6520,6 +6847,8 @@ def _ops_preflight(source: str) -> Dict[str, Any]:
 def _ops_gate(source: str, to_mode: str) -> Dict[str, Any]:
     status = collect_runtime_status(source=source)
     gate = evaluate_gate_decision(status, target_mode=to_mode)
+    if str(gate.get('decision', 'no-go') or 'no-go').strip().lower() == 'go':
+        _persist_gate_run_context(gate)
     _write_json_file(_control_file(LAST_GATE_FILE), gate)
     return gate
 
@@ -6547,15 +6876,22 @@ def _ops_mode_list() -> Dict[str, Any]:
 
 def _ops_mode_set(source: str, to_mode: str) -> Dict[str, Any]:
     gate = _load_json_file(_control_file(LAST_GATE_FILE), {})
-    to_state = str(gate.get('to_state', ''))
-    expected_to_state = '{0}:{1}'.format(_normalize_source(source), to_mode)
-    if gate.get('decision') != 'go' or to_state != expected_to_state or (not _is_gate_packet_fresh(gate, max_age_sec=GATE_PACKET_MAX_AGE_SEC)):
+    gate_validation = _validate_mode_set_gate_packet(gate, source, to_mode)
+    if not bool(gate_validation.get('ok', False)):
         return {
             'timestamp_utc': _utc_now(),
             'decision': 'no-go',
-            'reason_codes': ['critical_check_failed:gate_packet_missing_or_stale'],
+            'reason_codes': list(gate_validation.get('reason_codes', [])),
             'runtime_cli_surface': 'observerctl',
-            'evidence_refs': _merge_evidence_refs(gate.get('evidence_refs', [])),
+            'expected_to_state': str(gate_validation.get('expected_to_state', '') or ''),
+            'current_from_state': str(gate_validation.get('current_from_state', '') or ''),
+            'gate_from_state': str(gate_validation.get('gate_from_state', '') or ''),
+            'lineage_mismatch_fields': list(gate_validation.get('lineage_mismatch_fields', [])),
+            'evidence_refs': _merge_evidence_refs(
+                gate.get('evidence_refs', []),
+                str(gate_validation.get('run_context_path', '') or ''),
+                str(gate.get('security_report_ref', '') or ''),
+            ),
         }
     prior_state = _load_state()
     rollback_anchor = {
@@ -6580,7 +6916,7 @@ def _ops_mode_set(source: str, to_mode: str) -> Dict[str, Any]:
             'reason_codes': reason_codes,
             'runtime_cli_surface': 'observerctl',
             'from_state': gate.get('from_state', ''),
-            'attempted_to_state': expected_to_state,
+            'attempted_to_state': str(gate_validation.get('expected_to_state', '') or ''),
             'rollback_anchor': rollback_anchor,
             'rollback_applied': bool(rollback_verified),
             'restored_state': {
@@ -6614,7 +6950,11 @@ def _ops_mode_set(source: str, to_mode: str) -> Dict[str, Any]:
             str(posture_packet.get('receipt_path', '') or ''),
         ),
     }
-    response.update(_make_run_linkage(state['mode'], event='mode-set'))
+    for key in ('run_id', 'posture_trigger_id', 'posture_trigger', 'security_report_ref'):
+        value = str(gate.get(key, '') or '').strip()
+        if value:
+            response[key] = value
+    _persist_gate_run_context(gate)
     return response
 
 
@@ -6634,6 +6974,8 @@ def _ops_mode_transition(source: str, to_mode: str, event: str, output: str) -> 
         if bool(remediation_packet.get('attempted', False)):
             gate = remediation_packet.get('gate_packet', gate) if isinstance(remediation_packet.get('gate_packet', gate), dict) else gate
             status_for_evidence = remediation_packet.get('status_after', status_before) if isinstance(remediation_packet.get('status_after', status_before), dict) else status_before
+    if str(gate.get('decision', 'no-go') or 'no-go').strip().lower() == 'go':
+        _persist_gate_run_context(gate)
     _write_json_file(_control_file(LAST_GATE_FILE), gate)
     if gate.get('decision') != 'go':
         failure_packet = {
@@ -6751,6 +7093,8 @@ def _ops_mode_switch(
         if bool(remediation_packet.get('attempted', False)):
             gate = remediation_packet.get('gate_packet', gate) if isinstance(remediation_packet.get('gate_packet', gate), dict) else gate
             status_for_evidence = remediation_packet.get('status_after', status_before) if isinstance(remediation_packet.get('status_after', status_before), dict) else status_before
+    if str(gate.get('decision', 'no-go') or 'no-go').strip().lower() == 'go':
+        _persist_gate_run_context(gate)
     _write_json_file(_control_file(LAST_GATE_FILE), gate)
     if gate.get('decision') != 'go':
         failure_packet = {
@@ -7235,7 +7579,7 @@ def _baseline_set(baseline_id: str) -> Dict[str, Any]:
     }
 
 
-def _baseline_collect(source: str, mode: str, profile: str, duration_sec: float, interval_sec: float, segment_records: int, window_id: str, output: str) -> Dict[str, Any]:
+def _baseline_collect(source: str, mode: str, profile: str, duration_sec: float, interval_sec: float, segment_records: int, window_id: str, output: str, persist_watchdog_state: bool = True) -> Dict[str, Any]:
     src = _normalize_source(source)
     m = str(mode or 'canary').strip().lower()
     if m not in MODES:
@@ -7311,7 +7655,7 @@ def _baseline_collect(source: str, mode: str, profile: str, duration_sec: float,
         _append_jsonl(idx_path, index_row)
 
     # Update control resource state for gate consumers.
-    if cpu_vals and ram_vals:
+    if bool(persist_watchdog_state) and cpu_vals and ram_vals:
         state_payload = {
             'updated_at_utc': _utc_now(),
             'baseline_window_id': wid,
@@ -7408,7 +7752,7 @@ def _baseline_collect(source: str, mode: str, profile: str, duration_sec: float,
     return packet
 
 
-def _baseline_analyze(source: str, mode: str, hours: float, profile: str, min_normal_samples: int, min_rapid_samples: int, output: str) -> Dict[str, Any]:
+def _baseline_analyze(source: str, mode: str, hours: float, profile: str, min_normal_samples: int, min_rapid_samples: int, output: str, persist_watchdog_state: bool = True) -> Dict[str, Any]:
     src = _normalize_source(source)
     m = str(mode or 'canary').strip().lower()
     if m not in MODES:
@@ -7481,7 +7825,7 @@ def _baseline_analyze(source: str, mode: str, hours: float, profile: str, min_no
     linkage = _make_run_linkage(m, event='baseline-analyze')
     analyze_reason_codes = [] if baseline_ready else ['critical_check_failed:resource_baseline_window_incomplete']
 
-    if cpu_vals and ram_vals:
+    if bool(persist_watchdog_state) and cpu_vals and ram_vals:
         state_payload = {
             'updated_at_utc': _utc_now(),
             'stream_type': 'resource_baseline_analysis',
@@ -8847,6 +9191,43 @@ def _ds_lineage_target_baseline_stages(mode: str) -> Tuple[str, ...]:
     return ()
 
 
+def _ds_comparison_baseline_packet_matches_selector_authority(payload: Dict[str, Any]) -> bool:
+    selector_entry_id = str(payload.get('selector_entry_id', '') or '').strip()
+    selector_run_id = str(payload.get('selector_run_id', '') or '').strip()
+    if not selector_entry_id or not selector_run_id:
+        return False
+
+    authority_entry = _ds_comparison_baseline_authority_entry(
+        {
+            'entry_id': selector_entry_id,
+            'run_id': selector_run_id,
+            'display_alias': str(payload.get('display_alias', '') or '').strip(),
+        }
+    )
+    if not authority_entry:
+        return False
+    if str(authority_entry.get('entry_id', '') or '').strip() != selector_entry_id:
+        return False
+    if str(authority_entry.get('run_id', '') or '').strip() != selector_run_id:
+        return False
+    if not _ds_is_eligible_comparison_baseline(authority_entry):
+        return False
+
+    packet_stage = str(payload.get('baseline_stage', '') or '').strip()
+    if _ds_comparison_baseline_stage(authority_entry) != packet_stage:
+        return False
+
+    authority_source = _normalize_source(str(authority_entry.get('source', '') or '').strip() or 'unknown')
+    authority_mode = str(authority_entry.get('mode', '') or '').strip().lower()
+    packet_source = _normalize_source(str(payload.get('source', '') or '').strip() or 'unknown')
+    packet_mode = str(payload.get('mode', '') or '').strip().lower()
+    if authority_source != 'unknown' and packet_source != authority_source:
+        return False
+    if authority_mode and packet_mode != authority_mode:
+        return False
+    return True
+
+
 def _ds_comparison_baseline_packet_match_info(
     packet_ref: str,
     *,
@@ -8878,6 +9259,9 @@ def _ds_comparison_baseline_packet_match_info(
         packet_stage = str(payload.get('baseline_stage', '') or '').strip()
         if not target_stages or packet_stage not in target_stages:
             return {}
+
+    if not _ds_comparison_baseline_packet_matches_selector_authority(payload):
+        return {}
 
     return {
         'path': packet_path,

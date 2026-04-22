@@ -391,6 +391,8 @@ def test_ops_keysmith_status_reports_shipped_surfaces(monkeypatch, tmp_path: Pat
     assert payload['surface_status']['src_keysmith_py']['exists'] is True
     assert payload['surface_status']['deployment_keysmith_dockerfile']['exists'] is True
     assert payload['surface_status']['deployment_keysmith_requirements']['exists'] is True
+    assert payload['build_proof']['keysmith_version'] == '1.0.1'
+    assert payload['build_proof']['surface_hashes']['src_keysmith_py'] != ''
     assert payload['env_presence']['moltbook_api_key'] is False
     assert 'keysmith_allow_unsandboxed' not in payload['env_presence']
     assert payload['artifacts']['default_output_dir'] != ''
@@ -654,6 +656,7 @@ def test_ops_keysmith_mint_dry_run_delegates_and_keeps_output_names_only(tmp_pat
     assert Path(payload['result_json']).exists()
     assert Path(payload['import_helper_path']).exists()
     assert Path(payload['persist_user_env_helper_path']).exists()
+    assert payload['build_proof_review']['decision'] == 'go'
 
 
 def test_project_dotenv_loads_missing_env_without_overriding_existing(tmp_path: Path, monkeypatch) -> None:
@@ -750,9 +753,11 @@ def test_ops_keysmith_mint_non_dry_run_requires_sandbox(tmp_path: Path, monkeypa
             'Import-MoltbookApiKeyFromSealedDrop.ps1',
             'Persist-MoltbookApiKeyToUserEnv.ps1',
             'keysmith_audit.jsonl',
-            'keysmith_result.json',
         ):
             (out_dir / name).write_text('ok\n', encoding='utf-8')
+        (out_dir / 'keysmith_result.json').write_text(json.dumps({
+            'build_proof': observerctl_module._keysmith_build_proof(),
+        }), encoding='utf-8')
 
         class _Completed:
             returncode = 0
@@ -778,7 +783,21 @@ def test_ops_keysmith_mint_non_dry_run_requires_sandbox(tmp_path: Path, monkeypa
     assert payload['env_import']['current_process'] is True
     assert payload['env_import']['project_env_updated'] is False
     assert payload['env_import']['user_env_persisted'] is False
+    assert payload['build_proof_review']['decision'] == 'go'
     assert captured_imports == [Path(payload['sealed_drop_path'])]
+
+
+def test_keysmith_result_proof_packet_detects_version_parity_break(tmp_path: Path) -> None:
+    result_json = tmp_path / 'keysmith_result.json'
+    tampered_proof = dict(observerctl_module._keysmith_build_proof())
+    tampered_proof['keysmith_version'] = '0.0.0-tampered'
+    result_json.write_text(json.dumps({'build_proof': tampered_proof}), encoding='utf-8')
+
+    review_packet = observerctl_module._keysmith_result_proof_packet(result_json)
+
+    assert review_packet['decision'] == 'no-go'
+    assert 'critical_check_failed:keysmith_version_parity_mismatch' in review_packet['reason_codes']
+    assert 'keysmith_version' in review_packet['mismatches']
 
 
 def test_ops_keysmith_mint_non_dry_run_reports_docker_lane_blocker(tmp_path: Path, monkeypatch, capsys) -> None:
@@ -1246,6 +1265,56 @@ def test_ds_comparison_baseline_resolver_can_emit_missing_packet_for_explicit_re
     assert payload['selector_entry_id'] == entry['entry_id']
     assert payload['selector_run_id'] == entry['run_id']
     assert payload['baseline_stage'] == 'honeypot_reviewed'
+
+
+def test_ds_select_lineage_comparison_baseline_candidate_rejects_explicit_selector_tamper_and_repairs_from_authority(
+    monkeypatch,
+    tmp_path: Path,
+) -> None:
+    project_root, anchor = _make_temp_observer_project(tmp_path)
+    _bind_temp_observer_project(monkeypatch, project_root, anchor)
+
+    entry, _, _, _ = _seed_librarian_dataset_entry(
+        anchor,
+        project_root,
+        slug='reviewed_canary_explicit_repair_window1',
+        display_name='Reviewed Canary Explicit Repair Window1',
+        run_id='reviewed-canary-explicit-repair-window1',
+        source='real',
+        mode='canary',
+        recorded_at_utc='2026-04-21T00:10:00Z',
+        workflow='manual-register',
+        registration_kind='reviewed-closeout',
+    )
+    review_policy_packet = project_root / 'local_untracked' / 'reports' / 'explicit_selector_repair_review_policy_packet.md'
+    review_policy_packet.parent.mkdir(parents=True, exist_ok=True)
+    review_policy_packet.write_text('# explicit selector repair review policy\n', encoding='utf-8')
+
+    emitted = observerctl_module._ds_emit_comparison_baseline_packet(
+        entry,
+        baseline_stage='canary_reviewed',
+        companion_role='explicit selector repair companion',
+        review_policy_packet=str(review_policy_packet),
+    )
+    packet_path = _resolve_reported_path(emitted['packet_path'])
+    tampered_payload = json.loads(packet_path.read_text(encoding='utf-8'))
+    tampered_payload['selector_entry_id'] = 'forged-selector-entry'
+    tampered_payload['selector_run_id'] = 'forged-selector-run'
+    packet_path.write_text(json.dumps(tampered_payload, indent=2, sort_keys=True), encoding='utf-8')
+
+    candidate = observerctl_module._ds_select_lineage_comparison_baseline_candidate(
+        source='real',
+        mode='live',
+        baseline_packet_ref=str(packet_path),
+        baseline_window_id=str(entry.get('run_id', '') or ''),
+    )
+    repaired_payload = json.loads(packet_path.read_text(encoding='utf-8'))
+
+    assert candidate
+    assert Path(candidate['packet_path']) == packet_path
+    assert repaired_payload['selector_entry_id'] == entry['entry_id']
+    assert repaired_payload['selector_run_id'] == entry['run_id']
+    assert candidate['baseline_stage'] == 'canary_reviewed'
 
 
 def test_ds_comparison_baseline_eligibility_fails_closed_for_nonreviewed_or_unlabeled_entries(monkeypatch, tmp_path: Path) -> None:
@@ -6624,6 +6693,88 @@ def test_ds_report_publication_skips_ephemeral_dataset_manifest_lineage(tmp_path
     assert not (project_root / 'docs' / 'reports' / 'collections' / 'build-temp-lineage').exists()
 
 
+def test_ds_report_publication_skips_persisted_lineage_tamper_after_initially_canonical_manifest(tmp_path: Path) -> None:
+    from analysis.report_aggregate import append_ds_run_index, publication_eligibility_reasons, refresh_tracked_ds_publication
+    from analysis.report_pack import prepare_report_bundle, write_report_bundle
+
+    project_root = tmp_path / 'observer_project'
+    anchor = project_root / 'src' / 'observerctl_anchor.py'
+    anchor.parent.mkdir(parents=True, exist_ok=True)
+    anchor.write_text('# anchor\n', encoding='utf-8')
+    (project_root / 'PROJECT_MANIFEST.json').write_text('{}\n', encoding='utf-8')
+
+    dataset_dir = project_root / 'datasets' / 'canonical_before_tamper'
+    dataset_dir.mkdir(parents=True, exist_ok=True)
+    manifest_path = dataset_dir / 'dataset_manifest.json'
+    features_csv = dataset_dir / 'features.csv'
+    features_csv.write_text('record_id,feature\n1,0.4\n', encoding='utf-8')
+    manifest_path.write_text(
+        json.dumps(
+            {
+                'source': 'real',
+                'mode': 'live',
+                'features_csv': str(features_csv),
+                'total_records': 1,
+                'has_labels': False,
+            }
+        ),
+        encoding='utf-8',
+    )
+
+    score_bundle = prepare_report_bundle(anchor, 'score', run_id='score-canonical-before-tamper')
+    scoring_dir = score_bundle.artifact_dirs['scoring']
+    scoring_dir.mkdir(parents=True, exist_ok=True)
+    scores_csv = scoring_dir / 'scores.csv'
+    scores_csv.write_text('record_id,score_anomaly\na,0.1\n', encoding='utf-8')
+
+    score_report_bundle = write_report_bundle(
+        project_anchor=anchor,
+        bundle=score_bundle,
+        packet={
+            'timestamp_utc': '2026-04-21T23:59:00Z',
+            'runtime_cli_surface': 'observerctl',
+            'decision': 'go',
+            'action': 'ds-score',
+            'command_family': 'ds',
+            'command_path': 'observerctl ds score',
+            'implementation_state': 'command-available',
+            'underlying_surface': 'analysis.score_unsupervised',
+            'summary': 'Canonical lineage score report before tamper.',
+            'run_id': score_bundle.run_id,
+            'collection_alias': 'canonical-before-tamper',
+            'records_scored': 1,
+            'anomaly_direction': 'lower-is-more-anomalous',
+            'score_column': 'score_anomaly',
+            'artifacts': {},
+            'reason_codes': [],
+        },
+        artifact_paths={'scores_csv': scores_csv},
+        context={'output_override': False},
+        lineage={'dataset_manifest': manifest_path},
+    )
+
+    pre_tamper_reasons = publication_eligibility_reasons(
+        project_anchor=anchor,
+        manifest_payload=score_report_bundle['manifest'],
+    )
+    append_ds_run_index(project_anchor=anchor, manifest_payload=score_report_bundle['manifest'])
+
+    source_manifest_json_path = project_root / score_report_bundle['paths']['manifest_json']
+    tampered_manifest = json.loads(source_manifest_json_path.read_text(encoding='utf-8'))
+    tampered_manifest['lineage']['dataset_manifest'] = 'C:/Users/tester/AppData/Local/Temp/forged_dataset_manifest.json'
+    source_manifest_json_path.write_text(json.dumps(tampered_manifest, indent=2, sort_keys=True), encoding='utf-8')
+
+    tampered_reasons = publication_eligibility_reasons(project_anchor=anchor, manifest_payload=tampered_manifest)
+    publication = refresh_tracked_ds_publication(project_anchor=anchor, current_manifest_payload=tampered_manifest)
+
+    assert 'publication_skipped:dataset_manifest_ephemeral' not in pre_tamper_reasons
+    assert 'publication_skipped:dataset_manifest_ephemeral' in tampered_reasons
+    assert publication['decision'] == 'go'
+    assert publication['published_run_count'] == 0
+    assert publication['current_run'] == {}
+    assert not (project_root / 'docs' / 'reports' / 'collections' / 'canonical-before-tamper').exists()
+
+
 def test_ds_report_publication_refresh_copies_visual_figures_and_rewrites_links(tmp_path: Path) -> None:
     from analysis.report_aggregate import append_ds_run_index, refresh_tracked_ds_publication
     from analysis.report_pack import prepare_report_bundle, write_report_bundle
@@ -7285,6 +7436,104 @@ def test_ds_report_bundle_prefers_existing_comparison_baseline_context_for_publi
     assert 'baseline packet ref' in collection_report_text
     assert 'comparison_baseline_packet.json' in collection_report_text
     assert legacy_baseline_packet.name not in collection_report_text
+
+
+def test_ds_report_bundle_repairs_explicit_tampered_comparison_baseline_context_for_publication(
+    monkeypatch,
+    tmp_path: Path,
+) -> None:
+    from analysis.report_pack import prepare_report_bundle, write_report_bundle
+
+    project_root, anchor = _make_temp_observer_project(tmp_path)
+    _bind_temp_observer_project(monkeypatch, project_root, anchor)
+
+    reviewed_canary_entry, _, _, _ = _seed_librarian_dataset_entry(
+        anchor,
+        project_root,
+        slug='reviewed_canary_report_explicit_repair',
+        display_name='Reviewed Canary Report Explicit Repair',
+        run_id='reviewed-canary-report-explicit-repair',
+        source='real',
+        mode='canary',
+        recorded_at_utc='2026-04-21T00:20:00Z',
+        workflow='manual-register',
+        registration_kind='reviewed-closeout',
+    )
+    _, manifest_path, _, _ = _seed_librarian_dataset_entry(
+        anchor,
+        project_root,
+        slug='live_report_target_explicit_repair',
+        display_name='Live Report Target Explicit Repair',
+        run_id='live-report-target-explicit-repair',
+        source='real',
+        mode='live',
+        recorded_at_utc='2026-04-21T00:22:00Z',
+        workflow='manual-register',
+    )
+    review_policy_packet = project_root / 'local_untracked' / 'reports' / 'report_explicit_repair_review_policy_packet.md'
+    review_policy_packet.parent.mkdir(parents=True, exist_ok=True)
+    review_policy_packet.write_text('# report explicit repair review policy\n', encoding='utf-8')
+    emitted = observerctl_module._ds_emit_comparison_baseline_packet(
+        reviewed_canary_entry,
+        baseline_stage='canary_reviewed',
+        companion_role='bounded reviewed canary explicit repair companion',
+        review_policy_packet=str(review_policy_packet),
+    )
+    comparison_baseline_path = _resolve_reported_path(emitted['packet_path'])
+    tampered_payload = json.loads(comparison_baseline_path.read_text(encoding='utf-8'))
+    tampered_payload['selector_entry_id'] = 'forged-selector-entry'
+    tampered_payload['selector_run_id'] = 'forged-selector-run'
+    comparison_baseline_path.write_text(json.dumps(tampered_payload, indent=2, sort_keys=True), encoding='utf-8')
+
+    bundle = prepare_report_bundle(anchor, 'evaluate', run_id='eval-reviewed-report-explicit-repair')
+    evaluation_dir = bundle.artifact_dirs['evaluation']
+    evaluation_dir.mkdir(parents=True, exist_ok=True)
+    run_json = evaluation_dir / 'run.json'
+    run_md = evaluation_dir / 'run.md'
+    run_json.write_text('{}\n', encoding='utf-8')
+    run_md.write_text('# eval reviewed report explicit repair\n', encoding='utf-8')
+
+    report_bundle = write_report_bundle(
+        project_anchor=anchor,
+        bundle=bundle,
+        packet={
+            'timestamp_utc': '2026-04-21T00:30:00Z',
+            'runtime_cli_surface': 'observerctl',
+            'decision': 'go',
+            'action': 'ds-evaluate',
+            'command_family': 'ds',
+            'command_path': 'observerctl ds evaluate',
+            'implementation_state': 'command-available',
+            'underlying_surface': 'analysis.evaluation_harness',
+            'summary': 'Explicit tampered comparison baseline repair report.',
+            'run_id': bundle.run_id,
+            'collection_alias': 'hp-explicit-repair',
+            'threshold': 0.37,
+            'artifacts': {},
+            'reason_codes': [],
+        },
+        artifact_paths={
+            'run_json': run_json,
+            'run_md': run_md,
+        },
+        context={
+            'source': 'real',
+            'mode': 'live',
+            'baseline_analysis_packet': str(comparison_baseline_path),
+            'baseline_window_id': 'reviewed-canary-report-explicit-repair',
+        },
+        lineage={'dataset_manifest': manifest_path},
+    )
+
+    repaired_payload = json.loads(comparison_baseline_path.read_text(encoding='utf-8'))
+    manifest_context = report_bundle['manifest']['context']
+    report_context = report_bundle['report']['context']
+
+    assert _resolve_reported_path(str(manifest_context.get('baseline_analysis_packet', '') or '')) == comparison_baseline_path
+    assert _resolve_reported_path(str(report_context.get('baseline_analysis_packet', '') or '')) == comparison_baseline_path
+    assert str(manifest_context.get('baseline_window_id', '') or '') == 'reviewed-canary-report-explicit-repair'
+    assert repaired_payload['selector_entry_id'] == reviewed_canary_entry['entry_id']
+    assert repaired_payload['selector_run_id'] == reviewed_canary_entry['run_id']
 
 
 def test_ds_report_bundle_materializes_missing_comparison_baseline_context_for_publication(
@@ -7988,6 +8237,114 @@ def test_real_sandbox_registry_includes_ds_alias_coherence_definition() -> None:
     assert definition['run_index_path'].endswith('framed_ds_alias_coherence_probe/run_index.jsonl')
 
 
+def test_real_sandbox_registry_includes_posture_transition_bypass_definition() -> None:
+    definition = observerctl_module.sandbox_get_definition('posture-transition-bypass')
+
+    assert definition is not None
+    assert definition['id'] == 'posture-transition-bypass'
+    assert definition['command'] == 'observerctl sandbox run posture-transition-bypass'
+    assert definition['run_index_path'].endswith('frameb_posture_transition_bypass_probe/run_index.jsonl')
+
+
+def test_real_sandbox_registry_includes_stale_gate_replay_definition() -> None:
+    definition = observerctl_module.sandbox_get_definition('stale-gate-replay')
+
+    assert definition is not None
+    assert definition['id'] == 'stale-gate-replay'
+    assert definition['command'] == 'observerctl sandbox run stale-gate-replay'
+    assert definition['run_index_path'].endswith('frameb_stale_gate_replay_probe/run_index.jsonl')
+
+
+def test_real_sandbox_registry_includes_names_only_persistence_escape_definition() -> None:
+    definition = observerctl_module.sandbox_get_definition('names-only-persistence-escape')
+
+    assert definition is not None
+    assert definition['id'] == 'names-only-persistence-escape'
+    assert definition['command'] == 'observerctl sandbox run names-only-persistence-escape'
+    assert definition['run_index_path'].endswith('framec_names_only_persistence_escape_probe/run_index.jsonl')
+
+
+def test_real_sandbox_registry_includes_packet_artifact_divergence_truthfulness_definition() -> None:
+    definition = observerctl_module.sandbox_get_definition('packet-artifact-divergence-truthfulness')
+
+    assert definition is not None
+    assert definition['id'] == 'packet-artifact-divergence-truthfulness'
+    assert definition['command'] == 'observerctl sandbox run packet-artifact-divergence-truthfulness'
+    assert definition['run_index_path'].endswith('framec_packet_artifact_divergence_truthfulness_probe/run_index.jsonl')
+
+
+def test_real_sandbox_registry_includes_watchdog_heartbeat_spoof_resistance_definition() -> None:
+    definition = observerctl_module.sandbox_get_definition('watchdog-heartbeat-spoof-resistance')
+
+    assert definition is not None
+    assert definition['id'] == 'watchdog-heartbeat-spoof-resistance'
+    assert definition['command'] == 'observerctl sandbox run watchdog-heartbeat-spoof-resistance'
+    assert definition['run_index_path'].endswith('framed_watchdog_heartbeat_spoof_resistance_probe/run_index.jsonl')
+
+
+def test_real_sandbox_registry_includes_resource_lockdown_chaos_definition() -> None:
+    definition = observerctl_module.sandbox_get_definition('resource-lockdown-chaos')
+
+    assert definition is not None
+    assert definition['id'] == 'resource-lockdown-chaos'
+    assert definition['command'] == 'observerctl sandbox run resource-lockdown-chaos'
+    assert definition['run_index_path'].endswith('framed_resource_lockdown_chaos_probe/run_index.jsonl')
+
+
+def test_real_sandbox_registry_includes_baseline_authority_tamper_definition() -> None:
+    definition = observerctl_module.sandbox_get_definition('baseline-authority-tamper')
+
+    assert definition is not None
+    assert definition['id'] == 'baseline-authority-tamper'
+    assert definition['command'] == 'observerctl sandbox run baseline-authority-tamper'
+    assert definition['run_index_path'].endswith('framee_baseline_authority_tamper_probe/run_index.jsonl')
+
+
+def test_real_sandbox_registry_includes_report_lineage_forgery_definition() -> None:
+    definition = observerctl_module.sandbox_get_definition('report-lineage-forgery')
+
+    assert definition is not None
+    assert definition['id'] == 'report-lineage-forgery'
+    assert definition['command'] == 'observerctl sandbox run report-lineage-forgery'
+    assert definition['run_index_path'].endswith('framee_report_lineage_forgery_probe/run_index.jsonl')
+
+
+def test_real_sandbox_registry_includes_keysmith_version_parity_break_definition() -> None:
+    definition = observerctl_module.sandbox_get_definition('keysmith-version-parity-break')
+
+    assert definition is not None
+    assert definition['id'] == 'keysmith-version-parity-break'
+    assert definition['command'] == 'observerctl sandbox run keysmith-version-parity-break'
+    assert definition['run_index_path'].endswith('framef_keysmith_version_parity_break_probe/run_index.jsonl')
+
+
+def test_real_sandbox_registry_includes_public_report_boundary_escape_definition() -> None:
+    definition = observerctl_module.sandbox_get_definition('public-report-boundary-escape')
+
+    assert definition is not None
+    assert definition['id'] == 'public-report-boundary-escape'
+    assert definition['command'] == 'observerctl sandbox run public-report-boundary-escape'
+    assert definition['run_index_path'].endswith('frameg_public_report_boundary_escape_probe/run_index.jsonl')
+
+
+def test_real_sandbox_registry_includes_bootstrap_root_starvation_definition() -> None:
+    definition = observerctl_module.sandbox_get_definition('bootstrap-root-starvation')
+
+    assert definition is not None
+    assert definition['id'] == 'bootstrap-root-starvation'
+    assert definition['command'] == 'observerctl sandbox run bootstrap-root-starvation'
+    assert definition['run_index_path'].endswith('frameg_bootstrap_root_starvation_probe/run_index.jsonl')
+
+
+def test_real_sandbox_registry_includes_sandbox_catalog_authority_drift_definition() -> None:
+    definition = observerctl_module.sandbox_get_definition('sandbox-catalog-authority-drift')
+
+    assert definition is not None
+    assert definition['id'] == 'sandbox-catalog-authority-drift'
+    assert definition['command'] == 'observerctl sandbox run sandbox-catalog-authority-drift'
+    assert definition['run_index_path'].endswith('frameg_sandbox_catalog_authority_drift_probe/run_index.jsonl')
+
+
 def test_real_sandbox_registry_includes_librarian_access_exchange_definition() -> None:
     definition = observerctl_module.sandbox_get_definition('librarian-access-exchange')
 
@@ -8119,6 +8476,28 @@ def test_sandbox_runs_show_emits_run_review_json(monkeypatch, capsys) -> None:
     assert payload['action'] == 'sandbox-runs-show'
     assert payload['run']['run_id'] == 'metadata-contract-001'
     assert payload['report']['all_sample_fields_present'] is True
+
+
+def test_sandbox_runs_show_fails_closed_when_report_payload_missing(monkeypatch, capsys) -> None:
+    monkeypatch.setattr(observerctl_module, 'sandbox_get_run', lambda run_id: (
+        {
+            'run_id': run_id,
+            'definition_id': 'metadata-contract',
+            'timestamp_utc': '2026-03-23T00:00:00Z',
+            'result': 'review',
+            'report_path': 'report_tmp/frame4_metadata_contract_probe/{0}/report.json'.format(run_id),
+        },
+        {},
+    ))
+
+    rc = main(['sandbox', 'runs', 'show', 'metadata-contract-stale-001', '--json'])
+    assert rc == 2
+
+    payload = json.loads(capsys.readouterr().out)
+    assert payload['action'] == 'sandbox-runs-show'
+    assert payload['decision'] == 'no-go'
+    assert payload['run']['run_id'] == 'metadata-contract-stale-001'
+    assert 'critical_check_failed:sandbox_run_report_missing' in payload['reason_codes']
 
 
 def test_gate_check_go_in_sim_mode(tmp_path: Path, monkeypatch) -> None:
@@ -9907,6 +10286,7 @@ def test_ops_mode_set_persists_lockdown_posture_packet(tmp_path: Path, monkeypat
     monkeypatch.setenv('CALAMUM_LOG_DIR', str(log_dir))
     monkeypatch.setenv('CALAMUM_DATA_SIGNING_KEY', 'unit-test-signing-key')
     _set_security_report_ref(monkeypatch, log_dir)
+    observerctl_module._save_state('sim', 'canary')
 
     gate_doc = {
         'decision': 'go',
@@ -9942,6 +10322,126 @@ def test_ops_mode_set_persists_lockdown_posture_packet(tmp_path: Path, monkeypat
     assert receipt_doc.get('mode') == 'live'
     assert (receipt_doc.get('posture') or {}).get('readback_verified') is True
     assert (receipt_doc.get('provenance') or {}).get('artifact_sha256')
+
+
+def test_ops_mode_gate_persists_go_linkage_into_run_context(tmp_path: Path, monkeypatch) -> None:
+    log_dir = tmp_path / 'logs'
+    control = log_dir / 'control' / 'calamum'
+    control.mkdir(parents=True, exist_ok=True)
+    monkeypatch.setenv('CALAMUM_LOG_DIR', str(log_dir))
+    security_report = _set_security_report_ref(monkeypatch, log_dir)
+
+    monkeypatch.setattr(observerctl_module, 'collect_runtime_status', lambda source='sim': {
+        'timestamp_utc': observerctl_module._utc_now(),
+        'runtime_cli_surface': 'observerctl',
+        'source': source,
+        'state_source': source,
+        'mode': 'canary',
+        'checks': {},
+    })
+    monkeypatch.setattr(observerctl_module, 'evaluate_gate_decision', lambda status, target_mode='watch': {
+        'timestamp_utc': observerctl_module._utc_now(),
+        'runtime_cli_surface': 'observerctl',
+        'decision': 'go',
+        'reason_codes': [],
+        'from_state': 'sim:canary',
+        'to_state': 'sim:live',
+        'run_id': 'gate-context-run',
+        'posture_trigger_id': 'pt-gate-context',
+        'posture_trigger': 'lockdown',
+        'security_report_ref': str(security_report).replace('\\', '/'),
+        'evidence_refs': [str(security_report).replace('\\', '/')],
+    })
+
+    packet = observerctl_module._ops_gate(source='sim', to_mode='live')
+    assert packet.get('decision') == 'go'
+
+    run_context_path = control / 'observerctl_run_context.json'
+    assert run_context_path.exists()
+    run_context = json.loads(run_context_path.read_text(encoding='utf-8'))
+    assert run_context.get('run_id') == 'gate-context-run'
+    assert run_context.get('posture_trigger_id') == 'pt-gate-context'
+    assert run_context.get('posture_trigger') == 'lockdown'
+    assert run_context.get('security_report_ref') == str(security_report).replace('\\', '/')
+
+
+def test_ops_mode_set_denies_gate_packet_when_current_state_mismatch(tmp_path: Path, monkeypatch) -> None:
+    log_dir = tmp_path / 'logs'
+    control = log_dir / 'control' / 'calamum'
+    control.mkdir(parents=True, exist_ok=True)
+
+    monkeypatch.setenv('CALAMUM_LOG_DIR', str(log_dir))
+    monkeypatch.setenv('CALAMUM_DATA_SIGNING_KEY', 'unit-test-signing-key')
+    security_report = _set_security_report_ref(monkeypatch, log_dir)
+
+    observerctl_module._save_state('sim', 'watch')
+    gate_doc = {
+        'decision': 'go',
+        'timestamp_utc': observerctl_module._utc_now(),
+        'from_state': 'sim:canary',
+        'to_state': 'sim:live',
+        'run_id': 'state-mismatch-run',
+        'posture_trigger_id': 'pt-state-mismatch',
+        'posture_trigger': 'lockdown',
+        'security_report_ref': str(security_report).replace('\\', '/'),
+        'evidence_refs': [str(security_report).replace('\\', '/')],
+    }
+    (control / 'observerctl_last_gate.json').write_text(json.dumps(gate_doc), encoding='utf-8')
+    observerctl_module._save_run_context({
+        'run_id': 'state-mismatch-run',
+        'posture_trigger_id': 'pt-state-mismatch',
+        'posture_trigger': 'lockdown',
+        'security_report_ref': str(security_report).replace('\\', '/'),
+    })
+
+    packet = observerctl_module._ops_mode_set(source='sim', to_mode='live')
+    assert packet.get('decision') == 'no-go'
+    assert 'critical_check_failed:gate_packet_state_mismatch' in packet.get('reason_codes', [])
+    assert packet.get('current_from_state') == 'sim:watch'
+    assert packet.get('gate_from_state') == 'sim:canary'
+    state = observerctl_module._load_state()
+    assert state.get('mode') == 'watch'
+    assert not (control / 'watchdog_posture_state.json').exists()
+
+
+def test_ops_mode_set_denies_gate_packet_when_run_context_lineage_changes(tmp_path: Path, monkeypatch) -> None:
+    log_dir = tmp_path / 'logs'
+    control = log_dir / 'control' / 'calamum'
+    control.mkdir(parents=True, exist_ok=True)
+
+    monkeypatch.setenv('CALAMUM_LOG_DIR', str(log_dir))
+    monkeypatch.setenv('CALAMUM_DATA_SIGNING_KEY', 'unit-test-signing-key')
+    security_report_a = _set_security_report_ref(monkeypatch, log_dir)
+    security_report_b = log_dir / 'security_report_replayed.md'
+    security_report_b.write_text('# security report replayed\n', encoding='utf-8')
+
+    observerctl_module._save_state('sim', 'canary')
+    gate_doc = {
+        'decision': 'go',
+        'timestamp_utc': observerctl_module._utc_now(),
+        'from_state': 'sim:canary',
+        'to_state': 'sim:live',
+        'run_id': 'gate-lineage-alpha',
+        'posture_trigger_id': 'pt-gate-lineage-alpha',
+        'posture_trigger': 'lockdown',
+        'security_report_ref': str(security_report_a).replace('\\', '/'),
+        'evidence_refs': [str(security_report_a).replace('\\', '/')],
+    }
+    (control / 'observerctl_last_gate.json').write_text(json.dumps(gate_doc), encoding='utf-8')
+    observerctl_module._save_run_context({
+        'run_id': 'gate-lineage-beta',
+        'posture_trigger_id': 'pt-gate-lineage-beta',
+        'posture_trigger': 'lockdown',
+        'security_report_ref': str(security_report_b).replace('\\', '/'),
+    })
+
+    packet = observerctl_module._ops_mode_set(source='sim', to_mode='live')
+    assert packet.get('decision') == 'no-go'
+    assert 'critical_check_failed:gate_packet_lineage_mismatch' in packet.get('reason_codes', [])
+    assert set(packet.get('lineage_mismatch_fields', [])) == {'run_id', 'posture_trigger_id', 'security_report_ref'}
+    state = observerctl_module._load_state()
+    assert state.get('mode') == 'canary'
+    assert not (control / 'watchdog_posture_state.json').exists()
 
 
 def test_ops_mode_set_rolls_back_state_when_posture_apply_fails(tmp_path: Path, monkeypatch) -> None:

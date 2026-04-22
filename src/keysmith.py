@@ -16,6 +16,7 @@ from __future__ import annotations
 import argparse
 import dataclasses
 import datetime as _dt
+import hashlib
 import json
 import os
 import secrets
@@ -26,6 +27,7 @@ from urllib.parse import urlparse
 
 
 KEYSMITH_VERSION = "1.0.1"
+KEYSMITH_BUILD_PROOF_SCHEMA = "keysmith_build_proof_v1"
 MOLTBOOK_CANONICAL_BASE_URL = "https://www.moltbook.com/api/v1"
 MOLTBOOK_STALE_BASE_URLS = (
     "https://api.moltbook.com/v1",
@@ -63,7 +65,7 @@ class KeysmithArtifacts:
 
 def _utc_timestamp_compact() -> str:
     # Example: 20260212T053012Z
-    return _dt.datetime.utcnow().strftime("%Y%m%dT%H%M%SZ")
+    return _dt.datetime.now(_dt.timezone.utc).strftime("%Y%m%dT%H%M%SZ")
 
 
 def _project_root() -> Path:
@@ -221,6 +223,38 @@ def _default_output_dir() -> Path:
     return _local_untracked_root() / "keysmith_exports" / _utc_timestamp_compact()
 
 
+def _surface_sha256(path: Path) -> str:
+    if not path.exists() or not path.is_file():
+        return ""
+    return hashlib.sha256(path.read_bytes()).hexdigest()
+
+
+def build_proof_for_surfaces(surface_paths: Dict[str, Path], *, version: str = KEYSMITH_VERSION) -> Dict[str, Any]:
+    return {
+        "proof_schema": KEYSMITH_BUILD_PROOF_SCHEMA,
+        "keysmith_version": str(version or KEYSMITH_VERSION),
+        "surface_presence": {
+            str(name): bool(path.exists())
+            for name, path in surface_paths.items()
+        },
+        "surface_hashes": {
+            str(name): _surface_sha256(path)
+            for name, path in surface_paths.items()
+        },
+    }
+
+
+def current_build_proof(project_root: Optional[Path] = None) -> Dict[str, Any]:
+    root = Path(project_root) if project_root is not None else _project_root()
+    return build_proof_for_surfaces(
+        {
+            "src_keysmith_py": root / "src" / "keysmith.py",
+            "deployment_keysmith_dockerfile": root / "deployment" / "keysmith" / "Dockerfile",
+            "deployment_keysmith_requirements": root / "deployment" / "keysmith" / "requirements.txt",
+        }
+    )
+
+
 def _render_import_helper_ps1(sealed_drop_path: Path) -> str:
     # Important: this script must never print the secret.
     # It prints presence-only evidence.
@@ -363,7 +397,7 @@ def moltbook_register(
     raise KeysmithError(f"Registration request failed: url={url}") from last_error
 
 
-def run_keysmith(config: KeysmithConfig) -> KeysmithArtifacts:
+def run_keysmith(config: KeysmithConfig, *, build_proof: Optional[Dict[str, Any]] = None) -> KeysmithArtifacts:
     ensure_safe_output_dir(config.output_dir)
     host = ensure_allowlisted_host(config.base_url, config.allowed_hosts)
     _require_sandbox_for_live_mint(dry_run=config.dry_run)
@@ -399,6 +433,7 @@ def run_keysmith(config: KeysmithConfig) -> KeysmithArtifacts:
         import_helper_ps1=config.output_dir / "Import-MoltbookApiKeyFromSealedDrop.ps1",
         persist_user_env_ps1=config.output_dir / "Persist-MoltbookApiKeyToUserEnv.ps1",
     )
+    build_proof_payload = dict(build_proof or current_build_proof())
 
     _append_jsonl(
         artifacts.audit_jsonl,
@@ -462,10 +497,12 @@ def run_keysmith(config: KeysmithConfig) -> KeysmithArtifacts:
                 "persist_user_env_ps1": str(artifacts.persist_user_env_ps1.as_posix()),
                 "audit_jsonl": str(artifacts.audit_jsonl.as_posix()),
             },
+            "build_proof": build_proof_payload,
             "notes": {
                 "secrets": "api_key is stored only in sealed_drop_bin; never printed/logged",
                 "claim_url": "claim_url is non-secret and stored in claim_url.txt",
                 "host_helpers": "PowerShell import/persist helper scripts are emitted alongside the sealed drop.",
+                "build_proof": "build_proof binds the retained result artifact to the KEYSMITH build surfaces under review.",
             },
         },
     )

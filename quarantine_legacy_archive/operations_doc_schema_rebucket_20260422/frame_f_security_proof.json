@@ -1,0 +1,83 @@
+{
+  "doc_class": "frame_f_evidence",
+  "frame_id": "F",
+  "scenario_focus": [
+    "S11"
+  ],
+  "generated_from": {
+    "source_report_json": "report_tmp/framef_keysmith_version_parity_break_probe/runs/framef-keysmith-version-parity-break-20260421T233956Z/framef_keysmith_version_parity_break_probe.json",
+    "source_report_md": "report_tmp/framef_keysmith_version_parity_break_probe/runs/framef-keysmith-version-parity-break-20260421T233956Z/framef_keysmith_version_parity_break_probe.md",
+    "script": "projects/calamum-moltbook-observer/src/simulation/run_simulation.py"
+  },
+  "related_artifacts": {
+    "frame_f_librarian_vault_md": "projects/calamum-moltbook-observer/local_untracked/reports/operations/frame_f_librarian_vault.md"
+  },
+  "run_id": "framef-keysmith-version-parity-break-20260421T233956Z",
+  "overall_result": "pass",
+  "summary": {
+    "decision_basis": "Frame F S11 passes when retained KEYSMITH proof matches the current candidate build on the untampered path and the same review fails closed when the retained proof version is altered.",
+    "observed_boundary_result": "keysmith_version_parity_break_detected_fail_closed",
+    "execution_lane": "host-dry-run",
+    "live_mint_authority": "sandbox-only",
+    "proof_schema": "keysmith_build_proof_v1",
+    "keysmith_version": "1.0.1"
+  },
+  "result_matrix": {
+    "keysmith_dry_run_completed": true,
+    "positive_proof_review_go": true,
+    "positive_proof_review_has_no_mismatches": true,
+    "proof_review_stays_names_only": true,
+    "result_json_written": true,
+    "tampered_proof_reason_emitted": true,
+    "tampered_proof_review_no_go": true,
+    "tampered_proof_surfaces_version_mismatch": true
+  },
+  "artifact_review": {
+    "result_json": "report_tmp/framef_keysmith_version_parity_break_probe/runs/framef-keysmith-version-parity-break-20260421T233956Z/artifacts/keysmith_exports/keysmith_result.json",
+    "tampered_result_json": "report_tmp/framef_keysmith_version_parity_break_probe/runs/framef-keysmith-version-parity-break-20260421T233956Z/artifacts/keysmith_result_tampered.json",
+    "security_report": "report_tmp/framef_keysmith_version_parity_break_probe/runs/framef-keysmith-version-parity-break-20260421T233956Z/security_report.md"
+  },
+  "build_proof": {
+    "keysmith_version": "1.0.1",
+    "proof_schema": "keysmith_build_proof_v1",
+    "surface_hashes": {
+      "deployment_keysmith_dockerfile": "4f7928f2f911799c4f28ba77814836d1eb6e3591966629b78056e5015fd43499",
+      "deployment_keysmith_requirements": "cfaefc7f8ea07eadcc88ccb982d00f6475fe0a32b598e9c0c4d19a2b45aad3e0",
+      "src_keysmith_py": "2a40677627c681d07d0ac1466b2c99ed2ea05c387ba6a04b21f52219b58efa9b"
+    },
+    "surface_presence": {
+      "deployment_keysmith_dockerfile": true,
+      "deployment_keysmith_requirements": true,
+      "src_keysmith_py": true
+    }
+  },
+  "proof_review": {
+    "positive_review": {
+      "decision": "go",
+      "summary": "KEYSMITH retained build proof matches the current candidate build surfaces.",
+      "reason_codes": [],
+      "mismatches": {}
+    },
+    "tampered_review": {
+      "decision": "no-go",
+      "summary": "KEYSMITH retained build proof does not match the current candidate build surfaces.",
+      "reason_codes": [
+        "critical_check_failed:keysmith_version_parity_mismatch"
+      ],
+      "mismatches": {
+        "keysmith_version": {
+          "expected": "1.0.1",
+          "observed": "0.0.0-tampered"
+        }
+      }
+    }
+  },
+  "conclusion": {
+    "positive_proof_review_go": true,
+    "tampered_proof_rejected": true,
+    "proof_names_only": true,
+    "mismatch_reason_codes": [
+      "critical_check_failed:keysmith_version_parity_mismatch"
+    ]
+  }
+}

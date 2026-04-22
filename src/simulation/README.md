@@ -99,6 +99,7 @@ Current retained probe lanes include:
 - `ds-wizard-durability` for Frame 6 prior-run import and draft round-trip proof
 - `baseline-monitor-runtime` for broad runtime/readiness continuity
 - `validation-cycle-lineage` for Frame 5 append-only validation-cycle lineage
+- `keysmith-version-parity-break` for Frame F retained KEYSMITH proof/version mismatch detection
 - `baseline-monitor-restart-continuity` for Frame 6 restart-safe continuity anchor preservation
 - `baseline-monitor-state-recovery` for Frame 6 malformed persisted-state degradation and repair
 

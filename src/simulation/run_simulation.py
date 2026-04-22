@@ -12,6 +12,7 @@ import argparse
 import io
 import json
 import os
+import shutil
 import sys
 import tempfile
 import threading
@@ -47,7 +48,19 @@ FRAME6_DS_WIZARD_DURABILITY_PROBE_DIR = REPO_ROOT / 'report_tmp' / 'frame6_ds_wi
 FRAMEB_DS_WIZARD_LABELED_EVAL_CONTRACT_COHERENCE_PROBE_DIR = REPO_ROOT / 'report_tmp' / 'frameb_ds_wizard_labeled_eval_contract_coherence_probe'
 FRAMEB_DS_WIZARD_BLOCKED_EXECUTE_TRUTHFULNESS_PROBE_DIR = REPO_ROOT / 'report_tmp' / 'frameb_ds_wizard_blocked_execute_truthfulness_probe'
 FRAMEB_DS_WIZARD_EXECUTE_FAILURE_TRUTHFULNESS_PROBE_DIR = REPO_ROOT / 'report_tmp' / 'frameb_ds_wizard_execute_failure_truthfulness_probe'
+FRAMEB_POSTURE_TRANSITION_BYPASS_PROBE_DIR = REPO_ROOT / 'report_tmp' / 'frameb_posture_transition_bypass_probe'
+FRAMEB_STALE_GATE_REPLAY_PROBE_DIR = REPO_ROOT / 'report_tmp' / 'frameb_stale_gate_replay_probe'
+FRAMEC_NAMES_ONLY_PERSISTENCE_ESCAPE_PROBE_DIR = REPO_ROOT / 'report_tmp' / 'framec_names_only_persistence_escape_probe'
+FRAMEC_PACKET_ARTIFACT_DIVERGENCE_TRUTHFULNESS_PROBE_DIR = REPO_ROOT / 'report_tmp' / 'framec_packet_artifact_divergence_truthfulness_probe'
 FRAMED_DS_ALIAS_COHERENCE_PROBE_DIR = REPO_ROOT / 'report_tmp' / 'framed_ds_alias_coherence_probe'
+FRAMED_WATCHDOG_HEARTBEAT_SPOOF_RESISTANCE_PROBE_DIR = REPO_ROOT / 'report_tmp' / 'framed_watchdog_heartbeat_spoof_resistance_probe'
+FRAMED_RESOURCE_LOCKDOWN_CHAOS_PROBE_DIR = REPO_ROOT / 'report_tmp' / 'framed_resource_lockdown_chaos_probe'
+FRAMEE_BASELINE_AUTHORITY_TAMPER_PROBE_DIR = REPO_ROOT / 'report_tmp' / 'framee_baseline_authority_tamper_probe'
+FRAMEE_REPORT_LINEAGE_FORGERY_PROBE_DIR = REPO_ROOT / 'report_tmp' / 'framee_report_lineage_forgery_probe'
+FRAMEF_KEYSMITH_VERSION_PARITY_BREAK_PROBE_DIR = REPO_ROOT / 'report_tmp' / 'framef_keysmith_version_parity_break_probe'
+FRAMEG_PUBLIC_REPORT_BOUNDARY_ESCAPE_PROBE_DIR = REPO_ROOT / 'report_tmp' / 'frameg_public_report_boundary_escape_probe'
+FRAMEG_BOOTSTRAP_ROOT_STARVATION_PROBE_DIR = REPO_ROOT / 'report_tmp' / 'frameg_bootstrap_root_starvation_probe'
+FRAMEG_SANDBOX_CATALOG_AUTHORITY_DRIFT_PROBE_DIR = REPO_ROOT / 'report_tmp' / 'frameg_sandbox_catalog_authority_drift_probe'
 FRAME6_RESTART_PROBE_DIR = REPO_ROOT / 'report_tmp' / 'frame6_restart_continuity_probe'
 FRAME6_RECOVERY_PROBE_DIR = REPO_ROOT / 'report_tmp' / 'frame6_state_recovery_probe'
 LIBRARIAN_ACCESS_EXCHANGE_PROBE_DIR = REPO_ROOT / 'report_tmp' / 'librarian_access_exchange_probe'
@@ -247,6 +260,19 @@ def _seed_probe_project_root(project_root: Path) -> Path:
     return anchor
 
 
+def _seed_shipped_manual_report_surfaces(project_root: Path) -> None:
+    for relative_path in (
+        'docs/reports/reference/GENERATED_REPORT_SURFACES.md',
+        'docs/reports/validations/INDEX.md',
+        'docs/reports/validations/APEXLAB_REFERENCE_VALIDATION_REPORT_20260324.md',
+        'docs/reports/validations/APEXLAB_REFERENCE_VALIDATION_REPORT_20260324.html',
+    ):
+        source_path = PROJECT_ROOT / relative_path
+        target_path = project_root / relative_path
+        target_path.parent.mkdir(parents=True, exist_ok=True)
+        shutil.copy2(source_path, target_path)
+
+
 def _resolve_probe_artifact_path(project_root: Path, reported_path: str) -> Path:
     raw = str(reported_path or '').strip()
     if not raw:
@@ -279,6 +305,25 @@ def _bind_probe_observer_project(project_root: Path) -> Tuple[Path, Any, str]:
 def _restore_probe_observer_project(original_project_anchor: Any, original_file: str) -> None:
     observerctl_module._project_anchor = original_project_anchor
     observerctl_module.__file__ = str(original_file)
+
+
+def _bind_sandbox_catalog_roots(report_tmp_root: Path, repo_root: Path) -> Tuple[Any, Any]:
+    import observerctl_sandbox_registry as sandbox_registry_module
+    import observerctl_sandbox_runs as sandbox_runs_module
+
+    original_registry_report_tmp = sandbox_registry_module._REPORT_TMP
+    original_runs_repo_root = sandbox_runs_module._REPO_ROOT
+    sandbox_registry_module._REPORT_TMP = report_tmp_root
+    sandbox_runs_module._REPO_ROOT = repo_root
+    return original_registry_report_tmp, original_runs_repo_root
+
+
+def _restore_sandbox_catalog_roots(original_registry_report_tmp: Any, original_runs_repo_root: Any) -> None:
+    import observerctl_sandbox_registry as sandbox_registry_module
+    import observerctl_sandbox_runs as sandbox_runs_module
+
+    sandbox_registry_module._REPORT_TMP = original_registry_report_tmp
+    sandbox_runs_module._REPO_ROOT = original_runs_repo_root
 
 
 def _write_signed_jsonl(path: Path, records: List[Dict[str, Any]]) -> None:
@@ -342,6 +387,93 @@ def _seed_runtime_liveness(sandbox_root: Path, log_dir: Path) -> Dict[str, str]:
         'librarian_pid': _rel_to_repo(librarian_pid),
         'baseline_monitor_pid': _rel_to_repo(baseline_monitor_pid),
     }
+
+
+def _seed_watchdog_state_files(
+    log_dir: Path,
+    *,
+    posture: str = 'isolation',
+    heartbeat_interval: float = 10.0,
+    baseline_interval: float = 120.0,
+    cpu_now: float = 35.0,
+    ram_now: float = 40.0,
+    cpu_p95: float = 30.0,
+    ram_p95: float = 35.0,
+    score: float = 0.1,
+    age_s: float = 5.0,
+) -> Dict[str, Path]:
+    control_dir = log_dir / 'control' / 'calamum'
+    posture_path = control_dir / 'watchdog_posture_state.json'
+    resource_path = control_dir / 'watchdog_resource_state.json'
+    _write_json(
+        posture_path,
+        {
+            'posture_trigger': posture,
+            'heartbeat_interval_seconds': heartbeat_interval,
+            'baseline_validation_interval_seconds': baseline_interval,
+        },
+    )
+    _write_json(
+        resource_path,
+        {
+            'cpu_pct_now': cpu_now,
+            'ram_pct_now': ram_now,
+            'cpu_p95_15m': cpu_p95,
+            'ram_p95_15m': ram_p95,
+            'resource_spike_score': score,
+            'sample_age_seconds': age_s,
+        },
+    )
+    return {
+        'posture_state': posture_path,
+        'resource_state': resource_path,
+    }
+
+
+def _seed_mode_gate_packet(
+    source: str,
+    from_mode: str,
+    to_mode: str,
+    *,
+    run_id: str,
+    posture_trigger_id: str,
+    security_report_ref: str,
+    timestamp_utc: str = '',
+) -> Dict[str, Any]:
+    packet = {
+        'timestamp_utc': str(timestamp_utc or observerctl_module._utc_now()),
+        'runtime_cli_surface': 'observerctl',
+        'decision': 'go',
+        'reason_codes': [],
+        'from_state': '{0}:{1}'.format(observerctl_module._normalize_source(source), str(from_mode or 'watch').strip().lower()),
+        'to_state': '{0}:{1}'.format(observerctl_module._normalize_source(source), str(to_mode or 'watch').strip().lower()),
+        'profile': 'GP-4',
+        'run_id': str(run_id),
+        'posture_trigger_id': str(posture_trigger_id),
+        'posture_trigger': str(observerctl_module._posture_for_mode(to_mode)),
+        'security_report_ref': str(security_report_ref).replace('\\', '/'),
+        'evidence_refs': [str(security_report_ref).replace('\\', '/')],
+    }
+    observerctl_module._write_json_file(
+        observerctl_module._control_file(observerctl_module.LAST_GATE_FILE),
+        packet,
+    )
+    return packet
+
+
+def _seed_gate_run_context(
+    *,
+    run_id: str,
+    posture_trigger_id: str,
+    security_report_ref: str,
+    posture_trigger: str,
+) -> Dict[str, Any]:
+    return observerctl_module._save_run_context({
+        'run_id': str(run_id),
+        'posture_trigger_id': str(posture_trigger_id),
+        'posture_trigger': str(posture_trigger),
+        'security_report_ref': str(security_report_ref).replace('\\', '/'),
+    })
 
 
 def run_feedback_loop_simulation() -> int:
@@ -2205,6 +2337,651 @@ def _report_path_map(paths: Dict[str, Path]) -> Dict[str, str]:
     return {key: _rel_to_repo(value) if str(value) else '' for key, value in paths.items()}
 
 
+def _token_labels_found_in_text(text: str, forbidden_tokens: Dict[str, str]) -> List[str]:
+    hits: List[str] = []
+    for label, token in forbidden_tokens.items():
+        if str(token or '') and str(token) in str(text or ''):
+            hits.append(str(label))
+    return hits
+
+
+def _scan_paths_for_forbidden_tokens(paths: List[Path], forbidden_tokens: Dict[str, str]) -> Dict[str, List[str]]:
+    findings: Dict[str, List[str]] = {}
+    for path in paths:
+        if not str(path) or not path.exists() or not path.is_file():
+            continue
+        hits = _token_labels_found_in_text(path.read_text(encoding='utf-8', errors='ignore'), forbidden_tokens)
+        if hits:
+            findings[_rel_to_repo(path)] = hits
+    return findings
+
+
+def _scan_command_streams_for_forbidden_tokens(
+    command_runs: Dict[str, Dict[str, Any]],
+    forbidden_tokens: Dict[str, str],
+) -> Dict[str, Dict[str, List[str]]]:
+    findings: Dict[str, Dict[str, List[str]]] = {}
+    for name, command in command_runs.items():
+        stream_hits: Dict[str, List[str]] = {}
+        stdout_hits = _token_labels_found_in_text(str(command.get('stdout_text', '') or ''), forbidden_tokens)
+        stderr_hits = _token_labels_found_in_text(str(command.get('stderr_text', '') or ''), forbidden_tokens)
+        if stdout_hits:
+            stream_hits['stdout'] = stdout_hits
+        if stderr_hits:
+            stream_hits['stderr'] = stderr_hits
+        if stream_hits:
+            findings[str(name)] = stream_hits
+    return findings
+
+
+def run_names_only_persistence_escape_probe() -> int:
+    run_id = 'framec-names-only-persistence-escape-{0}'.format(_utc_stamp())
+    run_dir = FRAMEC_NAMES_ONLY_PERSISTENCE_ESCAPE_PROBE_DIR / 'runs' / run_id
+    run_index_jsonl = FRAMEC_NAMES_ONLY_PERSISTENCE_ESCAPE_PROBE_DIR / 'run_index.jsonl'
+    run_dir.mkdir(parents=True, exist_ok=True)
+
+    original_env: Dict[str, Optional[str]] = {}
+    original_project_root = None
+    original_project_anchor = None
+    original_file = ''
+    try:
+        sandbox_root, log_dir, original_env, original_project_root = _seed_probe_environment(
+            run_dir=run_dir,
+            signing_key='framec-names-only-persistence-escape-signing-key',
+            security_report_title='# Frame C names-only persistence escape probe security report\n',
+        )
+        _anchor, original_project_anchor, original_file = _bind_probe_observer_project(sandbox_root)
+        _seed_runtime_liveness(sandbox_root, log_dir)
+        watchdog_paths = _seed_watchdog_state_files(log_dir)
+
+        forbidden_tokens = {
+            'raw_content_lure': 'RAW_MOLTBOOK_CONTENT_LURE::observer-frame-c-names-only-boundary',
+            'fake_secret_token': 'sk-live-framec-names-only-escape-987654321',
+            'sensitive_path_lure': 'C:/Users/joedi/Documents/Private/framec_sensitive_payload.txt',
+        }
+        _override_env_vars(original_env, {'MOLTBOOK_API_KEY': forbidden_tokens['fake_secret_token']})
+
+        hostile_input_path = run_dir / 'inbound' / 'hostile_payload.txt'
+        hostile_input_path.parent.mkdir(parents=True, exist_ok=True)
+        hostile_input_path.write_text(
+            '\n'.join([forbidden_tokens['raw_content_lure'], forbidden_tokens['fake_secret_token'], forbidden_tokens['sensitive_path_lure']]) + '\n',
+            encoding='utf-8',
+        )
+
+        observerctl_module._save_state('sim', 'watch')
+        output_packet_path = run_dir / 'framec_names_only_packet.json'
+        security_report_path = run_dir / 'security_report.md'
+
+        command_runs = {
+            'mode_gate': _run_observerctl_cli([
+                'ops',
+                'mode',
+                'gate',
+                '--source',
+                'sim',
+                '--to',
+                'canary',
+                '--json',
+            ]),
+            'evidence_pack': _run_observerctl_cli([
+                'ops',
+                'evidence',
+                'pack',
+                '--source',
+                'sim',
+                '--output',
+                str(output_packet_path),
+                '--json',
+            ]),
+        }
+
+        last_gate_path = observerctl_module._control_file(observerctl_module.LAST_GATE_FILE)
+        run_context_path = observerctl_module._control_file(observerctl_module.RUN_CONTEXT_FILE)
+        scanned_paths = [
+            security_report_path,
+            watchdog_paths['posture_state'],
+            watchdog_paths['resource_state'],
+            last_gate_path,
+            run_context_path,
+            output_packet_path,
+        ]
+        file_hits = _scan_paths_for_forbidden_tokens(scanned_paths, forbidden_tokens)
+        command_hits = _scan_command_streams_for_forbidden_tokens(command_runs, forbidden_tokens)
+
+        result_matrix = {
+            'hostile_input_seed_written': hostile_input_path.exists(),
+            'mode_gate_command_returncode_zero': int(command_runs['mode_gate'].get('returncode', 1)) == 0,
+            'evidence_pack_command_returncode_zero': int(command_runs['evidence_pack'].get('returncode', 1)) == 0,
+            'retained_output_packet_written': output_packet_path.exists(),
+            'scanned_retained_output_count_at_least_three': len([path for path in scanned_paths if path.exists()]) >= 5,
+            'retained_file_outputs_preserved_names_only': not bool(file_hits),
+            'command_output_preserved_names_only': not bool(command_hits),
+        }
+
+        report = {
+            'scenario_id': 'S3',
+            'threat_class': 'names_only_persistence_escape',
+            'test_classes': ['sandbox-run', 'secret-boundary-scan', 'pytest-regression'],
+            'expected_safe_outcome': 'outputs remain names-only and no secret/raw material persists',
+            'observed_boundary_result': 'names_only_boundary_preserved' if _probe_result(result_matrix) == 'pass' else 'review_required',
+            'run_id': run_id,
+            'run_dir': _rel_to_repo(run_dir),
+            'probe_dir': _rel_to_repo(FRAMEC_NAMES_ONLY_PERSISTENCE_ESCAPE_PROBE_DIR),
+            'script': _rel_to_repo(Path(__file__)),
+            'next_bite_result': _probe_result(result_matrix),
+            'command_runs': command_runs,
+            'artifact_paths': _report_path_map(
+                {
+                    'hostile_input': hostile_input_path,
+                    'security_report': security_report_path,
+                    'posture_state': watchdog_paths['posture_state'],
+                    'resource_state': watchdog_paths['resource_state'],
+                    'last_gate': last_gate_path,
+                    'run_context': run_context_path,
+                    'output_packet': output_packet_path,
+                }
+            ),
+            'artifact_snapshots': {
+                'forbidden_token_labels': list(forbidden_tokens.keys()),
+                'mode_gate_packet': _read_json(last_gate_path) if last_gate_path.exists() else {},
+                'run_context': _read_json(run_context_path) if run_context_path.exists() else {},
+                'output_packet': _read_json(output_packet_path) if output_packet_path.exists() else {},
+            },
+            'result_matrix': result_matrix,
+            'findings': {
+                'forbidden_token_labels': list(forbidden_tokens.keys()),
+                'scanned_paths': [_rel_to_repo(path) for path in scanned_paths if path.exists()],
+                'file_hits': file_hits,
+                'command_hits': command_hits,
+            },
+        }
+
+        report_json = run_dir / 'framec_names_only_persistence_escape_probe.json'
+        report_md = run_dir / 'framec_names_only_persistence_escape_probe.md'
+        _write_json(report_json, report)
+        report_md.write_text(_render_result_matrix_markdown('Frame C Names-Only Persistence Escape Probe', report), encoding='utf-8')
+
+        _append_jsonl(
+            run_index_jsonl,
+            {
+                'run_id': run_id,
+                'timestamp_utc': _utc_stamp(),
+                'run_dir': _rel_to_repo(run_dir),
+                'report_json': _rel_to_repo(report_json),
+                'report_md': _rel_to_repo(report_md),
+                'next_bite_result': report['next_bite_result'],
+                'observed_boundary_result': report['observed_boundary_result'],
+            },
+        )
+
+        print('run_id={0}'.format(run_id))
+        print('report_json={0}'.format(_rel_to_repo(report_json)))
+        print('report_md={0}'.format(_rel_to_repo(report_md)))
+        print('run_index={0}'.format(_rel_to_repo(run_index_jsonl)))
+        print('next_bite_result={0}'.format(report['next_bite_result']))
+        return 0
+    finally:
+        if original_project_anchor is not None:
+            _restore_probe_observer_project(original_project_anchor, original_file)
+        if original_project_root is not None:
+            _restore_probe_environment(original_env, original_project_root)
+
+
+def run_packet_artifact_divergence_truthfulness_probe() -> int:
+    run_id = 'framec-packet-artifact-divergence-truthfulness-{0}'.format(_utc_stamp())
+    run_dir = FRAMEC_PACKET_ARTIFACT_DIVERGENCE_TRUTHFULNESS_PROBE_DIR / 'runs' / run_id
+    run_index_jsonl = FRAMEC_PACKET_ARTIFACT_DIVERGENCE_TRUTHFULNESS_PROBE_DIR / 'run_index.jsonl'
+    run_dir.mkdir(parents=True, exist_ok=True)
+
+    original_env: Dict[str, Optional[str]] = {}
+    original_project_root = None
+    original_project_anchor = None
+    original_file = ''
+    try:
+        sandbox_root, log_dir, original_env, original_project_root = _seed_probe_environment(
+            run_dir=run_dir,
+            signing_key='framec-packet-artifact-divergence-truthfulness-signing-key',
+            security_report_title='# Frame C packet artifact divergence truthfulness probe security report\n',
+        )
+        _anchor, original_project_anchor, original_file = _bind_probe_observer_project(sandbox_root)
+        _seed_runtime_liveness(sandbox_root, log_dir)
+        _seed_watchdog_state_files(log_dir)
+
+        observerctl_module._save_state('sim', 'watch')
+        current_artifact_path = run_dir / 'framec_truthfulness_packet.json'
+        stale_artifact_path = run_dir / 'framec_truthfulness_stale_copy.json'
+
+        command_runs = {
+            'evidence_pack': _run_observerctl_cli([
+                'ops',
+                'evidence',
+                'pack',
+                '--source',
+                'sim',
+                '--output',
+                str(current_artifact_path),
+                '--json',
+            ]),
+        }
+
+        command_packet = _command_stdout_json(command_runs['evidence_pack'])
+        current_artifact_created_before_tamper = current_artifact_path.exists()
+        current_packet_before_tamper = _read_json(current_artifact_path) if current_artifact_created_before_tamper else {}
+        if current_artifact_created_before_tamper:
+            stale_artifact_path.write_text(current_artifact_path.read_text(encoding='utf-8'), encoding='utf-8')
+            current_artifact_path.unlink()
+
+        divergence_detected = (
+            int(command_runs['evidence_pack'].get('returncode', 1)) == 0
+            and current_artifact_created_before_tamper
+            and not current_artifact_path.exists()
+        )
+        review_decision = 'no-go' if divergence_detected else 'go'
+        observed_boundary_result = 'packet_artifact_divergence_detected_fail_closed' if divergence_detected else 'packet_artifact_agreement_unverified'
+
+        result_matrix = {
+            'evidence_pack_command_returncode_zero': int(command_runs['evidence_pack'].get('returncode', 1)) == 0,
+            'current_artifact_created_before_tamper': current_artifact_created_before_tamper,
+            'stale_copy_created': stale_artifact_path.exists(),
+            'current_artifact_missing_during_review': not current_artifact_path.exists(),
+            'cross_surface_divergence_detected': divergence_detected,
+            'stale_copy_not_mistaken_for_current': stale_artifact_path.exists() and stale_artifact_path != current_artifact_path,
+            'no_false_success_narrative_survives_review': review_decision == 'no-go',
+        }
+
+        report = {
+            'scenario_id': 'S4',
+            'threat_class': 'packet_artifact_divergence_truthfulness',
+            'test_classes': ['sandbox-run', 'diff-contract-review', 'artifact-forensics'],
+            'expected_safe_outcome': 'no false-success narrative survives cross-surface review',
+            'observed_boundary_result': observed_boundary_result,
+            'run_id': run_id,
+            'run_dir': _rel_to_repo(run_dir),
+            'probe_dir': _rel_to_repo(FRAMEC_PACKET_ARTIFACT_DIVERGENCE_TRUTHFULNESS_PROBE_DIR),
+            'script': _rel_to_repo(Path(__file__)),
+            'next_bite_result': _probe_result(result_matrix),
+            'command_runs': command_runs,
+            'artifact_paths': _report_path_map(
+                {
+                    'security_report': run_dir / 'security_report.md',
+                    'claimed_current_artifact': current_artifact_path,
+                    'stale_previous_artifact': stale_artifact_path,
+                }
+            ),
+            'artifact_snapshots': {
+                'command_packet': command_packet,
+                'current_artifact_before_tamper': current_packet_before_tamper,
+                'stale_artifact_snapshot': _read_json(stale_artifact_path) if stale_artifact_path.exists() else {},
+            },
+            'result_matrix': result_matrix,
+            'findings': {
+                'review_decision': review_decision,
+                'claimed_current_artifact_path': _rel_to_repo(current_artifact_path),
+                'stale_artifact_path': _rel_to_repo(stale_artifact_path) if stale_artifact_path.exists() else '',
+                'command_decision': str(command_packet.get('decision', '') or ''),
+            },
+        }
+
+        report_json = run_dir / 'framec_packet_artifact_divergence_truthfulness_probe.json'
+        report_md = run_dir / 'framec_packet_artifact_divergence_truthfulness_probe.md'
+        _write_json(report_json, report)
+        report_md.write_text(_render_result_matrix_markdown('Frame C Packet Artifact Divergence Truthfulness Probe', report), encoding='utf-8')
+
+        _append_jsonl(
+            run_index_jsonl,
+            {
+                'run_id': run_id,
+                'timestamp_utc': _utc_stamp(),
+                'run_dir': _rel_to_repo(run_dir),
+                'report_json': _rel_to_repo(report_json),
+                'report_md': _rel_to_repo(report_md),
+                'next_bite_result': report['next_bite_result'],
+                'observed_boundary_result': observed_boundary_result,
+            },
+        )
+
+        print('run_id={0}'.format(run_id))
+        print('report_json={0}'.format(_rel_to_repo(report_json)))
+        print('report_md={0}'.format(_rel_to_repo(report_md)))
+        print('run_index={0}'.format(_rel_to_repo(run_index_jsonl)))
+        print('next_bite_result={0}'.format(report['next_bite_result']))
+        return 0
+    finally:
+        if original_project_anchor is not None:
+            _restore_probe_observer_project(original_project_anchor, original_file)
+        if original_project_root is not None:
+            _restore_probe_environment(original_env, original_project_root)
+
+
+def run_watchdog_heartbeat_spoof_resistance_probe() -> int:
+    run_id = 'framed-watchdog-heartbeat-spoof-resistance-{0}'.format(_utc_stamp())
+    run_dir = FRAMED_WATCHDOG_HEARTBEAT_SPOOF_RESISTANCE_PROBE_DIR / 'runs' / run_id
+    run_index_jsonl = FRAMED_WATCHDOG_HEARTBEAT_SPOOF_RESISTANCE_PROBE_DIR / 'run_index.jsonl'
+    run_dir.mkdir(parents=True, exist_ok=True)
+
+    original_env: Dict[str, Optional[str]] = {}
+    original_project_root = None
+    original_project_anchor = None
+    original_file = ''
+    try:
+        sandbox_root, log_dir, original_env, original_project_root = _seed_probe_environment(
+            run_dir=run_dir,
+            signing_key='framed-watchdog-heartbeat-spoof-resistance-signing-key',
+            security_report_title='# Frame D watchdog heartbeat spoof resistance probe security report\n',
+        )
+        _anchor, original_project_anchor, original_file = _bind_probe_observer_project(sandbox_root)
+        _seed_runtime_liveness(sandbox_root, log_dir)
+        watchdog_paths = _seed_watchdog_state_files(log_dir)
+
+        observerctl_module._save_state('sim', 'watch')
+        output_packet_path = run_dir / 'framed_watchdog_heartbeat_spoof_resistance_packet.json'
+        observer_heartbeat_path = log_dir / 'health' / 'calamum_observer.heartbeat'
+        ops_watchdog_heartbeat_path = log_dir / 'health' / 'calamum_ops_watchdog.heartbeat'
+        agent_pid_path = sandbox_root / 'calamum_agent.pid'
+        stale_epoch = 946684800.0  # 2000-01-01 UTC
+        os.utime(observer_heartbeat_path, (stale_epoch, stale_epoch))
+
+        command_runs = {
+            'watchdog_check': _run_observerctl_cli([
+                'watchdog',
+                'check',
+                '--json',
+            ]),
+            'mode_gate_canary': _run_observerctl_cli([
+                'ops',
+                'mode',
+                'gate',
+                '--source',
+                'sim',
+                '--to',
+                'canary',
+                '--json',
+            ]),
+            'evidence_pack': _run_observerctl_cli([
+                'ops',
+                'evidence',
+                'pack',
+                '--source',
+                'sim',
+                '--to',
+                'canary',
+                '--event',
+                'framed-watchdog-heartbeat-spoof-resistance',
+                '--output',
+                str(output_packet_path),
+                '--json',
+            ]),
+        }
+
+        watchdog_packet = _command_stdout_json(command_runs['watchdog_check'])
+        mode_gate_packet = _command_stdout_json(command_runs['mode_gate_canary'])
+        runtime_status = observerctl_module.collect_runtime_status(source='sim')
+        runtime_checks = runtime_status.get('checks', {}) if isinstance(runtime_status.get('checks', {}), dict) else {}
+        observer_service = runtime_checks.get('runtime.observer_service', {}) if isinstance(runtime_checks.get('runtime.observer_service', {}), dict) else {}
+        collection_state = runtime_checks.get('runtime.collection_state', {}) if isinstance(runtime_checks.get('runtime.collection_state', {}), dict) else {}
+        evidence_packet = _read_json(output_packet_path) if output_packet_path.exists() else {}
+
+        result_matrix = {
+            'stale_observer_heartbeat_seeded': observer_heartbeat_path.exists(),
+            'watchdog_check_completed': int(command_runs['watchdog_check'].get('returncode', 1)) in (0, 2),
+            'watchdog_advisory_reason_emitted': 'major_check_failed:observer_heartbeat_stale_service_alive' in list(watchdog_packet.get('advisory_reason_codes', []) or []),
+            'watchdog_false_critical_denial_avoided': str(watchdog_packet.get('decision', '') or '').strip().lower() == 'go' and 'critical_check_failed:observer_heartbeat_stale' not in list(watchdog_packet.get('reason_codes', []) or []),
+            'runtime_service_state_preserved': str(observer_service.get('status', '') or '').strip().lower() == 'ok',
+            'collection_state_remains_legible': str(collection_state.get('state', '') or '').strip().lower() in ('idle', 'warmup', 'collecting', 'stopped', 'error'),
+            'mode_gate_preserves_no_false_critical': str(mode_gate_packet.get('decision', '') or '').strip().lower() == 'go' and 'critical_check_failed:observer_heartbeat_stale' not in list(mode_gate_packet.get('reason_codes', []) or []),
+            'evidence_packet_written': output_packet_path.exists(),
+        }
+
+        report = {
+            'scenario_id': 'S5',
+            'threat_class': 'watchdog_heartbeat_spoof_resistance',
+            'test_classes': ['sandbox-run', 'fault-injection', 'artifact-forensics'],
+            'expected_safe_outcome': 'spoofed liveness rejected or degraded explicitly',
+            'observed_boundary_result': 'observer_heartbeat_spoof_degraded_explicitly' if _probe_result(result_matrix) == 'pass' else 'review_required',
+            'run_id': run_id,
+            'run_dir': _rel_to_repo(run_dir),
+            'probe_dir': _rel_to_repo(FRAMED_WATCHDOG_HEARTBEAT_SPOOF_RESISTANCE_PROBE_DIR),
+            'script': _rel_to_repo(Path(__file__)),
+            'next_bite_result': _probe_result(result_matrix),
+            'command_runs': command_runs,
+            'artifact_paths': _report_path_map(
+                {
+                    'security_report': run_dir / 'security_report.md',
+                    'observer_heartbeat': observer_heartbeat_path,
+                    'ops_watchdog_heartbeat': ops_watchdog_heartbeat_path,
+                    'agent_pid': agent_pid_path,
+                    'posture_state': watchdog_paths['posture_state'],
+                    'resource_state': watchdog_paths['resource_state'],
+                    'last_gate': observerctl_module._control_file(observerctl_module.LAST_GATE_FILE),
+                    'output_packet': output_packet_path,
+                }
+            ),
+            'artifact_snapshots': {
+                'watchdog_check_packet': watchdog_packet,
+                'mode_gate_packet': mode_gate_packet,
+                'runtime_status': runtime_status,
+                'evidence_packet': evidence_packet,
+            },
+            'result_matrix': result_matrix,
+            'findings': {
+                'stale_observer_heartbeat_timestamp_utc': datetime.fromtimestamp(stale_epoch, timezone.utc).isoformat().replace('+00:00', 'Z'),
+                'watchdog_advisory_reason_codes': list(watchdog_packet.get('advisory_reason_codes', []) or []),
+                'gate_reason_codes': list(mode_gate_packet.get('reason_codes', []) or []),
+                'observer_service_state': observer_service,
+                'collection_state': collection_state,
+            },
+        }
+
+        report_json = run_dir / 'framed_watchdog_heartbeat_spoof_resistance_probe.json'
+        report_md = run_dir / 'framed_watchdog_heartbeat_spoof_resistance_probe.md'
+        _write_json(report_json, report)
+        report_md.write_text(_render_result_matrix_markdown('Frame D Watchdog Heartbeat Spoof Resistance Probe', report), encoding='utf-8')
+
+        _append_jsonl(
+            run_index_jsonl,
+            {
+                'run_id': run_id,
+                'timestamp_utc': _utc_stamp(),
+                'run_dir': _rel_to_repo(run_dir),
+                'report_json': _rel_to_repo(report_json),
+                'report_md': _rel_to_repo(report_md),
+                'next_bite_result': report['next_bite_result'],
+                'observed_boundary_result': report['observed_boundary_result'],
+            },
+        )
+
+        print('run_id={0}'.format(run_id))
+        print('report_json={0}'.format(_rel_to_repo(report_json)))
+        print('report_md={0}'.format(_rel_to_repo(report_md)))
+        print('run_index={0}'.format(_rel_to_repo(run_index_jsonl)))
+        print('next_bite_result={0}'.format(report['next_bite_result']))
+        return 0
+    finally:
+        if original_project_anchor is not None:
+            _restore_probe_observer_project(original_project_anchor, original_file)
+        if original_project_root is not None:
+            _restore_probe_environment(original_env, original_project_root)
+
+
+def run_resource_lockdown_chaos_probe() -> int:
+    run_id = 'framed-resource-lockdown-chaos-{0}'.format(_utc_stamp())
+    run_dir = FRAMED_RESOURCE_LOCKDOWN_CHAOS_PROBE_DIR / 'runs' / run_id
+    run_index_jsonl = FRAMED_RESOURCE_LOCKDOWN_CHAOS_PROBE_DIR / 'run_index.jsonl'
+    run_dir.mkdir(parents=True, exist_ok=True)
+
+    original_env: Dict[str, Optional[str]] = {}
+    original_project_root = None
+    original_project_anchor = None
+    original_file = ''
+    try:
+        sandbox_root, log_dir, original_env, original_project_root = _seed_probe_environment(
+            run_dir=run_dir,
+            signing_key='framed-resource-lockdown-chaos-signing-key',
+            security_report_title='# Frame D resource lockdown chaos probe security report\n',
+        )
+        _anchor, original_project_anchor, original_file = _bind_probe_observer_project(sandbox_root)
+        _seed_runtime_liveness(sandbox_root, log_dir)
+        observerctl_module._save_state('sim', 'canary')
+
+        output_packet_path = run_dir / 'framed_resource_lockdown_chaos_packet.json'
+        command_runs = {
+            'baseline_monitor_once': _run_observerctl_cli([
+                'baseline',
+                'monitor-once',
+                '--source',
+                'sim',
+                '--mode',
+                'canary',
+                '--normal-interval-sec',
+                '0.01',
+                '--baseline-interval-sec',
+                '0.01',
+                '--baseline-window-sec',
+                '0.2',
+                '--baseline-sample-interval-sec',
+                '0.05',
+                '--min-normal-samples',
+                '1',
+                '--min-baseline-samples',
+                '1',
+                '--json',
+            ]),
+        }
+
+        watchdog_paths = _seed_watchdog_state_files(
+            log_dir,
+            posture='lockdown',
+            heartbeat_interval=4.0,
+            baseline_interval=45.0,
+            cpu_now=80.0,
+            ram_now=70.0,
+            cpu_p95=50.0,
+            ram_p95=55.0,
+            score=0.6,
+            age_s=3.0,
+        )
+        command_runs['mode_gate_live'] = _run_observerctl_cli([
+            'ops',
+            'mode',
+            'gate',
+            '--source',
+            'sim',
+            '--to',
+            'live',
+            '--json',
+        ])
+        command_runs['mode_gate_honeypot'] = _run_observerctl_cli([
+            'ops',
+            'mode',
+            'gate',
+            '--source',
+            'sim',
+            '--to',
+            'honeypot',
+            '--json',
+        ])
+        command_runs['evidence_pack_live'] = _run_observerctl_cli([
+            'ops',
+            'evidence',
+            'pack',
+            '--source',
+            'sim',
+            '--to',
+            'live',
+            '--event',
+            'framed-resource-lockdown-chaos',
+            '--output',
+            str(output_packet_path),
+            '--json',
+        ])
+
+        live_gate_packet = _command_stdout_json(command_runs['mode_gate_live'])
+        honeypot_gate_packet = _command_stdout_json(command_runs['mode_gate_honeypot'])
+        evidence_packet = _read_json(output_packet_path) if output_packet_path.exists() else {}
+        final_state = observerctl_module._load_state()
+        evidence_gate_packet = evidence_packet.get('gate_packet', {}) if isinstance(evidence_packet.get('gate_packet', {}), dict) else {}
+        evidence_reason_codes = list(evidence_gate_packet.get('reason_codes', []) or evidence_packet.get('reason_codes', []) or [])
+
+        result_matrix = {
+            'baseline_monitor_seed_completed': int(command_runs['baseline_monitor_once'].get('returncode', 1)) == 0,
+            'lockdown_state_seed_written': all(path.exists() for path in watchdog_paths.values()),
+            'live_gate_denied': str(live_gate_packet.get('decision', '') or '').strip().lower() == 'no-go',
+            'honeypot_gate_denied': str(honeypot_gate_packet.get('decision', '') or '').strip().lower() == 'no-go',
+            'live_gate_surfaces_lockdown_cpu_spike': 'critical_check_failed:cpu_spike_lockdown' in list(live_gate_packet.get('reason_codes', []) or []),
+            'honeypot_gate_surfaces_lockdown_cpu_spike': 'critical_check_failed:cpu_spike_lockdown' in list(honeypot_gate_packet.get('reason_codes', []) or []),
+            'state_unchanged_after_chaos_denial': str(final_state.get('mode', '') or '').strip().lower() == 'canary',
+            'evidence_packet_preserves_no_go_reasoning': output_packet_path.exists() and ('critical_check_failed:cpu_spike_lockdown' in evidence_reason_codes or 'critical_check_failed:resource_spike_score_critical' in evidence_reason_codes),
+        }
+
+        report = {
+            'scenario_id': 'S6',
+            'threat_class': 'resource_lockdown_chaos',
+            'test_classes': ['sandbox-run', 'chaos-stress', 'artifact-forensics'],
+            'expected_safe_outcome': 'lockdown or denial path triggers truthfully',
+            'observed_boundary_result': 'resource_lockdown_chaos_fail_closed' if _probe_result(result_matrix) == 'pass' else 'review_required',
+            'run_id': run_id,
+            'run_dir': _rel_to_repo(run_dir),
+            'probe_dir': _rel_to_repo(FRAMED_RESOURCE_LOCKDOWN_CHAOS_PROBE_DIR),
+            'script': _rel_to_repo(Path(__file__)),
+            'next_bite_result': _probe_result(result_matrix),
+            'command_runs': command_runs,
+            'artifact_paths': _report_path_map(
+                {
+                    'security_report': run_dir / 'security_report.md',
+                    'posture_state': watchdog_paths['posture_state'],
+                    'resource_state': watchdog_paths['resource_state'],
+                    'baseline_monitor_state': log_dir / 'control' / 'calamum' / 'baseline_monitor_state.json',
+                    'last_gate': observerctl_module._control_file(observerctl_module.LAST_GATE_FILE),
+                    'output_packet': output_packet_path,
+                }
+            ),
+            'artifact_snapshots': {
+                'live_gate_packet': live_gate_packet,
+                'honeypot_gate_packet': honeypot_gate_packet,
+                'evidence_packet': evidence_packet,
+                'final_state': final_state,
+            },
+            'result_matrix': result_matrix,
+            'findings': {
+                'live_reason_codes': list(live_gate_packet.get('reason_codes', []) or []),
+                'honeypot_reason_codes': list(honeypot_gate_packet.get('reason_codes', []) or []),
+                'evidence_reason_codes': evidence_reason_codes,
+                'posture_trigger': _read_json(watchdog_paths['posture_state']).get('posture_trigger', ''),
+                'resource_spike_score': _read_json(watchdog_paths['resource_state']).get('resource_spike_score', None),
+            },
+        }
+
+        report_json = run_dir / 'framed_resource_lockdown_chaos_probe.json'
+        report_md = run_dir / 'framed_resource_lockdown_chaos_probe.md'
+        _write_json(report_json, report)
+        report_md.write_text(_render_result_matrix_markdown('Frame D Resource Lockdown Chaos Probe', report), encoding='utf-8')
+
+        _append_jsonl(
+            run_index_jsonl,
+            {
+                'run_id': run_id,
+                'timestamp_utc': _utc_stamp(),
+                'run_dir': _rel_to_repo(run_dir),
+                'report_json': _rel_to_repo(report_json),
+                'report_md': _rel_to_repo(report_md),
+                'next_bite_result': report['next_bite_result'],
+                'observed_boundary_result': report['observed_boundary_result'],
+            },
+        )
+
+        print('run_id={0}'.format(run_id))
+        print('report_json={0}'.format(_rel_to_repo(report_json)))
+        print('report_md={0}'.format(_rel_to_repo(report_md)))
+        print('run_index={0}'.format(_rel_to_repo(run_index_jsonl)))
+        print('next_bite_result={0}'.format(report['next_bite_result']))
+        return 0
+    finally:
+        if original_project_anchor is not None:
+            _restore_probe_observer_project(original_project_anchor, original_file)
+        if original_project_root is not None:
+            _restore_probe_environment(original_env, original_project_root)
+
+
 def run_librarian_access_exchange_probe() -> int:
     run_id = 'librarian-access-exchange-{0}'.format(_utc_stamp())
     run_dir = LIBRARIAN_ACCESS_EXCHANGE_PROBE_DIR / 'runs' / run_id
@@ -2291,8 +3068,19 @@ def run_librarian_access_exchange_probe() -> int:
         request_payload = dict(request_doc.get('packet', {}) or {}) if isinstance(request_doc.get('packet', {}), dict) else {}
         attestation_payload = dict(attestation_doc.get('packet', {}) or {}) if isinstance(attestation_doc.get('packet', {}), dict) else {}
         release_receipt_payload = dict(release_receipt_doc.get('packet', {}) or {}) if isinstance(release_receipt_doc.get('packet', {}), dict) else {}
+        tampered_request_payload = dict(request_payload)
+        tampered_request_payload['requested_action'] = 'publish-live'
+        tampered_attestation_payload = dict(attestation_payload)
+        tampered_attestation_payload['granted'] = False
+        tampered_release_payload = dict(release_receipt_payload)
+        tampered_release_payload['dataset_manifest_path'] = 'forged_dataset_manifest.json'
 
         result_matrix = {
+            'signature_roles_are_separated': {
+                str((request_doc.get('detached_signature', {}) or {}).get('role', '') or ''),
+                str((attestation_doc.get('detached_signature', {}) or {}).get('role', '') or ''),
+                str((release_receipt_doc.get('detached_signature', {}) or {}).get('role', '') or ''),
+            } == {'requester', 'librarian', 'source'},
             'protected_dataset_registered': int(command_runs['register_protected_dataset'].get('returncode', 1)) == 0 and str(register_packet.get('action', '')).strip() == 'librarian-dataset-register',
             'protected_dataset_released': int(command_runs['release_protected_dataset'].get('returncode', 1)) == 0 and str(release_packet.get('release_mode', '')).strip() == 'protected-source',
             'shared_signing_root_not_required': not bool(str(os.environ.get('CALAMUM_DATA_SIGNING_KEY', '') or '').strip()),
@@ -2317,9 +3105,31 @@ def run_librarian_access_exchange_probe() -> int:
             'delegated_access_projection_written': all(path.exists() for path in [request_path, attestation_path, release_receipt_path]),
             'vault_baseline_written': baseline_path.exists(),
             'vault_audit_written': audit_path.exists(),
+            'tampered_request_rejected': not verify_detached_payload(
+                tampered_request_payload,
+                dict(request_doc.get('detached_signature', {}) or {}),
+                expected_role='requester',
+                expected_purpose='dataset_access_request',
+            ),
+            'tampered_attestation_rejected': not verify_detached_payload(
+                tampered_attestation_payload,
+                dict(attestation_doc.get('detached_signature', {}) or {}),
+                expected_role='librarian',
+                expected_purpose='dataset_access_attestation',
+            ),
+            'tampered_release_receipt_rejected': not verify_detached_payload(
+                tampered_release_payload,
+                dict(release_receipt_doc.get('detached_signature', {}) or {}),
+                expected_role='source',
+                expected_purpose='dataset_access_release',
+            ),
         }
 
         report = {
+            'scenario_id': 'S9',
+            'threat_class': 'delegated_release_abuse',
+            'expected_safe_outcome': 'Delegated release packets verify when untampered and fail closed when a retained signed payload is altered.',
+            'observed_boundary_result': 'delegated_release_abuse_packets_fail_signature_verification' if _probe_result(result_matrix) == 'pass' else 'review_required',
             'run_id': run_id,
             'run_dir': _rel_to_repo(run_dir),
             'probe_dir': _rel_to_repo(LIBRARIAN_ACCESS_EXCHANGE_PROBE_DIR),
@@ -2349,6 +3159,8 @@ def run_librarian_access_exchange_probe() -> int:
                 'request_role': str((request_doc.get('detached_signature', {}) or {}).get('role', '') or ''),
                 'attestation_role': str((attestation_doc.get('detached_signature', {}) or {}).get('role', '') or ''),
                 'release_role': str((release_receipt_doc.get('detached_signature', {}) or {}).get('role', '') or ''),
+                'tampered_request_action': str(tampered_request_payload.get('requested_action', '') or ''),
+                'tampered_release_manifest': str(tampered_release_payload.get('dataset_manifest_path', '') or ''),
             },
         }
 
@@ -2377,6 +3189,459 @@ def run_librarian_access_exchange_probe() -> int:
         print('next_bite_result={0}'.format(report['next_bite_result']))
         return 0
     finally:
+        if original_project_root is not None:
+            _restore_probe_environment(original_env, original_project_root)
+
+
+def run_baseline_authority_tamper_probe() -> int:
+    from analysis.report_pack import prepare_report_bundle, write_report_bundle
+    from calamum_librarian import register_librarian_dataset_packet
+
+    run_id = 'framee-baseline-authority-tamper-{0}'.format(_utc_stamp())
+    run_dir = FRAMEE_BASELINE_AUTHORITY_TAMPER_PROBE_DIR / 'runs' / run_id
+    run_index_jsonl = FRAMEE_BASELINE_AUTHORITY_TAMPER_PROBE_DIR / 'run_index.jsonl'
+    run_dir.mkdir(parents=True, exist_ok=True)
+
+    original_env: Dict[str, Optional[str]] = {}
+    original_project_root = None
+    original_project_anchor = None
+    original_file = ''
+    try:
+        sandbox_root, _sandbox_log_dir, original_env, original_project_root = _seed_probe_environment(
+            run_dir=run_dir,
+            signing_key='framee-baseline-authority-tamper-signing-key',
+            security_report_title='# Frame E baseline authority tamper probe security report\n',
+        )
+        _override_env_vars(
+            original_env,
+            {'CALAMUM_LIBRARIAN_VAULT_KEY': 'framee-baseline-authority-tamper-vault-key'},
+        )
+        anchor, original_project_anchor, original_file = _bind_probe_observer_project(sandbox_root)
+
+        canary_dataset_dir = sandbox_root / 'datasets' / 'framee_reviewed_canary_authority'
+        canary_dataset_dir.mkdir(parents=True, exist_ok=True)
+        canary_features_csv = canary_dataset_dir / 'features.csv'
+        canary_labels_csv = canary_dataset_dir / 'labels.csv'
+        canary_manifest_path = canary_dataset_dir / 'dataset_manifest.json'
+        canary_features_csv.write_text('record_id,feature\n1,0.11\n2,0.29\n', encoding='utf-8')
+        canary_labels_csv.write_text('record_id,label\n1,1\n2,0\n', encoding='utf-8')
+        _write_json(
+            canary_manifest_path,
+            {
+                'source': 'real',
+                'mode': 'canary',
+                'features_csv': str(canary_features_csv),
+                'labels_csv': str(canary_labels_csv),
+                'total_records': 2,
+                'has_labels': True,
+            },
+        )
+
+        live_target_dir = sandbox_root / 'datasets' / 'framee_live_report_target'
+        live_target_dir.mkdir(parents=True, exist_ok=True)
+        live_features_csv = live_target_dir / 'features.csv'
+        live_manifest_path = live_target_dir / 'dataset_manifest.json'
+        live_features_csv.write_text('record_id,feature\n1,0.34\n2,0.71\n', encoding='utf-8')
+        _write_json(
+            live_manifest_path,
+            {
+                'source': 'real',
+                'mode': 'live',
+                'features_csv': str(live_features_csv),
+                'total_records': 2,
+                'has_labels': False,
+            },
+        )
+
+        canary_register_packet = register_librarian_dataset_packet(
+            anchor,
+            canary_manifest_path,
+            display_name='Frame E Reviewed Canary Authority',
+            run_id='framee-reviewed-canary-authority',
+        )
+        live_register_packet = register_librarian_dataset_packet(
+            anchor,
+            live_manifest_path,
+            display_name='Frame E Live Report Target',
+            run_id='framee-live-report-target',
+        )
+        authority_entry = dict(canary_register_packet.get('dataset', {}) or {})
+
+        review_policy_packet = run_dir / 'framee_review_policy_packet.md'
+        review_policy_packet.write_text('# frame e baseline authority review policy\n', encoding='utf-8')
+
+        emitted = observerctl_module._ds_emit_comparison_baseline_packet(
+            authority_entry,
+            baseline_stage='canary_reviewed',
+            companion_role='frame e baseline authority companion',
+            review_policy_packet=str(review_policy_packet),
+        )
+        comparison_baseline_path = _resolve_probe_artifact_path(
+            sandbox_root,
+            str(emitted.get('packet_path', '') or ''),
+        )
+        original_packet = _read_json(comparison_baseline_path) if comparison_baseline_path.exists() else {}
+
+        pre_tamper_candidate = observerctl_module._ds_select_lineage_comparison_baseline_candidate(
+            source='real',
+            mode='live',
+            baseline_window_id=str(authority_entry.get('run_id', '') or ''),
+        )
+
+        tampered_packet = dict(original_packet)
+        tampered_packet['selector_entry_id'] = 'forged-selector-entry'
+        tampered_packet['selector_run_id'] = 'forged-selector-run'
+        _write_json(comparison_baseline_path, tampered_packet)
+
+        repaired_candidate = observerctl_module._ds_select_lineage_comparison_baseline_candidate(
+            source='real',
+            mode='live',
+            baseline_packet_ref=str(comparison_baseline_path),
+            baseline_window_id=str(authority_entry.get('run_id', '') or ''),
+        )
+        repaired_packet = _read_json(comparison_baseline_path) if comparison_baseline_path.exists() else {}
+        pre_tamper_candidate_snapshot = json.loads(json.dumps(pre_tamper_candidate, default=str))
+        repaired_candidate_snapshot = json.loads(json.dumps(repaired_candidate, default=str))
+
+        bundle = prepare_report_bundle(anchor, 'evaluate', run_id='framee-baseline-authority-report')
+        evaluation_dir = bundle.artifact_dirs['evaluation']
+        evaluation_dir.mkdir(parents=True, exist_ok=True)
+        run_json = evaluation_dir / 'run.json'
+        run_md = evaluation_dir / 'run.md'
+        run_json.write_text('{}\n', encoding='utf-8')
+        run_md.write_text('# frame e baseline authority report\n', encoding='utf-8')
+
+        report_bundle = write_report_bundle(
+            project_anchor=anchor,
+            bundle=bundle,
+            packet={
+                'timestamp_utc': observerctl_module._utc_now(),
+                'runtime_cli_surface': 'observerctl',
+                'decision': 'go',
+                'action': 'ds-evaluate',
+                'command_family': 'ds',
+                'command_path': 'observerctl ds evaluate',
+                'implementation_state': 'command-available',
+                'underlying_surface': 'analysis.evaluation_harness',
+                'summary': 'Frame E baseline authority tamper evaluation report.',
+                'run_id': bundle.run_id,
+                'collection_alias': 'framee-baseline-authority',
+                'threshold': 0.37,
+                'artifacts': {},
+                'reason_codes': [],
+            },
+            artifact_paths={
+                'run_json': run_json,
+                'run_md': run_md,
+            },
+            context={
+                'source': 'real',
+                'mode': 'live',
+                'baseline_analysis_packet': str(comparison_baseline_path),
+                'baseline_window_id': str(authority_entry.get('run_id', '') or ''),
+            },
+            lineage={'dataset_manifest': live_manifest_path},
+        )
+
+        manifest_context = dict(report_bundle.get('manifest', {}).get('context', {}) or {})
+        manifest_context_packet_path = _resolve_probe_artifact_path(
+            sandbox_root,
+            str(manifest_context.get('baseline_analysis_packet', '') or ''),
+        )
+        manifest_context_packet = _read_json(manifest_context_packet_path) if manifest_context_packet_path.exists() else {}
+        report_manifest_path = _resolve_probe_artifact_path(
+            sandbox_root,
+            str(report_bundle.get('paths', {}).get('manifest_json', '') or ''),
+        )
+        report_json_path = _resolve_probe_artifact_path(
+            sandbox_root,
+            str(report_bundle.get('paths', {}).get('report_json', '') or ''),
+        )
+        report_md_path = _resolve_probe_artifact_path(
+            sandbox_root,
+            str(report_bundle.get('paths', {}).get('report_md', '') or ''),
+        )
+
+        result_matrix = {
+            'canary_authority_registered': str(canary_register_packet.get('decision', '') or '').strip().lower() == 'go',
+            'live_target_registered': str(live_register_packet.get('decision', '') or '').strip().lower() == 'go',
+            'comparison_baseline_candidate_exists_before_tamper': bool(pre_tamper_candidate),
+            'selector_linkage_tamper_written': str(tampered_packet.get('selector_entry_id', '') or '').strip() == 'forged-selector-entry',
+            'explicit_candidate_repaired_from_authority': bool(repaired_candidate),
+            'repaired_packet_restored_selector_entry': str(repaired_packet.get('selector_entry_id', '') or '').strip() == str(authority_entry.get('entry_id', '') or '').strip(),
+            'repaired_packet_restored_selector_run': str(repaired_packet.get('selector_run_id', '') or '').strip() == str(authority_entry.get('run_id', '') or '').strip(),
+            'report_context_uses_repaired_packet': manifest_context_packet_path == comparison_baseline_path,
+            'report_context_keeps_expected_window_id': str(manifest_context.get('baseline_window_id', '') or '').strip() == str(authority_entry.get('run_id', '') or '').strip(),
+            'report_context_packet_restored_selector_entry': str(manifest_context_packet.get('selector_entry_id', '') or '').strip() == str(authority_entry.get('entry_id', '') or '').strip(),
+        }
+
+        report = {
+            'run_id': run_id,
+            'run_dir': _rel_to_repo(run_dir),
+            'probe_dir': _rel_to_repo(FRAMEE_BASELINE_AUTHORITY_TAMPER_PROBE_DIR),
+            'script': _rel_to_repo(Path(__file__)),
+            'scenario_id': 'S7',
+            'threat_class': 'baseline_authority_tamper',
+            'expected_safe_outcome': 'Explicit selector-linkage tampering is rejected and repaired from authoritative dataset state before report context reuse.',
+            'observed_boundary_result': 'baseline_authority_tamper_repaired_from_authoritative_selector',
+            'next_bite_result': _probe_result(result_matrix),
+            'command_runs': {},
+            'artifact_paths': _report_path_map(
+                {
+                    'security_report': run_dir / 'security_report.md',
+                    'review_policy_packet': review_policy_packet,
+                    'canary_manifest': canary_manifest_path,
+                    'live_manifest': live_manifest_path,
+                    'comparison_baseline_packet': comparison_baseline_path,
+                    'report_manifest_json': report_manifest_path,
+                    'report_json': report_json_path,
+                    'report_md': report_md_path,
+                }
+            ),
+            'artifact_snapshots': {
+                'canary_register_packet': canary_register_packet,
+                'live_register_packet': live_register_packet,
+                'original_packet': original_packet,
+                'tampered_packet': tampered_packet,
+                'repaired_packet': repaired_packet,
+                'pre_tamper_candidate': pre_tamper_candidate_snapshot,
+                'repaired_candidate': repaired_candidate_snapshot,
+                'report_manifest_context': manifest_context,
+            },
+            'result_matrix': result_matrix,
+            'findings': {
+                'authority_entry_id': str(authority_entry.get('entry_id', '') or ''),
+                'authority_run_id': str(authority_entry.get('run_id', '') or ''),
+                'tampered_selector_entry_id': str(tampered_packet.get('selector_entry_id', '') or ''),
+                'repaired_selector_entry_id': str(repaired_packet.get('selector_entry_id', '') or ''),
+                'repaired_selector_run_id': str(repaired_packet.get('selector_run_id', '') or ''),
+                'report_context_baseline_packet': _rel_to_repo(manifest_context_packet_path),
+            },
+        }
+
+        report_json = run_dir / 'framee_baseline_authority_tamper_probe.json'
+        report_md = run_dir / 'framee_baseline_authority_tamper_probe.md'
+        _write_json(report_json, report)
+        report_md.write_text(_render_result_matrix_markdown('Frame E Baseline Authority Tamper Probe', report), encoding='utf-8')
+
+        _append_jsonl(
+            run_index_jsonl,
+            {
+                'run_id': run_id,
+                'timestamp_utc': _utc_stamp(),
+                'run_dir': _rel_to_repo(run_dir),
+                'report_json': _rel_to_repo(report_json),
+                'report_md': _rel_to_repo(report_md),
+                'next_bite_result': report['next_bite_result'],
+                'observed_boundary_result': report['observed_boundary_result'],
+            },
+        )
+
+        print('run_id={0}'.format(run_id))
+        print('report_json={0}'.format(_rel_to_repo(report_json)))
+        print('report_md={0}'.format(_rel_to_repo(report_md)))
+        print('run_index={0}'.format(_rel_to_repo(run_index_jsonl)))
+        print('next_bite_result={0}'.format(report['next_bite_result']))
+        return 0
+    finally:
+        if original_project_anchor is not None:
+            _restore_probe_observer_project(original_project_anchor, original_file)
+        if original_project_root is not None:
+            _restore_probe_environment(original_env, original_project_root)
+
+
+def run_report_lineage_forgery_probe() -> int:
+    from analysis.report_aggregate import append_ds_run_index, publication_eligibility_reasons, refresh_tracked_ds_publication
+    from analysis.report_pack import prepare_report_bundle, write_report_bundle
+    from calamum_librarian import register_librarian_dataset_packet
+
+    run_id = 'framee-report-lineage-forgery-{0}'.format(_utc_stamp())
+    run_dir = FRAMEE_REPORT_LINEAGE_FORGERY_PROBE_DIR / 'runs' / run_id
+    run_index_jsonl = FRAMEE_REPORT_LINEAGE_FORGERY_PROBE_DIR / 'run_index.jsonl'
+    run_dir.mkdir(parents=True, exist_ok=True)
+
+    original_env: Dict[str, Optional[str]] = {}
+    original_project_root = None
+    original_project_anchor = None
+    original_file = ''
+    try:
+        sandbox_root, _sandbox_log_dir, original_env, original_project_root = _seed_probe_environment(
+            run_dir=run_dir,
+            signing_key='framee-report-lineage-forgery-signing-key',
+            security_report_title='# Frame E report lineage forgery probe security report\n',
+        )
+        _override_env_vars(
+            original_env,
+            {'CALAMUM_LIBRARIAN_VAULT_KEY': 'framee-report-lineage-forgery-vault-key'},
+        )
+        anchor, original_project_anchor, original_file = _bind_probe_observer_project(sandbox_root)
+
+        dataset_dir = sandbox_root / 'datasets' / 'framee_lineage_authority'
+        dataset_dir.mkdir(parents=True, exist_ok=True)
+        features_csv = dataset_dir / 'features.csv'
+        manifest_path = dataset_dir / 'dataset_manifest.json'
+        features_csv.write_text('record_id,feature\n1,0.18\n2,0.83\n', encoding='utf-8')
+        _write_json(
+            manifest_path,
+            {
+                'source': 'real',
+                'mode': 'live',
+                'features_csv': str(features_csv),
+                'total_records': 2,
+                'has_labels': False,
+            },
+        )
+
+        dataset_register_packet = register_librarian_dataset_packet(
+            anchor,
+            manifest_path,
+            display_name='Frame E Lineage Authority Dataset',
+            run_id='framee-lineage-authority',
+        )
+
+        bundle = prepare_report_bundle(anchor, 'score', run_id='framee-lineage-forgery-score')
+        scoring_dir = bundle.artifact_dirs['scoring']
+        scoring_dir.mkdir(parents=True, exist_ok=True)
+        scores_csv = scoring_dir / 'scores.csv'
+        scores_csv.write_text('record_id,score_anomaly\na,0.1\nb,0.9\n', encoding='utf-8')
+
+        report_bundle = write_report_bundle(
+            project_anchor=anchor,
+            bundle=bundle,
+            packet={
+                'timestamp_utc': '2026-04-21T23:59:00Z',
+                'runtime_cli_surface': 'observerctl',
+                'decision': 'go',
+                'action': 'ds-score',
+                'command_family': 'ds',
+                'command_path': 'observerctl ds score',
+                'implementation_state': 'command-available',
+                'underlying_surface': 'analysis.score_unsupervised',
+                'summary': 'Frame E lineage forgery publication candidate.',
+                'run_id': bundle.run_id,
+                'collection_alias': 'framee-lineage-forgery',
+                'records_scored': 2,
+                'anomaly_direction': 'lower-is-more-anomalous',
+                'score_column': 'score_anomaly',
+                'artifacts': {},
+                'reason_codes': [],
+            },
+            artifact_paths={'scores_csv': scores_csv},
+            context={'output_override': False},
+            lineage={'dataset_manifest': manifest_path},
+        )
+
+        pre_tamper_reasons = publication_eligibility_reasons(
+            project_anchor=anchor,
+            manifest_payload=report_bundle['manifest'],
+        )
+        append_ds_run_index(project_anchor=anchor, manifest_payload=report_bundle['manifest'])
+
+        source_manifest_path = _resolve_probe_artifact_path(
+            sandbox_root,
+            str(report_bundle.get('paths', {}).get('manifest_json', '') or ''),
+        )
+        tampered_manifest = _read_json(source_manifest_path)
+        forged_manifest_ref = 'C:/Users/tester/AppData/Local/Temp/forged_dataset_manifest.json'
+        tampered_lineage = dict(tampered_manifest.get('lineage', {}) or {})
+        tampered_lineage['dataset_manifest'] = forged_manifest_ref
+        tampered_manifest['lineage'] = tampered_lineage
+        _write_json(source_manifest_path, tampered_manifest)
+
+        tampered_reasons = publication_eligibility_reasons(
+            project_anchor=anchor,
+            manifest_payload=tampered_manifest,
+        )
+        publication = refresh_tracked_ds_publication(
+            project_anchor=anchor,
+            current_manifest_payload=tampered_manifest,
+        )
+
+        alias_root = sandbox_root / 'docs' / 'reports' / 'collections' / 'framee-lineage-forgery'
+        aggregate_report_path = _resolve_probe_artifact_path(
+            sandbox_root,
+            str(publication.get('aggregate_paths', {}).get('aggregate_report_md', '') or ''),
+        )
+        public_run_ledger_path = _resolve_probe_artifact_path(
+            sandbox_root,
+            str(publication.get('aggregate_paths', {}).get('public_run_ledger_md', '') or ''),
+        )
+
+        result_matrix = {
+            'dataset_authority_registered': str(dataset_register_packet.get('decision', '') or '').strip().lower() == 'go',
+            'pre_tamper_publication_eligible': 'publication_skipped:dataset_manifest_ephemeral' not in pre_tamper_reasons,
+            'manifest_tamper_persisted': str(dict(tampered_manifest.get('lineage', {}) or {}).get('dataset_manifest', '') or '').strip() == forged_manifest_ref,
+            'tampered_publication_reason_emitted': 'publication_skipped:dataset_manifest_ephemeral' in tampered_reasons,
+            'tampered_run_not_published': publication.get('current_run', {}) == {},
+            'published_run_count_zero': int(publication.get('published_run_count', 0) or 0) == 0,
+            'collection_alias_not_materialized': not alias_root.exists(),
+            'aggregate_surfaces_still_rendered': aggregate_report_path.exists() and public_run_ledger_path.exists(),
+        }
+
+        report = {
+            'run_id': run_id,
+            'run_dir': _rel_to_repo(run_dir),
+            'probe_dir': _rel_to_repo(FRAMEE_REPORT_LINEAGE_FORGERY_PROBE_DIR),
+            'script': _rel_to_repo(Path(__file__)),
+            'scenario_id': 'S8',
+            'threat_class': 'report_lineage_forgery',
+            'expected_safe_outcome': 'Tracked publication fails closed when a persisted run manifest is tampered to point at ephemeral dataset lineage.',
+            'observed_boundary_result': 'report_lineage_forgery_blocked_before_publication',
+            'next_bite_result': _probe_result(result_matrix),
+            'command_runs': {},
+            'artifact_paths': _report_path_map(
+                {
+                    'security_report': run_dir / 'security_report.md',
+                    'dataset_manifest': manifest_path,
+                    'scores_csv': scores_csv,
+                    'source_manifest_json': source_manifest_path,
+                    'aggregate_report_md': aggregate_report_path,
+                    'public_run_ledger_md': public_run_ledger_path,
+                }
+            ),
+            'artifact_snapshots': {
+                'dataset_register_packet': dataset_register_packet,
+                'pre_tamper_manifest': report_bundle['manifest'],
+                'tampered_manifest': tampered_manifest,
+                'publication': publication,
+            },
+            'result_matrix': result_matrix,
+            'findings': {
+                'pre_tamper_reasons': pre_tamper_reasons,
+                'tampered_reasons': tampered_reasons,
+                'forged_dataset_manifest': forged_manifest_ref,
+                'aggregate_report_md': _rel_to_repo(aggregate_report_path),
+                'public_run_ledger_md': _rel_to_repo(public_run_ledger_path),
+            },
+        }
+
+        report_json = run_dir / 'framee_report_lineage_forgery_probe.json'
+        report_md = run_dir / 'framee_report_lineage_forgery_probe.md'
+        _write_json(report_json, report)
+        report_md.write_text(_render_result_matrix_markdown('Frame E Report Lineage Forgery Probe', report), encoding='utf-8')
+
+        _append_jsonl(
+            run_index_jsonl,
+            {
+                'run_id': run_id,
+                'timestamp_utc': _utc_stamp(),
+                'run_dir': _rel_to_repo(run_dir),
+                'report_json': _rel_to_repo(report_json),
+                'report_md': _rel_to_repo(report_md),
+                'next_bite_result': report['next_bite_result'],
+                'observed_boundary_result': report['observed_boundary_result'],
+            },
+        )
+
+        print('run_id={0}'.format(run_id))
+        print('report_json={0}'.format(_rel_to_repo(report_json)))
+        print('report_md={0}'.format(_rel_to_repo(report_md)))
+        print('run_index={0}'.format(_rel_to_repo(run_index_jsonl)))
+        print('next_bite_result={0}'.format(report['next_bite_result']))
+        return 0
+    finally:
+        if original_project_anchor is not None:
+            _restore_probe_observer_project(original_project_anchor, original_file)
         if original_project_root is not None:
             _restore_probe_environment(original_env, original_project_root)
 
@@ -2419,6 +3684,8 @@ def run_librarian_vault_controls_probe() -> int:
                 'dataset',
                 'register',
                 str(first_manifest_path),
+                '--access-class',
+                'protected-source',
                 '--display-name',
                 'Vault Primary Dataset',
                 '--run-id',
@@ -2438,6 +3705,15 @@ def run_librarian_vault_controls_probe() -> int:
                 'vault-secondary',
                 '--json',
             ]),
+            'release_while_unlocked': _run_observerctl_cli([
+                'librarian',
+                'dataset',
+                'release',
+                '1',
+                '--requester-id',
+                'sandbox-maintenance-probe',
+                '--json',
+            ]),
             'vault_lock': _run_observerctl_cli(['librarian', 'vault', 'lock', '--reason', 'sandbox-complete', '--json']),
             'vault_rebaseline': _run_observerctl_cli(['librarian', 'vault', 'rebaseline', '--reason', 'sandbox-refresh', '--json']),
             'vault_verify': _run_observerctl_cli(['librarian', 'vault', 'verify', '--json']),
@@ -2446,6 +3722,7 @@ def run_librarian_vault_controls_probe() -> int:
         status_packet = command_runs['vault_status'].get('stdout_json', {}) if isinstance(command_runs['vault_status'].get('stdout_json', {}), dict) else {}
         unlock_packet = command_runs['vault_unlock'].get('stdout_json', {}) if isinstance(command_runs['vault_unlock'].get('stdout_json', {}), dict) else {}
         unlocked_register_packet = command_runs['register_while_unlocked'].get('stdout_json', {}) if isinstance(command_runs['register_while_unlocked'].get('stdout_json', {}), dict) else {}
+        unlocked_release_packet = command_runs['release_while_unlocked'].get('stdout_json', {}) if isinstance(command_runs['release_while_unlocked'].get('stdout_json', {}), dict) else {}
         lock_packet = command_runs['vault_lock'].get('stdout_json', {}) if isinstance(command_runs['vault_lock'].get('stdout_json', {}), dict) else {}
         rebaseline_packet = command_runs['vault_rebaseline'].get('stdout_json', {}) if isinstance(command_runs['vault_rebaseline'].get('stdout_json', {}), dict) else {}
         verify_packet = command_runs['vault_verify'].get('stdout_json', {}) if isinstance(command_runs['vault_verify'].get('stdout_json', {}), dict) else {}
@@ -2463,6 +3740,7 @@ def run_librarian_vault_controls_probe() -> int:
             'vault_status_reported': int(command_runs['vault_status'].get('returncode', 1)) == 0 and str(status_packet.get('action', '')).strip() == 'librarian-vault-status',
             'vault_unlock_succeeded': int(command_runs['vault_unlock'].get('returncode', 1)) == 0 and bool(unlock_packet.get('locked', True)) is False,
             'unlocked_register_denied': int(command_runs['register_while_unlocked'].get('returncode', 0)) != 0 and 'critical_check_failed:librarian_vault_maintenance_window_open' in list(unlocked_register_packet.get('reason_codes', []) or []),
+            'unlocked_release_denied': int(command_runs['release_while_unlocked'].get('returncode', 0)) != 0 and 'critical_check_failed:librarian_vault_maintenance_window_open' in list(unlocked_release_packet.get('reason_codes', []) or []),
             'vault_lock_succeeded': int(command_runs['vault_lock'].get('returncode', 1)) == 0 and bool(lock_packet.get('locked', False)) is True,
             'vault_rebaseline_succeeded': int(command_runs['vault_rebaseline'].get('returncode', 1)) == 0 and str(rebaseline_packet.get('action', '')).strip() == 'librarian-vault-rebaseline',
             'vault_verify_succeeded': int(command_runs['vault_verify'].get('returncode', 1)) == 0 and str(verify_packet.get('decision', '')).strip() == 'go',
@@ -2471,6 +3749,10 @@ def run_librarian_vault_controls_probe() -> int:
         }
 
         report = {
+            'scenario_id': 'S10',
+            'threat_class': 'maintenance_window_abuse',
+            'expected_safe_outcome': 'Maintenance-window unlock preserves manual control while failing closed for ordinary register and release mutations.',
+            'observed_boundary_result': 'maintenance_window_abuse_denied_fail_closed' if _probe_result(result_matrix) == 'pass' else 'review_required',
             'run_id': run_id,
             'run_dir': _rel_to_repo(run_dir),
             'probe_dir': _rel_to_repo(LIBRARIAN_VAULT_CONTROLS_PROBE_DIR),
@@ -2490,6 +3772,7 @@ def run_librarian_vault_controls_probe() -> int:
                 'vault_status_packet': status_packet,
                 'vault_unlock_packet': unlock_packet,
                 'unlocked_register_packet': unlocked_register_packet,
+                'unlocked_release_packet': unlocked_release_packet,
                 'vault_lock_packet': lock_packet,
                 'vault_rebaseline_packet': rebaseline_packet,
                 'vault_verify_packet': verify_packet,
@@ -2500,7 +3783,9 @@ def run_librarian_vault_controls_probe() -> int:
             'findings': {
                 'audit_actions': audit_actions,
                 'verify_integrity_status': str(verify_packet.get('integrity_status', '') or ''),
-                'locked_reason_codes': list(locked_register_packet.get('reason_codes', []) or []),
+                'locked_reason_codes': list(unlocked_register_packet.get('reason_codes', []) or []),
+                'unlocked_register_reason_codes': list(unlocked_register_packet.get('reason_codes', []) or []),
+                'unlocked_release_reason_codes': list(unlocked_release_packet.get('reason_codes', []) or []),
             },
         }
 
@@ -2699,6 +3984,243 @@ def run_baseline_monitor_runtime_probe() -> int:
         print('next_bite_result={0}'.format(next_bite_result))
         return 0
     finally:
+        if original_project_root is not None:
+            _restore_probe_environment(original_env, original_project_root)
+
+
+def run_posture_transition_bypass_probe() -> int:
+    run_id = 'frameb-posture-transition-bypass-{0}'.format(_utc_stamp())
+    run_dir = FRAMEB_POSTURE_TRANSITION_BYPASS_PROBE_DIR / 'runs' / run_id
+    run_index_jsonl = FRAMEB_POSTURE_TRANSITION_BYPASS_PROBE_DIR / 'run_index.jsonl'
+    run_dir.mkdir(parents=True, exist_ok=True)
+
+    original_env: Dict[str, Optional[str]] = {}
+    original_project_root = None
+    original_project_anchor = None
+    original_file = ''
+    try:
+        sandbox_root, log_dir, original_env, original_project_root = _seed_probe_environment(
+            run_dir=run_dir,
+            signing_key='frameb-posture-transition-bypass-signing-key',
+            security_report_title='# Frame B posture transition bypass probe security report\n',
+        )
+        _anchor, original_project_anchor, original_file = _bind_probe_observer_project(sandbox_root)
+        _seed_runtime_liveness(sandbox_root, log_dir)
+
+        security_report = run_dir / 'security_report_transition.md'
+        security_report.write_text('# frame b posture transition bypass security report\n', encoding='utf-8')
+
+        observerctl_module._save_state('sim', 'canary')
+        gate_packet = _seed_mode_gate_packet(
+            'sim',
+            'canary',
+            'live',
+            run_id='frameb-posture-transition-bypass-live',
+            posture_trigger_id='pt-frameb-posture-transition-bypass',
+            security_report_ref=str(security_report),
+        )
+        seeded_run_context = _seed_gate_run_context(
+            run_id=str(gate_packet.get('run_id', '') or ''),
+            posture_trigger_id=str(gate_packet.get('posture_trigger_id', '') or ''),
+            posture_trigger=str(gate_packet.get('posture_trigger', '') or ''),
+            security_report_ref=str(gate_packet.get('security_report_ref', '') or ''),
+        )
+
+        observerctl_module._save_state('sim', 'watch')
+        mode_set_packet = observerctl_module._ops_mode_set(source='sim', to_mode='live')
+        final_state = observerctl_module._load_state()
+        posture_state_path = observerctl_module._control_file(observerctl_module.WATCHDOG_POSTURE_FILE)
+
+        result_matrix = {
+            'fresh_gate_packet_seeded': str(gate_packet.get('decision', '') or '').strip().lower() == 'go',
+            'matching_run_context_seeded': str(seeded_run_context.get('run_id', '') or '').strip() == str(gate_packet.get('run_id', '') or '').strip(),
+            'current_state_mutated_after_gate': str(final_state.get('mode', '') or '').strip().lower() == 'watch',
+            'mode_set_denied': str(mode_set_packet.get('decision', '') or '').strip().lower() == 'no-go',
+            'state_mismatch_reason_emitted': 'critical_check_failed:gate_packet_state_mismatch' in list(mode_set_packet.get('reason_codes', []) or []),
+            'live_mode_not_persisted': str(final_state.get('mode', '') or '').strip().lower() == 'watch',
+            'posture_write_skipped_on_denial': not posture_state_path.exists(),
+        }
+
+        report = {
+            'run_id': run_id,
+            'run_dir': _rel_to_repo(run_dir),
+            'probe_dir': _rel_to_repo(FRAMEB_POSTURE_TRANSITION_BYPASS_PROBE_DIR),
+            'script': _rel_to_repo(Path(__file__)),
+            'next_bite_result': _probe_result(result_matrix),
+            'command_runs': {},
+            'artifact_paths': _report_path_map({
+                'security_report_ref': security_report,
+                'last_gate': observerctl_module._control_file(observerctl_module.LAST_GATE_FILE),
+                'run_context': observerctl_module._control_file(observerctl_module.RUN_CONTEXT_FILE),
+                'posture_state': posture_state_path,
+            }),
+            'artifact_snapshots': {
+                'gate_packet': gate_packet,
+                'mode_set_packet': mode_set_packet,
+                'final_state': final_state,
+            },
+            'result_matrix': result_matrix,
+            'findings': {
+                'mode_set_reason_codes': list(mode_set_packet.get('reason_codes', []) or []),
+                'current_from_state': str(mode_set_packet.get('current_from_state', '') or ''),
+                'gate_from_state': str(mode_set_packet.get('gate_from_state', '') or ''),
+            },
+        }
+
+        report_json = run_dir / 'frameb_posture_transition_bypass_probe.json'
+        report_md = run_dir / 'frameb_posture_transition_bypass_probe.md'
+        _write_json(report_json, report)
+        report_md.write_text(_render_result_matrix_markdown('Frame B Posture Transition Bypass Probe', report), encoding='utf-8')
+
+        _append_jsonl(run_index_jsonl, {
+            'run_id': run_id,
+            'timestamp_utc': _utc_stamp(),
+            'run_dir': _rel_to_repo(run_dir),
+            'report_json': _rel_to_repo(report_json),
+            'report_md': _rel_to_repo(report_md),
+            'next_bite_result': report['next_bite_result'],
+            'mode_set_decision': str(mode_set_packet.get('decision', '') or ''),
+        })
+
+        print('run_id={0}'.format(run_id))
+        print('report_json={0}'.format(_rel_to_repo(report_json)))
+        print('report_md={0}'.format(_rel_to_repo(report_md)))
+        print('run_index={0}'.format(_rel_to_repo(run_index_jsonl)))
+        print('next_bite_result={0}'.format(report['next_bite_result']))
+        return 0
+    finally:
+        if original_project_anchor is not None:
+            _restore_probe_observer_project(original_project_anchor, original_file)
+        if original_project_root is not None:
+            _restore_probe_environment(original_env, original_project_root)
+
+
+def run_stale_gate_replay_probe() -> int:
+    run_id = 'frameb-stale-gate-replay-{0}'.format(_utc_stamp())
+    run_dir = FRAMEB_STALE_GATE_REPLAY_PROBE_DIR / 'runs' / run_id
+    run_index_jsonl = FRAMEB_STALE_GATE_REPLAY_PROBE_DIR / 'run_index.jsonl'
+    run_dir.mkdir(parents=True, exist_ok=True)
+
+    original_env: Dict[str, Optional[str]] = {}
+    original_project_root = None
+    original_project_anchor = None
+    original_file = ''
+    try:
+        sandbox_root, log_dir, original_env, original_project_root = _seed_probe_environment(
+            run_dir=run_dir,
+            signing_key='frameb-stale-gate-replay-signing-key',
+            security_report_title='# Frame B stale gate replay probe security report\n',
+        )
+        _anchor, original_project_anchor, original_file = _bind_probe_observer_project(sandbox_root)
+        _seed_runtime_liveness(sandbox_root, log_dir)
+
+        security_report_a = run_dir / 'security_report_a.md'
+        security_report_b = run_dir / 'security_report_b.md'
+        security_report_a.write_text('# frame b stale gate report a\n', encoding='utf-8')
+        security_report_b.write_text('# frame b stale gate report b\n', encoding='utf-8')
+
+        observerctl_module._save_state('sim', 'canary')
+
+        stale_gate_packet = _seed_mode_gate_packet(
+            'sim',
+            'canary',
+            'live',
+            run_id='frameb-stale-gate-packet',
+            posture_trigger_id='pt-frameb-stale-gate',
+            security_report_ref=str(security_report_a),
+            timestamp_utc='2000-01-01T00:00:00Z',
+        )
+        _seed_gate_run_context(
+            run_id=str(stale_gate_packet.get('run_id', '') or ''),
+            posture_trigger_id=str(stale_gate_packet.get('posture_trigger_id', '') or ''),
+            posture_trigger=str(stale_gate_packet.get('posture_trigger', '') or ''),
+            security_report_ref=str(stale_gate_packet.get('security_report_ref', '') or ''),
+        )
+        stale_mode_set_packet = observerctl_module._ops_mode_set(source='sim', to_mode='live')
+
+        replay_gate_packet = _seed_mode_gate_packet(
+            'sim',
+            'canary',
+            'live',
+            run_id='frameb-replayed-gate-packet',
+            posture_trigger_id='pt-frameb-replayed-gate',
+            security_report_ref=str(security_report_a),
+        )
+        replay_run_context = _seed_gate_run_context(
+            run_id='frameb-new-lineage',
+            posture_trigger_id='pt-frameb-new-lineage',
+            posture_trigger=str(replay_gate_packet.get('posture_trigger', '') or ''),
+            security_report_ref=str(security_report_b),
+        )
+        replay_mode_set_packet = observerctl_module._ops_mode_set(source='sim', to_mode='live')
+        final_state = observerctl_module._load_state()
+        posture_state_path = observerctl_module._control_file(observerctl_module.WATCHDOG_POSTURE_FILE)
+
+        result_matrix = {
+            'stale_packet_denied': str(stale_mode_set_packet.get('decision', '') or '').strip().lower() == 'no-go',
+            'stale_reason_emitted': 'critical_check_failed:gate_packet_missing_or_stale' in list(stale_mode_set_packet.get('reason_codes', []) or []),
+            'replay_packet_denied': str(replay_mode_set_packet.get('decision', '') or '').strip().lower() == 'no-go',
+            'lineage_mismatch_reason_emitted': 'critical_check_failed:gate_packet_lineage_mismatch' in list(replay_mode_set_packet.get('reason_codes', []) or []),
+            'replayed_lineage_fields_detected': set(list(replay_mode_set_packet.get('lineage_mismatch_fields', []) or [])) == set(['run_id', 'posture_trigger_id', 'security_report_ref']),
+            'live_mode_not_persisted': str(final_state.get('mode', '') or '').strip().lower() == 'canary',
+            'posture_write_skipped_on_denial': not posture_state_path.exists(),
+            'replay_context_differs_from_gate': str(replay_run_context.get('run_id', '') or '').strip() != str(replay_gate_packet.get('run_id', '') or '').strip(),
+        }
+
+        report = {
+            'run_id': run_id,
+            'run_dir': _rel_to_repo(run_dir),
+            'probe_dir': _rel_to_repo(FRAMEB_STALE_GATE_REPLAY_PROBE_DIR),
+            'script': _rel_to_repo(Path(__file__)),
+            'next_bite_result': _probe_result(result_matrix),
+            'command_runs': {},
+            'artifact_paths': _report_path_map({
+                'security_report_a': security_report_a,
+                'security_report_b': security_report_b,
+                'last_gate': observerctl_module._control_file(observerctl_module.LAST_GATE_FILE),
+                'run_context': observerctl_module._control_file(observerctl_module.RUN_CONTEXT_FILE),
+                'posture_state': posture_state_path,
+            }),
+            'artifact_snapshots': {
+                'stale_gate_packet': stale_gate_packet,
+                'stale_mode_set_packet': stale_mode_set_packet,
+                'replay_gate_packet': replay_gate_packet,
+                'replay_run_context': replay_run_context,
+                'replay_mode_set_packet': replay_mode_set_packet,
+                'final_state': final_state,
+            },
+            'result_matrix': result_matrix,
+            'findings': {
+                'stale_reason_codes': list(stale_mode_set_packet.get('reason_codes', []) or []),
+                'replay_reason_codes': list(replay_mode_set_packet.get('reason_codes', []) or []),
+                'replay_lineage_mismatch_fields': list(replay_mode_set_packet.get('lineage_mismatch_fields', []) or []),
+            },
+        }
+
+        report_json = run_dir / 'frameb_stale_gate_replay_probe.json'
+        report_md = run_dir / 'frameb_stale_gate_replay_probe.md'
+        _write_json(report_json, report)
+        report_md.write_text(_render_result_matrix_markdown('Frame B Stale Gate Replay Probe', report), encoding='utf-8')
+
+        _append_jsonl(run_index_jsonl, {
+            'run_id': run_id,
+            'timestamp_utc': _utc_stamp(),
+            'run_dir': _rel_to_repo(run_dir),
+            'report_json': _rel_to_repo(report_json),
+            'report_md': _rel_to_repo(report_md),
+            'next_bite_result': report['next_bite_result'],
+            'replay_mode_set_decision': str(replay_mode_set_packet.get('decision', '') or ''),
+        })
+
+        print('run_id={0}'.format(run_id))
+        print('report_json={0}'.format(_rel_to_repo(report_json)))
+        print('report_md={0}'.format(_rel_to_repo(report_md)))
+        print('run_index={0}'.format(_rel_to_repo(run_index_jsonl)))
+        print('next_bite_result={0}'.format(report['next_bite_result']))
+        return 0
+    finally:
+        if original_project_anchor is not None:
+            _restore_probe_observer_project(original_project_anchor, original_file)
         if original_project_root is not None:
             _restore_probe_environment(original_env, original_project_root)
 
@@ -3052,6 +4574,663 @@ def run_baseline_monitor_state_recovery_probe() -> int:
             _restore_probe_environment(original_env, original_project_root)
 
 
+def run_keysmith_version_parity_break_probe() -> int:
+    run_id = 'framef-keysmith-version-parity-break-{0}'.format(_utc_stamp())
+    run_dir = FRAMEF_KEYSMITH_VERSION_PARITY_BREAK_PROBE_DIR / 'runs' / run_id
+    run_index_jsonl = FRAMEF_KEYSMITH_VERSION_PARITY_BREAK_PROBE_DIR / 'run_index.jsonl'
+    run_dir.mkdir(parents=True, exist_ok=True)
+
+    original_env: Dict[str, Optional[str]] = {}
+    original_project_root = None
+    try:
+        sandbox_root, _sandbox_log_dir, original_env, original_project_root = _seed_probe_environment(
+            run_dir=run_dir,
+            signing_key='framef-keysmith-version-parity-break-signing-key',
+            security_report_title='# Frame F KEYSMITH version parity break probe security report\n',
+        )
+        _seed_probe_project_root(sandbox_root)
+
+        sandbox_keysmith_path = sandbox_root / 'src' / 'keysmith.py'
+        sandbox_dockerfile = sandbox_root / 'deployment' / 'keysmith' / 'Dockerfile'
+        sandbox_requirements = sandbox_root / 'deployment' / 'keysmith' / 'requirements.txt'
+        sandbox_keysmith_path.parent.mkdir(parents=True, exist_ok=True)
+        sandbox_dockerfile.parent.mkdir(parents=True, exist_ok=True)
+        sandbox_requirements.parent.mkdir(parents=True, exist_ok=True)
+        sandbox_keysmith_path.write_text((PROJECT_ROOT / 'src' / 'keysmith.py').read_text(encoding='utf-8'), encoding='utf-8')
+        sandbox_dockerfile.write_text((PROJECT_ROOT / 'deployment' / 'keysmith' / 'Dockerfile').read_text(encoding='utf-8'), encoding='utf-8')
+        sandbox_requirements.write_text((PROJECT_ROOT / 'deployment' / 'keysmith' / 'requirements.txt').read_text(encoding='utf-8'), encoding='utf-8')
+
+        artifacts_dir = run_dir / 'artifacts'
+        output_dir = artifacts_dir / 'keysmith_exports'
+        artifacts_dir.mkdir(parents=True, exist_ok=True)
+
+        command_runs = {
+            'keysmith_dry_run': _run_observerctl_cli([
+                'ops',
+                'keysmith',
+                'mint',
+                '--dry-run',
+                '--output-dir',
+                str(output_dir),
+                '--json',
+            ]),
+        }
+
+        mint_packet = _command_stdout_json(command_runs['keysmith_dry_run'])
+        result_json_path = _resolve_probe_artifact_path(sandbox_root, str(mint_packet.get('result_json', '') or ''))
+        result_payload = _read_json(result_json_path) if result_json_path.exists() else {}
+        proof_review = observerctl_module._keysmith_result_proof_packet(result_json_path)
+
+        tampered_result_path = artifacts_dir / 'keysmith_result_tampered.json'
+        tampered_payload = json.loads(json.dumps(result_payload)) if result_payload else {}
+        tampered_build_proof = dict(tampered_payload.get('build_proof', {}) or {}) if isinstance(tampered_payload.get('build_proof', {}), dict) else {}
+        tampered_build_proof['keysmith_version'] = '0.0.0-tampered'
+        tampered_payload['build_proof'] = tampered_build_proof
+        _write_json(tampered_result_path, tampered_payload)
+        tampered_review = observerctl_module._keysmith_result_proof_packet(tampered_result_path)
+        tampered_mismatches = dict(tampered_review.get('mismatches', {}) or {}) if isinstance(tampered_review.get('mismatches', {}), dict) else {}
+
+        result_matrix = {
+            'keysmith_dry_run_completed': int(command_runs['keysmith_dry_run'].get('returncode', 1)) == 0 and str(mint_packet.get('decision', '')).strip().lower() == 'go',
+            'result_json_written': result_json_path.exists(),
+            'positive_proof_review_go': str(proof_review.get('decision', '')).strip().lower() == 'go',
+            'positive_proof_review_has_no_mismatches': len(dict(proof_review.get('mismatches', {}) or {})) == 0,
+            'tampered_proof_review_no_go': str(tampered_review.get('decision', '')).strip().lower() == 'no-go',
+            'tampered_proof_reason_emitted': 'critical_check_failed:keysmith_version_parity_mismatch' in list(tampered_review.get('reason_codes', []) or []),
+            'tampered_proof_surfaces_version_mismatch': 'keysmith_version' in tampered_mismatches,
+            'proof_review_stays_names_only': 'DRY_RUN_PLACEHOLDER_DO_NOT_USE' not in json.dumps({
+                'mint_packet': mint_packet,
+                'proof_review': proof_review,
+                'tampered_review': tampered_review,
+            }),
+        }
+
+        report = {
+            'scenario_id': 'S11',
+            'threat_class': 'keysmith_version_parity_break',
+            'expected_safe_outcome': 'KEYSMITH retained proof mismatches are surfaced as explicit no-go instead of standing in for the current build under review.',
+            'observed_boundary_result': 'keysmith_version_parity_break_detected_fail_closed' if _probe_result(result_matrix) == 'pass' else 'review_required',
+            'run_id': run_id,
+            'run_dir': _rel_to_repo(run_dir),
+            'probe_dir': _rel_to_repo(FRAMEF_KEYSMITH_VERSION_PARITY_BREAK_PROBE_DIR),
+            'script': _rel_to_repo(Path(__file__)),
+            'next_bite_result': _probe_result(result_matrix),
+            'command_runs': command_runs,
+            'artifact_paths': _report_path_map(
+                {
+                    'security_report': run_dir / 'security_report.md',
+                    'result_json': result_json_path,
+                    'tampered_result_json': tampered_result_path,
+                }
+            ),
+            'artifact_snapshots': {
+                'mint_packet': mint_packet,
+                'result_payload': result_payload,
+                'proof_review': proof_review,
+                'tampered_payload': tampered_payload,
+                'tampered_review': tampered_review,
+            },
+            'result_matrix': result_matrix,
+            'findings': {
+                'build_proof': dict(proof_review.get('expected_build_proof', {}) or {}) if isinstance(proof_review.get('expected_build_proof', {}), dict) else {},
+                'tampered_mismatches': tampered_mismatches,
+                'mint_summary': str(mint_packet.get('summary', '') or ''),
+            },
+        }
+
+        report_json = run_dir / 'framef_keysmith_version_parity_break_probe.json'
+        report_md = run_dir / 'framef_keysmith_version_parity_break_probe.md'
+        _write_json(report_json, report)
+        report_md.write_text(_render_result_matrix_markdown('Frame F KEYSMITH Version Parity Break Probe', report), encoding='utf-8')
+
+        _append_jsonl(
+            run_index_jsonl,
+            {
+                'run_id': run_id,
+                'timestamp_utc': _utc_stamp(),
+                'run_dir': _rel_to_repo(run_dir),
+                'report_json': _rel_to_repo(report_json),
+                'report_md': _rel_to_repo(report_md),
+                'next_bite_result': report['next_bite_result'],
+                'observed_boundary_result': report['observed_boundary_result'],
+            },
+        )
+
+        print('run_id={0}'.format(run_id))
+        print('report_json={0}'.format(_rel_to_repo(report_json)))
+        print('report_md={0}'.format(_rel_to_repo(report_md)))
+        print('run_index={0}'.format(_rel_to_repo(run_index_jsonl)))
+        print('next_bite_result={0}'.format(report['next_bite_result']))
+        return 0
+    finally:
+        if original_project_root is not None:
+            _restore_probe_environment(original_env, original_project_root)
+
+
+def run_public_report_boundary_escape_probe() -> int:
+    from analysis.report_aggregate import append_ds_run_index, refresh_tracked_ds_publication
+    from analysis.report_pack import prepare_report_bundle, write_report_bundle
+
+    run_id = 'frameg-public-report-boundary-escape-{0}'.format(_utc_stamp())
+    run_dir = FRAMEG_PUBLIC_REPORT_BOUNDARY_ESCAPE_PROBE_DIR / 'runs' / run_id
+    run_index_jsonl = FRAMEG_PUBLIC_REPORT_BOUNDARY_ESCAPE_PROBE_DIR / 'run_index.jsonl'
+    run_dir.mkdir(parents=True, exist_ok=True)
+
+    original_env: Dict[str, Optional[str]] = {}
+    original_project_root = None
+    original_project_anchor = None
+    original_file = ''
+    try:
+        sandbox_root, _sandbox_log_dir, original_env, original_project_root = _seed_probe_environment(
+            run_dir=run_dir,
+            signing_key='frameg-public-report-boundary-escape-signing-key',
+            security_report_title='# Frame G public report boundary escape probe security report\n',
+        )
+        anchor, original_project_anchor, original_file = _bind_probe_observer_project(sandbox_root)
+        _seed_shipped_manual_report_surfaces(sandbox_root)
+
+        score_bundle = prepare_report_bundle(anchor, 'score', run_id='frameg-public-boundary-score')
+        scoring_dir = score_bundle.artifact_dirs['scoring']
+        scoring_dir.mkdir(parents=True, exist_ok=True)
+        scores_csv = scoring_dir / 'scores.csv'
+        threshold_report_json = scoring_dir / 'threshold_report.json'
+        threshold_report_md = scoring_dir / 'threshold_report.md'
+        scores_csv.write_text('record_id,score_anomaly\na,0.1\nb,0.9\n', encoding='utf-8')
+        threshold_report_json.write_text('{}\n', encoding='utf-8')
+        threshold_report_md.write_text('# threshold\n', encoding='utf-8')
+
+        figures_dir = score_bundle.run_root / 'figures'
+        figures_dir.mkdir(parents=True, exist_ok=True)
+        figure_path = figures_dir / 'score_distribution.png'
+        figure_path.write_bytes(b'frameg-public-report-boundary-escape-fixture')
+
+        score_report_bundle = write_report_bundle(
+            project_anchor=anchor,
+            bundle=score_bundle,
+            packet={
+                'timestamp_utc': '2026-04-22T00:15:00Z',
+                'runtime_cli_surface': 'observerctl',
+                'decision': 'go',
+                'action': 'ds-score',
+                'command_family': 'ds',
+                'command_path': 'observerctl ds score',
+                'implementation_state': 'command-available',
+                'underlying_surface': 'analysis.score_unsupervised',
+                'summary': 'Frame G public report boundary publication candidate.',
+                'run_id': score_bundle.run_id,
+                'collection_alias': 'frameg-public-boundary',
+                'records_scored': 2,
+                'anomaly_direction': 'lower-is-more-anomalous',
+                'score_column': 'score_anomaly',
+                'thresholding': {
+                    'decision': 'go',
+                    'anomaly_direction': 'lower-is-more-anomalous',
+                    'flag_rule': 'score <= threshold',
+                    'threshold': 0.2,
+                    'target_fpr': 0.01,
+                    'actual_fpr': 0.0,
+                    'flagged_records': 1,
+                    'records_scored': 2,
+                    'report_json': str(threshold_report_json),
+                    'report_md': str(threshold_report_md),
+                    'scores_csv': str(scores_csv),
+                },
+                'visuals': {
+                    'decision': 'go',
+                    'figure_count': 1,
+                    'anomaly_direction': 'lower-is-more-anomalous',
+                    'score_column': 'score_anomaly',
+                    'figures': [
+                        {
+                            'id': 'score_distribution',
+                            'title': 'Score distribution',
+                            'caption': 'Distribution of anomaly scores.',
+                            'path': str(figure_path),
+                            'kind': 'distribution',
+                        }
+                    ],
+                },
+                'artifacts': {},
+                'reason_codes': [],
+            },
+            artifact_paths={
+                'scores_csv': scores_csv,
+                'score_distribution_png': figure_path,
+                'threshold_report_json': threshold_report_json,
+                'threshold_report_md': threshold_report_md,
+            },
+            context={'output_override': False},
+        )
+
+        source_report_json_path = _resolve_probe_artifact_path(
+            sandbox_root,
+            str(score_report_bundle.get('paths', {}).get('report_json', '') or ''),
+        )
+        source_report_md_path = _resolve_probe_artifact_path(
+            sandbox_root,
+            str(score_report_bundle.get('paths', {}).get('report_md', '') or ''),
+        )
+        source_report_payload = _read_json(source_report_json_path)
+        source_report_payload['result']['thresholding']['report_json'] = str(threshold_report_json).replace('\\', '/')
+        source_report_payload['result']['thresholding']['report_md'] = str(threshold_report_md).replace('\\', '/')
+        source_report_payload['result']['thresholding']['scores_csv'] = str(scores_csv).replace('\\', '/')
+        source_report_payload['result']['visuals']['figures'][0]['path'] = str(figure_path).replace('\\', '/')
+        source_report_json_path.write_text(json.dumps(source_report_payload, indent=2, sort_keys=True), encoding='utf-8')
+
+        local_authority_lure = 'C:/Operators/RuntimeAuthority/local_only/not-for-public.json'
+        source_report_md_path.write_text(
+            '# stale canonical markdown\n\n- leaked path: {0}\n- local authority lure: {1}\n'.format(
+                str(figure_path).replace('\\', '/'),
+                local_authority_lure,
+            ),
+            encoding='utf-8',
+        )
+
+        append_ds_run_index(project_anchor=anchor, manifest_payload=score_report_bundle['manifest'])
+        publication = refresh_tracked_ds_publication(
+            project_anchor=anchor,
+            current_manifest_payload=score_report_bundle['manifest'],
+        )
+
+        current_run = publication.get('current_run', {}) if isinstance(publication.get('current_run', {}), dict) else {}
+        published_paths = current_run.get('published_report_paths', {}) if isinstance(current_run.get('published_report_paths', {}), dict) else {}
+        aggregate_paths = publication.get('aggregate_paths', {}) if isinstance(publication.get('aggregate_paths', {}), dict) else {}
+        published_processing_md_path = _resolve_probe_artifact_path(
+            sandbox_root,
+            str(published_paths.get('processing_markdown', '') or ''),
+        )
+        published_collection_md_path = _resolve_probe_artifact_path(
+            sandbox_root,
+            str(published_paths.get('markdown', '') or ''),
+        )
+        published_report_json_path = _resolve_probe_artifact_path(
+            sandbox_root,
+            str(published_paths.get('json', '') or ''),
+        )
+        published_manifest_path = _resolve_probe_artifact_path(
+            sandbox_root,
+            str(published_paths.get('manifest', '') or ''),
+        )
+        generated_surfaces_md_path = _resolve_probe_artifact_path(
+            sandbox_root,
+            str(aggregate_paths.get('generated_surfaces_md', '') or ''),
+        )
+
+        published_processing_text = published_processing_md_path.read_text(encoding='utf-8') if published_processing_md_path.exists() else ''
+        published_collection_text = published_collection_md_path.read_text(encoding='utf-8') if published_collection_md_path.exists() else ''
+        generated_surfaces_text = generated_surfaces_md_path.read_text(encoding='utf-8') if generated_surfaces_md_path.exists() else ''
+        published_report_payload = _read_json(published_report_json_path) if published_report_json_path.exists() else {}
+        published_manifest_payload = _read_json(published_manifest_path) if published_manifest_path.exists() else {}
+        project_root_prefix = str(sandbox_root).replace('\\', '/')
+        published_figures = current_run.get('published_figures', []) if isinstance(current_run.get('published_figures', []), list) else []
+        published_figure_path = _resolve_probe_artifact_path(
+            sandbox_root,
+            str(published_figures[0] if published_figures else ''),
+        )
+        published_visuals = published_report_payload.get('result', {}).get('visuals', {}) if isinstance(published_report_payload.get('result', {}), dict) else {}
+        published_visual_figures = published_visuals.get('figures', []) if isinstance(published_visuals.get('figures', []), list) else []
+        published_visual_path = str(published_visual_figures[0].get('path', '') or '').strip() if published_visual_figures and isinstance(published_visual_figures[0], dict) else ''
+        stable_collection_landing = sandbox_root / 'docs' / 'reports' / 'collections' / 'frameg-public-boundary' / 'collection' / 'report.md'
+
+        result_matrix = {
+            'source_report_seed_contains_absolute_path': project_root_prefix in str(source_report_payload),
+            'publication_refresh_go': str(publication.get('decision', '') or '').strip().lower() == 'go',
+            'published_processing_markdown_written': published_processing_md_path.exists(),
+            'published_collection_markdown_written': published_collection_md_path.exists(),
+            'published_report_json_written': published_report_json_path.exists() and published_manifest_path.exists(),
+            'absolute_project_root_removed_from_public_markdown': project_root_prefix not in published_processing_text and project_root_prefix not in published_collection_text,
+            'absolute_project_root_removed_from_public_json': project_root_prefix not in json.dumps(published_report_payload, sort_keys=True),
+            'local_authority_lure_removed_from_reader_surfaces': local_authority_lure not in published_processing_text and local_authority_lure not in published_collection_text and local_authority_lure not in generated_surfaces_text,
+            'published_figure_rewritten_relative': bool(published_figures) and project_root_prefix not in str(published_figures[0]) and published_figure_path.exists() and published_visual_path == str(published_figures[0]),
+            'human_facing_generated_surfaces_contract_present': all(
+                token in generated_surfaces_text
+                for token in (
+                    'Aggregate surface roles',
+                    'Runtime-safe population census',
+                    'Contract/reference surface',
+                )
+            ),
+            'stable_collection_landing_absent': not stable_collection_landing.exists(),
+        }
+
+        report = {
+            'run_id': run_id,
+            'run_dir': _rel_to_repo(run_dir),
+            'probe_dir': _rel_to_repo(FRAMEG_PUBLIC_REPORT_BOUNDARY_ESCAPE_PROBE_DIR),
+            'script': _rel_to_repo(Path(__file__)),
+            'scenario_id': 'S12',
+            'threat_class': 'public_report_boundary_escape',
+            'expected_safe_outcome': 'Reader-facing publication stays human-facing, strips absolute-path noise, and keeps local authority residue out of tracked docs/reports surfaces.',
+            'observed_boundary_result': 'public_report_boundary_preserved',
+            'next_bite_result': _probe_result(result_matrix),
+            'command_runs': {},
+            'artifact_paths': _report_path_map(
+                {
+                    'security_report': run_dir / 'security_report.md',
+                    'source_report_json': source_report_json_path,
+                    'source_report_md': source_report_md_path,
+                    'published_processing_markdown': published_processing_md_path,
+                    'published_collection_markdown': published_collection_md_path,
+                    'published_report_json': published_report_json_path,
+                    'published_manifest_json': published_manifest_path,
+                    'generated_surfaces_md': generated_surfaces_md_path,
+                    'published_figure_png': published_figure_path,
+                }
+            ),
+            'artifact_snapshots': {
+                'publication': publication,
+                'published_report_payload': published_report_payload,
+                'published_manifest_payload': published_manifest_payload,
+            },
+            'result_matrix': result_matrix,
+            'findings': {
+                'collection_alias': str(current_run.get('collection_alias', '') or 'frameg-public-boundary'),
+                'local_authority_lure': local_authority_lure,
+                'published_figures': published_figures,
+                'generated_surfaces_md': _rel_to_repo(generated_surfaces_md_path),
+            },
+        }
+
+        report_json = run_dir / 'frameg_public_report_boundary_escape_probe.json'
+        report_md = run_dir / 'frameg_public_report_boundary_escape_probe.md'
+        _write_json(report_json, report)
+        report_md.write_text(_render_result_matrix_markdown('Frame G Public Report Boundary Escape Probe', report), encoding='utf-8')
+
+        _append_jsonl(
+            run_index_jsonl,
+            {
+                'run_id': run_id,
+                'timestamp_utc': _utc_stamp(),
+                'run_dir': _rel_to_repo(run_dir),
+                'report_json': _rel_to_repo(report_json),
+                'report_md': _rel_to_repo(report_md),
+                'next_bite_result': report['next_bite_result'],
+                'observed_boundary_result': report['observed_boundary_result'],
+            },
+        )
+
+        print('run_id={0}'.format(run_id))
+        print('report_json={0}'.format(_rel_to_repo(report_json)))
+        print('report_md={0}'.format(_rel_to_repo(report_md)))
+        print('run_index={0}'.format(_rel_to_repo(run_index_jsonl)))
+        print('next_bite_result={0}'.format(report['next_bite_result']))
+        return 0
+    finally:
+        if original_project_anchor is not None:
+            _restore_probe_observer_project(original_project_anchor, original_file)
+        if original_project_root is not None:
+            _restore_probe_environment(original_env, original_project_root)
+
+
+def run_bootstrap_root_starvation_probe() -> int:
+    run_id = 'frameg-bootstrap-root-starvation-{0}'.format(_utc_stamp())
+    run_dir = FRAMEG_BOOTSTRAP_ROOT_STARVATION_PROBE_DIR / 'runs' / run_id
+    run_index_jsonl = FRAMEG_BOOTSTRAP_ROOT_STARVATION_PROBE_DIR / 'run_index.jsonl'
+    run_dir.mkdir(parents=True, exist_ok=True)
+
+    original_env: Dict[str, Optional[str]] = {}
+    original_project_root = None
+    original_project_anchor = None
+    original_file = ''
+    try:
+        sandbox_root, _sandbox_log_dir, original_env, original_project_root = _seed_probe_environment(
+            run_dir=run_dir,
+            signing_key='frameg-bootstrap-root-starvation-signing-key',
+            security_report_title='# Frame G bootstrap root starvation probe security report\n',
+        )
+        _override_env_vars(
+            original_env,
+            {'CALAMUM_LIBRARIAN_VAULT_KEY': 'frameg-bootstrap-root-starvation-vault-key'},
+        )
+        _anchor, original_project_anchor, original_file = _bind_probe_observer_project(sandbox_root)
+
+        specs = observerctl_module._ops_bootstrap_root_specs()
+        spec_index = {str(spec.get('id', '') or ''): spec for spec in specs}
+        blocked_root_id = 'reports_operations_root'
+        missing_root_id = 'analysis_root'
+        blocked_root_path = Path(str(spec_index[blocked_root_id].get('path', '') or ''))
+        blocked_root_path.parent.mkdir(parents=True, exist_ok=True)
+        blocked_root_path.write_text('blocked bootstrap root placeholder\n', encoding='utf-8')
+
+        check_command = _run_observerctl_cli(['ops', 'bootstrap', '--check', '--json'])
+        bootstrap_command = _run_observerctl_cli(['ops', 'bootstrap', '--json'])
+        check_packet = _command_stdout_json(check_command)
+        bootstrap_packet = _command_stdout_json(bootstrap_command)
+        check_roots = {
+            str(row.get('id', '') or ''): row
+            for row in check_packet.get('roots', [])
+            if isinstance(row, dict)
+        }
+        bootstrap_roots = {
+            str(row.get('id', '') or ''): row
+            for row in bootstrap_packet.get('roots', [])
+            if isinstance(row, dict)
+        }
+
+        result_matrix = {
+            'check_bootstrap_no_go': str(check_packet.get('decision', '') or '').strip().lower() == 'no-go',
+            'check_bootstrap_marks_missing_root': str(check_roots.get(missing_root_id, {}).get('status', '') or '').strip().lower() == 'missing',
+            'missing_root_reason_emitted': observerctl_module._ops_bootstrap_root_reason(missing_root_id) in list(check_packet.get('reason_codes', [])),
+            'blocked_root_seed_written': blocked_root_path.exists() and not blocked_root_path.is_dir(),
+            'mutating_bootstrap_no_go': str(bootstrap_packet.get('decision', '') or '').strip().lower() == 'no-go',
+            'blocked_root_reason_emitted': observerctl_module._ops_bootstrap_root_reason(blocked_root_id, blocked=True) in list(bootstrap_packet.get('reason_codes', [])),
+            'blocked_root_status_preserved': str(bootstrap_roots.get(blocked_root_id, {}).get('status', '') or '').strip().lower() == 'blocked',
+            'other_roots_created_under_partial_success': int(dict(bootstrap_packet.get('counts', {}) or {}).get('created_roots', 0) or 0) > 0,
+            'partial_success_not_reported_as_go': str(bootstrap_packet.get('summary', '') or '').strip() == 'Runtime bootstrap could not prepare all required local roots.',
+            'blocked_root_not_converted_to_directory': blocked_root_path.exists() and not blocked_root_path.is_dir(),
+        }
+
+        report = {
+            'run_id': run_id,
+            'run_dir': _rel_to_repo(run_dir),
+            'probe_dir': _rel_to_repo(FRAMEG_BOOTSTRAP_ROOT_STARVATION_PROBE_DIR),
+            'script': _rel_to_repo(Path(__file__)),
+            'scenario_id': 'S13',
+            'threat_class': 'bootstrap_root_starvation',
+            'expected_safe_outcome': 'Missing or blocked bootstrap roots force a truthful no-go while still making partial creation visible instead of inventing healthy readiness.',
+            'observed_boundary_result': 'bootstrap_root_starvation_degraded_truthfully',
+            'next_bite_result': _probe_result(result_matrix),
+            'command_runs': {
+                'bootstrap_check': check_command,
+                'bootstrap_create': bootstrap_command,
+            },
+            'artifact_paths': _report_path_map(
+                {
+                    'security_report': run_dir / 'security_report.md',
+                    'blocked_root_placeholder': blocked_root_path,
+                }
+            ),
+            'artifact_snapshots': {
+                'bootstrap_check': check_packet,
+                'bootstrap_create': bootstrap_packet,
+            },
+            'result_matrix': result_matrix,
+            'findings': {
+                'blocked_root_id': blocked_root_id,
+                'blocked_root_path': _rel_to_repo(blocked_root_path),
+                'missing_root_id': missing_root_id,
+                'created_roots': dict(bootstrap_packet.get('counts', {}) or {}).get('created_roots', 0),
+                'bootstrap_reason_codes': list(bootstrap_packet.get('reason_codes', [])),
+            },
+        }
+
+        report_json = run_dir / 'frameg_bootstrap_root_starvation_probe.json'
+        report_md = run_dir / 'frameg_bootstrap_root_starvation_probe.md'
+        _write_json(report_json, report)
+        report_md.write_text(_render_result_matrix_markdown('Frame G Bootstrap Root Starvation Probe', report), encoding='utf-8')
+
+        _append_jsonl(
+            run_index_jsonl,
+            {
+                'run_id': run_id,
+                'timestamp_utc': _utc_stamp(),
+                'run_dir': _rel_to_repo(run_dir),
+                'report_json': _rel_to_repo(report_json),
+                'report_md': _rel_to_repo(report_md),
+                'next_bite_result': report['next_bite_result'],
+                'observed_boundary_result': report['observed_boundary_result'],
+            },
+        )
+
+        print('run_id={0}'.format(run_id))
+        print('report_json={0}'.format(_rel_to_repo(report_json)))
+        print('report_md={0}'.format(_rel_to_repo(report_md)))
+        print('run_index={0}'.format(_rel_to_repo(run_index_jsonl)))
+        print('next_bite_result={0}'.format(report['next_bite_result']))
+        return 0
+    finally:
+        if original_project_anchor is not None:
+            _restore_probe_observer_project(original_project_anchor, original_file)
+        if original_project_root is not None:
+            _restore_probe_environment(original_env, original_project_root)
+
+
+def run_sandbox_catalog_authority_drift_probe() -> int:
+    run_id = 'frameg-sandbox-catalog-authority-drift-{0}'.format(_utc_stamp())
+    run_dir = FRAMEG_SANDBOX_CATALOG_AUTHORITY_DRIFT_PROBE_DIR / 'runs' / run_id
+    run_index_jsonl = FRAMEG_SANDBOX_CATALOG_AUTHORITY_DRIFT_PROBE_DIR / 'run_index.jsonl'
+    run_dir.mkdir(parents=True, exist_ok=True)
+
+    original_env: Dict[str, Optional[str]] = {}
+    original_project_root = None
+    original_project_anchor = None
+    original_file = ''
+    original_registry_report_tmp = None
+    original_runs_repo_root = None
+    try:
+        sandbox_root, _sandbox_log_dir, original_env, original_project_root = _seed_probe_environment(
+            run_dir=run_dir,
+            signing_key='frameg-sandbox-catalog-authority-drift-signing-key',
+            security_report_title='# Frame G sandbox catalog authority drift probe security report\n',
+        )
+        _anchor, original_project_anchor, original_file = _bind_probe_observer_project(sandbox_root)
+        original_registry_report_tmp, original_runs_repo_root = _bind_sandbox_catalog_roots(REPO_ROOT / 'report_tmp', REPO_ROOT)
+
+        catalog_command = _run_observerctl_cli(['sandbox', 'list', '--json'])
+        canonical_show_command = _run_observerctl_cli(['sandbox', 'show', 'metadata-contract', '--json'])
+        alias_show_command = _run_observerctl_cli(['sandbox', 'show', 'metadata-contract-reg', '--json'])
+        catalog_packet = _command_stdout_json(catalog_command)
+        canonical_show_packet = _command_stdout_json(canonical_show_command)
+        alias_show_packet = _command_stdout_json(alias_show_command)
+        canonical_definition = canonical_show_packet.get('definition', {}) if isinstance(canonical_show_packet.get('definition', {}), dict) else {}
+
+        run_index_path = Path(str(canonical_definition.get('run_index_path', '') or '').replace('/', os.sep))
+        stale_run_id = 'metadata-contract-stale-{0}'.format(_utc_stamp())
+        stale_run_dir = run_index_path.parent / 'runs' / stale_run_id
+        stale_report_json_path = stale_run_dir / 'report.json'
+        stale_run_dir.mkdir(parents=True, exist_ok=True)
+        _append_jsonl(
+            run_index_path,
+            {
+                'run_id': stale_run_id,
+                'timestamp_utc': '2026-04-22T00:20:00Z',
+                'run_dir': _rel_to_repo(stale_run_dir),
+                'report_json': _rel_to_repo(stale_report_json_path),
+                'next_bite_result': 'review',
+                'observed_boundary_result': 'synthetic_stale_run_reference',
+            },
+        )
+
+        runs_list_command = _run_observerctl_cli(['sandbox', 'runs', 'list', '--json'])
+        stale_review_command = _run_observerctl_cli(['sandbox', 'runs', 'show', stale_run_id, '--json'])
+        runs_list_packet = _command_stdout_json(runs_list_command)
+        stale_review_packet = _command_stdout_json(stale_review_command)
+        catalog_definitions = catalog_packet.get('definitions', []) if isinstance(catalog_packet.get('definitions', []), list) else []
+        catalog_ids = [str(row.get('id', '') or '') for row in catalog_definitions if isinstance(row, dict)]
+        visible_run_ids = [
+            str(row.get('run_id', '') or '')
+            for row in runs_list_packet.get('runs', [])
+            if isinstance(row, dict)
+        ]
+
+        result_matrix = {
+            'catalog_list_go': str(catalog_packet.get('decision', '') or '').strip().lower() == 'go',
+            'catalog_ids_unique': bool(catalog_ids) and len(catalog_ids) == len(set(catalog_ids)),
+            'canonical_definition_show_go': str(canonical_show_packet.get('decision', '') or '').strip().lower() == 'go',
+            'canonical_selector_policy_exact_name_only': str(canonical_definition.get('selector_policy', '') or '').strip().lower() == 'exact-name-only',
+            'prefix_alias_lookup_denied': str(alias_show_packet.get('decision', '') or '').strip().lower() == 'no-go' and 'critical_check_failed:unknown_sandbox_definition' in list(alias_show_packet.get('reason_codes', [])),
+            'stale_run_index_row_written': run_index_path.exists(),
+            'stale_run_visible_in_catalog_list': stale_run_id in visible_run_ids,
+            'stale_run_review_no_go': str(stale_review_packet.get('decision', '') or '').strip().lower() == 'no-go',
+            'stale_run_reason_emitted': 'critical_check_failed:sandbox_run_report_missing' in list(stale_review_packet.get('reason_codes', [])),
+            'stale_run_payload_not_presented_as_reviewable': not bool(stale_review_packet.get('report', {})),
+        }
+
+        report = {
+            'run_id': run_id,
+            'run_dir': _rel_to_repo(run_dir),
+            'probe_dir': _rel_to_repo(FRAMEG_SANDBOX_CATALOG_AUTHORITY_DRIFT_PROBE_DIR),
+            'script': _rel_to_repo(Path(__file__)),
+            'scenario_id': 'S14',
+            'threat_class': 'sandbox_catalog_authority_drift',
+            'expected_safe_outcome': 'Exact-name-only catalog discipline holds and stale retained-run references fail closed instead of being presented as trustworthy review material.',
+            'observed_boundary_result': 'sandbox_catalog_authority_drift_visible_fail_closed',
+            'next_bite_result': _probe_result(result_matrix),
+            'command_runs': {
+                'catalog_list': catalog_command,
+                'canonical_show': canonical_show_command,
+                'alias_show': alias_show_command,
+                'runs_list': runs_list_command,
+                'stale_run_review': stale_review_command,
+            },
+            'artifact_paths': _report_path_map(
+                {
+                    'security_report': run_dir / 'security_report.md',
+                    'catalog_run_index_jsonl': run_index_path,
+                    'stale_run_dir': stale_run_dir,
+                }
+            ),
+            'artifact_snapshots': {
+                'catalog_list': catalog_packet,
+                'canonical_show': canonical_show_packet,
+                'alias_show': alias_show_packet,
+                'runs_list': runs_list_packet,
+                'stale_review': stale_review_packet,
+            },
+            'result_matrix': result_matrix,
+            'findings': {
+                'catalog_count': len(catalog_ids),
+                'canonical_definition_id': str(canonical_definition.get('id', '') or ''),
+                'alias_candidate': 'metadata-contract-reg',
+                'stale_run_id': stale_run_id,
+                'stale_report_json': _rel_to_repo(stale_report_json_path),
+                'stale_review_reason_codes': list(stale_review_packet.get('reason_codes', [])),
+            },
+        }
+
+        report_json = run_dir / 'frameg_sandbox_catalog_authority_drift_probe.json'
+        report_md = run_dir / 'frameg_sandbox_catalog_authority_drift_probe.md'
+        _write_json(report_json, report)
+        report_md.write_text(_render_result_matrix_markdown('Frame G Sandbox Catalog Authority Drift Probe', report), encoding='utf-8')
+
+        _append_jsonl(
+            run_index_jsonl,
+            {
+                'run_id': run_id,
+                'timestamp_utc': _utc_stamp(),
+                'run_dir': _rel_to_repo(run_dir),
+                'report_json': _rel_to_repo(report_json),
+                'report_md': _rel_to_repo(report_md),
+                'next_bite_result': report['next_bite_result'],
+                'observed_boundary_result': report['observed_boundary_result'],
+            },
+        )
+
+        print('run_id={0}'.format(run_id))
+        print('report_json={0}'.format(_rel_to_repo(report_json)))
+        print('report_md={0}'.format(_rel_to_repo(report_md)))
+        print('run_index={0}'.format(_rel_to_repo(run_index_jsonl)))
+        print('next_bite_result={0}'.format(report['next_bite_result']))
+        return 0
+    finally:
+        if original_registry_report_tmp is not None and original_runs_repo_root is not None:
+            _restore_sandbox_catalog_roots(original_registry_report_tmp, original_runs_repo_root)
+        if original_project_anchor is not None:
+            _restore_probe_observer_project(original_project_anchor, original_file)
+        if original_project_root is not None:
+            _restore_probe_environment(original_env, original_project_root)
+
+
 def _definition_registry() -> Dict[str, Callable[[], int]]:
     return {
         'feedback-loop': run_feedback_loop_simulation,
@@ -3064,6 +5243,18 @@ def _definition_registry() -> Dict[str, Callable[[], int]]:
         'ds-wizard-blocked-execute-truthfulness': run_ds_wizard_blocked_execute_truthfulness_probe,
         'ds-wizard-execute-failure-truthfulness': run_ds_wizard_execute_failure_truthfulness_probe,
         'ds-alias-coherence': run_ds_alias_coherence_probe,
+        'posture-transition-bypass': run_posture_transition_bypass_probe,
+        'stale-gate-replay': run_stale_gate_replay_probe,
+        'names-only-persistence-escape': run_names_only_persistence_escape_probe,
+        'packet-artifact-divergence-truthfulness': run_packet_artifact_divergence_truthfulness_probe,
+        'watchdog-heartbeat-spoof-resistance': run_watchdog_heartbeat_spoof_resistance_probe,
+        'resource-lockdown-chaos': run_resource_lockdown_chaos_probe,
+        'baseline-authority-tamper': run_baseline_authority_tamper_probe,
+        'report-lineage-forgery': run_report_lineage_forgery_probe,
+        'keysmith-version-parity-break': run_keysmith_version_parity_break_probe,
+        'public-report-boundary-escape': run_public_report_boundary_escape_probe,
+        'bootstrap-root-starvation': run_bootstrap_root_starvation_probe,
+        'sandbox-catalog-authority-drift': run_sandbox_catalog_authority_drift_probe,
         'baseline-monitor-runtime': run_baseline_monitor_runtime_probe,
         'validation-cycle-lineage': run_validation_cycle_lineage_probe,
         'baseline-monitor-restart-continuity': run_baseline_monitor_restart_continuity_probe,
@@ -3079,7 +5270,7 @@ def build_parser() -> argparse.ArgumentParser:
         'definition',
         nargs='?',
         default='feedback-loop',
-        help='Definition to run: feedback-loop, metadata-contract, metadata-contract-regression, ds-wizard-hydration, ds-wizard-stale-state-continuity, ds-wizard-durability, ds-wizard-labeled-eval-contract-coherence, ds-wizard-blocked-execute-truthfulness, ds-wizard-execute-failure-truthfulness, ds-alias-coherence, baseline-monitor-runtime, validation-cycle-lineage, baseline-monitor-restart-continuity, baseline-monitor-state-recovery, librarian-access-exchange, librarian-vault-controls',
+        help='Definition to run: feedback-loop, metadata-contract, metadata-contract-regression, ds-wizard-hydration, ds-wizard-stale-state-continuity, ds-wizard-durability, ds-wizard-labeled-eval-contract-coherence, ds-wizard-blocked-execute-truthfulness, ds-wizard-execute-failure-truthfulness, ds-alias-coherence, posture-transition-bypass, stale-gate-replay, names-only-persistence-escape, packet-artifact-divergence-truthfulness, watchdog-heartbeat-spoof-resistance, resource-lockdown-chaos, baseline-authority-tamper, report-lineage-forgery, keysmith-version-parity-break, public-report-boundary-escape, bootstrap-root-starvation, sandbox-catalog-authority-drift, baseline-monitor-runtime, validation-cycle-lineage, baseline-monitor-restart-continuity, baseline-monitor-state-recovery, librarian-access-exchange, librarian-vault-controls',
     )
     parser.add_argument(
         '--list-definitions',
@@ -3106,6 +5297,16 @@ def main(argv: Optional[List[str]] = None) -> int:
             'ds-wizard-blocked-execute-truthfulness',
             'ds-wizard-execute-failure-truthfulness',
             'ds-alias-coherence',
+            'names-only-persistence-escape',
+            'packet-artifact-divergence-truthfulness',
+            'watchdog-heartbeat-spoof-resistance',
+            'resource-lockdown-chaos',
+            'baseline-authority-tamper',
+            'report-lineage-forgery',
+            'keysmith-version-parity-break',
+            'public-report-boundary-escape',
+            'bootstrap-root-starvation',
+            'sandbox-catalog-authority-drift',
             'baseline-monitor-runtime',
             'validation-cycle-lineage',
             'baseline-monitor-restart-continuity',

@@ -1,0 +1,8 @@
+{
+  "archive_id": "docs_metrics_residue_20260422",
+  "created_at": "2026-04-22T07:31:00Z",
+  "reason": "Archive the empty non-canonical docs/metrics directory so the tracked documentation tree matches the schema-layout guardrail contract.",
+  "archived_items": [
+    "docs/metrics/"
+  ]
+}

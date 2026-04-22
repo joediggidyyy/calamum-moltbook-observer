@@ -1,0 +1,23 @@
+{
+  "archive_id": "operations_doc_schema_rebucket_20260422",
+  "created_at": "2026-04-22T07:25:00Z",
+  "reason": "Archive obsolete free-floating operations evidence after rebucketing the active job spine to typed audit and snapshot surfaces under local_untracked/reports/operations/audits/.",
+  "active_replacement_root": "projects/calamum-moltbook-observer/local_untracked/reports/operations/audits/",
+  "archived_items": [
+    "local_untracked/reports/operations/frame_a_result_matrix.json",
+    "local_untracked/reports/operations/frame_a_threat_register.md",
+    "local_untracked/reports/operations/frame_b_gate_posture.md",
+    "local_untracked/reports/operations/frame_b_stale_state.json",
+    "local_untracked/reports/operations/frame_c_names_only.md",
+    "local_untracked/reports/operations/frame_c_truthfulness.json",
+    "local_untracked/reports/operations/frame_d_recovery.json",
+    "local_untracked/reports/operations/frame_d_runtime_spoof.md",
+    "local_untracked/reports/operations/frame_e_authority_tamper.md",
+    "local_untracked/reports/operations/frame_e_lineage.json",
+    "local_untracked/reports/operations/frame_f_librarian_vault.md",
+    "local_untracked/reports/operations/frame_f_security_proof.json",
+    "local_untracked/reports/operations/frame_g_closeout_packet.json",
+    "local_untracked/reports/operations/frame_g_publication_boundary.md",
+    "local_untracked/reports/operations/frame_stack_schema_transfer_20260420/"
+  ]
+}

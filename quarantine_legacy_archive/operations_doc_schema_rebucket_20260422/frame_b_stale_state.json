@@ -1,0 +1,133 @@
+{
+  "doc_class": "frame_b_evidence",
+  "frame_id": "B",
+  "scenario_focus": [
+    "S2"
+  ],
+  "generated_from": {
+    "source_report_json": "report_tmp/frameb_stale_gate_replay_probe/runs/frameb-stale-gate-replay-20260421T180519Z/frameb_stale_gate_replay_probe.json",
+    "source_report_md": "report_tmp/frameb_stale_gate_replay_probe/runs/frameb-stale-gate-replay-20260421T180519Z/frameb_stale_gate_replay_probe.md",
+    "script": "projects/calamum-moltbook-observer/src/simulation/run_simulation.py"
+  },
+  "run_id": "frameb-stale-gate-replay-20260421T180519Z",
+  "overall_result": "pass",
+  "summary": {
+    "decision_basis": "Frame B S2 passes when stale and replayed gate packets are denied before live-mode mutation.",
+    "stale_case_result": "no-go",
+    "replay_case_result": "no-go",
+    "final_mode_after_probes": "canary"
+  },
+  "result_matrix": {
+    "lineage_mismatch_reason_emitted": true,
+    "live_mode_not_persisted": true,
+    "posture_write_skipped_on_denial": true,
+    "replay_context_differs_from_gate": true,
+    "replay_packet_denied": true,
+    "replayed_lineage_fields_detected": true,
+    "stale_packet_denied": true,
+    "stale_reason_emitted": true
+  },
+  "stale_case": {
+    "gate_packet": {
+      "decision": "go",
+      "evidence_refs": [
+        "C:/Users/joedi/Documents/CodeSentinel-1/report_tmp/frameb_stale_gate_replay_probe/runs/frameb-stale-gate-replay-20260421T180519Z/security_report_a.md"
+      ],
+      "from_state": "sim:canary",
+      "posture_trigger": "lockdown",
+      "posture_trigger_id": "pt-frameb-stale-gate",
+      "profile": "GP-4",
+      "reason_codes": [],
+      "run_id": "frameb-stale-gate-packet",
+      "runtime_cli_surface": "observerctl",
+      "security_report_ref": "C:/Users/joedi/Documents/CodeSentinel-1/report_tmp/frameb_stale_gate_replay_probe/runs/frameb-stale-gate-replay-20260421T180519Z/security_report_a.md",
+      "timestamp_utc": "2000-01-01T00:00:00Z",
+      "to_state": "sim:live"
+    },
+    "mode_set_packet": {
+      "current_from_state": "sim:canary",
+      "decision": "no-go",
+      "evidence_refs": [
+        "C:/Users/joedi/Documents/CodeSentinel-1/report_tmp/frameb_stale_gate_replay_probe/runs/frameb-stale-gate-replay-20260421T180519Z/security_report_a.md",
+        "C:/Users/joedi/Documents/CodeSentinel-1/report_tmp/frameb_stale_gate_replay_probe/runs/frameb-stale-gate-replay-20260421T180519Z/sandbox_logs/control/calamum/observerctl_run_context.json"
+      ],
+      "expected_to_state": "sim:live",
+      "gate_from_state": "sim:canary",
+      "lineage_mismatch_fields": [],
+      "reason_codes": [
+        "critical_check_failed:gate_packet_missing_or_stale"
+      ],
+      "runtime_cli_surface": "observerctl",
+      "timestamp_utc": "2026-04-21T18:05:19.778510Z"
+    },
+    "expected_reason_codes": [
+      "critical_check_failed:gate_packet_missing_or_stale"
+    ]
+  },
+  "replay_case": {
+    "gate_packet": {
+      "decision": "go",
+      "evidence_refs": [
+        "C:/Users/joedi/Documents/CodeSentinel-1/report_tmp/frameb_stale_gate_replay_probe/runs/frameb-stale-gate-replay-20260421T180519Z/security_report_a.md"
+      ],
+      "from_state": "sim:canary",
+      "posture_trigger": "lockdown",
+      "posture_trigger_id": "pt-frameb-replayed-gate",
+      "profile": "GP-4",
+      "reason_codes": [],
+      "run_id": "frameb-replayed-gate-packet",
+      "runtime_cli_surface": "observerctl",
+      "security_report_ref": "C:/Users/joedi/Documents/CodeSentinel-1/report_tmp/frameb_stale_gate_replay_probe/runs/frameb-stale-gate-replay-20260421T180519Z/security_report_a.md",
+      "timestamp_utc": "2026-04-21T18:05:19.778560Z",
+      "to_state": "sim:live"
+    },
+    "run_context": {
+      "posture_trigger": "lockdown",
+      "posture_trigger_id": "pt-frameb-new-lineage",
+      "run_id": "frameb-new-lineage",
+      "security_report_ref": "C:/Users/joedi/Documents/CodeSentinel-1/report_tmp/frameb_stale_gate_replay_probe/runs/frameb-stale-gate-replay-20260421T180519Z/security_report_b.md",
+      "updated_at_utc": "2026-04-21T18:05:19.783193Z"
+    },
+    "mode_set_packet": {
+      "current_from_state": "sim:canary",
+      "decision": "no-go",
+      "evidence_refs": [
+        "C:/Users/joedi/Documents/CodeSentinel-1/report_tmp/frameb_stale_gate_replay_probe/runs/frameb-stale-gate-replay-20260421T180519Z/security_report_a.md",
+        "C:/Users/joedi/Documents/CodeSentinel-1/report_tmp/frameb_stale_gate_replay_probe/runs/frameb-stale-gate-replay-20260421T180519Z/sandbox_logs/control/calamum/observerctl_run_context.json"
+      ],
+      "expected_to_state": "sim:live",
+      "gate_from_state": "sim:canary",
+      "lineage_mismatch_fields": [
+        "run_id",
+        "posture_trigger_id",
+        "security_report_ref"
+      ],
+      "reason_codes": [
+        "critical_check_failed:gate_packet_lineage_mismatch"
+      ],
+      "runtime_cli_surface": "observerctl",
+      "timestamp_utc": "2026-04-21T18:05:19.820232Z"
+    },
+    "expected_reason_codes": [
+      "critical_check_failed:gate_packet_lineage_mismatch"
+    ],
+    "lineage_mismatch_fields": [
+      "run_id",
+      "posture_trigger_id",
+      "security_report_ref"
+    ]
+  },
+  "artifact_paths": {
+    "last_gate": "report_tmp/frameb_stale_gate_replay_probe/runs/frameb-stale-gate-replay-20260421T180519Z/sandbox_logs/control/calamum/observerctl_last_gate.json",
+    "posture_state": "report_tmp/frameb_stale_gate_replay_probe/runs/frameb-stale-gate-replay-20260421T180519Z/sandbox_logs/control/calamum/watchdog_posture_state.json",
+    "run_context": "report_tmp/frameb_stale_gate_replay_probe/runs/frameb-stale-gate-replay-20260421T180519Z/sandbox_logs/control/calamum/observerctl_run_context.json",
+    "security_report_a": "report_tmp/frameb_stale_gate_replay_probe/runs/frameb-stale-gate-replay-20260421T180519Z/security_report_a.md",
+    "security_report_b": "report_tmp/frameb_stale_gate_replay_probe/runs/frameb-stale-gate-replay-20260421T180519Z/security_report_b.md"
+  },
+  "conclusion": {
+    "stale_packet_denied": true,
+    "replay_lineage_denied": true,
+    "no_live_mode_mutation": true,
+    "no_posture_write_on_denial": true
+  }
+}
