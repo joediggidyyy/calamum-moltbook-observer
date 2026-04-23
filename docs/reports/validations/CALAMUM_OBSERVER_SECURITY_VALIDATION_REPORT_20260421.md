@@ -60,13 +60,13 @@ Detailed engineering evidence is retained separately for internal review. This o
 
 The current report summarizes the following validation families.
 
-| Validation family | Why it matters | Role in final verdict |
-| --- | --- | --- |
-| Automated validation corpus | establishes broad stability and quality across the active codebase | primary confidence anchor |
-| Scripted public-surface checks | confirms reader-facing outputs remain clean and presentation-safe | publication-quality assurance |
-| Sandbox security validation | exercises structured scenario families in a controlled setting | headline security evidence |
-| Adversarial scenario validation | tests hostile and stress conditions directly | headline security evidence |
-| Publication guardrails | verifies the report lane remains contract-aligned and reviewer-ready | outward-facing closeout evidence |
+| Validation family               | Why it matters                                                       | Role in final verdict            |
+| ------------------------------- | -------------------------------------------------------------------- | -------------------------------- |
+| Automated validation corpus     | establishes broad stability and quality across the active codebase   | primary confidence anchor        |
+| Scripted public-surface checks  | confirms reader-facing outputs remain clean and presentation-safe    | publication-quality assurance    |
+| Sandbox security validation     | exercises structured scenario families in a controlled setting       | headline security evidence       |
+| Adversarial scenario validation | tests hostile and stress conditions directly                         | headline security evidence       |
+| Publication guardrails          | verifies the report lane remains contract-aligned and reviewer-ready | outward-facing closeout evidence |
 
 ### Validation emphasis
 
@@ -106,13 +106,13 @@ pie showData
 
 ### Evidence acquisition model
 
-| Lane | Method | Why it matters |
-| --- | --- | --- |
-| Automated validation | full active automated test corpus | verifies broad stability and contract compliance |
+| Lane                        | Method                                                 | Why it matters                                                    |
+| --------------------------- | ------------------------------------------------------ | ----------------------------------------------------------------- |
+| Automated validation        | full active automated test corpus                      | verifies broad stability and contract compliance                  |
 | Sandbox security validation | structured scenario execution in controlled conditions | verifies intended secure behavior under representative conditions |
-| Adversarial validation | hostile-path and misuse-oriented scenario exercises | verifies safe outcomes when conditions are pushed or degraded |
-| Public-surface checks | output and presentation validation | verifies outward-facing cleanliness and reviewer readiness |
-| Publication guardrails | report-lane contract validation | verifies that the published report pair remains presentation-safe |
+| Adversarial validation      | hostile-path and misuse-oriented scenario exercises    | verifies safe outcomes when conditions are pushed or degraded     |
+| Public-surface checks       | output and presentation validation                     | verifies outward-facing cleanliness and reviewer readiness        |
+| Publication guardrails      | report-lane contract validation                        | verifies that the published report pair remains presentation-safe |
 
 ### Interpretive rule
 
@@ -124,13 +124,13 @@ This report evaluates the current posture using three plain-language principles:
 
 ## Results at a glance
 
-| Validation family | Verdict | Headline result | Interpretation |
-| --- | --- | --- | --- |
-| Automated validation corpus | `Pass` | `483/483` checks passed | broad current-state stability is strong |
-| Public-surface checks | `Pass` | reviewer-facing outputs remained clean and presentation-safe | outward-facing materials are in good shape |
-| Sandbox security validation | `Pass` | `15/15` selected probes passed | structured security behavior remains strong |
-| Adversarial scenario validation | `Pass` | `10/10` selected scenarios passed | the system remains safe under pressure |
-| Publication guardrails | `Pass` | `3/3` targeted checks passed | the report lane is reviewer-ready |
+| Validation family               | Verdict | Headline result                                              | Interpretation                              |
+| ------------------------------- | ------- | ------------------------------------------------------------ | ------------------------------------------- |
+| Automated validation corpus     | `Pass`  | `483/483` checks passed                                      | broad current-state stability is strong     |
+| Public-surface checks           | `Pass`  | reviewer-facing outputs remained clean and presentation-safe | outward-facing materials are in good shape  |
+| Sandbox security validation     | `Pass`  | `15/15` selected probes passed                               | structured security behavior remains strong |
+| Adversarial scenario validation | `Pass`  | `10/10` selected scenarios passed                            | the system remains safe under pressure      |
+| Publication guardrails          | `Pass`  | `3/3` targeted checks passed                                 | the report lane is reviewer-ready           |
 
 ## 1) Broad automated validation
 
@@ -147,16 +147,16 @@ The automated validation corpus provides the broadest confidence signal in the r
 
 ### Family-level breakdown
 
-| Test family | Passed | Failed | What it contributes |
-| --- | ---: | ---: | --- |
-| `test_observerctl.py` | 294 | 0 | confidence in the primary control surface and runtime-facing behavior |
-| `test_simulation_runner.py` | 40 | 0 | confidence in scenario execution and simulation harness behavior |
-| `test_librarian.py` | 18 | 0 | confidence in protection, release, and operational coordination surfaces |
-| `test_obfuscator.py` | 9 | 0 | confidence in outward-facing privacy and masking behavior |
-| `test_keysmith.py` | 7 | 0 | confidence in proof and integrity-sensitive support behavior |
-| `test_container_constraints.py` | 1 | 0 | supporting containment signal |
-| `test_schema_layout_guardrails.py` | 16 | 0 | confidence in report, layout, and publication-shape correctness |
-| `test_operations_doc_guardrails.py` | 2 | 0 | confidence in outward-facing document hygiene and routing discipline |
+| Test family                         | Passed | Failed | What it contributes                                                      |
+| ----------------------------------- | -----: | -----: | ------------------------------------------------------------------------ |
+| `test_observerctl.py`               |    294 |      0 | confidence in the primary control surface and runtime-facing behavior    |
+| `test_simulation_runner.py`         |     40 |      0 | confidence in scenario execution and simulation harness behavior         |
+| `test_librarian.py`                 |     18 |      0 | confidence in protection, release, and operational coordination surfaces |
+| `test_obfuscator.py`                |      9 |      0 | confidence in outward-facing privacy and masking behavior                |
+| `test_keysmith.py`                  |      7 |      0 | confidence in proof and integrity-sensitive support behavior             |
+| `test_container_constraints.py`     |      1 |      0 | supporting containment signal                                            |
+| `test_schema_layout_guardrails.py`  |     16 |      0 | confidence in report, layout, and publication-shape correctness          |
+| `test_operations_doc_guardrails.py` |      2 |      0 | confidence in outward-facing document hygiene and routing discipline     |
 
 ### Interpretation
 
@@ -170,13 +170,13 @@ A reviewer-facing report is only as credible as its own presentation surface. If
 
 ### Current public-surface checks
 
-| Check | Result | Why it matters |
-| --- | --- | --- |
-| report pair exists | `Pass` | the outward-facing Markdown/HTML pair is present and reviewable |
-| validation index routing | `Pass` | the report remains discoverable and properly routed |
-| public-surface cleanliness | `Pass` | reviewer-facing outputs stayed clean and presentation-safe |
-| path hygiene | `Pass` | no absolute local path residue appeared in the public pair |
-| presentation quality | `Pass` | the report lane remained polished and readable |
+| Check                      | Result | Why it matters                                                  |
+| -------------------------- | ------ | --------------------------------------------------------------- |
+| report pair exists         | `Pass` | the outward-facing Markdown/HTML pair is present and reviewable |
+| validation index routing   | `Pass` | the report remains discoverable and properly routed             |
+| public-surface cleanliness | `Pass` | reviewer-facing outputs stayed clean and presentation-safe      |
+| path hygiene               | `Pass` | no absolute local path residue appeared in the public pair      |
+| presentation quality       | `Pass` | the report lane remained polished and readable                  |
 
 ### Interpretation
 
@@ -196,12 +196,12 @@ The sandbox campaign provides structured, scenario-based security evidence in a 
 
 ### Control-family overview
 
-| Control family | Probe count | Current result | What it demonstrates |
-| --- | ---: | --- | --- |
-| Runtime and posture integrity | 4 | `Pass` | stable runtime behavior, continuity, restart handling, and safe recovery |
-| Names-only and truthfulness preservation | 4 | `Pass` | clean outward-facing behavior and truthful communication of blocked or invalid conditions |
-| Integrity and release protections | 5 | `Pass` | bounded handling for integrity-sensitive and release-adjacent behaviors |
-| Publication-boundary and reader-surface safety | 2 | `Pass` | reviewer-facing surfaces remain clean and stable under scenario pressure |
+| Control family                                 | Probe count | Current result | What it demonstrates                                                                      |
+| ---------------------------------------------- | ----------: | -------------- | ----------------------------------------------------------------------------------------- |
+| Runtime and posture integrity                  |           4 | `Pass`         | stable runtime behavior, continuity, restart handling, and safe recovery                  |
+| Names-only and truthfulness preservation       |           4 | `Pass`         | clean outward-facing behavior and truthful communication of blocked or invalid conditions |
+| Integrity and release protections              |           5 | `Pass`         | bounded handling for integrity-sensitive and release-adjacent behaviors                   |
+| Publication-boundary and reader-surface safety |           2 | `Pass`         | reviewer-facing surfaces remain clean and stable under scenario pressure                  |
 
 ### Interpretation
 
@@ -221,18 +221,18 @@ The adversarial lane carries the most direct security weight in the report becau
 
 ### Scenario matrix
 
-| Scenario family | Attack intent | Expected safe outcome | Current observed result | Verdict |
-| --- | --- | --- | --- | --- |
-| Names-only boundary pressure | push outward-facing outputs beyond intended limits | public-facing outputs remain clean and bounded | intended boundary preserved | `Pass` |
-| Cross-surface truthfulness pressure | create mismatched or misleading status conditions | no false-success story survives review | truthful outcome preserved | `Pass` |
-| Liveness and monitoring spoof pressure | simulate misleading health signals | false health does not become a trusted positive state | safe handling preserved | `Pass` |
-| Runtime chaos and resource pressure | induce instability or degraded runtime conditions | unsafe-looking conditions remain bounded and truthful | safe handling preserved | `Pass` |
-| Authority tamper pressure | distort trusted selection or reference conditions | integrity-sensitive behavior rejects or repairs invalid states | safe handling preserved | `Pass` |
-| Publication-forgery pressure | attempt to push invalid material toward outward-facing surfaces | public-facing publication remains bounded and trustworthy | safe handling preserved | `Pass` |
-| Proof-mismatch pressure | present mismatched or stale integrity signals | invalid proof does not become trusted | safe handling preserved | `Pass` |
-| Public-output boundary pressure | try to contaminate outward-facing report surfaces | public-facing publication stays clean and reader-safe | safe handling preserved | `Pass` |
-| Bootstrap starvation pressure | deny required setup conditions | degraded readiness remains truthful and bounded | safe handling preserved | `Pass` |
-| Catalog drift pressure | stress stale or mismatched lookup conditions | stale or invalid review material does not become trusted | safe handling preserved | `Pass` |
+| Scenario family                        | Attack intent                                                   | Expected safe outcome                                          | Current observed result     | Verdict |
+| -------------------------------------- | --------------------------------------------------------------- | -------------------------------------------------------------- | --------------------------- | ------- |
+| Names-only boundary pressure           | push outward-facing outputs beyond intended limits              | public-facing outputs remain clean and bounded                 | intended boundary preserved | `Pass`  |
+| Cross-surface truthfulness pressure    | create mismatched or misleading status conditions               | no false-success story survives review                         | truthful outcome preserved  | `Pass`  |
+| Liveness and monitoring spoof pressure | simulate misleading health signals                              | false health does not become a trusted positive state          | safe handling preserved     | `Pass`  |
+| Runtime chaos and resource pressure    | induce instability or degraded runtime conditions               | unsafe-looking conditions remain bounded and truthful          | safe handling preserved     | `Pass`  |
+| Authority tamper pressure              | distort trusted selection or reference conditions               | integrity-sensitive behavior rejects or repairs invalid states | safe handling preserved     | `Pass`  |
+| Publication-forgery pressure           | attempt to push invalid material toward outward-facing surfaces | public-facing publication remains bounded and trustworthy      | safe handling preserved     | `Pass`  |
+| Proof-mismatch pressure                | present mismatched or stale integrity signals                   | invalid proof does not become trusted                          | safe handling preserved     | `Pass`  |
+| Public-output boundary pressure        | try to contaminate outward-facing report surfaces               | public-facing publication stays clean and reader-safe          | safe handling preserved     | `Pass`  |
+| Bootstrap starvation pressure          | deny required setup conditions                                  | degraded readiness remains truthful and bounded                | safe handling preserved     | `Pass`  |
+| Catalog drift pressure                 | stress stale or mismatched lookup conditions                    | stale or invalid review material does not become trusted       | safe handling preserved     | `Pass`  |
 
 ### Interpretation
 

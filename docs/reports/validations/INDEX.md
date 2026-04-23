@@ -9,10 +9,10 @@ Detailed technical validation evidence is maintained separately from this public
 
 ## Published validation packets
 
-| Validation packet                                      | Status                       | Markdown                                                                                                           | HTML                                                                                                                   |
-| ------------------------------------------------------ | ---------------------------- | ------------------------------------------------------------------------------------------------------------------ | ---------------------------------------------------------------------------------------------------------------------- |
-| `CALAMUM_OBSERVER_SECURITY_VALIDATION_REPORT_20260421` | `Pass`                       | [CALAMUM_OBSERVER_SECURITY_VALIDATION_REPORT_20260421.md](CALAMUM_OBSERVER_SECURITY_VALIDATION_REPORT_20260421.md) | [CALAMUM_OBSERVER_SECURITY_VALIDATION_REPORT_20260421.html](CALAMUM_OBSERVER_SECURITY_VALIDATION_REPORT_20260421.html) |
-| `APEXLAB_REFERENCE_VALIDATION_REPORT_20260324`         | `Pass`                       | [APEXLAB_REFERENCE_VALIDATION_REPORT_20260324.md](APEXLAB_REFERENCE_VALIDATION_REPORT_20260324.md)                 | [APEXLAB_REFERENCE_VALIDATION_REPORT_20260324.html](APEXLAB_REFERENCE_VALIDATION_REPORT_20260324.html)                 |
+| Validation packet                                      | Status | Markdown                                                                                                           | HTML                                                                                                                   |
+| ------------------------------------------------------ | ------ | ------------------------------------------------------------------------------------------------------------------ | ---------------------------------------------------------------------------------------------------------------------- |
+| `CALAMUM_OBSERVER_SECURITY_VALIDATION_REPORT_20260421` | `Pass` | [CALAMUM_OBSERVER_SECURITY_VALIDATION_REPORT_20260421.md](CALAMUM_OBSERVER_SECURITY_VALIDATION_REPORT_20260421.md) | [CALAMUM_OBSERVER_SECURITY_VALIDATION_REPORT_20260421.html](CALAMUM_OBSERVER_SECURITY_VALIDATION_REPORT_20260421.html) |
+| `APEXLAB_REFERENCE_VALIDATION_REPORT_20260324`         | `Pass` | [APEXLAB_REFERENCE_VALIDATION_REPORT_20260324.md](APEXLAB_REFERENCE_VALIDATION_REPORT_20260324.md)                 | [APEXLAB_REFERENCE_VALIDATION_REPORT_20260324.html](APEXLAB_REFERENCE_VALIDATION_REPORT_20260324.html)                 |
 
 - `CALAMUM_OBSERVER_SECURITY_VALIDATION_REPORT_20260421` provides the current public-facing security validation dossier for Calamum Observer, including the reviewer-facing Markdown and HTML report pair.
 

@@ -67,32 +67,32 @@ Reference libraries used by that runner:
 
 ### Sections tested
 
-| Section | ApexLab surface | Reference surface | Acceptance style |
-|---|---|---|---|
-| Statistical comparison | `mann_whitney_u`, `ks_two_sample`, `welch_t_test`, `cohens_d` | SciPy plus analytical Cohen's $d$ reference | Absolute deltas must remain within declared thresholds |
-| OLS regression | `ols_fit` | scikit-learn `LinearRegression` | Coefficient and prediction deltas must remain near zero |
-| Logistic regression | `logistic_fit` | scikit-learn `LogisticRegression` | Classification quality, probability agreement, and coefficient-sign agreement must pass bounded checks |
+| Section                | ApexLab surface                                               | Reference surface                           | Acceptance style                                                                                       |
+| ---------------------- | ------------------------------------------------------------- | ------------------------------------------- | ------------------------------------------------------------------------------------------------------ |
+| Statistical comparison | `mann_whitney_u`, `ks_two_sample`, `welch_t_test`, `cohens_d` | SciPy plus analytical Cohen's $d$ reference | Absolute deltas must remain within declared thresholds                                                 |
+| OLS regression         | `ols_fit`                                                     | scikit-learn `LinearRegression`             | Coefficient and prediction deltas must remain near zero                                                |
+| Logistic regression    | `logistic_fit`                                                | scikit-learn `LogisticRegression`           | Classification quality, probability agreement, and coefficient-sign agreement must pass bounded checks |
 
 ### Acceptance thresholds
 
 The canonical JSON artifact declares the following thresholds:
 
-| Check | Threshold |
-|---|---:|
-| Mann-Whitney statistic delta | $1 \times 10^{-9}$ |
-| Mann-Whitney $p$-value delta | $5 \times 10^{-2}$ |
-| KS statistic delta | $1 \times 10^{-9}$ |
-| KS $p$-value delta | $5 \times 10^{-2}$ |
-| Welch $t$ delta | $1 \times 10^{-9}$ |
-| Welch $p$-value delta | $5 \times 10^{-2}$ |
-| Cohen's $d$ delta | $1 \times 10^{-9}$ |
-| OLS coefficient max abs delta | $1 \times 10^{-9}$ |
-| OLS prediction max abs delta | $1 \times 10^{-9}$ |
-| Logistic accuracy delta | $\leq 0.05$ |
-| Logistic prediction agreement | $\geq 0.90$ |
-| Logistic probability MAE | $\leq 0.12$ |
-| Logistic probability correlation | $\geq 0.98$ |
-| Logistic coefficient sign match | `true` |
+| Check                            |          Threshold |
+| -------------------------------- | -----------------: |
+| Mann-Whitney statistic delta     | $1 \times 10^{-9}$ |
+| Mann-Whitney $p$-value delta     | $5 \times 10^{-2}$ |
+| KS statistic delta               | $1 \times 10^{-9}$ |
+| KS $p$-value delta               | $5 \times 10^{-2}$ |
+| Welch $t$ delta                  | $1 \times 10^{-9}$ |
+| Welch $p$-value delta            | $5 \times 10^{-2}$ |
+| Cohen's $d$ delta                | $1 \times 10^{-9}$ |
+| OLS coefficient max abs delta    | $1 \times 10^{-9}$ |
+| OLS prediction max abs delta     | $1 \times 10^{-9}$ |
+| Logistic accuracy delta          |        $\leq 0.05$ |
+| Logistic prediction agreement    |        $\geq 0.90$ |
+| Logistic probability MAE         |        $\leq 0.12$ |
+| Logistic probability correlation |        $\geq 0.98$ |
+| Logistic coefficient sign match  |             `true` |
 
 ### Important methodological note
 
@@ -104,15 +104,15 @@ The validation runner explicitly allows looser tolerance on some $p$-value compa
 
 The statistical-comparison section passed cleanly.
 
-| Test | ApexLab result | Reference result | Absolute delta | Threshold | Pass |
-|---|---|---|---:|---:|---|
-| Mann-Whitney U statistic | `0.0` | `0.0` | `0.0` | `1e-9` | Yes |
-| Mann-Whitney $p$-value | `0.00018267179110953435` | `0.00018267179110955002` | `1.5667e-17` | `0.05` | Yes |
-| KS statistic $D$ | `1.0` | `1.0` | `0.0` | `1e-9` | Yes |
-| KS $p$-value | `1.8879793657162556e-05` | `0.0` | `1.88798e-05` | `0.05` | Yes |
-| Welch $t$ statistic | `6.847018410831535` | `6.847018410831535` | `0.0` | `1e-9` | Yes |
-| Welch $p$-value | `7.540634783254063e-12` | `3.209558497791793e-06` | `3.20955e-06` | `0.05` | Yes |
-| Cohen's $d$ | `3.062079721962379` | `3.0620797219623794` | `4.44089e-16` | `1e-9` | Yes |
+| Test                     | ApexLab result           | Reference result         | Absolute delta | Threshold | Pass |
+| ------------------------ | ------------------------ | ------------------------ | -------------: | --------: | ---- |
+| Mann-Whitney U statistic | `0.0`                    | `0.0`                    |          `0.0` |    `1e-9` | Yes  |
+| Mann-Whitney $p$-value   | `0.00018267179110953435` | `0.00018267179110955002` |   `1.5667e-17` |    `0.05` | Yes  |
+| KS statistic $D$         | `1.0`                    | `1.0`                    |          `0.0` |    `1e-9` | Yes  |
+| KS $p$-value             | `1.8879793657162556e-05` | `0.0`                    |  `1.88798e-05` |    `0.05` | Yes  |
+| Welch $t$ statistic      | `6.847018410831535`      | `6.847018410831535`      |          `0.0` |    `1e-9` | Yes  |
+| Welch $p$-value          | `7.540634783254063e-12`  | `3.209558497791793e-06`  |  `3.20955e-06` |    `0.05` | Yes  |
+| Cohen's $d$              | `3.062079721962379`      | `3.0620797219623794`     |  `4.44089e-16` |    `1e-9` | Yes  |
 
 ### Interpretation
 
@@ -122,12 +122,12 @@ This is the cleanest section in the run. The test statistics themselves matched 
 
 The OLS section also passed with effectively negligible error.
 
-| Metric | Observed value | Threshold | Pass |
-|---|---:|---:|---|
-| Maximum absolute coefficient delta | `6.661338147750939e-15` | `1e-9` | Yes |
-| Maximum absolute prediction delta | `7.105427357601002e-15` | `1e-9` | Yes |
-| ApexLab $R^2$ | `1.0` | Informational | — |
-| ApexLab RMSE | `6.898884543774767e-15` | Informational | — |
+| Metric                             |          Observed value |     Threshold | Pass |
+| ---------------------------------- | ----------------------: | ------------: | ---- |
+| Maximum absolute coefficient delta | `6.661338147750939e-15` |        `1e-9` | Yes  |
+| Maximum absolute prediction delta  | `7.105427357601002e-15` |        `1e-9` | Yes  |
+| ApexLab $R^2$                      |                   `1.0` | Informational | —    |
+| ApexLab RMSE                       | `6.898884543774767e-15` | Informational | —    |
 
 ApexLab OLS coefficients:
 
@@ -149,18 +149,18 @@ This section behaved exactly the way a publishable validation lane should behave
 
 The logistic section passed, but its pass deserves a more careful reading than the earlier two sections.
 
-| Metric | Observed value | Threshold | Pass |
-|---|---:|---:|---|
-| Accuracy delta | `0.0` | `0.05` | Yes |
-| Prediction agreement | `1.0` | `0.90` | Yes |
-| Probability MAE | `0.03230342561928962` | `0.12` | Yes |
-| Probability correlation | `0.9912416474961214` | `0.98` | Yes |
-| Coefficient sign match | `true` | `true` | Yes |
-| ApexLab convergence flag | `false` | Informational | — |
-| Iterations used | `12000` | Informational | — |
-| ApexLab accuracy | `1.0` | Informational | — |
-| ApexLab pseudo-$R^2$ | `0.9493130814508287` | Informational | — |
-| ApexLab log loss | `0.0351334946836297` | Informational | — |
+| Metric                   |        Observed value |     Threshold | Pass |
+| ------------------------ | --------------------: | ------------: | ---- |
+| Accuracy delta           |                 `0.0` |        `0.05` | Yes  |
+| Prediction agreement     |                 `1.0` |        `0.90` | Yes  |
+| Probability MAE          | `0.03230342561928962` |        `0.12` | Yes  |
+| Probability correlation  |  `0.9912416474961214` |        `0.98` | Yes  |
+| Coefficient sign match   |                `true` |        `true` | Yes  |
+| ApexLab convergence flag |               `false` | Informational | —    |
+| Iterations used          |               `12000` | Informational | —    |
+| ApexLab accuracy         |                 `1.0` | Informational | —    |
+| ApexLab pseudo-$R^2$     |  `0.9493130814508287` | Informational | —    |
+| ApexLab log loss         |  `0.0351334946836297` | Informational | —    |
 
 ApexLab logistic coefficients:
 
